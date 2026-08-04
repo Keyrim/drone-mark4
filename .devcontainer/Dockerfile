@@ -39,7 +39,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 \
         python3-pip \
         python3-venv \
+        pipenv \
     && rm -rf /var/lib/apt/lists/*
+
+# pipenv creates each tool's venv in-project (<tool>/.venv, gitignored), where
+# the VS Code launch configurations expect to find the interpreter.
+ENV PIPENV_VENV_IN_PROJECT=1
 
 # -----------------------------------------------------------------------------
 # Layer 2 - clang-format / clang-tidy / clangd from apt.llvm.org (pinned)
@@ -104,7 +109,29 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
-# Layer 6 - non-root user with NOPASSWD sudo
+# Layer 6 - Qt runtime for the ground station
+#   The PyQt6 wheels bundle Qt itself but dynamically link these system
+#   libraries (OpenGL, fontconfig, xcb platform plugin for X11/WSLg).
+# -----------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 \
+        libegl1 \
+        libfontconfig1 \
+        libfreetype6 \
+        libdbus-1-3 \
+        libxkbcommon-x11-0 \
+        libxcb-cursor0 \
+        libxcb-icccm4 \
+        libxcb-image0 \
+        libxcb-keysyms1 \
+        libxcb-randr0 \
+        libxcb-render-util0 \
+        libxcb-shape0 \
+        libxcb-xkb1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------------------------------
+# Layer 7 - non-root user with NOPASSWD sudo
 #   Ubuntu 24.04 ships an "ubuntu" user (UID 1000): replace it. The
 #   devcontainer extension remaps the UID/GID onto the host's at first start
 #   (updateRemoteUserUID).
@@ -120,7 +147,7 @@ RUN userdel -r ubuntu || true \
     && chmod 0440 /etc/sudoers.d/${USERNAME}
 
 # -----------------------------------------------------------------------------
-# Layer 7 - persisted gh and Claude Code configuration
+# Layer 8 - persisted gh and Claude Code configuration
 #   These two directories are mounted as named Docker volumes (see
 #   devcontainer.json); the environment variables point the tools at them so
 #   logins and settings survive image rebuilds.
@@ -134,7 +161,7 @@ WORKDIR /home/${USERNAME}
 RUN mkdir -p "${GH_CONFIG_DIR}" "${CLAUDE_CONFIG_DIR}"
 
 # -----------------------------------------------------------------------------
-# Layer 8 - Claude Code (native installer, binary in ~/.local/bin)
+# Layer 9 - Claude Code (native installer, binary in ~/.local/bin)
 # -----------------------------------------------------------------------------
 RUN curl -fsSL https://claude.ai/install.sh | bash
 

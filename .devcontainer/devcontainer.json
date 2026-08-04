@@ -18,10 +18,17 @@
 			"extensions": [
 				"ms-vscode.cmake-tools",
 				"llvm-vs-code-extensions.vscode-clangd",
+				"ms-vscode.cpptools",
+				"ms-python.python",
 				"geequlim.godot-tools",
 				"anthropic.claude-code",
 				"mhutchie.git-graph"
-			]
+			],
+			"settings": {
+				// clangd is the language server; cpptools is kept for its
+				// debugger (cppdbg) only.
+				"C_Cpp.intelliSenseEngine": "disabled"
+			}
 		}
 	}
 }
