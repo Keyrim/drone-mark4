@@ -19,7 +19,8 @@
 				"ms-vscode.cmake-tools",
 				"llvm-vs-code-extensions.vscode-clangd",
 				"geequlim.godot-tools",
-				"anthropic.claude-code"
+				"anthropic.claude-code",
+				"mhutchie.git-graph"
 			]
 		}
 	}
