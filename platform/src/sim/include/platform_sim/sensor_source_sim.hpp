@@ -1,34 +1,34 @@
 #pragma once
 
 /// @file
-/// @brief Self-generating sensor source for the sim variant.
+/// @brief UDP sensor source for the sim variant.
 
-#include <cstdint>
-
-#include "platform/clock.hpp"
 #include "platform/sensor_source.hpp"
+#include "platform_sim/udp_link.hpp"
 
 namespace mark4
 {
-    /// Generates plausible frames internally at a fixed rate (sinusoidal gyro,
-    /// gravity at rest), timestamped by the injected clock. Exhausts itself
-    /// after `maxFrames` so the main loop terminates cleanly. No network yet.
+    /// Turns sensor packets received on the sim link into sensor frames. The
+    /// simulator drives the cadence: waitFrame() blocks on the socket, and the
+    /// timestamp of the frame is the simulation time carried by the packet.
     class SensorSourceSim final : public AbsSensorSource
     {
       public:
-        SensorSourceSim(AbsClock &clock, std::uint64_t periodUs, std::uint32_t maxFrames)
-            : m_clock(clock),
-              m_periodUs(periodUs),
-              m_maxFrames(maxFrames)
+        /// @param link bound sim link the sensor packets arrive on
+        explicit SensorSourceSim(UdpLink &link)
+            : m_link(link)
         {
         }
 
+        /// @brief Blocks until a valid sensor packet arrives. Datagrams of an
+        ///        unexpected size or protocol version are dropped silently and
+        ///        the wait resumes.
+        /// @param[out] frameOut frame decoded from the packet
+        /// @return true when a frame was decoded, false when the link stayed
+        ///         idle for the receive timeout
         bool waitFrame(mark4::SensorFrame &frameOut) override;
 
       private:
-        AbsClock &m_clock;
-        std::uint64_t m_periodUs;
-        std::uint32_t m_maxFrames;
-        std::uint32_t m_produced = 0U;
+        UdpLink &m_link; ///< sim link, owned by the composition root
     };
 } // namespace mark4

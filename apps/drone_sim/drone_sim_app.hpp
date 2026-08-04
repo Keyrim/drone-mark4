@@ -10,6 +10,7 @@
 #include "platform_sim/motor_sink_sim.hpp"
 #include "platform_sim/sensor_source_sim.hpp"
 #include "platform_sim/telemetry_sender_sim.hpp"
+#include "platform_sim/udp_link.hpp"
 
 namespace mark4
 {
@@ -20,21 +21,20 @@ namespace mark4
     class DroneSimApp
     {
       public:
-        /// Sensor frame period [us] (1 kHz, typical gyro rate).
-        static constexpr std::uint64_t FRAME_PERIOD_US = 1000U;
+        /// Delay without any sensor packet after which the run stops [ms].
+        static constexpr std::uint32_t IDLE_TIMEOUT_MS = 2000U;
 
-        /// @param iterations number of frames to run before stopping
-        explicit DroneSimApp(std::uint32_t iterations);
+        /// @param maxFrames number of frames to process before stopping
+        explicit DroneSimApp(std::uint32_t maxFrames);
 
-        /// @brief Initializes services in declaration order.
-        ///
-        /// Current services cannot fail; networked ones will check and log here,
-        /// following the rule: first failure returns false immediately.
+        /// @brief Initializes services in declaration order: binds the sim link
+        ///        and opens the telemetry socket. The first failure is logged by
+        ///        the service and returns false immediately.
         /// @return true when every service is ready
         bool init();
 
-        /// @brief Runs the waitFrame -> step -> push loop until the source is
-        ///        exhausted.
+        /// @brief Runs the waitFrame -> step -> push loop until the requested
+        ///        number of frames is reached or the sim link goes idle.
         /// @return number of steps executed
         std::uint32_t run();
 
@@ -59,9 +59,12 @@ namespace mark4
       private:
         void sendTelemetry(const mark4::SensorFrame &frame, const mark4::ActuatorFrame &actuators);
 
+        std::uint32_t m_maxFrames; ///< frame budget for run()
+
         // Declaration order = construction order; dependencies are injected by
         // reference, so a service may only depend on those declared above it.
         mark4::ClockSim m_clock;
+        mark4::UdpLink m_simLink;
         mark4::SensorSourceSim m_sensorSource;
         mark4::MotorSinkSim m_motorSink;
         mark4::TelemetrySenderSim m_telemetrySender;

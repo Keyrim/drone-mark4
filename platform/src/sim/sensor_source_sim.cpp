@@ -1,44 +1,55 @@
 #include "platform_sim/sensor_source_sim.hpp"
 
-#include <chrono>
-#include <cmath>
-#include <thread>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+
+#include "protocol/sim_link.hpp"
+#include "protocol/version.hpp"
 
 namespace mark4
 {
     namespace
     {
-        constexpr float TWO_PI = 6.28318530f;
-        constexpr float US_TO_S = 1e-6f;
-        constexpr float GYRO_AMPLITUDE_RAD_S = 0.5f;
-        constexpr float GYRO_FREQUENCY_HZ = 2.0f;
-        constexpr float GRAVITY_MPS2 = 9.80665f;
-        constexpr float SEA_LEVEL_PA = 101325.0f;
-        constexpr float IDLE_THROTTLE = 0.25f;
+        /// Larger than any expected packet, so an oversized datagram comes out
+        /// with its real size instead of being truncated to a valid one.
+        constexpr std::size_t RECEIVE_BUFFER_SIZE = 256U;
     } // namespace
 
     bool SensorSourceSim::waitFrame(mark4::SensorFrame &frameOut)
     {
-        if (m_produced >= m_maxFrames)
+        std::array<std::uint8_t, RECEIVE_BUFFER_SIZE> wire{};
+
+        while (true)
         {
-            return false;
+            const std::size_t received = m_link.receive(wire.data(), wire.size());
+            if (received == 0U)
+            {
+                return false; // idle link: the source is exhausted
+            }
+            if (received != mark4::SIM_SENSOR_PACKET_SIZE || wire[0] != mark4::PROTOCOL_VERSION)
+            {
+                continue; // not a sensor packet we understand: keep waiting
+            }
+
+            mark4::SimSensorPacket packet{};
+            std::memcpy(&packet, wire.data(), sizeof(packet));
+
+            frameOut.timestampUs = packet.timestampUs;
+            /* The std::array members sit at odd offsets in the packed struct:
+               reading them through it would bind a reference to a misaligned
+               address, so they are copied straight out of the datagram. */
+            std::memcpy(frameOut.gyroRadS.data(),
+                        wire.data() + offsetof(mark4::SimSensorPacket, gyroRadS),
+                        sizeof(frameOut.gyroRadS));
+            std::memcpy(frameOut.accelMps2.data(),
+                        wire.data() + offsetof(mark4::SimSensorPacket, accelMps2),
+                        sizeof(frameOut.accelMps2));
+            frameOut.baroPa = packet.baroPa;
+            frameOut.rc.killSwitch = packet.killSwitch != 0U;
+            frameOut.rc.throttle = packet.throttle;
+            return true;
         }
-
-        // Fixed cadence, standing in for the gyro data-ready interrupt.
-        std::this_thread::sleep_for(std::chrono::microseconds(m_periodUs));
-
-        const float tS = static_cast<float>(m_produced) * static_cast<float>(m_periodUs) * US_TO_S;
-        const float phase = TWO_PI * GYRO_FREQUENCY_HZ * tS;
-
-        frameOut.timestampUs = m_clock.nowUs();
-        frameOut.gyroRadS = {
-            GYRO_AMPLITUDE_RAD_S * std::sin(phase), GYRO_AMPLITUDE_RAD_S * std::cos(phase), 0.0f};
-        frameOut.accelMps2 = {0.0f, 0.0f, GRAVITY_MPS2}; // specific force at rest
-        frameOut.baroPa = SEA_LEVEL_PA;
-        frameOut.rc.killSwitch = false;
-        frameOut.rc.throttle = IDLE_THROTTLE;
-
-        ++m_produced;
-        return true;
     }
 } // namespace mark4

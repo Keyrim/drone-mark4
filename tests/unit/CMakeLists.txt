@@ -7,8 +7,16 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2)
 
 add_executable(unit_tests
-    test_flight_core.cpp)
-target_link_libraries(unit_tests PRIVATE flight_core Catch2::Catch2WithMain drone_warnings)
+    test_flight_core.cpp
+    test_platform_sim_udp.cpp)
+target_link_libraries(unit_tests
+    PRIVATE flight_core platform_sim protocol Catch2::Catch2WithMain drone_warnings)
+# The libs under test are compiled with -fno-rtti (drone_strict) and emit no
+# typeinfo, so UBSan's vptr check cannot be applied to their classes from here
+# (it would reference symbols that are never emitted). Nothing is lost: those
+# libs are not instrumented by that check in the first place. RTTI and
+# exceptions stay enabled in the tests, Catch2 needs them.
+target_compile_options(unit_tests PRIVATE -fno-sanitize=vptr)
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)

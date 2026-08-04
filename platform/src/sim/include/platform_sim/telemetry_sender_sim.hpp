@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file
-/// @brief Counting telemetry sender for the sim variant.
+/// @brief Broadcasting telemetry sender for the sim variant.
 
 #include <cstddef>
 #include <cstdint>
@@ -10,10 +10,28 @@
 
 namespace mark4
 {
-    /// Counts what would be emitted (UDP broadcast later). No network yet.
+    /// Broadcasts telemetry packets over UDP, to any number of listeners. Owns
+    /// its own socket: it only ever sends, so it needs no bound port and no
+    /// shared link. The socket is closed by the destructor.
     class TelemetrySenderSim final : public AbsTelemetrySender
     {
       public:
+        TelemetrySenderSim() = default;
+        ~TelemetrySenderSim() override;
+
+        TelemetrySenderSim(const TelemetrySenderSim &) = delete;
+        TelemetrySenderSim &operator=(const TelemetrySenderSim &) = delete;
+        TelemetrySenderSim(TelemetrySenderSim &&) = delete;
+        TelemetrySenderSim &operator=(TelemetrySenderSim &&) = delete;
+
+        /// @brief Creates the broadcast socket.
+        /// @return true when the socket is ready to send
+        bool open();
+
+        /// @brief Broadcasts one packet. Best effort: a send failure is logged
+        ///        once and the packet is dropped.
+        /// @param data packet bytes
+        /// @param size packet size in bytes
         void send(const std::uint8_t *data, std::size_t size) override;
 
         /// @return number of packets sent since construction
@@ -29,7 +47,9 @@ namespace mark4
         }
 
       private:
-        std::uint32_t m_packetCount = 0U;
-        std::size_t m_byteCount = 0U;
+        int m_socketFd = -1;              ///< -1 when closed
+        std::uint32_t m_packetCount = 0U; ///< packets actually sent
+        std::size_t m_byteCount = 0U;     ///< bytes actually sent
+        bool m_sendFailureLogged = false; ///< keeps a broken link from flooding stderr
     };
 } // namespace mark4
