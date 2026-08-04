@@ -10,6 +10,9 @@
 
 namespace mark4
 {
+    /// UDP port telemetry is broadcast to; any number of consumers may listen.
+    inline constexpr std::uint16_t TELEMETRY_PORT = 47801U;
+
 #pragma pack(push, 1)
     /// Minimal state snapshot. Placeholder layout, not the final format.
     struct TelemetryPacket
