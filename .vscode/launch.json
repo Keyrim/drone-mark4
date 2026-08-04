@@ -1,0 +1,52 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "drone_sim (gdb)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.launchTargetPath}",
+            "args": ["100000"],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.launchTargetDirectory}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "sim_stub (python)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/tools/sim-stub/sim_stub.py",
+            "args": ["--duration", "0"],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "ground_station (python)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/tools/ground-station/ground_station.py",
+            "python": "${workspaceFolder}/tools/ground-station/.venv/bin/python",
+            "console": "integratedTerminal"
+        }
+    ],
+    "compounds": [
+        {
+            "name": "full chain (drone_sim + stub + ground station)",
+            "configurations": ["drone_sim (gdb)", "ground_station (python)", "sim_stub (python)"],
+            "stopAll": true
+        }
+    ]
+}
