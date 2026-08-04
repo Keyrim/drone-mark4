@@ -1,4 +1,4 @@
-# System architecture — high-level view
+# System architecture - high-level view
 
 Target picture for the project: one flight core embedded everywhere, and
 external processes that only speak the network protocol. This document stays
@@ -8,13 +8,13 @@ deliberately high level; it will be refined along with the code.
 
 ```mermaid
 flowchart LR
-    subgraph flight["Flight executables — flight-core + platform composition"]
+    subgraph flight["Flight executables - flight-core + platform composition"]
         FW["firmware<br/>STM32F405"]
         DS["drone_sim<br/>desktop (and target)"]
         DR["drone_replay<br/>desktop"]
     end
 
-    ESP["ESP32 bridge<br/>UART ↔ UDP WiFi"]
+    ESP["ESP32 bridge<br/>UART <-> UDP WiFi"]
     GODOT["Godot simulator<br/>(on the host)"]
     GS["Ground station<br/>plots, 3D view, commands"]
     BUS(("Telemetry<br/>UDP broadcast"))
@@ -44,10 +44,10 @@ Each executable = the same core + a set of services picked in its `main`
 
 ```mermaid
 flowchart TB
-    MAIN["main — composition root"]
-    CORE["FlightCore::step(SensorFrame) → ActuatorFrame<br/>synchronous, single-threaded, data-paced"]
+    MAIN["main - composition root"]
+    CORE["FlightCore::step(SensorFrame) -> ActuatorFrame<br/>synchronous, single-threaded, data-paced"]
 
-    subgraph platform["platform — pure virtual interfaces"]
+    subgraph platform["platform - pure virtual interfaces"]
         SRC["AbsSensorSource<br/>(blocking, the single wait point)"]
         SINK["AbsMotorSink"]
         TEL["AbsTelemetrySender"]
@@ -67,7 +67,7 @@ flowchart TB
 Structuring principles:
 
 - **flight-core is pure**: no dynamic allocation, no exceptions/RTTI, no
-  clock access — the timestamp travels inside the `SensorFrame`, stamped by
+  clock access - the timestamp travels inside the `SensorFrame`, stamped by
   platform at acquisition time.
 - **The RC kill switch** is a field of the frame, handled at the very top of
   `step()`.

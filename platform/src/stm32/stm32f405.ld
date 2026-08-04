@@ -1,5 +1,5 @@
 /* Minimal STM32F405RG linker script.
- * WARNING: the CCM RAM is NOT DMA-capable — DMA buffers (DShot, SPI) must be
+ * WARNING: the CCM RAM is NOT DMA-capable - DMA buffers (DShot, SPI) must be
  * placed explicitly outside CCM. */
 
 ENTRY(Reset_Handler)

@@ -1,5 +1,5 @@
 # =============================================================================
-# drone-mark4 — development image
+# drone-mark4 - development image
 #
 # Ships both toolchains (native gcc + arm-none-eabi), the code quality tools
 # (clang-format/clang-tidy pinned via apt.llvm.org), the debug tools
@@ -17,7 +17,7 @@ ARG LLVM_VERSION=21
 ARG JLINK_VERSION=V812
 
 # -----------------------------------------------------------------------------
-# Layer 1 — base tools, native compiler, build system, debug, Python
+# Layer 1 - base tools, native compiler, build system, debug, Python
 #   - distro gcc for the desktop presets (no clang for compiling)
 #   - Ubuntu 24.04 cmake 3.28 (>= 3.25 required) + Ninja
 #   - gdb-multiarch for cross debugging via JLinkGDBServer (runs on the host)
@@ -42,7 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
-# Layer 2 — clang-format / clang-tidy / clangd from apt.llvm.org (pinned)
+# Layer 2 - clang-format / clang-tidy / clangd from apt.llvm.org (pinned)
 #   Exposed without a version suffix via update-alternatives.
 # -----------------------------------------------------------------------------
 RUN curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
@@ -58,7 +58,7 @@ RUN curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
     && update-alternatives --install /usr/bin/clang-tidy   clang-tidy   /usr/bin/clang-tidy-${LLVM_VERSION}   100 \
     && update-alternatives --install /usr/bin/clangd       clangd       /usr/bin/clangd-${LLVM_VERSION}       100 \
     # Safety net: direct symlink for any suffixed binary of the package that
-    # does not have its short name yet (run-clang-tidy, clang-apply-replacements…)
+    # does not have its short name yet (run-clang-tidy, clang-apply-replacements...)
     && for tool in /usr/bin/*-${LLVM_VERSION}; do \
            short="${tool%-${LLVM_VERSION}}"; \
            [ -e "${short}" ] || ln -s "${tool}" "${short}"; \
@@ -66,7 +66,7 @@ RUN curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
     && clang-format --version && clang-tidy --version && clangd --version
 
 # -----------------------------------------------------------------------------
-# Layer 3 — official ARM toolchain (developer.arm.com tarball, not the Ubuntu
+# Layer 3 - official ARM toolchain (developer.arm.com tarball, not the Ubuntu
 #   package), installed under /opt, exposed via PATH.
 # -----------------------------------------------------------------------------
 RUN wget -qO /tmp/arm-gnu-toolchain.tar.xz \
@@ -78,10 +78,10 @@ RUN wget -qO /tmp/arm-gnu-toolchain.tar.xz \
 ENV PATH="/opt/arm-gnu-toolchain/bin:${PATH}"
 
 # -----------------------------------------------------------------------------
-# Layer 4 — J-Link tools (Segger)
+# Layer 4 - J-Link tools (Segger)
 #   The download implies acceptance of the Segger license (--post-data):
 #   documented in the README. The .deb is extracted without running its
-#   install scripts (udev rules are useless in a container — the probe lives
+#   install scripts (udev rules are useless in a container - the probe lives
 #   on the host, where JLinkGDBServer also runs; what matters here are the
 #   clients such as JLinkRTTClient).
 # -----------------------------------------------------------------------------
@@ -94,7 +94,7 @@ RUN wget -q --post-data "accept_license_agreement=accepted" -O /tmp/jlink.deb \
 ENV PATH="/opt/SEGGER/JLink:${PATH}"
 
 # -----------------------------------------------------------------------------
-# Layer 5 — GitHub CLI (official apt repository)
+# Layer 5 - GitHub CLI (official apt repository)
 # -----------------------------------------------------------------------------
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -104,7 +104,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
-# Layer 6 — non-root user with NOPASSWD sudo
+# Layer 6 - non-root user with NOPASSWD sudo
 #   Ubuntu 24.04 ships an "ubuntu" user (UID 1000): replace it. The
 #   devcontainer extension remaps the UID/GID onto the host's at first start
 #   (updateRemoteUserUID).
@@ -120,7 +120,7 @@ RUN userdel -r ubuntu || true \
     && chmod 0440 /etc/sudoers.d/${USERNAME}
 
 # -----------------------------------------------------------------------------
-# Layer 7 — persisted gh and Claude Code configuration
+# Layer 7 - persisted gh and Claude Code configuration
 #   These two directories are mounted as named Docker volumes (see
 #   devcontainer.json); the environment variables point the tools at them so
 #   logins and settings survive image rebuilds.
@@ -134,7 +134,7 @@ WORKDIR /home/${USERNAME}
 RUN mkdir -p "${GH_CONFIG_DIR}" "${CLAUDE_CONFIG_DIR}"
 
 # -----------------------------------------------------------------------------
-# Layer 8 — Claude Code (native installer, binary in ~/.local/bin)
+# Layer 8 - Claude Code (native installer, binary in ~/.local/bin)
 # -----------------------------------------------------------------------------
 RUN curl -fsSL https://claude.ai/install.sh | bash
 

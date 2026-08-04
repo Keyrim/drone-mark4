@@ -196,13 +196,13 @@ the same namespace.
 
 ```text
 <component>/
-├── include/<component>/
-│   ├── constants/      # compile-time constants, grouped by topic
-│   ├── models/         # data / value types
-│   ├── services/       # behaviour, managers, workers
-│   ├── types/          # enums and small POD types
-│   └── utilities/      # free-function helpers
-└── src/                # mirrors include/
+|-- include/<component>/
+|   |-- constants/      # compile-time constants, grouped by topic
+|   |-- models/         # data / value types
+|   |-- services/       # behaviour, managers, workers
+|   |-- types/          # enums and small POD types
+|   `-- utilities/      # free-function helpers
+`-- src/                # mirrors include/
 ```
 
 Smaller components may omit unused folders. Folder depth is independent of namespace depth (see

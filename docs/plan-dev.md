@@ -1,4 +1,4 @@
-# "throw-drone" project — Reference document
+# "throw-drone" project - Reference document
 
 > Project reference document and initialization brief. Section 10 describes
 > the exact scope of milestone 0; everything else is the context that
@@ -6,8 +6,8 @@
 > project must read everything, then implement ONLY milestone 0.
 
 > **Project name: `drone-mark4`.** "throw-drone" is the concept (the target
-> flight mode); every named artifact — repo, devcontainer image, Docker
-> volumes, GHCR image — uses `drone-mark4`.
+> flight mode); every named artifact - repo, devcontainer image, Docker
+> volumes, GHCR image - uses `drone-mark4`.
 
 ---
 
@@ -21,15 +21,15 @@ into a hover.
 Structuring physical constraints:
 
 - A hand throw = 5 to 8 m/s vertical, apex reached in 0.5 to 0.8 s. The whole
-  detection → decision → spin-up chain must fit within that budget.
+  detection -> decision -> spin-up chain must fit within that budget.
 - In free fall the accelerometer reads ~0 g (specific force): attitude
   estimation relies on pure gyro integration during the ballistic phase.
 - The release velocity is estimated by integrating the accelerometer DURING
-  the throw's thrust phase (2-5 g); then vz(t) = vz0 − g·t and
-  t_apex = vz0/g. Spin-up is triggered at t_apex − motor_latency
+  the throw's thrust phase (2-5 g); then vz(t) = vz0 - g*t and
+  t_apex = vz0/g. Spin-up is triggered at t_apex - motor_latency
   (~100-300 ms); the apex is never "detected" after the fact.
-- Flight state machine: idle → armed motors off → ballistic → spin-up →
-  attitude recovery (quaternion) → hover. Plus a safety cutoff (timeout, gyro
+- Flight state machine: idle -> armed motors off -> ballistic -> spin-up ->
+  attitude recovery (quaternion) -> hover. Plus a safety cutoff (timeout, gyro
   saturation, impact).
 - Safety: 5" propellers are dangerous. A complete throw signature is required
   (sustained >2 g peak followed by confirmed <0.3 g free fall), an
@@ -38,32 +38,32 @@ Structuring physical constraints:
 
 Existing reference: ArduPilot's "Throw Mode" (mode_throw.cpp) does exactly
 this and serves as the behavioral reference. The goal here is to rewrite
-EVERYTHING from scratch (firmware, sim, tools) — this is a deliberate
+EVERYTHING from scratch (firmware, sim, tools) - this is a deliberate
 learning project.
 
 ## 2. Target hardware
 
 - Off-the-shelf reflashable FC (DFU bootloader, SWD pads), no custom PCB.
-  Candidates: SpeedyBee F405 V4 (stack ~80 €), Matek H743-Mini V3. Starting
+  Candidates: SpeedyBee F405 V4 (stack ~80 EUR), Matek H743-Mini V3. Starting
   on **STM32F405**; the code must not assume the exact model (the stack
   choice is a detail of `platform/src/stm32/`).
-- Modern SPI IMU (ICM-42688-P: ±4000 °/s — the MPU6050 is excluded, its
-  ±2000 °/s range is insufficient for a spinning throw), barometer
+- Modern SPI IMU (ICM-42688-P: +/-4000 deg/s - the MPU6050 is excluded, its
+  +/-2000 deg/s range is insufficient for a spinning throw), barometer
   (DPS310/SPL06), SPI flash or microSD for the blackbox, 4-in-1 DShot ESC.
 - Telemetry bridge: an ESP32 on a free FC UART (921600 baud to 2 Mbaud),
-  transparent UART ↔ UDP WiFi bridge. BLE is excluded (insufficient
+  transparent UART <-> UDP WiFi bridge. BLE is excluded (insufficient
   throughput).
 - Debug: **J-Link** probe (GDB server + RTT). Known F405 trap: the CCM RAM
-  (64 KB) is not DMA-accessible — DMA buffers (DShot, SPI) outside CCM in the
+  (64 KB) is not DMA-accessible - DMA buffers (DShot, SPI) outside CCM in the
   linker script.
 
-## 3. Software architecture — principles
+## 3. Software architecture - principles
 
 ### 3.1 flight-core
 
 - **Pure** static C++ library: no system dependency, no dynamic allocation in
   the loop, no exceptions or RTTI, no clock access, no waiting.
-- Central API: `FlightCore::step(const SensorFrame&, ActuatorFrame&)` — a
+- Central API: `FlightCore::step(const SensorFrame&, ActuatorFrame&)` - a
   synchronous, single-threaded function paced by data arrival (not by time).
   The timestamp travels INSIDE the SensorFrame, stamped by platform at
   acquisition.
@@ -78,12 +78,12 @@ learning project.
   `-Wdouble-promotion` treated as an error on all presets. Goal: comparable
   execution between desktop (double FPU) and F405 (single-precision FPU).
 
-### 3.2 platform — services behind virtual interfaces
+### 3.2 platform - services behind virtual interfaces
 
 - Public interfaces live in `platform/include/platform/*.hpp`: abstract
   classes, one per service. Implementations live in `platform/src/<variant>/`
   and inherit from them (ArduPilot's AP_HAL model).
-- Include pattern: `target_include_directories` on `include/` →
+- Include pattern: `target_include_directories` on `include/` ->
   `#include "platform/xxx.hpp"`.
 - Base classes stay **pure** (no template method); shared code goes into
   composed helpers. A variant's private services (e.g. the sim's com service)
@@ -118,11 +118,11 @@ themselves).
 - Packed structs, frozen units and sizes, a version number in the first byte
   of every packet, checked by all consumers.
 - Distinct from `flight_core/types.hpp` (internal types free to evolve).
-  flight-core converts internal → wire in telemetry.cpp.
-- Three families: telemetry (state, attitude, motors — UDP broadcast,
+  flight-core converts internal -> wire in telemetry.cpp.
+- Three families: telemetry (state, attitude, motors - UDP broadcast,
   multi-consumer), commands (PID params, triggers, scenario reset), sim link
   (SensorFrame/ActuatorFrame on the wire + real-time or **lockstep** mode:
-  the sim waits for the motor response before advancing its physics →
+  the sim waits for the motor response before advancing its physics ->
   determinism, accelerated runs, debugger single-stepping).
 
 ### 3.4 Executables and processes
@@ -130,13 +130,13 @@ themselves).
 Each executable = flight-core + one composition of platform services (tiny
 main):
 
-- `firmware` — stm32 preset only.
-- `drone_sim` — desktop AND stm32 presets (numerical conformity test of
+- `firmware` - stm32 preset only.
+- `drone_sim` - desktop AND stm32 presets (numerical conformity test of
   sim-on-target).
-- `drone_replay` — desktop preset. Replays a blackbox in open loop,
+- `drone_replay` - desktop preset. Replays a blackbox in open loop,
   re-publishes telemetry over UDP during the replay (option
   `--speed 0.1 / 1.0 / max`).
-- `drone_batch` — (future) headless internal C++ physics, Monte Carlo,
+- `drone_batch` - (future) headless internal C++ physics, Monte Carlo,
   regression tests.
 
 External processes (do NOT link flight-core, speak only protocol/):
@@ -144,7 +144,7 @@ External processes (do NOT link flight-core, speak only protocol/):
 - **Godot simulator** (`sim-godot/`, a standalone project, runs on the HOST,
   not in the container): RigidBody3D + Jolt physics, 500-1000 Hz physics
   tick, default damping at 0, manually defined inertia, first-order motor
-  model (τ ≈ 20-40 ms), k·ω² thrust, realistic sensor models — **the
+  model (tau ~ 20-40 ms), k*omega^2 thrust, realistic sensor models - **the
   accelerometer simulates specific force** (0 g in free fall),
   noise/bias/quantization/real rates. Parameterizable "throw" command.
   "Viewer" mode: physics off, pose slaved to received telemetry (replay of
@@ -162,31 +162,31 @@ drone_sim or drone_replay.
 
 ```
 drone-mark4/
-├── CMakeLists.txt
-├── CMakePresets.json              # desktop, desktop-san, stm32
-├── cmake/toolchain-arm-none-eabi.cmake
-├── protocol/                      # INTERFACE lib
-│   └── include/protocol/{version,telemetry,commands,sim_link}.hpp
-├── flight-core/
-│   ├── include/flight_core/{flight_core,types}.hpp
-│   └── src/                       # flight_core.cpp, state_machine.cpp,
-│                                  # estimator/{attitude,vertical}.cpp,
-│                                  # control/{rate_pid,attitude_ctrl,mixer}.cpp,
-│                                  # throw_launch/{detector,apogee}.cpp,
-│                                  # telemetry.cpp, blackbox.cpp
-├── platform/
-│   ├── include/platform/          # abstract interfaces (the 6 services)
-│   └── src/
-│       ├── common/                # composed helpers, if any
-│       ├── stm32/                 # stm32 preset only (+ private include/)
-│       ├── sim/                   # both presets (+ private include/, udp/uart transports)
-│       └── replay/                # desktop preset
-├── apps/{firmware,drone_sim,drone_replay,drone_batch}/
-├── tools/ground-station/
-├── sim-godot/
-├── esp32-bridge/
-├── tests/{unit,scenarios}/
-└── logs/                          # gitignored
+|-- CMakeLists.txt
+|-- CMakePresets.json              # desktop, desktop-san, stm32
+|-- cmake/toolchain-arm-none-eabi.cmake
+|-- protocol/                      # INTERFACE lib
+|   `-- include/protocol/{version,telemetry,commands,sim_link}.hpp
+|-- flight-core/
+|   |-- include/flight_core/{flight_core,types}.hpp
+|   `-- src/                       # flight_core.cpp, state_machine.cpp,
+|                                  # estimator/{attitude,vertical}.cpp,
+|                                  # control/{rate_pid,attitude_ctrl,mixer}.cpp,
+|                                  # throw_launch/{detector,apogee}.cpp,
+|                                  # telemetry.cpp, blackbox.cpp
+|-- platform/
+|   |-- include/platform/          # abstract interfaces (the 6 services)
+|   `-- src/
+|       |-- common/                # composed helpers, if any
+|       |-- stm32/                 # stm32 preset only (+ private include/)
+|       |-- sim/                   # both presets (+ private include/, udp/uart transports)
+|       `-- replay/                # desktop preset
+|-- apps/{firmware,drone_sim,drone_replay,drone_batch}/
+|-- tools/ground-station/
+|-- sim-godot/
+|-- esp32-bridge/
+|-- tests/{unit,scenarios}/
+`-- logs/                          # gitignored
 ```
 
 CMake logic: `platform` publishes an INTERFACE target (headers) that
@@ -204,26 +204,26 @@ and are linked by the apps.
   the host for sim-godot/).
 - X11/WSLg for the ground station from the container (`--device=/dev/dri`
   for the GPU).
-- Network: `--network=host` (simplest for container ↔ host UDP broadcast).
+- Network: `--network=host` (simplest for container <-> host UDP broadcast).
 - Flash/debug: `JLinkGDBServer` launched on the HOST, `gdb-multiarch` in the
   container with `target extended-remote host:2331`. RTT for bring-up traces.
 
-### Dockerfile — precise requirements
+### Dockerfile - precise requirements
 
 - **Ubuntu 24.04** base.
 - Clean, readable, in commented logical layers; direct installations (no
   obscure external scripts).
-- git + base tools (curl, wget, unzip, ca-certificates, pkg-config…).
-- Distro-native **gcc** (desktop build — gcc everywhere, no clang for
+- git + base tools (curl, wget, unzip, ca-certificates, pkg-config...).
+- Distro-native **gcc** (desktop build - gcc everywhere, no clang for
   compiling).
 - **arm-none-eabi-gcc: official ARM tarball** (not the Ubuntu package),
   pinned version, installed under /opt with PATH configured.
 - **Recent CMake + Ninja.**
 - **clang-format and clang-tidy from the LLVM apt repository (apt.llvm.org),
-  pinned version** — not the distro packages. Alternatives via
+  pinned version** - not the distro packages. Alternatives via
   update-alternatives or symlinks exposing `clang-format`/`clang-tidy`
   without a suffix.
-- gdb-multiarch; **J-Link tools** (Segger .deb package — note in the README
+- gdb-multiarch; **J-Link tools** (Segger .deb package - note in the README
   that the user must accept the Segger license; provide the build argument or
   documented step if the automated download is a problem).
 - Python 3 + pip (ground station, scripts).
@@ -231,7 +231,7 @@ and are linked by the apps.
 
 ## 6. Build
 
-- CMake ≥ 3.25 + **Ninja**, presets:
+- CMake >= 3.25 + **Ninja**, presets:
   - `desktop`: gcc, RelWithDebInfo, tests enabled.
   - `desktop-san`: gcc + `-fsanitize=address,undefined` (ASan/UBSan), tests.
   - `stm32`: arm-none-eabi toolchainFile, `-fno-exceptions -fno-rtti`,
@@ -240,9 +240,9 @@ and are linked by the apps.
 - `CMakePresets.json` versioned; `CMakeUserPresets.json` gitignored.
 - C++20.
 
-## 7. CI/CD (GitHub Actions — public project)
+## 7. CI/CD (GitHub Actions - public project)
 
-- Workflow 1: build the devcontainer image → push to **GHCR** whenever the
+- Workflow 1: build the devcontainer image -> push to **GHCR** whenever the
   Dockerfile changes. All other jobs run INSIDE that image (a single source
   of truth for the environment).
 - Workflow 2 (PR + main), parallel jobs:
@@ -270,26 +270,28 @@ and are linked by the apps.
 - A single project namespace: `mark4` (no per-module namespaces).
 - No `new`/`delete` in flight-core and platform; no iostream in flight-core.
 - **English everywhere: code, identifiers, comments and documentation.**
+- **ASCII only across the repository** (no em dashes, arrows, typographic
+  quotes...); accented letters are tolerated in proper names.
 
-## 9. Milestones (roadmap — context, do not implement beyond milestone 0)
+## 9. Milestones (roadmap - context, do not implement beyond milestone 0)
 
-- **M0 — Skeleton**: this document, section 10.
-- **M1 — Tracer bullet**: a Python script simulates sinusoidal SensorFrames
-  over UDP → drone_sim → broadcast telemetry → embryonic ground station
+- **M0 - Skeleton**: this document, section 10.
+- **M1 - Tracer bullet**: a Python script simulates sinusoidal SensorFrames
+  over UDP -> drone_sim -> broadcast telemetry -> embryonic ground station
   plotting one curve.
-- **M2 — Godot**: real physics, sensor models (specific force!), throw
+- **M2 - Godot**: real physics, sensor models (specific force!), throw
   command, file LogSink + blackbox format.
-- **M3 — Estimator**: Mahony, gyro bias, vertical fusion, release velocity,
+- **M3 - Estimator**: Mahony, gyro bias, vertical fusion, release velocity,
   apex prediction; drone_replay built in parallel; validation against Godot
   ground truth.
-- **M4 — Flight**: hover first (rate PID, quaternion controller, mixer,
+- **M4 - Flight**: hover first (rate PID, quaternion controller, mixer,
   altitude hold), then the full throw state machine; drone_batch + Monte
   Carlo in CI.
-- **M5 — Real world** (in parallel from M2): board bring-up (SPI IMU, DShot,
+- **M5 - Real world** (in parallel from M2): board bring-up (SPI IMU, DShot,
   RTT, blackbox), detection validation with propellers removed, real hover,
   first throws.
 
-## 10. MILESTONE 0 — exact scope for the initialization agent
+## 10. MILESTONE 0 - exact scope for the initialization agent
 
 Deliver a repo that compiles on all three presets with a green CI. Nothing
 more.
@@ -309,10 +311,10 @@ more.
      (pure virtual methods, virtual destructors, no logic).
    - `platform/src/sim/`: stub implementation of
      SensorSource/MotorSink/TelemetrySender/Clock running a loop without
-     network for now (frames generated internally at a fixed rate) — just
+     network for now (frames generated internally at a fixed rate) - just
      enough to prove the composition.
    - `apps/drone_sim/`: a main with an explicit composition root (services
-     built, injected into FlightCore, waitFrame → step → push loop) that
+     built, injected into FlightCore, waitFrame -> step -> push loop) that
      runs, prints a sign of life and exits cleanly (iteration count as an
      argument, reasonable default).
    - `apps/firmware/`: a minimal stm32 main that compiles and links (empty
@@ -326,13 +328,13 @@ more.
    visibility logic of section 4. For the stm32 preset at milestone 0:
    generic Cortex-M4F compilation
    (`-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard`), a minimal F405
-   linker script and `--specs=nosys.specs` are enough — the goal is to prove
+   linker script and `--specs=nosys.specs` are enough - the goal is to prove
    flight-core cross-compiles, not to boot a board.
 3. `.devcontainer/devcontainer.json` + `Dockerfile` per section 5 (precise
    requirements), port 6005 forwarded, `--network=host`, useful VSCode
    extensions (cmake-tools, clangd or cpptools, godot-tools).
 4. `.clang-format`, `.clang-tidy`, `.gitignore` (build/, logs/,
-   CMakeUserPresets.json…).
+   CMakeUserPresets.json...).
 5. The GitHub Actions workflows of section 7 (GHCR image + the 5 jobs).
 6. `README.md`: project description (recap the section 1 vision in a few
    lines), badges, build instructions (devcontainer and manual), a quick
@@ -357,4 +359,4 @@ more.
 
 Real network/UDP, Godot, ground station, ESP32, real STM32 drivers,
 estimator, control, flight state machine, blackbox format, final protocol.
-Any head start on these topics will be redone — do not write it.
+Any head start on these topics will be redone - do not write it.

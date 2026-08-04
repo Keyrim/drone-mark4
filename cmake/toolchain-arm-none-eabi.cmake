@@ -1,4 +1,4 @@
-# arm-none-eabi toolchain — generic Cortex-M4F build (STM32F405).
+# arm-none-eabi toolchain - generic Cortex-M4F build (STM32F405).
 # Proves that flight-core cross-compiles; board bring-up comes with the real
 # drivers.
 

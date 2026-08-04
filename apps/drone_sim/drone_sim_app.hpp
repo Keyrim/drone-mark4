@@ -15,7 +15,7 @@ namespace mark4
 {
     /// Composition root: owns every service and the flight core as value members.
     /// Member declaration order IS the construction/initialization order, and
-    /// destruction is guaranteed to run in the exact reverse order — no manual
+    /// destruction is guaranteed to run in the exact reverse order - no manual
     /// teardown. Built by main(), passed by reference: no singleton.
     class DroneSimApp
     {

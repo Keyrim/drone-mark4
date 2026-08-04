@@ -1,4 +1,4 @@
-# drone-mark4 — "throw-drone"
+# drone-mark4 - "throw-drone"
 
 [![ci](https://github.com/Keyrim/drone-mark4/actions/workflows/ci.yml/badge.svg)](https://github.com/Keyrim/drone-mark4/actions/workflows/ci.yml)
 [![devcontainer-image](https://github.com/Keyrim/drone-mark4/actions/workflows/devcontainer-image.yml/badge.svg)](https://github.com/Keyrim/drone-mark4/actions/workflows/devcontainer-image.yml)
@@ -7,33 +7,33 @@
 A 5-inch racing drone is thrown by hand, motors off. The firmware detects the
 throw, predicts the apex of the parabola, spins the motors up ahead of time,
 recovers from an arbitrary attitude (the drone may tumble) and settles into a
-stable hover. Everything is rewritten from scratch — firmware, simulator,
-tooling — as a deliberate learning project. Behavioral reference: ArduPilot's
+stable hover. Everything is rewritten from scratch - firmware, simulator,
+tooling - as a deliberate learning project. Behavioral reference: ArduPilot's
 "Throw Mode".
 
 Documentation:
 
-- [docs/architecture.md](docs/architecture.md) — system architecture (diagrams)
-- [docs/plan-dev.md](docs/plan-dev.md) — development plan and reference document
-- [docs/contributing/cpp-guidelines.md](docs/contributing/cpp-guidelines.md) — C++ coding guidelines
+- [docs/architecture.md](docs/architecture.md) - system architecture (diagrams)
+- [docs/plan-dev.md](docs/plan-dev.md) - development plan and reference document
+- [docs/contributing/cpp-guidelines.md](docs/contributing/cpp-guidelines.md) - C++ coding guidelines
 
 ## Modules
 
-- `flight-core/` — pure flight core: no dynamic allocation, no
+- `flight-core/` - pure flight core: no dynamic allocation, no
   exceptions/RTTI, no clock access. `float` everywhere
   (`-Wdouble-promotion` as an error).
-- `platform/` — 6 abstract interfaces (AbsSensorSource, AbsMotorSink,
+- `platform/` - 6 abstract interfaces (AbsSensorSource, AbsMotorSink,
   AbsCommandReceiver, AbsTelemetrySender, AbsLogSink, AbsClock) plus one
   implementation set per variant. No singletons: each executable has an
   explicit composition root in its main.
-- `protocol/` — header-only library, versioned packed structs, spoken by
+- `protocol/` - header-only library, versioned packed structs, spoken by
   everyone (firmware, sim, Godot, ground station).
 
 ## Build
 
 ### Inside the devcontainer (recommended)
 
-Open the folder in VS Code → "Reopen in Container". Both toolchains
+Open the folder in VS Code -> "Reopen in Container". Both toolchains
 (native gcc + arm-none-eabi) and the pinned tooling live in the image.
 
 ```sh
@@ -43,7 +43,7 @@ cmake --preset desktop && cmake --build --preset desktop && ctest --preset deskt
 # Sanitizers (ASan/UBSan)
 cmake --preset desktop-san && cmake --build --preset desktop-san && ctest --preset desktop-san
 
-# STM32F405 cross-compilation (Cortex-M4F) → firmware.elf
+# STM32F405 cross-compilation (Cortex-M4F) -> firmware.elf
 cmake --preset stm32 && cmake --build --preset stm32
 
 # Sign of life
@@ -52,7 +52,7 @@ cmake --preset stm32 && cmake --build --preset stm32
 
 ### Manual build (outside the container)
 
-Prerequisites: CMake ≥ 3.25, Ninja, gcc, arm-none-eabi-gcc (ARM tarball
+Prerequisites: CMake >= 3.25, Ninja, gcc, arm-none-eabi-gcc (ARM tarball
 14.2.rel1), clang-format/clang-tidy 21 for the checks. Same commands as above.
 
 ### Code quality
@@ -64,12 +64,12 @@ run-clang-tidy -p build/desktop "$(pwd)/(apps|flight-core|platform|protocol|test
 
 ## CI
 
-- `devcontainer-image.yml` — rebuilds the image and pushes it to GHCR
+- `devcontainer-image.yml` - rebuilds the image and pushes it to GHCR
   (`ghcr.io/keyrim/drone-mark4-devcontainer`) whenever `.devcontainer/` changes.
-- `ci.yml` — 5 parallel jobs inside that image: desktop+tests, stm32,
+- `ci.yml` - 5 parallel jobs inside that image: desktop+tests, stm32,
   desktop-san, clang-format, clang-tidy.
 
-First-push bootstrap: the `ci.yml` jobs pull the GHCR image — on the very
+First-push bootstrap: the `ci.yml` jobs pull the GHCR image - on the very
 first push, wait for `devcontainer-image` to finish, then re-run `ci` if
 needed (and make the GHCR package public to avoid pull issues).
 

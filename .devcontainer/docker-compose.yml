@@ -1,4 +1,4 @@
-# drone-mark4 — development environment (consumed by devcontainer.json)
+# drone-mark4 - development environment (consumed by devcontainer.json)
 services:
   dev:
     build:
@@ -13,7 +13,7 @@ services:
 
     # GPU acceleration for the ground station (WSLg / native X). Optional:
     # /dev/dri only exists when the host exposes a GPU (WSL vGPU, native
-    # DRI) — uncomment if so; software rendering is enough otherwise.
+    # DRI) - uncomment if so; software rendering is enough otherwise.
     # devices:
     #   - /dev/dri:/dev/dri
 
