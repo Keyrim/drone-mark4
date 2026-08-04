@@ -16,6 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/keyrim/drone-mark4-devcontainer:latest
+      # The image runs as user "dev"; the runner's mounted workdirs belong to
+      # another UID, so container jobs must run as root.
+      options: --user root
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -30,6 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/keyrim/drone-mark4-devcontainer:latest
+      options: --user root
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -43,6 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/keyrim/drone-mark4-devcontainer:latest
+      options: --user root
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -57,6 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/keyrim/drone-mark4-devcontainer:latest
+      options: --user root
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -70,6 +76,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/keyrim/drone-mark4-devcontainer:latest
+      options: --user root
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
