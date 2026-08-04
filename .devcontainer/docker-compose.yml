@@ -1,0 +1,40 @@
+# drone-mark4 — development environment (consumed by devcontainer.json)
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: drone-mark4-dev
+    # Container <-> host UDP broadcast with zero configuration.
+    network_mode: host
+    # Keeps the container alive; VS Code attaches to it.
+    command: sleep infinity
+    init: true
+
+    # GPU acceleration for the ground station (WSLg / native X). Optional:
+    # /dev/dri only exists when the host exposes a GPU (WSL vGPU, native
+    # DRI) — uncomment if so; software rendering is enough otherwise.
+    # devices:
+    #   - /dev/dri:/dev/dri
+
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      WAYLAND_DISPLAY: ${WAYLAND_DISPLAY:-}
+      XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-}
+
+    volumes:
+      # The repo, mounted where the devcontainer expects it.
+      - ..:/workspaces/drone-mark4:cached
+      # Persisted Claude Code and gh configuration (named volumes, targeted
+      # by CLAUDE_CONFIG_DIR / GH_CONFIG_DIR defined in the Dockerfile):
+      # logins survive image rebuilds.
+      - claude-config:/home/dev/.claude
+      - gh-config:/home/dev/.config/gh
+      # X11 socket (WSLg or native X) for the ground station.
+      - /tmp/.X11-unix:/tmp/.X11-unix
+
+volumes:
+  claude-config:
+    name: drone-mark4-claude-config
+  gh-config:
+    name: drone-mark4-gh-config

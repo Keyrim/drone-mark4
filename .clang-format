@@ -1,0 +1,20 @@
+---
+Language: Cpp
+BasedOnStyle: Microsoft
+
+# Custom configuration
+ColumnLimit: 100
+IncludeBlocks: Preserve
+IndentWidth: 4
+LineEnding: LF
+MaxEmptyLinesToKeep: 1
+PointerAlignment: Right
+QualifierAlignment: Left
+ReferenceAlignment: Right
+SortIncludes: true
+SpacesBeforeTrailingComments: 1
+NamespaceIndentation: All
+BinPackParameters: OnePerLine
+BinPackArguments: false
+PackConstructorInitializers : Never
+IndentCaseLabels: true

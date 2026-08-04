@@ -1,0 +1,62 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "desktop",
+      "displayName": "Desktop (gcc, RelWithDebInfo, tests)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "DRONE_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "desktop-san",
+      "displayName": "Desktop + ASan/UBSan",
+      "inherits": "desktop",
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=all",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
+      }
+    },
+    {
+      "name": "stm32",
+      "displayName": "STM32F405 (arm-none-eabi, Cortex-M4F)",
+      "inherits": "base",
+      "toolchainFile": "${sourceDir}/cmake/toolchain-arm-none-eabi.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "MinSizeRel",
+        "DRONE_BUILD_TESTS": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "desktop", "configurePreset": "desktop" },
+    { "name": "desktop-san", "configurePreset": "desktop-san" },
+    { "name": "stm32", "configurePreset": "stm32" }
+  ],
+  "testPresets": [
+    {
+      "name": "desktop",
+      "configurePreset": "desktop",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "desktop-san",
+      "configurePreset": "desktop-san",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

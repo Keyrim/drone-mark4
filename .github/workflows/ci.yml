@@ -1,0 +1,79 @@
+# Workflow 2: PR + main, parallel jobs, all INSIDE the devcontainer image.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  desktop:
+    name: desktop (build + tests)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/keyrim/drone-mark4-devcontainer:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake --preset desktop
+      - run: cmake --build --preset desktop
+      - run: ctest --preset desktop
+
+  stm32:
+    name: stm32 (cross-compilation)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/keyrim/drone-mark4-devcontainer:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake --preset stm32
+      - run: cmake --build --preset stm32
+
+  desktop-san:
+    name: desktop-san (ASan/UBSan)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/keyrim/drone-mark4-devcontainer:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake --preset desktop-san
+      - run: cmake --build --preset desktop-san
+      - run: ctest --preset desktop-san
+
+  format:
+    name: clang-format
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/keyrim/drone-mark4-devcontainer:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: git ls-files '*.cpp' '*.hpp' '*.c' '*.h' | xargs clang-format --dry-run --Werror
+
+  tidy:
+    name: clang-tidy
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/keyrim/drone-mark4-devcontainer:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake --preset desktop
+      - run: run-clang-tidy -p build/desktop -quiet "$(pwd)/(apps|flight-core|platform|protocol|tests)/"

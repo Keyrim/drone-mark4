@@ -1,0 +1,78 @@
+# System architecture — high-level view
+
+Target picture for the project: one flight core embedded everywhere, and
+external processes that only speak the network protocol. This document stays
+deliberately high level; it will be refined along with the code.
+
+## Overview
+
+```mermaid
+flowchart LR
+    subgraph flight["Flight executables — flight-core + platform composition"]
+        FW["firmware<br/>STM32F405"]
+        DS["drone_sim<br/>desktop (and target)"]
+        DR["drone_replay<br/>desktop"]
+    end
+
+    ESP["ESP32 bridge<br/>UART ↔ UDP WiFi"]
+    GODOT["Godot simulator<br/>(on the host)"]
+    GS["Ground station<br/>plots, 3D view, commands"]
+    BUS(("Telemetry<br/>UDP broadcast"))
+
+    FW <--> ESP
+    DS <-->|"sim link: SensorFrame / ActuatorFrame<br/>real-time or lockstep"| GODOT
+    DR -->|"blackbox replay"| BUS
+    ESP --> BUS
+    DS --> BUS
+    BUS --> GS
+    BUS --> GODOT
+```
+
+- **A single output bus**: telemetry goes out as UDP broadcast; any
+  combination of tools listens simultaneously, whatever the source (firmware
+  through the ESP32, simulation, replay).
+- **Godot and the ground station never link flight-core**: they only know
+  `protocol/` (packed structs, versioned from the first byte).
+- The sim link's **lockstep** mode (the simulator waits for the motor
+  response before advancing its physics) buys determinism, faster-than-real-
+  time runs and debugger single-stepping.
+
+## Anatomy of a flight executable
+
+Each executable = the same core + a set of services picked in its `main`
+(explicit composition root, injection by reference, no singleton):
+
+```mermaid
+flowchart TB
+    MAIN["main — composition root"]
+    CORE["FlightCore::step(SensorFrame) → ActuatorFrame<br/>synchronous, single-threaded, data-paced"]
+
+    subgraph platform["platform — pure virtual interfaces"]
+        SRC["AbsSensorSource<br/>(blocking, the single wait point)"]
+        SINK["AbsMotorSink"]
+        TEL["AbsTelemetrySender"]
+        CMD["AbsCommandReceiver"]
+        LOG["AbsLogSink"]
+        CLK["AbsClock<br/>(internal to platform)"]
+    end
+
+    MAIN -->|"builds and injects"| CORE
+    MAIN -->|"instantiates one variant:<br/>stm32 / sim / replay"| platform
+    SRC -->|"waitFrame()"| CORE
+    CORE -->|"push()"| SINK
+    CORE -.-> TEL
+    CORE -.-> LOG
+```
+
+Structuring principles:
+
+- **flight-core is pure**: no dynamic allocation, no exceptions/RTTI, no
+  clock access — the timestamp travels inside the `SensorFrame`, stamped by
+  platform at acquisition time.
+- **The RC kill switch** is a field of the frame, handled at the very top of
+  `step()`.
+- **Quaternions everywhere** (arbitrary attitude), `float` everywhere,
+  `-Wdouble-promotion` as an error: comparable execution between desktop and
+  Cortex-M4F.
+- Platform variants are **composable** (e.g. sim-on-target: stm32 clock +
+  UART transport + sim sensor source).
