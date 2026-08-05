@@ -10,11 +10,13 @@
 #include <sys/types.h>
 
 #include "flight_core/telemetry.hpp"
+#include "flight_core/throw_detector.hpp"
 #include "protocol/sim_link.hpp"
 
 namespace
 {
     constexpr std::uint32_t TELEMETRY_DECIMATION = 10U;
+    constexpr double US_PER_S = 1e6;
 
     /// Permissions of the log directory when it has to be created: rwxr-xr-x.
     constexpr mode_t LOG_DIRECTORY_MODE = 0755;
@@ -86,6 +88,7 @@ namespace mark4
         mark4::SensorFrame frame;
         mark4::ActuatorFrame actuators;
 
+        std::uint32_t announcedThrows = 0U;
         while (m_core.stepCount() < m_maxFrames && m_sensorSource.waitFrame(frame))
         {
             m_core.step(frame, actuators);
@@ -94,6 +97,19 @@ namespace mark4
             if (m_core.stepCount() % TELEMETRY_DECIMATION == 0U)
             {
                 sendTelemetry(frame, actuators);
+            }
+
+            const mark4::ThrowDetector &detector = m_core.throwDetector();
+            if (detector.throwCount() > announcedThrows)
+            {
+                announcedThrows = detector.throwCount();
+                std::printf("drone_sim: throw #%u detected: release %.2f m/s at t=%.3f s, "
+                            "predicted apex %.2f m at t=%.3f s\n",
+                            announcedThrows,
+                            static_cast<double>(detector.releaseVelocityMps()),
+                            static_cast<double>(detector.releaseTimestampUs()) / US_PER_S,
+                            static_cast<double>(detector.apexAltitudeM()),
+                            static_cast<double>(detector.apexTimestampUs()) / US_PER_S);
             }
         }
         return m_core.stepCount();
