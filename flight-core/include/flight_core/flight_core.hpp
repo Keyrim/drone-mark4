@@ -8,6 +8,7 @@
 
 #include "flight_core/attitude_estimator.hpp"
 #include "flight_core/types.hpp"
+#include "flight_core/vertical_estimator.hpp"
 
 namespace mark4
 {
@@ -39,8 +40,21 @@ namespace mark4
             return m_attitudeEstimator.gyroBiasRadS();
         }
 
+        /// @return estimated altitude above the startup reference [m]
+        [[nodiscard]] float altitudeM() const
+        {
+            return m_verticalEstimator.altitudeM();
+        }
+
+        /// @return estimated vertical velocity, positive up [m/s]
+        [[nodiscard]] float verticalVelocityMps() const
+        {
+            return m_verticalEstimator.verticalVelocityMps();
+        }
+
       private:
         std::uint32_t m_stepCount = 0U;
         AttitudeEstimator m_attitudeEstimator;
+        VerticalEstimator m_verticalEstimator;
     };
 } // namespace mark4

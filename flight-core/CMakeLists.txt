@@ -8,6 +8,7 @@ target_include_directories(flight_core_types INTERFACE ${CMAKE_CURRENT_SOURCE_DI
 add_library(flight_core STATIC
     src/blackbox.cpp
     src/estimator/attitude_estimator.cpp
+    src/estimator/vertical_estimator.cpp
     src/flight_core.cpp
     src/telemetry.cpp)
 target_link_libraries(flight_core

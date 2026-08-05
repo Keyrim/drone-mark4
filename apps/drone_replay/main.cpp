@@ -79,6 +79,9 @@ int main(int argc, char **argv)
     const float yaw =
         std::atan2(2.0f * (q.w * q.z + q.x * q.y), 1.0f - 2.0f * (q.y * q.y + q.z * q.z));
     const auto bias = app.accessFlightCore().gyroBiasRadS();
+    std::printf("drone_replay: final altitude %.2f m, vertical velocity %.2f m/s\n",
+                static_cast<double>(app.accessFlightCore().altitudeM()),
+                static_cast<double>(app.accessFlightCore().verticalVelocityMps()));
     std::printf("drone_replay: final attitude roll %.1f pitch %.1f yaw %.1f [deg], "
                 "gyro bias [%.4f %.4f %.4f] rad/s\n",
                 static_cast<double>(roll * RAD_TO_DEG),

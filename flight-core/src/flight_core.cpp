@@ -13,10 +13,12 @@ namespace mark4
         {
             actuators.motor.fill(0.0f);
             m_attitudeEstimator.update(sensors);
+            m_verticalEstimator.update(sensors, m_attitudeEstimator.attitude());
             return;
         }
 
         m_attitudeEstimator.update(sensors);
+        m_verticalEstimator.update(sensors, m_attitudeEstimator.attitude());
 
         // TODO(tmagne): real control law. Placeholder: observable throttle passthrough.
         actuators.motor.fill(sensors.rc.throttle);
