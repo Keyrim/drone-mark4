@@ -110,6 +110,10 @@ namespace mark4
                             static_cast<double>(detector.releaseTimestampUs()) / US_PER_S,
                             static_cast<double>(detector.apexAltitudeM()),
                             static_cast<double>(detector.apexTimestampUs()) / US_PER_S);
+                // Flushed so the line shows up immediately even when stdout is
+                // piped (VS Code debug console, redirections): the whole point
+                // is seeing the detection live.
+                static_cast<void>(std::fflush(stdout));
             }
         }
         return m_core.stepCount();
