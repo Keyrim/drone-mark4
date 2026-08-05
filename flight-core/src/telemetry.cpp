@@ -16,6 +16,12 @@ namespace mark4
         packet.timestampUs = frame.timestampUs;
         packet.altitudeM = core.altitudeM();
         packet.verticalVelocityMps = core.verticalVelocityMps();
+        const ThrowDetector &detector = core.throwDetector();
+        packet.throwState = static_cast<std::uint8_t>(detector.state());
+        packet.throwCount = detector.throwCount();
+        packet.releaseVelocityMps = detector.releaseVelocityMps();
+        packet.apexTimestampUs = detector.apexTimestampUs();
+        packet.apexAltitudeM = detector.apexAltitudeM();
 
         std::array<std::uint8_t, TELEMETRY_PACKET_SIZE> wire{};
         std::memcpy(wire.data(), &packet, sizeof(packet));

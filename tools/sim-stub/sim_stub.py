@@ -25,7 +25,7 @@ from typing import List, Optional, Tuple
 
 # Keep in sync with protocol/include/protocol/sim_link.hpp and
 # protocol/include/protocol/version.hpp.
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
 
 # version (1) + timestamp (8) + gyro (12) + accel (12) + baro (4)
 # + kill switch (1) + throttle (4).

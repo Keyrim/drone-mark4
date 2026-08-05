@@ -24,7 +24,7 @@ extends Node
 ## from the Godot body axes (y up, -z forward, x right).
 
 ## Keep in sync with protocol/include/protocol/version.hpp.
-const PROTOCOL_VERSION := 4
+const PROTOCOL_VERSION := 5
 
 ## Axis remap from the Godot body frame to the drone body frame: columns are
 ## the drone coordinates of the Godot x, y and z axes.

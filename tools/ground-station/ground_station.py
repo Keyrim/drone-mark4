@@ -105,6 +105,7 @@ class GroundStationWindow(pg.GraphicsLayoutWidget):
         self._dropped = 0
         self._first_timestamp_us: Optional[int] = None
         self._last_true_quat: Optional[Tuple[float, float, float, float]] = None
+        self._last_throw: Optional[Tuple[int, float, float]] = None  # count, vz0, apex m
 
         capacity = max(
             MIN_BUFFER_SAMPLES,
@@ -233,6 +234,12 @@ class GroundStationWindow(pg.GraphicsLayoutWidget):
                 )
             self._vertical_estimated[0].append(sample.altitude_m)
             self._vertical_estimated[1].append(sample.vertical_velocity_mps)
+            if sample.throw_count > 0:
+                self._last_throw = (
+                    sample.throw_count,
+                    sample.release_velocity_mps,
+                    sample.apex_altitude_m,
+                )
             appended = True
         return appended
 
@@ -262,14 +269,19 @@ class GroundStationWindow(pg.GraphicsLayoutWidget):
         )
 
     def _refresh_title(self) -> None:
-        """Show the packet counters in the window title."""
+        """Show the packet counters and the last throw in the window title."""
         window = self.window()
-        if window is not None:
-            window.setWindowTitle(
-                "Ground station - received {} - dropped {}".format(
-                    self._received, self._dropped
-                )
+        if window is None:
+            return
+        title = "Ground station - received {} - dropped {}".format(
+            self._received, self._dropped
+        )
+        if self._last_throw is not None:
+            count, release_vz, apex_m = self._last_throw
+            title += " - throw #{}: vz0 {:.1f} m/s, apex {:.1f} m".format(
+                count, release_vz, apex_m
             )
+        window.setWindowTitle(title)
 
 
 def parse_arguments(argv: List[str]) -> argparse.Namespace:

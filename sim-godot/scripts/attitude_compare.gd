@@ -14,9 +14,9 @@ extends Node
 ## the Godot axes for display.
 
 ## Keep in sync with protocol/include/protocol/version.hpp.
-const PROTOCOL_VERSION := 4
+const PROTOCOL_VERSION := 5
 
-const TELEMETRY_PACKET_SIZE := 73
+const TELEMETRY_PACKET_SIZE := 94
 
 ## Offset of the attitude quaternion (w x y z) inside the telemetry packet:
 ## version (1) + timestamp (8) + gyro (12).

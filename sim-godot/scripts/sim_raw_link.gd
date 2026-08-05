@@ -15,7 +15,7 @@ extends Node
 ## (body x forward, y left, z up; world z up), remapped from the Godot axes.
 
 ## Keep in sync with protocol/include/protocol/version.hpp.
-const PROTOCOL_VERSION := 4
+const PROTOCOL_VERSION := 5
 
 const PACKET_SIZE := 49
 

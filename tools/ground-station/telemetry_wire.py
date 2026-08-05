@@ -20,11 +20,18 @@ from typing import Optional, Tuple
 #   float   motor[4]         normalized motor commands [0, 1]
 #   float   altitudeM        estimated altitude above startup [m]
 #   float   verticalVelocityMps  estimated vertical velocity, up [m/s]
-TELEMETRY_STRUCT = struct.Struct("<BQ3f4f3f4f2f")
+#   uint8   throwState       ThrowState of the detector
+#   uint32  throwCount       throws detected since startup
+#   float   releaseVelocityMps   last release velocity [m/s]
+#   uint64  apexTimestampUs  last predicted apex instant [us]
+#   float   apexAltitudeM    last predicted apex altitude [m]
+TELEMETRY_STRUCT = struct.Struct("<BQ3f4f3f4f2fBIfQf")
 
 #: Packed wire size: version (1) + timestamp (8) + gyro (12) + attitude
-#: quaternion (16) + gyro bias (12) + motors (16) + altitude (4) + vz (4).
-TELEMETRY_PACKET_SIZE = 73
+#: quaternion (16) + gyro bias (12) + motors (16) + altitude (4) + vz (4)
+#: + throw state (1) + throw count (4) + release velocity (4)
+#: + apex timestamp (8) + apex altitude (4).
+TELEMETRY_PACKET_SIZE = 94
 
 # Wire format mirroring mark4::SimRawPacket, the exact simulator state:
 #   uint8   version          = PROTOCOL_VERSION
@@ -39,7 +46,7 @@ SIM_RAW_STRUCT = struct.Struct("<BQ4f3f3f")
 SIM_RAW_PACKET_SIZE = 49
 
 #: First byte of every packet, must match mark4::PROTOCOL_VERSION.
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
 
 #: UDP port telemetry is broadcast to, must match mark4::TELEMETRY_PORT.
 TELEMETRY_PORT = 47801
@@ -66,6 +73,11 @@ class TelemetrySample:
     motor: Tuple[float, float, float, float]
     altitude_m: float
     vertical_velocity_mps: float
+    throw_state: int
+    throw_count: int
+    release_velocity_mps: float
+    apex_timestamp_us: int
+    apex_altitude_m: float
 
     @property
     def timestamp_s(self) -> float:
@@ -109,6 +121,11 @@ def decode_telemetry(datagram: bytes) -> Optional[TelemetrySample]:
         motor=fields[12:16],
         altitude_m=fields[16],
         vertical_velocity_mps=fields[17],
+        throw_state=fields[18],
+        throw_count=fields[19],
+        release_velocity_mps=fields[20],
+        apex_timestamp_us=fields[21],
+        apex_altitude_m=fields[22],
     )
 
 
@@ -157,6 +174,11 @@ def encode_telemetry(sample: TelemetrySample, version: int = PROTOCOL_VERSION) -
         *sample.motor,
         sample.altitude_m,
         sample.vertical_velocity_mps,
+        sample.throw_state,
+        sample.throw_count,
+        sample.release_velocity_mps,
+        sample.apex_timestamp_us,
+        sample.apex_altitude_m,
     )
 
 
