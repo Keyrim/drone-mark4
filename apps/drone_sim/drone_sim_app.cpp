@@ -89,6 +89,7 @@ namespace mark4
         mark4::ActuatorFrame actuators;
 
         std::uint32_t announcedThrows = 0U;
+        mark4::ArmState previousArmState = mark4::ArmState::DISARMED;
         while (m_core.stepCount() < m_maxFrames && m_sensorSource.waitFrame(frame))
         {
             m_core.step(frame, actuators);
@@ -114,6 +115,18 @@ namespace mark4
                 // piped (VS Code debug console, redirections): the whole point
                 // is seeing the detection live.
                 static_cast<void>(std::fflush(stdout));
+            }
+
+            if (m_core.armState() != previousArmState)
+            {
+                if (m_core.armState() == mark4::ArmState::CUTOFF)
+                {
+                    std::printf("drone_sim: safety cutoff at t=%.3f s: motors stopped, "
+                                "lower the throttle to rearm\n",
+                                static_cast<double>(frame.timestampUs) / US_PER_S);
+                    static_cast<void>(std::fflush(stdout));
+                }
+                previousArmState = m_core.armState();
             }
         }
         return m_core.stepCount();
