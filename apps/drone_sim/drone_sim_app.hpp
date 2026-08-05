@@ -3,6 +3,8 @@
 /// @file
 /// @brief drone_sim composition root.
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 
 #include "flight_core/blackbox.hpp"
@@ -29,8 +31,8 @@ namespace mark4
         /// Directory the blackbox file is created in, relative to the cwd.
         static constexpr const char *LOG_DIRECTORY = "logs";
 
-        /// Blackbox file of a run; truncated at every start.
-        static constexpr const char *LOG_FILE_PATH = "logs/drone_sim.m4bb";
+        /// Size of the buffer holding the timestamped blackbox file path.
+        static constexpr std::size_t LOG_PATH_SIZE = 64U;
 
         /// @param maxFrames number of frames to process before stopping
         explicit DroneSimApp(std::uint32_t maxFrames);
@@ -88,6 +90,7 @@ namespace mark4
         mark4::SensorSourceSim m_sensorSource;
         mark4::MotorSinkSim m_motorSink;
         mark4::TelemetrySenderSim m_telemetrySender;
+        std::array<char, LOG_PATH_SIZE> m_logFilePath; ///< one file per run, outlives m_logSink
         mark4::LogSinkFile m_logSink;
         mark4::FlightCore m_core;
         mark4::Blackbox m_blackbox;

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -33,6 +34,24 @@ namespace
             stderr, "drone_sim: mkdir failed on '%s': %s\n", path, std::strerror(errno)));
         return false;
     }
+
+    /// @brief Builds a per-run blackbox path from the wall clock, so a run
+    ///        never overwrites the previous one. The format string embeds
+    ///        DroneSimApp::LOG_DIRECTORY (strftime cannot interpolate it).
+    /// @return "logs/drone_sim_YYYYMMDD_HHMMSS.m4bb"
+    std::array<char, mark4::DroneSimApp::LOG_PATH_SIZE> makeLogFilePath()
+    {
+        std::array<char, mark4::DroneSimApp::LOG_PATH_SIZE> path{};
+        const std::time_t now = std::time(nullptr);
+        std::tm local{};
+        static_cast<void>(::localtime_r(&now, &local));
+        if (std::strftime(path.data(), path.size(), "logs/drone_sim_%Y%m%d_%H%M%S.m4bb", &local) ==
+            0U)
+        {
+            static_cast<void>(std::snprintf(path.data(), path.size(), "logs/drone_sim.m4bb"));
+        }
+        return path;
+    }
 } // namespace
 
 namespace mark4
@@ -41,7 +60,8 @@ namespace mark4
         : m_maxFrames(maxFrames),
           m_sensorSource(m_simLink),
           m_motorSink(m_simLink),
-          m_logSink(LOG_FILE_PATH),
+          m_logFilePath(makeLogFilePath()),
+          m_logSink(m_logFilePath.data()),
           m_blackbox(m_logSink)
     {
     }
