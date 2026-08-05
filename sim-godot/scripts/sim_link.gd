@@ -18,9 +18,17 @@ extends Node
 ##   actuator (17 bytes): u8 version, 4x f32 motor commands in [0, 1]
 ##
 ## Anything with another size or another version byte is dropped.
+##
+## Vectors on the wire use the drone body frame of the protocol (x forward,
+## y left, z up - the accelerometer reads +1 g on z at rest), remapped here
+## from the Godot body axes (y up, -z forward, x right).
 
 ## Keep in sync with protocol/include/protocol/version.hpp.
-const PROTOCOL_VERSION := 2
+const PROTOCOL_VERSION := 3
+
+## Axis remap from the Godot body frame to the drone body frame: columns are
+## the drone coordinates of the Godot x, y and z axes.
+const GODOT_TO_DRONE := Basis(Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(-1, 0, 0))
 
 const SENSOR_PACKET_SIZE := 42
 const ACTUATOR_PACKET_SIZE := 17
@@ -138,15 +146,17 @@ func _send_sensor_packet(
 	kill_switch: bool,
 	throttle: float
 ) -> void:
+	var gyro_drone := GODOT_TO_DRONE * gyro_rad_s
+	var accel_drone := GODOT_TO_DRONE * accel_mps2
 	_buffer.clear()
 	_buffer.put_u8(PROTOCOL_VERSION)
 	_buffer.put_u64(timestamp_us)
-	_buffer.put_float(gyro_rad_s.x)
-	_buffer.put_float(gyro_rad_s.y)
-	_buffer.put_float(gyro_rad_s.z)
-	_buffer.put_float(accel_mps2.x)
-	_buffer.put_float(accel_mps2.y)
-	_buffer.put_float(accel_mps2.z)
+	_buffer.put_float(gyro_drone.x)
+	_buffer.put_float(gyro_drone.y)
+	_buffer.put_float(gyro_drone.z)
+	_buffer.put_float(accel_drone.x)
+	_buffer.put_float(accel_drone.y)
+	_buffer.put_float(accel_drone.z)
 	_buffer.put_float(baro_pa)
 	_buffer.put_u8(1 if kill_switch else 0)
 	_buffer.put_float(throttle)

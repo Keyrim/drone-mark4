@@ -1,4 +1,4 @@
-[gd_scene load_steps=26 format=3]
+[gd_scene load_steps=28 format=3]
 
 [ext_resource type="Script" path="res://scripts/drone.gd" id="1_drone"]
 [ext_resource type="Script" path="res://scripts/sensors.gd" id="2_sensors"]
@@ -6,6 +6,8 @@
 [ext_resource type="Script" path="res://scripts/pilot_input.gd" id="4_pilot"]
 [ext_resource type="Script" path="res://scripts/camera_follow.gd" id="5_camera"]
 [ext_resource type="Script" path="res://scripts/hud.gd" id="6_hud"]
+[ext_resource type="Script" path="res://scripts/sim_raw_link.gd" id="8_sim_raw"]
+[ext_resource type="Script" path="res://scripts/attitude_compare.gd" id="9_attitude"]
 [ext_resource type="Shader" path="res://shaders/ground_grid.gdshader" id="7_grid"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_world"]
@@ -191,6 +193,9 @@ script = ExtResource("2_sensors")
 [node name="SimLink" type="Node" parent="Drone"]
 script = ExtResource("3_sim_link")
 
+[node name="SimRawLink" type="Node" parent="Drone"]
+script = ExtResource("8_sim_raw")
+
 [node name="PilotInput" type="Node" parent="Drone"]
 script = ExtResource("4_pilot")
 
@@ -199,6 +204,10 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 3)
 current = true
 script = ExtResource("5_camera")
 target_path = NodePath("../Drone")
+
+[node name="AttitudeCompare" type="Node" parent="."]
+script = ExtResource("9_attitude")
+drone_path = NodePath("../Drone")
 
 [node name="Hud" type="CanvasLayer" parent="."]
 

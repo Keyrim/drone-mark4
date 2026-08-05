@@ -43,6 +43,17 @@ the motor commands coming back from the flight process, the accelerometer
 magnitude in g, the altitude and the packet counters. If the counters for
 received packets stay at zero, the flight process is not answering.
 
+The small view in the top right corner compares attitudes, orientation only:
+the solid gizmo mirrors the real drone, the ghost one follows the attitude
+estimated by the flight process, decoded from the telemetry broadcast
+(udp/47801). Any divergence between the two is directly visible.
+
+The simulator also broadcasts its exact state (attitude, position, velocity,
+no sensor model) as `SimRawPacket` on udp/47802, so the ground station can
+plot the estimated attitude against the exact one. Wire vectors use the drone
+frame convention of `protocol/` (body x forward, y left, z up); the remap
+from the Godot axes happens in `sim_link.gd` and `sim_raw_link.gd`.
+
 ## Controls
 
 | Key        | Effect                                                        |

@@ -80,6 +80,7 @@ var _tick_rate_hz: float = 500.0
 
 @onready var sensors: DroneSensors = $Sensors
 @onready var sim_link: SimLink = $SimLink
+@onready var sim_raw: SimRawLink = $SimRawLink
 @onready var pilot: PilotInput = $PilotInput
 
 
@@ -112,6 +113,7 @@ func _physics_process(delta: float) -> void:
 		pilot.kill_switch,
 		pilot.throttle
 	)
+	sim_raw.publish(simulated_time_us(), body_basis, global_position, velocity)
 
 	_update_motor_speeds(sim_link.motor_commands, delta)
 	_apply_motor_forces(body_basis)
