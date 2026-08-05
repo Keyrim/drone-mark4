@@ -1,4 +1,8 @@
 # platform/src/replay
 
-Coming later - a sensor source reading frames from a blackbox, motor sink
-ignored (open loop), UDP broadcast telemetry sender. Desktop preset only.
+Replay variant of the platform services, desktop preset only. Provides
+`SensorSourceReplay`: reads the records of a `.m4bb` blackbox file and
+serves them as sensor frames, paced by the recorded timestamps scaled by a
+speed factor (or unpaced with `SPEED_MAX`). Open loop: the motor commands
+stored in the records are ignored. The record layout comes from
+`flight_core/blackbox.hpp`.

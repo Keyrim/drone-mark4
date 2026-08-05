@@ -9,9 +9,11 @@ FetchContent_MakeAvailable(Catch2)
 add_executable(unit_tests
     test_blackbox.cpp
     test_flight_core.cpp
-    test_platform_sim_udp.cpp)
+    test_platform_sim_udp.cpp
+    test_replay.cpp)
 target_link_libraries(unit_tests
-    PRIVATE flight_core platform_sim protocol Catch2::Catch2WithMain drone_warnings)
+    PRIVATE flight_core platform_sim platform_replay protocol Catch2::Catch2WithMain
+            drone_warnings)
 # The libs under test are compiled with -fno-rtti (drone_strict) and emit no
 # typeinfo, so UBSan's vptr check cannot be applied to their classes from here
 # (it would reference symbols that are never emitted). Nothing is lost: those
