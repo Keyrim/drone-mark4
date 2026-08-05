@@ -1,0 +1,41 @@
+#include <array>
+#include <cstdint>
+#include <cstring>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include "flight_core/flight_core.hpp"
+#include "flight_core/telemetry.hpp"
+#include "flight_core/types.hpp"
+#include "protocol/telemetry.hpp"
+#include "protocol/version.hpp"
+
+TEST_CASE("packTelemetry carries the estimated attitude next to the raw frame")
+{
+    mark4::FlightCore core;
+    mark4::SensorFrame frame;
+    frame.timestampUs = 123456U;
+    frame.gyroRadS = {0.1f, 0.2f, 0.3f};
+    frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
+    frame.rc.killSwitch = false;
+    frame.rc.throttle = 0.5f;
+    mark4::ActuatorFrame actuators;
+    core.step(frame, actuators);
+
+    const auto wire = mark4::packTelemetry(frame, actuators, core);
+    REQUIRE(wire.size() == mark4::TELEMETRY_PACKET_SIZE);
+    REQUIRE(wire[0] == mark4::PROTOCOL_VERSION);
+
+    std::array<float, 4> quat{};
+    std::memcpy(
+        quat.data(), wire.data() + offsetof(mark4::TelemetryPacket, attitudeQuat), sizeof(quat));
+    const mark4::Quaternion &attitude = core.attitude();
+    REQUIRE(quat[0] == attitude.w);
+    REQUIRE(quat[1] == attitude.x);
+    REQUIRE(quat[2] == attitude.y);
+    REQUIRE(quat[3] == attitude.z);
+
+    std::array<float, 4> motor{};
+    std::memcpy(motor.data(), wire.data() + offsetof(mark4::TelemetryPacket, motor), sizeof(motor));
+    REQUIRE(motor == actuators.motor);
+}

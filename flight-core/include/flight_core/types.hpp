@@ -31,6 +31,8 @@ namespace mark4
 
     /// Input of step(). Timestamped by platform at acquisition: the timestamp
     /// travels inside the frame, the flight core never reads a clock.
+    /// Body frame convention, for every producer: x forward, y left, z up,
+    /// right-handed - the accelerometer reads +GRAVITY_MPS2 on z at rest.
     struct SensorFrame
     {
         std::uint64_t timestampUs = 0U;   ///< acquisition time [us]
