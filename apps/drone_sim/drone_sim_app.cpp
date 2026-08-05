@@ -1,8 +1,13 @@
 #include "drone_sim_app.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
+
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include "protocol/sim_link.hpp"
 #include "protocol/telemetry.hpp"
@@ -11,6 +16,23 @@
 namespace
 {
     constexpr std::uint32_t TELEMETRY_DECIMATION = 10U;
+
+    /// Permissions of the log directory when it has to be created: rwxr-xr-x.
+    constexpr mode_t LOG_DIRECTORY_MODE = 0755;
+
+    /// @brief Creates a directory, treating an existing one as a success.
+    /// @param path directory to create
+    /// @return true when the directory exists afterwards
+    bool ensureDirectory(const char *path)
+    {
+        if (::mkdir(path, LOG_DIRECTORY_MODE) == 0 || errno == EEXIST)
+        {
+            return true;
+        }
+        static_cast<void>(std::fprintf(
+            stderr, "drone_sim: mkdir failed on '%s': %s\n", path, std::strerror(errno)));
+        return false;
+    }
 } // namespace
 
 namespace mark4
@@ -18,7 +40,9 @@ namespace mark4
     DroneSimApp::DroneSimApp(std::uint32_t maxFrames)
         : m_maxFrames(maxFrames),
           m_sensorSource(m_simLink),
-          m_motorSink(m_simLink)
+          m_motorSink(m_simLink),
+          m_logSink(LOG_FILE_PATH),
+          m_blackbox(m_logSink)
     {
     }
 
@@ -28,7 +52,15 @@ namespace mark4
         {
             return false;
         }
-        return m_telemetrySender.open();
+        if (!m_telemetrySender.open())
+        {
+            return false;
+        }
+        if (!ensureDirectory(LOG_DIRECTORY))
+        {
+            return false;
+        }
+        return m_logSink.init();
     }
 
     std::uint32_t DroneSimApp::run()
@@ -40,6 +72,7 @@ namespace mark4
         {
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);
+            m_blackbox.record(frame, actuators);
             if (m_core.stepCount() % TELEMETRY_DECIMATION == 0U)
             {
                 sendTelemetry(frame, actuators);

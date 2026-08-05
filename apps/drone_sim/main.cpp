@@ -57,5 +57,11 @@ int main(int argc, char **argv)
                 static_cast<double>(motor[1]),
                 static_cast<double>(motor[2]),
                 static_cast<double>(motor[3]));
+
+    const auto &logSink = app.accessLogSink();
+    std::printf("drone_sim: %u blackbox records (%zu bytes) in %s\n",
+                app.accessBlackbox().recordCount(),
+                logSink.bytesWritten(),
+                logSink.path());
     return 0;
 }
