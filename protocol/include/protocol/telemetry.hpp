@@ -25,12 +25,15 @@ namespace mark4
         std::array<float, 4> attitudeQuat; ///< estimated attitude, w x y z
         std::array<float, 3> gyroBiasRadS; ///< estimated gyro bias [rad/s]
         std::array<float, 4> motor;        ///< normalized motor commands [0, 1]
+        float altitudeM;                   ///< estimated altitude above startup [m]
+        float verticalVelocityMps;         ///< estimated vertical velocity, up [m/s]
     };
 #pragma pack(pop)
 
     /// Packed wire size: version (1) + timestamp (8) + gyro (12) + attitude
-    /// quaternion (16) + gyro bias (12) + motors (16).
-    inline constexpr std::size_t TELEMETRY_PACKET_SIZE = 65U;
+    /// quaternion (16) + gyro bias (12) + motors (16) + altitude (4) +
+    /// vertical velocity (4).
+    inline constexpr std::size_t TELEMETRY_PACKET_SIZE = 73U;
 
     static_assert(sizeof(TelemetryPacket) == TELEMETRY_PACKET_SIZE, "wire layout must be packed");
     static_assert(std::is_trivially_copyable_v<TelemetryPacket>);

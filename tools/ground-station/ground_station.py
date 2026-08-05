@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Real-time viewer for the drone UDP broadcasts.
 
-Three stacked plots fed by two streams:
+Stacked plots fed by two streams:
   - body angular rates, from the telemetry broadcast of the flight process;
   - attitude as Euler angles, estimated (telemetry, solid) against the exact
     simulator state (sim raw broadcast, dashed);
   - attitude error angle between the two quaternions, the estimator's
-    validation metric.
+    validation metric;
+  - altitude and vertical velocity, estimated against exact.
 
 Without a simulator the sim raw stream simply stays silent and only the
 estimated curves draw. Packet decoding lives in telemetry_wire.py so it stays
@@ -117,8 +118,10 @@ class GroundStationWindow(pg.GraphicsLayoutWidget):
         self._gyro = buffers(3)
         self._euler_estimated = buffers(3)
         self._error_deg: Deque[float] = deque(maxlen=capacity)
+        self._vertical_estimated = buffers(2)  # altitude [m], velocity [m/s]
         self._sim_raw_times: Deque[float] = deque(maxlen=capacity)
         self._euler_true = buffers(3)
+        self._vertical_true = buffers(2)
 
         self.setBackground("w")
 
@@ -147,14 +150,30 @@ class GroundStationWindow(pg.GraphicsLayoutWidget):
 
         error_plot = self.addPlot(row=2, col=0)
         error_plot.setLabel("left", "attitude error", units="deg")
-        error_plot.setLabel("bottom", "time", units="s")
         self._error_curve = error_plot.plot(pen=pg.mkPen("#f58231", width=2))
 
-        self._plots = (gyro_plot, euler_plot, error_plot)
+        vertical_plot = self.addPlot(row=3, col=0)
+        vertical_plot.setLabel("left", "vertical (alt m, vz m/s)")
+        vertical_plot.setLabel("bottom", "time", units="s")
+        vertical_plot.addLegend()
+        vertical_names = ("altitude", "vz")
+        self._vertical_estimated_curves = [
+            vertical_plot.plot(name=name + " est", pen=pg.mkPen(color, width=2))
+            for name, (_, color) in zip(vertical_names, AXIS_COLORS)
+        ]
+        self._vertical_true_curves = [
+            vertical_plot.plot(
+                name=name + " true",
+                pen=pg.mkPen(color, width=1, style=QtCore.Qt.PenStyle.DashLine),
+            )
+            for name, (_, color) in zip(vertical_names, AXIS_COLORS)
+        ]
+
+        self._plots = (gyro_plot, euler_plot, error_plot, vertical_plot)
         for plot in self._plots:
             plot.showGrid(x=True, y=True, alpha=0.3)
-        euler_plot.setXLink(gyro_plot)
-        error_plot.setXLink(gyro_plot)
+        for plot in self._plots[1:]:
+            plot.setXLink(gyro_plot)
 
         self._refresh_title()
 
@@ -188,6 +207,8 @@ class GroundStationWindow(pg.GraphicsLayoutWidget):
             self._sim_raw_times.append(self._elapsed_s(sample.timestamp_us))
             for axis, angle in enumerate(euler_deg(sample.attitude_quat)):
                 self._euler_true[axis].append(angle)
+            self._vertical_true[0].append(sample.position_m[2])
+            self._vertical_true[1].append(sample.velocity_mps[2])
             appended = True
         return appended
 
@@ -210,6 +231,8 @@ class GroundStationWindow(pg.GraphicsLayoutWidget):
                 self._error_deg.append(
                     error_angle_deg(sample.attitude_quat, self._last_true_quat)
                 )
+            self._vertical_estimated[0].append(sample.altitude_m)
+            self._vertical_estimated[1].append(sample.vertical_velocity_mps)
             appended = True
         return appended
 
@@ -221,9 +244,13 @@ class GroundStationWindow(pg.GraphicsLayoutWidget):
         for curve, buffer in zip(self._estimated_curves, self._euler_estimated):
             curve.setData(telemetry_times, list(buffer))
         self._error_curve.setData(telemetry_times, list(self._error_deg))
+        for curve, buffer in zip(self._vertical_estimated_curves, self._vertical_estimated):
+            curve.setData(telemetry_times, list(buffer))
 
         sim_raw_times = list(self._sim_raw_times)
         for curve, buffer in zip(self._true_curves, self._euler_true):
+            curve.setData(sim_raw_times, list(buffer))
+        for curve, buffer in zip(self._vertical_true_curves, self._vertical_true):
             curve.setData(sim_raw_times, list(buffer))
 
         latest = max(
@@ -285,7 +312,7 @@ def main(argv: List[str]) -> int:
 
     application = QtWidgets.QApplication(sys.argv[:1])
     widget = GroundStationWindow(telemetry_socket, sim_raw_socket, args.window)
-    widget.resize(900, 800)
+    widget.resize(900, 1000)
     widget.show()
     print(
         "listening on 0.0.0.0:{} (telemetry) and 0.0.0.0:{} (sim raw)".format(

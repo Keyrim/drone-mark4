@@ -18,11 +18,13 @@ from typing import Optional, Tuple
 #   float   attitudeQuat[4]  estimated attitude, w x y z
 #   float   gyroBiasRadS[3]  estimated gyro bias [rad/s]
 #   float   motor[4]         normalized motor commands [0, 1]
-TELEMETRY_STRUCT = struct.Struct("<BQ3f4f3f4f")
+#   float   altitudeM        estimated altitude above startup [m]
+#   float   verticalVelocityMps  estimated vertical velocity, up [m/s]
+TELEMETRY_STRUCT = struct.Struct("<BQ3f4f3f4f2f")
 
 #: Packed wire size: version (1) + timestamp (8) + gyro (12) + attitude
-#: quaternion (16) + gyro bias (12) + motors (16).
-TELEMETRY_PACKET_SIZE = 65
+#: quaternion (16) + gyro bias (12) + motors (16) + altitude (4) + vz (4).
+TELEMETRY_PACKET_SIZE = 73
 
 # Wire format mirroring mark4::SimRawPacket, the exact simulator state:
 #   uint8   version          = PROTOCOL_VERSION
@@ -37,7 +39,7 @@ SIM_RAW_STRUCT = struct.Struct("<BQ4f3f3f")
 SIM_RAW_PACKET_SIZE = 49
 
 #: First byte of every packet, must match mark4::PROTOCOL_VERSION.
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 
 #: UDP port telemetry is broadcast to, must match mark4::TELEMETRY_PORT.
 TELEMETRY_PORT = 47801
@@ -62,6 +64,8 @@ class TelemetrySample:
     attitude_quat: Tuple[float, float, float, float]
     gyro_bias_rad_s: Tuple[float, float, float]
     motor: Tuple[float, float, float, float]
+    altitude_m: float
+    vertical_velocity_mps: float
 
     @property
     def timestamp_s(self) -> float:
@@ -103,6 +107,8 @@ def decode_telemetry(datagram: bytes) -> Optional[TelemetrySample]:
         attitude_quat=fields[5:9],
         gyro_bias_rad_s=fields[9:12],
         motor=fields[12:16],
+        altitude_m=fields[16],
+        vertical_velocity_mps=fields[17],
     )
 
 
@@ -149,6 +155,8 @@ def encode_telemetry(sample: TelemetrySample, version: int = PROTOCOL_VERSION) -
         *sample.attitude_quat,
         *sample.gyro_bias_rad_s,
         *sample.motor,
+        sample.altitude_m,
+        sample.vertical_velocity_mps,
     )
 
 

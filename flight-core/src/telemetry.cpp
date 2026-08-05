@@ -14,6 +14,8 @@ namespace mark4
         TelemetryPacket packet{};
         packet.version = PROTOCOL_VERSION;
         packet.timestampUs = frame.timestampUs;
+        packet.altitudeM = core.altitudeM();
+        packet.verticalVelocityMps = core.verticalVelocityMps();
 
         std::array<std::uint8_t, TELEMETRY_PACKET_SIZE> wire{};
         std::memcpy(wire.data(), &packet, sizeof(packet));

@@ -1,12 +1,13 @@
 # Ground station
 
-Real-time viewer for the drone UDP broadcasts. Three stacked plots:
+Real-time viewer for the drone UDP broadcasts. Four stacked plots:
 
 - body angular rates, from the telemetry broadcast of the flight process;
 - attitude as Euler angles, estimated (telemetry, solid) against the exact
   simulator state (sim raw broadcast, dashed);
 - attitude error angle between the two quaternions, the estimator's
-  validation metric.
+  validation metric;
+- altitude and vertical velocity, estimated against exact.
 
 Without a simulator the sim raw stream stays silent and only the estimated
 curves draw. Packet decoding (`telemetry_wire.py`) is kept separate from the
