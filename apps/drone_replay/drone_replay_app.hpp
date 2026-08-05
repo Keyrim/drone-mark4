@@ -40,6 +40,12 @@ namespace mark4
             return m_telemetrySender;
         }
 
+        /// @return flight core, for post-run reporting
+        [[nodiscard]] const mark4::FlightCore &accessFlightCore() const
+        {
+            return m_core;
+        }
+
       private:
         void sendTelemetry(const mark4::SensorFrame &frame, const mark4::ActuatorFrame &actuators);
 

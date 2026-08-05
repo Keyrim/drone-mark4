@@ -3,8 +3,10 @@
 /// @file
 /// @brief Flight core entry point.
 
+#include <array>
 #include <cstdint>
 
+#include "flight_core/attitude_estimator.hpp"
 #include "flight_core/types.hpp"
 
 namespace mark4
@@ -25,7 +27,20 @@ namespace mark4
             return m_stepCount;
         }
 
+        /// @return estimated body-to-world attitude
+        [[nodiscard]] const Quaternion &attitude() const
+        {
+            return m_attitudeEstimator.attitude();
+        }
+
+        /// @return estimated constant gyro bias [rad/s]
+        [[nodiscard]] std::array<float, 3> gyroBiasRadS() const
+        {
+            return m_attitudeEstimator.gyroBiasRadS();
+        }
+
       private:
         std::uint32_t m_stepCount = 0U;
+        AttitudeEstimator m_attitudeEstimator;
     };
 } // namespace mark4

@@ -1,6 +1,7 @@
 /// @file
 /// @brief drone_replay entry point: parses arguments, builds the app, runs it.
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +13,7 @@
 namespace
 {
     constexpr float DEFAULT_SPEED = 1.0f;
+    constexpr float RAD_TO_DEG = 57.29578f;
 
     void printUsage(const char *program)
     {
@@ -69,5 +71,21 @@ int main(int argc, char **argv)
                 steps,
                 telemetry.packetCount(),
                 telemetry.byteCount());
+
+    const mark4::Quaternion &q = app.accessFlightCore().attitude();
+    const float roll =
+        std::atan2(2.0f * (q.w * q.x + q.y * q.z), 1.0f - 2.0f * (q.x * q.x + q.y * q.y));
+    const float pitch = std::asin(2.0f * (q.w * q.y - q.z * q.x));
+    const float yaw =
+        std::atan2(2.0f * (q.w * q.z + q.x * q.y), 1.0f - 2.0f * (q.y * q.y + q.z * q.z));
+    const auto bias = app.accessFlightCore().gyroBiasRadS();
+    std::printf("drone_replay: final attitude roll %.1f pitch %.1f yaw %.1f [deg], "
+                "gyro bias [%.4f %.4f %.4f] rad/s\n",
+                static_cast<double>(roll * RAD_TO_DEG),
+                static_cast<double>(pitch * RAD_TO_DEG),
+                static_cast<double>(yaw * RAD_TO_DEG),
+                static_cast<double>(bias[0]),
+                static_cast<double>(bias[1]),
+                static_cast<double>(bias[2]));
     return 0;
 }

@@ -7,6 +7,7 @@ target_include_directories(flight_core_types INTERFACE ${CMAKE_CURRENT_SOURCE_DI
 # no clock access, no waiting.
 add_library(flight_core STATIC
     src/blackbox.cpp
+    src/estimator/attitude_estimator.cpp
     src/flight_core.cpp)
 target_link_libraries(flight_core
     PUBLIC flight_core_types platform protocol

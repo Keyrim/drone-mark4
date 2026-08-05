@@ -9,6 +9,19 @@
 
 namespace mark4
 {
+    /// Standard gravity [m/s^2], the reference for accelerometer readings.
+    inline constexpr float GRAVITY_MPS2 = 9.80665f;
+
+    /// Unit quaternion representing a body-to-world rotation. Identity by
+    /// default. Kept a plain aggregate: the math lives with its users.
+    struct Quaternion
+    {
+        float w = 1.0f; ///< scalar part
+        float x = 0.0f; ///< vector part, body x
+        float y = 0.0f; ///< vector part, body y
+        float z = 0.0f; ///< vector part, body z
+    };
+
     /// RC state. The kill switch is processed before anything else in step().
     struct RcInput
     {
