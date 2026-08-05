@@ -32,18 +32,42 @@ TEST_CASE("kill switch forces all motors to zero")
     }
 }
 
-TEST_CASE("throttle is copied to motors when kill switch is released")
+TEST_CASE("a throttle below the arming threshold keeps the motors stopped")
+{
+    mark4::FlightCore core;
+    mark4::SensorFrame frame;
+    mark4::ActuatorFrame actuators;
+    actuators.motor.fill(0.7f);
+
+    frame.rc.killSwitch = false;
+    frame.rc.throttle = 0.0f;
+    frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
+    core.step(frame, actuators);
+
+    for (const float m : actuators.motor)
+    {
+        REQUIRE(m == 0.0f);
+    }
+}
+
+TEST_CASE("a raised throttle drives the motors through the hover stack")
 {
     mark4::FlightCore core;
     mark4::SensorFrame frame;
     mark4::ActuatorFrame actuators;
 
     frame.rc.killSwitch = false;
-    frame.rc.throttle = 0.25f;
+    frame.rc.throttle = 0.5f; // mid stick: hold the altitude
+    frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
+    frame.timestampUs = 0U;
+    core.step(frame, actuators);
+    frame.timestampUs = 2000U;
     core.step(frame, actuators);
 
+    // Level, at rest, mid stick: every motor sits near the hover collective.
     for (const float m : actuators.motor)
     {
-        REQUIRE(m == 0.25f);
+        REQUIRE(m > 0.3f);
+        REQUIRE(m < 0.8f);
     }
 }

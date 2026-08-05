@@ -9,6 +9,7 @@ FetchContent_MakeAvailable(Catch2)
 add_executable(unit_tests
     test_attitude_estimator.cpp
     test_blackbox.cpp
+    test_control.cpp
     test_flight_core.cpp
     test_platform_sim_udp.cpp
     test_replay.cpp

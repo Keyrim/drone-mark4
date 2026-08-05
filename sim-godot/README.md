@@ -75,10 +75,11 @@ with their normal lag. That is exactly the path worth exercising.
 The usual sequence is `R` then `SPACE`. Pressing `SPACE` while the drone is
 already flying simply adds another push.
 
-What the throttle field does depends entirely on the flight process. As long as
-it simply forwards the throttle to the four motors, the airframe leaves the
-ground somewhere around 0.55, since a motor produces `6.0 N * throttle^2` and
-the drone weighs 6.4 N.
+What the throttle field does depends entirely on the flight process. With the
+hover stack, the stick commands a vertical velocity: below 0.05 the drone is
+disarmed (motors stopped), mid stick holds the altitude, and full deflection
+climbs or sinks at 2 m/s; the attitude is leveled automatically. Raise the
+throttle with `Up` and the drone takes off and hovers.
 
 ## Physics
 

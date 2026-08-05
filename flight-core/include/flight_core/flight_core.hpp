@@ -6,9 +6,12 @@
 #include <array>
 #include <cstdint>
 
+#include "flight_core/attitude_controller.hpp"
 #include "flight_core/attitude_estimator.hpp"
+#include "flight_core/rate_controller.hpp"
 #include "flight_core/throw_detector.hpp"
 #include "flight_core/types.hpp"
+#include "flight_core/vertical_controller.hpp"
 #include "flight_core/vertical_estimator.hpp"
 
 namespace mark4
@@ -59,12 +62,29 @@ namespace mark4
             return m_throwDetector;
         }
 
+        /// Throttle below which the drone stays disarmed: motors stopped and
+        /// control integrators held at zero.
+        static constexpr float ARM_THROTTLE = 0.05f;
+
+        /// Vertical velocity setpoint at full stick deflection [m/s]; mid
+        /// stick holds the altitude.
+        static constexpr float STICK_VZ_RANGE_MPS = 2.0f;
+
+        /// Control steps longer than this are gaps: the loop outputs are
+        /// recomputed but the integrators do not integrate the hole.
+        static constexpr float MAX_CONTROL_STEP_S = 0.05f;
+
       private:
         void updateEstimators(const SensorFrame &sensors);
+        void runControl(const SensorFrame &sensors, ActuatorFrame &actuators);
 
         std::uint32_t m_stepCount = 0U;
         AttitudeEstimator m_attitudeEstimator;
         VerticalEstimator m_verticalEstimator;
         ThrowDetector m_throwDetector;
+        AttitudeController m_attitudeController;
+        RateController m_rateController;
+        VerticalController m_verticalController;
+        std::uint64_t m_prevControlTimestampUs = 0U; ///< control step reference [us]
     };
 } // namespace mark4
