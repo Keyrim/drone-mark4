@@ -32,8 +32,10 @@ const VIEW_MARGIN := 12.0
 const CAMERA_POSITION := Vector3(0.5, 0.4, 0.5)
 
 @export_group("Endpoint")
-## UDP port of the telemetry broadcast, TELEMETRY_PORT in the headers.
-@export var telemetry_port: int = 47801
+## UDP port of the telemetry mirror, TELEMETRY_MIRROR_PORT in the headers.
+## Godot binds ports exclusively (no SO_REUSEADDR), so this view listens to
+## the mirror of the broadcast and leaves udp/47801 to the other tools.
+@export var telemetry_port: int = 47803
 
 @export_group("Scene")
 ## The rigid body whose real attitude is mirrored by the solid gizmo.

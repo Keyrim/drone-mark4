@@ -82,6 +82,16 @@ namespace mark4
             return;
         }
 
+        // Same packet on the mirror port, for the consumer that cannot share
+        // a bound port. Best effort: the main broadcast already went out.
+        target.sin_port = htons(mark4::TELEMETRY_MIRROR_PORT);
+        static_cast<void>(::sendto(m_socketFd,
+                                   data,
+                                   size,
+                                   0,
+                                   reinterpret_cast<const sockaddr *>(&target),
+                                   sizeof(target)));
+
         ++m_packetCount;
         m_byteCount += static_cast<std::size_t>(sent);
     }

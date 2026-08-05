@@ -45,8 +45,10 @@ received packets stay at zero, the flight process is not answering.
 
 The small view in the top right corner compares attitudes, orientation only:
 the solid gizmo mirrors the real drone, the ghost one follows the attitude
-estimated by the flight process, decoded from the telemetry broadcast
-(udp/47801). Any divergence between the two is directly visible.
+estimated by the flight process, decoded from the telemetry mirror
+(udp/47803 - Godot binds ports exclusively, so the view leaves the shared
+telemetry broadcast on udp/47801 to the other tools). Any divergence between
+the two is directly visible.
 
 The simulator also broadcasts its exact state (attitude, position, velocity,
 no sensor model) as `SimRawPacket` on udp/47802, so the ground station can

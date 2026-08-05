@@ -10,8 +10,14 @@
 
 namespace mark4
 {
-    /// UDP port telemetry is broadcast to; any number of consumers may listen.
+    /// UDP port telemetry is broadcast to; any number of consumers may listen,
+    /// provided their socket sets SO_REUSEADDR so the port can be shared.
     inline constexpr std::uint16_t TELEMETRY_PORT = 47801U;
+
+    /// Mirror of the telemetry broadcast: every packet is also sent here, for
+    /// the single consumer whose socket stack cannot share a bound port
+    /// (Godot's UDP sockets bind exclusively).
+    inline constexpr std::uint16_t TELEMETRY_MIRROR_PORT = 47803U;
 
 #pragma pack(push, 1)
     /// Minimal state snapshot. Placeholder layout, not the final format.
