@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "drone_replay_app.hpp"
+#include "flight_core/throw_detector.hpp"
 #include "platform_replay/sensor_source_replay.hpp"
 #include "protocol/telemetry.hpp"
 
@@ -14,6 +15,7 @@ namespace
 {
     constexpr float DEFAULT_SPEED = 1.0f;
     constexpr float RAD_TO_DEG = 57.29578f;
+    constexpr double US_PER_S = 1e6;
 
     void printUsage(const char *program)
     {
@@ -71,6 +73,22 @@ int main(int argc, char **argv)
                 steps,
                 telemetry.packetCount(),
                 telemetry.byteCount());
+
+    const mark4::ThrowDetector &detector = app.accessFlightCore().throwDetector();
+    if (detector.throwCount() > 0U)
+    {
+        std::printf("drone_replay: %u throw(s) detected, last release %.2f m/s at t=%.3f s, "
+                    "predicted apex %.2f m at t=%.3f s\n",
+                    detector.throwCount(),
+                    static_cast<double>(detector.releaseVelocityMps()),
+                    static_cast<double>(detector.releaseTimestampUs()) / US_PER_S,
+                    static_cast<double>(detector.apexAltitudeM()),
+                    static_cast<double>(detector.apexTimestampUs()) / US_PER_S);
+    }
+    else
+    {
+        std::printf("drone_replay: no throw detected\n");
+    }
 
     const mark4::Quaternion &q = app.accessFlightCore().attitude();
     const float roll =

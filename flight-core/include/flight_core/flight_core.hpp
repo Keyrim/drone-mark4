@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "flight_core/attitude_estimator.hpp"
+#include "flight_core/throw_detector.hpp"
 #include "flight_core/types.hpp"
 #include "flight_core/vertical_estimator.hpp"
 
@@ -52,9 +53,18 @@ namespace mark4
             return m_verticalEstimator.verticalVelocityMps();
         }
 
+        /// @return throw detector, source of the apex prediction
+        [[nodiscard]] const ThrowDetector &throwDetector() const
+        {
+            return m_throwDetector;
+        }
+
       private:
+        void updateEstimators(const SensorFrame &sensors);
+
         std::uint32_t m_stepCount = 0U;
         AttitudeEstimator m_attitudeEstimator;
         VerticalEstimator m_verticalEstimator;
+        ThrowDetector m_throwDetector;
     };
 } // namespace mark4

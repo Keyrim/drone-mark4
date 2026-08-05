@@ -13,6 +13,7 @@ add_executable(unit_tests
     test_platform_sim_udp.cpp
     test_replay.cpp
     test_telemetry.cpp
+    test_throw_detector.cpp
     test_vertical_estimator.cpp)
 target_link_libraries(unit_tests
     PRIVATE flight_core platform_sim platform_replay protocol Catch2::Catch2WithMain

@@ -12,15 +12,21 @@ namespace mark4
         if (sensors.rc.killSwitch)
         {
             actuators.motor.fill(0.0f);
-            m_attitudeEstimator.update(sensors);
-            m_verticalEstimator.update(sensors, m_attitudeEstimator.attitude());
+            updateEstimators(sensors);
             return;
         }
 
-        m_attitudeEstimator.update(sensors);
-        m_verticalEstimator.update(sensors, m_attitudeEstimator.attitude());
+        updateEstimators(sensors);
 
         // TODO(tmagne): real control law. Placeholder: observable throttle passthrough.
         actuators.motor.fill(sensors.rc.throttle);
+    }
+
+    void FlightCore::updateEstimators(const SensorFrame &sensors)
+    {
+        m_attitudeEstimator.update(sensors);
+        m_verticalEstimator.update(sensors, m_attitudeEstimator.attitude());
+        m_throwDetector.update(
+            sensors, m_verticalEstimator.verticalVelocityMps(), m_verticalEstimator.altitudeM());
     }
 } // namespace mark4
