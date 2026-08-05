@@ -160,6 +160,14 @@ WORKDIR /home/${USERNAME}
 
 RUN mkdir -p "${GH_CONFIG_DIR}" "${CLAUDE_CONFIG_DIR}"
 
+# gdb: debuginfod symbol downloads stall behind restricted networks and
+# freeze every debug session at startup (the inferior never gets resumed).
+# Disabling is not enough: the VS Code cpptools debug engine (MIEngine)
+# unconditionally sends "set debuginfod enabled on" after user setup
+# commands, so the URL list is emptied as well - with no server configured
+# the feature is inert no matter who turns it back on.
+RUN printf 'set debuginfod enabled off\nset debuginfod urls ""\n' > "/home/${USERNAME}/.gdbinit"
+
 # -----------------------------------------------------------------------------
 # Layer 9 - Claude Code (native installer, binary in ~/.local/bin)
 # -----------------------------------------------------------------------------

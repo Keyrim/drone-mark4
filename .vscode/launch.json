@@ -6,13 +6,20 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${command:cmake.launchTargetPath}",
-            "args": ["100000"],
+            "args": [
+                "100000"
+            ],
             "stopAtEntry": false,
             "cwd": "${command:cmake.launchTargetDirectory}",
             "environment": [],
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [
+                {
+                    "description": "Neutralize debuginfod: MIEngine force-enables it after setup commands and its downloads stall forever behind the container network, so the server list is emptied instead",
+                    "text": "-gdb-set debuginfod urls ",
+                    "ignoreFailures": true
+                },
                 {
                     "description": "Enable pretty-printing for gdb",
                     "text": "-enable-pretty-printing",
@@ -30,7 +37,10 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/tools/sim-stub/sim_stub.py",
-            "args": ["--duration", "0"],
+            "args": [
+                "--duration",
+                "0"
+            ],
             "console": "integratedTerminal"
         },
         {
@@ -45,7 +55,11 @@
     "compounds": [
         {
             "name": "full chain (drone_sim + stub + ground station)",
-            "configurations": ["drone_sim (gdb)", "ground_station (python)", "sim_stub (python)"],
+            "configurations": [
+                "drone_sim (gdb)",
+                "ground_station (python)",
+                "sim_stub (python)"
+            ],
             "stopAll": true
         }
     ]
