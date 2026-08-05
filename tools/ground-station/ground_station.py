@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Real-time viewer for the drone telemetry broadcast over UDP.
+"""Real-time viewer for the drone UDP broadcasts.
 
-Listens to the telemetry datagrams emitted by the flight process and plots the
-body angular rates as they arrive. Packet decoding lives in telemetry_wire.py
-so it stays testable without a GUI.
+Three stacked plots fed by two streams:
+  - body angular rates, from the telemetry broadcast of the flight process;
+  - attitude as Euler angles, estimated (telemetry, solid) against the exact
+    simulator state (sim raw broadcast, dashed);
+  - attitude error angle between the two quaternions, the estimator's
+    validation metric.
 
-Run with --help for the available options.
+Without a simulator the sim raw stream simply stays silent and only the
+estimated curves draw. Packet decoding lives in telemetry_wire.py so it stays
+testable without a GUI. Run with --help for the available options.
 """
 
 import argparse
@@ -13,17 +18,24 @@ import errno
 import socket
 import sys
 from collections import deque
-from typing import Deque, List
+from typing import Deque, List, Optional, Tuple
 
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtWidgets
 
-from telemetry_wire import TELEMETRY_PORT, TELEMETRY_PACKET_SIZE, decode_telemetry
+from telemetry_wire import (
+    SIM_RAW_PORT,
+    TELEMETRY_PORT,
+    decode_sim_raw,
+    decode_telemetry,
+    error_angle_deg,
+    euler_deg,
+)
 
 #: Plot refresh period, in milliseconds (roughly 30 Hz).
 REFRESH_PERIOD_MS = 33
 
-#: Expected telemetry rate, used to size the history buffers.
+#: Expected sample rate, used to size the history buffers.
 EXPECTED_RATE_HZ = 100.0
 
 #: Extra room on top of window * rate, so a faster sender cannot starve the plot.
@@ -35,15 +47,17 @@ MIN_BUFFER_SAMPLES = 1024
 #: Receive buffer, large enough for any single datagram.
 RECV_BUFFER_SIZE = 2048
 
-#: Curve names and colors, one per gyro axis.
-GYRO_CURVES = (
-    ("gyro x", "#e6194b"),
-    ("gyro y", "#3cb44b"),
-    ("gyro z", "#4363d8"),
-)
-
 #: Default seconds of history kept on screen.
 DEFAULT_WINDOW_S = 10.0
+
+#: Axis names and colors, shared by the gyro and the Euler angle curves.
+AXIS_COLORS = (
+    ("x", "#e6194b"),
+    ("y", "#3cb44b"),
+    ("z", "#4363d8"),
+)
+
+EULER_NAMES = ("roll", "pitch", "yaw")
 
 
 def open_socket(port: int) -> socket.socket:
@@ -58,34 +72,89 @@ def open_socket(port: int) -> socket.socket:
     return sock
 
 
-class GyroPlotWidget(pg.PlotWidget):
-    """Plots the three gyro axes against time, fed by a periodic timer."""
+def drain(sock: socket.socket) -> List[bytes]:
+    """Read every pending datagram of a nonblocking socket."""
+    datagrams = []
+    while True:
+        try:
+            datagrams.append(sock.recv(RECV_BUFFER_SIZE))
+        except BlockingIOError:
+            return datagrams
+        except OSError as error:
+            if error.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
+                return datagrams
+            raise
 
-    def __init__(self, sock: socket.socket, window_s: float) -> None:
+
+class GroundStationWindow(pg.GraphicsLayoutWidget):
+    """Three stacked time plots fed by the telemetry and sim raw sockets."""
+
+    def __init__(
+        self,
+        telemetry_socket: socket.socket,
+        sim_raw_socket: socket.socket,
+        window_s: float,
+    ) -> None:
         super().__init__()
 
-        self._socket = sock
+        self._telemetry_socket = telemetry_socket
+        self._sim_raw_socket = sim_raw_socket
         self._window_s = window_s
         self._received = 0
         self._dropped = 0
-        self._first_timestamp_us = None
+        self._first_timestamp_us: Optional[int] = None
+        self._last_true_quat: Optional[Tuple[float, float, float, float]] = None
 
         capacity = max(
             MIN_BUFFER_SAMPLES,
             int(window_s * EXPECTED_RATE_HZ * BUFFER_MARGIN),
         )
-        self._times: Deque[float] = deque(maxlen=capacity)
-        self._gyro: List[Deque[float]] = [deque(maxlen=capacity) for _ in GYRO_CURVES]
+
+        def buffers(count: int) -> List[Deque[float]]:
+            return [deque(maxlen=capacity) for _ in range(count)]
+
+        self._telemetry_times: Deque[float] = deque(maxlen=capacity)
+        self._gyro = buffers(3)
+        self._euler_estimated = buffers(3)
+        self._error_deg: Deque[float] = deque(maxlen=capacity)
+        self._sim_raw_times: Deque[float] = deque(maxlen=capacity)
+        self._euler_true = buffers(3)
 
         self.setBackground("w")
-        self.showGrid(x=True, y=True, alpha=0.3)
-        self.setLabel("bottom", "time", units="s")
-        self.setLabel("left", "angular rate", units="rad/s")
-        self.addLegend()
-        self._curves = [
-            self.plot(name=name, pen=pg.mkPen(color, width=2))
-            for name, color in GYRO_CURVES
+
+        gyro_plot = self.addPlot(row=0, col=0)
+        gyro_plot.setLabel("left", "angular rate", units="rad/s")
+        gyro_plot.addLegend()
+        self._gyro_curves = [
+            gyro_plot.plot(name="gyro " + name, pen=pg.mkPen(color, width=2))
+            for name, color in AXIS_COLORS
         ]
+
+        euler_plot = self.addPlot(row=1, col=0)
+        euler_plot.setLabel("left", "attitude", units="deg")
+        euler_plot.addLegend()
+        self._estimated_curves = [
+            euler_plot.plot(name=name + " est", pen=pg.mkPen(color, width=2))
+            for name, (_, color) in zip(EULER_NAMES, AXIS_COLORS)
+        ]
+        self._true_curves = [
+            euler_plot.plot(
+                name=name + " true",
+                pen=pg.mkPen(color, width=1, style=QtCore.Qt.PenStyle.DashLine),
+            )
+            for name, (_, color) in zip(EULER_NAMES, AXIS_COLORS)
+        ]
+
+        error_plot = self.addPlot(row=2, col=0)
+        error_plot.setLabel("left", "attitude error", units="deg")
+        error_plot.setLabel("bottom", "time", units="s")
+        self._error_curve = error_plot.plot(pen=pg.mkPen("#f58231", width=2))
+
+        self._plots = (gyro_plot, euler_plot, error_plot)
+        for plot in self._plots:
+            plot.showGrid(x=True, y=True, alpha=0.3)
+        euler_plot.setXLink(gyro_plot)
+        error_plot.setXLink(gyro_plot)
 
         self._refresh_title()
 
@@ -94,47 +163,76 @@ class GyroPlotWidget(pg.PlotWidget):
         self._timer.start(REFRESH_PERIOD_MS)
 
     def _on_tick(self) -> None:
-        """Drain every pending datagram, then redraw."""
-        if self._drain_socket():
+        """Drain both sockets, then redraw."""
+        appended = self._drain_sim_raw()
+        appended = self._drain_telemetry() or appended
+        if appended:
             self._refresh_plot()
         self._refresh_title()
 
-    def _drain_socket(self) -> bool:
-        """Read until the socket is empty. Returns True if anything was stored."""
-        appended = False
-        while True:
-            try:
-                datagram = self._socket.recv(RECV_BUFFER_SIZE)
-            except BlockingIOError:
-                return appended
-            except OSError as error:
-                if error.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
-                    return appended
-                raise
+    def _elapsed_s(self, timestamp_us: int) -> float:
+        """Seconds since the first sample seen, both streams share the clock."""
+        if self._first_timestamp_us is None:
+            self._first_timestamp_us = timestamp_us
+        return (timestamp_us - self._first_timestamp_us) * 1e-6
 
+    def _drain_sim_raw(self) -> bool:
+        appended = False
+        for datagram in drain(self._sim_raw_socket):
+            sample = decode_sim_raw(datagram)
+            if sample is None:
+                self._dropped += 1
+                continue
+            self._received += 1
+            self._last_true_quat = sample.attitude_quat
+            self._sim_raw_times.append(self._elapsed_s(sample.timestamp_us))
+            for axis, angle in enumerate(euler_deg(sample.attitude_quat)):
+                self._euler_true[axis].append(angle)
+            appended = True
+        return appended
+
+    def _drain_telemetry(self) -> bool:
+        appended = False
+        for datagram in drain(self._telemetry_socket):
             sample = decode_telemetry(datagram)
             if sample is None:
                 self._dropped += 1
                 continue
-
             self._received += 1
-            if self._first_timestamp_us is None:
-                self._first_timestamp_us = sample.timestamp_us
-
-            elapsed_s = (sample.timestamp_us - self._first_timestamp_us) * 1e-6
-            self._times.append(elapsed_s)
-            for axis, buffer in enumerate(self._gyro):
-                buffer.append(sample.gyro_rad_s[axis])
+            self._telemetry_times.append(self._elapsed_s(sample.timestamp_us))
+            for axis, rate in enumerate(sample.gyro_rad_s):
+                self._gyro[axis].append(rate)
+            for axis, angle in enumerate(euler_deg(sample.attitude_quat)):
+                self._euler_estimated[axis].append(angle)
+            if self._last_true_quat is None:
+                self._error_deg.append(0.0)
+            else:
+                self._error_deg.append(
+                    error_angle_deg(sample.attitude_quat, self._last_true_quat)
+                )
             appended = True
+        return appended
 
     def _refresh_plot(self) -> None:
         """Push the buffers to the curves and slide the visible time window."""
-        times = list(self._times)
-        for curve, buffer in zip(self._curves, self._gyro):
-            curve.setData(times, list(buffer))
+        telemetry_times = list(self._telemetry_times)
+        for curve, buffer in zip(self._gyro_curves, self._gyro):
+            curve.setData(telemetry_times, list(buffer))
+        for curve, buffer in zip(self._estimated_curves, self._euler_estimated):
+            curve.setData(telemetry_times, list(buffer))
+        self._error_curve.setData(telemetry_times, list(self._error_deg))
 
-        latest = times[-1]
-        self.setXRange(max(0.0, latest - self._window_s), max(latest, self._window_s))
+        sim_raw_times = list(self._sim_raw_times)
+        for curve, buffer in zip(self._true_curves, self._euler_true):
+            curve.setData(sim_raw_times, list(buffer))
+
+        latest = max(
+            telemetry_times[-1] if telemetry_times else 0.0,
+            sim_raw_times[-1] if sim_raw_times else 0.0,
+        )
+        self._plots[0].setXRange(
+            max(0.0, latest - self._window_s), max(latest, self._window_s)
+        )
 
     def _refresh_title(self) -> None:
         """Show the packet counters in the window title."""
@@ -151,10 +249,16 @@ def parse_arguments(argv: List[str]) -> argparse.Namespace:
     """Parse the command line."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
-        "--port",
+        "--telemetry-port",
         type=int,
         default=TELEMETRY_PORT,
-        help="UDP port to listen on (default: %(default)s)",
+        help="UDP port of the telemetry broadcast (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--sim-raw-port",
+        type=int,
+        default=SIM_RAW_PORT,
+        help="UDP port of the raw simulator broadcast (default: %(default)s)",
     )
     parser.add_argument(
         "--window",
@@ -166,25 +270,26 @@ def parse_arguments(argv: List[str]) -> argparse.Namespace:
 
 
 def main(argv: List[str]) -> int:
-    """Open the socket, build the window, run the Qt loop."""
+    """Open the sockets, build the window, run the Qt loop."""
     args = parse_arguments(argv)
     if args.window <= 0.0:
         print("--window must be strictly positive", file=sys.stderr)
         return 2
 
     try:
-        sock = open_socket(args.port)
+        telemetry_socket = open_socket(args.telemetry_port)
+        sim_raw_socket = open_socket(args.sim_raw_port)
     except OSError as error:
-        print("cannot bind UDP port {}: {}".format(args.port, error), file=sys.stderr)
+        print("cannot bind UDP port: {}".format(error), file=sys.stderr)
         return 1
 
     application = QtWidgets.QApplication(sys.argv[:1])
-    widget = GyroPlotWidget(sock, args.window)
-    widget.resize(900, 500)
+    widget = GroundStationWindow(telemetry_socket, sim_raw_socket, args.window)
+    widget.resize(900, 800)
     widget.show()
     print(
-        "listening on 0.0.0.0:{}, expecting {} byte packets".format(
-            args.port, TELEMETRY_PACKET_SIZE
+        "listening on 0.0.0.0:{} (telemetry) and 0.0.0.0:{} (sim raw)".format(
+            args.telemetry_port, args.sim_raw_port
         )
     )
     return application.exec()
