@@ -1,0 +1,214 @@
+[gd_scene load_steps=26 format=3]
+
+[ext_resource type="Script" path="res://scripts/drone.gd" id="1_drone"]
+[ext_resource type="Script" path="res://scripts/sensors.gd" id="2_sensors"]
+[ext_resource type="Script" path="res://scripts/sim_link.gd" id="3_sim_link"]
+[ext_resource type="Script" path="res://scripts/pilot_input.gd" id="4_pilot"]
+[ext_resource type="Script" path="res://scripts/camera_follow.gd" id="5_camera"]
+[ext_resource type="Script" path="res://scripts/hud.gd" id="6_hud"]
+[ext_resource type="Shader" path="res://shaders/ground_grid.gdshader" id="7_grid"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_world"]
+sky_horizon_color = Color(0.65, 0.68, 0.71, 1)
+ground_horizon_color = Color(0.65, 0.68, 0.71, 1)
+
+[sub_resource type="Sky" id="Sky_world"]
+sky_material = SubResource("ProceduralSkyMaterial_world")
+
+[sub_resource type="Environment" id="Environment_world"]
+background_mode = 2
+sky = SubResource("Sky_world")
+tonemap_mode = 2
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_ground"]
+shader = ExtResource("7_grid")
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
+size = Vector3(80, 1, 80)
+
+[sub_resource type="BoxMesh" id="BoxMesh_ground"]
+material = SubResource("ShaderMaterial_ground")
+size = Vector3(80, 1, 80)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_pylon"]
+albedo_color = Color(0.85, 0.5, 0.15, 1)
+roughness = 0.7
+
+[sub_resource type="BoxMesh" id="BoxMesh_pylon_1m"]
+material = SubResource("StandardMaterial3D_pylon")
+size = Vector3(0.2, 1, 0.2)
+
+[sub_resource type="BoxMesh" id="BoxMesh_pylon_2m"]
+material = SubResource("StandardMaterial3D_pylon")
+size = Vector3(0.2, 2, 0.2)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_pylon_1m"]
+size = Vector3(0.2, 1, 0.2)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_pylon_2m"]
+size = Vector3(0.2, 2, 0.2)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_frame"]
+albedo_color = Color(0.12, 0.13, 0.15, 1)
+metallic = 0.3
+roughness = 0.5
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_frame"]
+size = Vector3(0.17, 0.05, 0.17)
+
+[sub_resource type="BoxMesh" id="BoxMesh_frame"]
+material = SubResource("StandardMaterial3D_frame")
+size = Vector3(0.16, 0.03, 0.16)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_motor_front"]
+albedo_color = Color(0.85, 0.16, 0.16, 1)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_motor_rear"]
+albedo_color = Color(0.9, 0.9, 0.9, 1)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_motor_front"]
+material = SubResource("StandardMaterial3D_motor_front")
+top_radius = 0.012
+bottom_radius = 0.012
+height = 0.02
+radial_segments = 12
+rings = 1
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_motor_rear"]
+material = SubResource("StandardMaterial3D_motor_rear")
+top_radius = 0.012
+bottom_radius = 0.012
+height = 0.02
+radial_segments = 12
+rings = 1
+
+[node name="Main" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_world")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.5736, -0.8192, 0, 0.8192, 0.5736, 0, 10, 0)
+shadow_enabled = true
+
+[node name="Ground" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground"]
+shape = SubResource("BoxShape3D_ground")
+
+[node name="Mesh" type="MeshInstance3D" parent="Ground"]
+mesh = SubResource("BoxMesh_ground")
+
+[node name="Pylons" type="StaticBody3D" parent="."]
+
+[node name="PylonA" type="MeshInstance3D" parent="Pylons"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0.5, 5)
+mesh = SubResource("BoxMesh_pylon_1m")
+
+[node name="PylonAShape" type="CollisionShape3D" parent="Pylons"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0.5, 5)
+shape = SubResource("BoxShape3D_pylon_1m")
+
+[node name="PylonB" type="MeshInstance3D" parent="Pylons"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0.5, -5)
+mesh = SubResource("BoxMesh_pylon_1m")
+
+[node name="PylonBShape" type="CollisionShape3D" parent="Pylons"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0.5, -5)
+shape = SubResource("BoxShape3D_pylon_1m")
+
+[node name="PylonC" type="MeshInstance3D" parent="Pylons"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 0.5, 5)
+mesh = SubResource("BoxMesh_pylon_1m")
+
+[node name="PylonCShape" type="CollisionShape3D" parent="Pylons"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 0.5, 5)
+shape = SubResource("BoxShape3D_pylon_1m")
+
+[node name="PylonD" type="MeshInstance3D" parent="Pylons"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 0.5, -5)
+mesh = SubResource("BoxMesh_pylon_1m")
+
+[node name="PylonDShape" type="CollisionShape3D" parent="Pylons"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 0.5, -5)
+shape = SubResource("BoxShape3D_pylon_1m")
+
+[node name="PylonE" type="MeshInstance3D" parent="Pylons"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 1, 0)
+mesh = SubResource("BoxMesh_pylon_2m")
+
+[node name="PylonEShape" type="CollisionShape3D" parent="Pylons"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 1, 0)
+shape = SubResource("BoxShape3D_pylon_2m")
+
+[node name="PylonF" type="MeshInstance3D" parent="Pylons"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, -10)
+mesh = SubResource("BoxMesh_pylon_2m")
+
+[node name="PylonFShape" type="CollisionShape3D" parent="Pylons"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, -10)
+shape = SubResource("BoxShape3D_pylon_2m")
+
+[node name="Drone" type="RigidBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.03, 0)
+mass = 0.65
+inertia = Vector3(0.0023, 0.004, 0.0023)
+center_of_mass_mode = 1
+center_of_mass = Vector3(0, 0, 0)
+can_sleep = false
+linear_damp_mode = 1
+linear_damp = 0.0
+angular_damp_mode = 1
+angular_damp = 0.0
+script = ExtResource("1_drone")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Drone"]
+shape = SubResource("BoxShape3D_frame")
+
+[node name="Frame" type="MeshInstance3D" parent="Drone"]
+mesh = SubResource("BoxMesh_frame")
+
+[node name="Motor0" type="MeshInstance3D" parent="Drone"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0566, 0.02, 0.0566)
+mesh = SubResource("CylinderMesh_motor_rear")
+
+[node name="Motor1" type="MeshInstance3D" parent="Drone"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0566, 0.02, -0.0566)
+mesh = SubResource("CylinderMesh_motor_front")
+
+[node name="Motor2" type="MeshInstance3D" parent="Drone"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0566, 0.02, 0.0566)
+mesh = SubResource("CylinderMesh_motor_rear")
+
+[node name="Motor3" type="MeshInstance3D" parent="Drone"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0566, 0.02, -0.0566)
+mesh = SubResource("CylinderMesh_motor_front")
+
+[node name="Sensors" type="Node" parent="Drone"]
+script = ExtResource("2_sensors")
+
+[node name="SimLink" type="Node" parent="Drone"]
+script = ExtResource("3_sim_link")
+
+[node name="PilotInput" type="Node" parent="Drone"]
+script = ExtResource("4_pilot")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 3)
+current = true
+script = ExtResource("5_camera")
+target_path = NodePath("../Drone")
+
+[node name="Hud" type="CanvasLayer" parent="."]
+
+[node name="Label" type="Label" parent="Hud"]
+offset_left = 16.0
+offset_top = 12.0
+offset_right = 640.0
+offset_bottom = 260.0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 6
+script = ExtResource("6_hud")
+drone_path = NodePath("../../Drone")

@@ -1,0 +1,6 @@
+# Godot 4 editor cache and imported resources.
+.godot/
+# Exported builds.
+build/
+# Generated translation binaries.
+*.translation
