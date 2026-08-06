@@ -213,6 +213,7 @@ TEST_CASE("pushed motors are sent back to the sensor sender")
     REQUIRE(source.waitFrame(frame));
 
     mark4::ActuatorFrame actuators;
+    actuators.timestampUs = frame.timestampUs;
     actuators.motor = {0.1f, 0.2f, 0.3f, 0.4f};
     sink.push(actuators);
 
@@ -222,6 +223,12 @@ TEST_CASE("pushed motors are sent back to the sensor sender")
     std::array<std::uint8_t, 64> wire{};
     REQUIRE(simulator.receive(wire.data(), wire.size()) == mark4::SIM_ACTUATOR_PACKET_SIZE);
     REQUIRE(wire[offsetof(mark4::SimActuatorPacket, version)] == mark4::PROTOCOL_VERSION);
+
+    // The reply echoes the sensor timestamp: the lockstep handshake.
+    std::uint64_t echo = 0U;
+    std::memcpy(
+        &echo, wire.data() + offsetof(mark4::SimActuatorPacket, echoTimestampUs), sizeof(echo));
+    REQUIRE(echo == TEST_TIMESTAMP_US);
 
     std::array<float, 4> motor{};
     std::memcpy(

@@ -35,7 +35,12 @@ namespace mark4
         static constexpr std::size_t LOG_PATH_SIZE = 64U;
 
         /// @param maxFrames number of frames to process before stopping
-        explicit DroneSimApp(std::uint32_t maxFrames);
+        /// @param simPort UDP port the sim link listens on
+        /// @param telemetryPort UDP port telemetry is broadcast to (mirror
+        ///        copies go to telemetryPort + 2)
+        explicit DroneSimApp(std::uint32_t maxFrames,
+                             std::uint16_t simPort,
+                             std::uint16_t telemetryPort);
 
         /// @brief Initializes services in declaration order: binds the sim link,
         ///        opens the telemetry socket and the blackbox file. The first
@@ -81,7 +86,9 @@ namespace mark4
       private:
         void sendTelemetry(const mark4::SensorFrame &frame, const mark4::ActuatorFrame &actuators);
 
-        std::uint32_t m_maxFrames; ///< frame budget for run()
+        std::uint32_t m_maxFrames;     ///< frame budget for run()
+        std::uint16_t m_simPort;       ///< sim link listen port
+        std::uint16_t m_telemetryPort; ///< telemetry broadcast port
 
         // Declaration order = construction order; dependencies are injected by
         // reference, so a service may only depend on those declared above it.

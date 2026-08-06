@@ -79,8 +79,12 @@ namespace
 
 namespace mark4
 {
-    DroneSimApp::DroneSimApp(std::uint32_t maxFrames)
+    DroneSimApp::DroneSimApp(std::uint32_t maxFrames,
+                             std::uint16_t simPort,
+                             std::uint16_t telemetryPort)
         : m_maxFrames(maxFrames),
+          m_simPort(simPort),
+          m_telemetryPort(telemetryPort),
           m_sensorSource(m_simLink),
           m_motorSink(m_simLink),
           m_logFilePath(makeLogFilePath()),
@@ -91,11 +95,11 @@ namespace mark4
 
     bool DroneSimApp::init()
     {
-        if (!m_simLink.open(mark4::SIM_LINK_PORT, IDLE_TIMEOUT_MS))
+        if (!m_simLink.open(m_simPort, IDLE_TIMEOUT_MS))
         {
             return false;
         }
-        if (!m_telemetrySender.open())
+        if (!m_telemetrySender.open(m_telemetryPort))
         {
             return false;
         }

@@ -17,6 +17,7 @@ namespace mark4
 
         mark4::SimActuatorPacket packet{};
         packet.version = mark4::PROTOCOL_VERSION;
+        packet.echoTimestampUs = frame.timestampUs;
 
         std::array<std::uint8_t, sizeof(packet)> wire{};
         std::memcpy(wire.data(), &packet, sizeof(packet));

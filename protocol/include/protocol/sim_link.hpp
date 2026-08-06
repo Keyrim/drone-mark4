@@ -35,11 +35,16 @@ namespace mark4
                                         ///< counterpart an estimator could track.
     };
 
-    /// Actuator frame on the wire, flight process back to the simulator.
+    /// Actuator frame on the wire, flight process back to the simulator. The
+    /// echoed timestamp identifies the sensor packet this frame answers: it
+    /// is the lockstep handshake, letting the simulator wait for the reply
+    /// to the exact tick it sent (and resend on packet loss) instead of
+    /// accepting whatever arrives.
     struct SimActuatorPacket
     {
-        std::uint8_t version;       ///< = PROTOCOL_VERSION
-        std::array<float, 4> motor; ///< normalized motor commands [0, 1]
+        std::uint8_t version;          ///< = PROTOCOL_VERSION
+        std::uint64_t echoTimestampUs; ///< timestamp of the sensor packet answered
+        std::array<float, 4> motor;    ///< normalized motor commands [0, 1]
     };
 #pragma pack(pop)
 
@@ -47,8 +52,8 @@ namespace mark4
     /// + kill switch (1) + throttle (4) + arm switch (1) + reset count (1).
     inline constexpr std::size_t SIM_SENSOR_PACKET_SIZE = 44U;
 
-    /// version (1) + motors (16).
-    inline constexpr std::size_t SIM_ACTUATOR_PACKET_SIZE = 17U;
+    /// version (1) + echoed timestamp (8) + motors (16).
+    inline constexpr std::size_t SIM_ACTUATOR_PACKET_SIZE = 25U;
 
     static_assert(sizeof(SimSensorPacket) == SIM_SENSOR_PACKET_SIZE, "wire layout must be packed");
     static_assert(sizeof(SimActuatorPacket) == SIM_ACTUATOR_PACKET_SIZE,

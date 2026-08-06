@@ -43,9 +43,12 @@ namespace mark4
         RcInput rc;                       ///< RC state
     };
 
-    /// Output of step().
+    /// Output of step(). Stamped with the timestamp of the sensor frame it
+    /// answers, so a consumer can pair outputs with inputs (the sim link
+    /// lockstep relies on it).
     struct ActuatorFrame
     {
-        std::array<float, 4> motor{}; ///< normalized motor commands [0, 1]
+        std::uint64_t timestampUs = 0U; ///< timestamp of the answered SensorFrame [us]
+        std::array<float, 4> motor{};   ///< normalized motor commands [0, 1]
     };
 } // namespace mark4

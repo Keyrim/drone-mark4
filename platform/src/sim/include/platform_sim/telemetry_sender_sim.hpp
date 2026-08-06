@@ -25,8 +25,12 @@ namespace mark4
         TelemetrySenderSim &operator=(TelemetrySenderSim &&) = delete;
 
         /// @brief Creates the broadcast socket.
+        /// @param port destination port of the broadcast; the mirror copy
+        ///        goes to port + 2 (the defaults reproduce TELEMETRY_PORT
+        ///        and TELEMETRY_MIRROR_PORT). Configurable so several
+        ///        instances can run side by side in a batch campaign.
         /// @return true when the socket is ready to send
-        bool open();
+        bool open(std::uint16_t port);
 
         /// @brief Broadcasts one packet. Best effort: a send failure is logged
         ///        once and the packet is dropped.
@@ -48,6 +52,7 @@ namespace mark4
 
       private:
         int m_socketFd = -1;              ///< -1 when closed
+        std::uint16_t m_port = 0U;        ///< broadcast destination port
         std::uint32_t m_packetCount = 0U; ///< packets actually sent
         std::size_t m_byteCount = 0U;     ///< bytes actually sent
         bool m_sendFailureLogged = false; ///< keeps a broken link from flooding stderr

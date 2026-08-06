@@ -1,6 +1,7 @@
 #include "drone_replay_app.hpp"
 
 #include "flight_core/telemetry.hpp"
+#include "protocol/telemetry.hpp"
 
 namespace
 {
@@ -21,7 +22,7 @@ namespace mark4
         {
             return false;
         }
-        return m_telemetrySender.open();
+        return m_telemetrySender.open(mark4::TELEMETRY_PORT);
     }
 
     std::uint32_t DroneReplayApp::run()

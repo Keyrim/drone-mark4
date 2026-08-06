@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include "drone_sim_app.hpp"
 #include "protocol/sim_link.hpp"
@@ -14,24 +15,74 @@ namespace
     constexpr std::uint32_t DEFAULT_MAX_FRAMES = 500U;
     constexpr int STRTOL_BASE = 10;
     constexpr std::uint64_t US_PER_MS = 1000U;
+    constexpr long MAX_PORT = 65535L;
+
+    void printUsage(const char *program)
+    {
+        static_cast<void>(std::fprintf(
+            stderr,
+            "usage: %s [frames > 0] [--sim-port N] [--telemetry-port N]\n"
+            "  --sim-port        UDP port the sim link listens on (default %u)\n"
+            "  --telemetry-port  UDP telemetry broadcast port, mirror on +2 (default %u)\n",
+            program,
+            static_cast<unsigned>(mark4::SIM_LINK_PORT),
+            static_cast<unsigned>(mark4::TELEMETRY_PORT)));
+    }
+
+    /// @brief Parses a strictly positive integer bounded by maxValue.
+    /// @return true on success, with the value stored in valueOut
+    bool parsePositive(const char *text, long maxValue, long &valueOut)
+    {
+        char *end = nullptr;
+        const long parsed = std::strtol(text, &end, STRTOL_BASE);
+        if (end == text || *end != '\0' || parsed <= 0L || parsed > maxValue)
+        {
+            return false;
+        }
+        valueOut = parsed;
+        return true;
+    }
 } // namespace
 
 int main(int argc, char **argv)
 {
     std::uint32_t maxFrames = DEFAULT_MAX_FRAMES;
-    if (argc > 1)
+    std::uint16_t simPort = mark4::SIM_LINK_PORT;
+    std::uint16_t telemetryPort = mark4::TELEMETRY_PORT;
+
+    for (int i = 1; i < argc; ++i)
     {
-        char *end = nullptr;
-        const long parsed = std::strtol(argv[1], &end, STRTOL_BASE);
-        if (end == argv[1] || *end != '\0' || parsed <= 0L)
+        long value = 0L;
+        if (std::strcmp(argv[i], "--sim-port") == 0 && i + 1 < argc)
         {
-            static_cast<void>(std::fprintf(stderr, "usage: %s [frames > 0]\n", argv[0]));
+            if (!parsePositive(argv[++i], MAX_PORT, value))
+            {
+                printUsage(argv[0]);
+                return 1;
+            }
+            simPort = static_cast<std::uint16_t>(value);
+        }
+        else if (std::strcmp(argv[i], "--telemetry-port") == 0 && i + 1 < argc)
+        {
+            if (!parsePositive(argv[++i], MAX_PORT, value))
+            {
+                printUsage(argv[0]);
+                return 1;
+            }
+            telemetryPort = static_cast<std::uint16_t>(value);
+        }
+        else if (parsePositive(argv[i], static_cast<long>(UINT32_MAX), value))
+        {
+            maxFrames = static_cast<std::uint32_t>(value);
+        }
+        else
+        {
+            printUsage(argv[0]);
             return 1;
         }
-        maxFrames = static_cast<std::uint32_t>(parsed);
     }
 
-    mark4::DroneSimApp app(maxFrames);
+    mark4::DroneSimApp app(maxFrames, simPort, telemetryPort);
     if (!app.init())
     {
         static_cast<void>(std::fprintf(stderr, "drone_sim: initialization failed\n"));
@@ -39,8 +90,8 @@ int main(int argc, char **argv)
     }
 
     std::printf("drone_sim: waiting for sensor packets on udp/%u, telemetry broadcast on udp/%u\n",
-                static_cast<unsigned>(mark4::SIM_LINK_PORT),
-                static_cast<unsigned>(mark4::TELEMETRY_PORT));
+                static_cast<unsigned>(simPort),
+                static_cast<unsigned>(telemetryPort));
 
     const std::uint32_t steps = app.run();
     const std::uint64_t elapsedMs = app.accessClock().nowUs() / US_PER_MS;

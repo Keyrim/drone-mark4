@@ -32,8 +32,9 @@ namespace mark4
         }
     }
 
-    bool TelemetrySenderSim::open()
+    bool TelemetrySenderSim::open(std::uint16_t port)
     {
+        m_port = port;
         if (m_socketFd >= 0)
         {
             static_cast<void>(std::fprintf(stderr, "TelemetrySenderSim: already open\n"));
@@ -67,7 +68,7 @@ namespace mark4
 
         sockaddr_in target{};
         target.sin_family = AF_INET;
-        target.sin_port = htons(mark4::TELEMETRY_PORT);
+        target.sin_port = htons(m_port);
         target.sin_addr.s_addr = htonl(INADDR_BROADCAST);
 
         const ssize_t sent = ::sendto(
@@ -84,7 +85,7 @@ namespace mark4
 
         // Same packet on the mirror port, for the consumer that cannot share
         // a bound port. Best effort: the main broadcast already went out.
-        target.sin_port = htons(mark4::TELEMETRY_MIRROR_PORT);
+        target.sin_port = htons(static_cast<std::uint16_t>(m_port + 2U));
         static_cast<void>(::sendto(m_socketFd,
                                    data,
                                    size,
