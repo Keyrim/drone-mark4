@@ -25,7 +25,7 @@ from typing import List, Optional, Tuple
 
 # Keep in sync with protocol/include/protocol/sim_link.hpp and
 # protocol/include/protocol/version.hpp.
-PROTOCOL_VERSION = 7
+PROTOCOL_VERSION = 9
 
 # version (1) + timestamp (8) + gyro (12) + accel (12) + baro (4)
 # + kill switch (1) + throttle (4).
@@ -33,8 +33,8 @@ SENSOR_FORMAT = "<BQ3f3ffBfBB"
 SENSOR_PACKET_SIZE = 44
 
 # version (1) + motors (16).
-ACTUATOR_FORMAT = "<B4f"
-ACTUATOR_PACKET_SIZE = 17
+ACTUATOR_FORMAT = "<BQ4f"
+ACTUATOR_PACKET_SIZE = 25
 
 assert struct.calcsize(SENSOR_FORMAT) == SENSOR_PACKET_SIZE
 assert struct.calcsize(ACTUATOR_FORMAT) == ACTUATOR_PACKET_SIZE
@@ -127,13 +127,16 @@ def build_sensor_packet(
 
 
 def decode_actuator_packet(payload: bytes) -> Optional[Tuple[float, ...]]:
-    """Return the four motor commands, or None if the datagram is not ours."""
+    """Return the four motor commands, or None if the datagram is not ours.
+
+    The echoed timestamp (fields[1]) is ignored here: the stub free-runs.
+    """
     if len(payload) != ACTUATOR_PACKET_SIZE:
         return None
     fields = struct.unpack(ACTUATOR_FORMAT, payload)
     if fields[0] != PROTOCOL_VERSION:
         return None
-    return fields[1:]
+    return fields[2:]
 
 
 def drain_replies(

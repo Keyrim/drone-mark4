@@ -47,7 +47,7 @@ SIM_RAW_STRUCT = struct.Struct("<BQ4f3f3f")
 SIM_RAW_PACKET_SIZE = 49
 
 #: First byte of every packet, must match mark4::PROTOCOL_VERSION.
-PROTOCOL_VERSION = 7
+PROTOCOL_VERSION = 9
 
 #: UDP port telemetry is broadcast to, must match mark4::TELEMETRY_PORT.
 TELEMETRY_PORT = 47801
