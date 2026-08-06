@@ -25,12 +25,12 @@ from typing import List, Optional, Tuple
 
 # Keep in sync with protocol/include/protocol/sim_link.hpp and
 # protocol/include/protocol/version.hpp.
-PROTOCOL_VERSION = 5
+PROTOCOL_VERSION = 7
 
 # version (1) + timestamp (8) + gyro (12) + accel (12) + baro (4)
 # + kill switch (1) + throttle (4).
-SENSOR_FORMAT = "<BQ3f3ffBf"
-SENSOR_PACKET_SIZE = 42
+SENSOR_FORMAT = "<BQ3f3ffBfBB"
+SENSOR_PACKET_SIZE = 44
 
 # version (1) + motors (16).
 ACTUATOR_FORMAT = "<B4f"
@@ -50,6 +50,8 @@ GRAVITY_MPS2 = 9.80665
 SEA_LEVEL_PRESSURE_PA = 101325.0
 KILL_SWITCH_RELEASED = 0
 THROTTLE = 0.25
+ARM_SWITCH_OFF = 0
+RESET_COUNT = 0
 
 STATUS_PERIOD_S = 1.0
 RECEIVE_BUFFER_SIZE = 512
@@ -119,6 +121,8 @@ def build_sensor_packet(
         SEA_LEVEL_PRESSURE_PA,
         KILL_SWITCH_RELEASED,
         THROTTLE,
+        ARM_SWITCH_OFF,
+        RESET_COUNT,
     )
 
 

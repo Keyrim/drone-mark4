@@ -13,14 +13,14 @@ import sys
 
 # Must match BlackboxRecord in flight-core/include/flight_core/blackbox.hpp:
 # version u8, timestamp u64, gyro 3f, accel 3f, baro f, kill u8,
-# throttle f, motors 4f - packed, little-endian.
-RECORD = struct.Struct("<BQ3f3ffBf4f")
-RECORD_VERSION = 1
-assert RECORD.size == 58, "format string out of sync with BlackboxRecord"
+# throttle f, arm u8, motors 4f - packed, little-endian.
+RECORD = struct.Struct("<BQ3f3ffBfB4f")
+RECORD_VERSION = 2
+assert RECORD.size == 59, "format string out of sync with BlackboxRecord"
 
 CSV_HEADER = (
     "timestamp_us,gyro_x_rad_s,gyro_y_rad_s,gyro_z_rad_s,"
-    "accel_x_mps2,accel_y_mps2,accel_z_mps2,baro_pa,kill_switch,throttle,"
+    "accel_x_mps2,accel_y_mps2,accel_z_mps2,baro_pa,kill_switch,throttle,arm_switch,"
     "motor_0,motor_1,motor_2,motor_3"
 )
 G_MPS2 = 9.80665

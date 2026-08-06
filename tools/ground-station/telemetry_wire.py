@@ -25,13 +25,14 @@ from typing import Optional, Tuple
 #   float   releaseVelocityMps   last release velocity [m/s]
 #   uint64  apexTimestampUs  last predicted apex instant [us]
 #   float   apexAltitudeM    last predicted apex altitude [m]
-TELEMETRY_STRUCT = struct.Struct("<BQ3f4f3f4f2fBIfQf")
+#   uint8   flightPhase      FlightPhase of the state machine
+TELEMETRY_STRUCT = struct.Struct("<BQ3f4f3f4f2fBIfQfB")
 
 #: Packed wire size: version (1) + timestamp (8) + gyro (12) + attitude
 #: quaternion (16) + gyro bias (12) + motors (16) + altitude (4) + vz (4)
 #: + throw state (1) + throw count (4) + release velocity (4)
-#: + apex timestamp (8) + apex altitude (4).
-TELEMETRY_PACKET_SIZE = 94
+#: + apex timestamp (8) + apex altitude (4) + flight phase (1).
+TELEMETRY_PACKET_SIZE = 95
 
 # Wire format mirroring mark4::SimRawPacket, the exact simulator state:
 #   uint8   version          = PROTOCOL_VERSION
@@ -46,7 +47,7 @@ SIM_RAW_STRUCT = struct.Struct("<BQ4f3f3f")
 SIM_RAW_PACKET_SIZE = 49
 
 #: First byte of every packet, must match mark4::PROTOCOL_VERSION.
-PROTOCOL_VERSION = 5
+PROTOCOL_VERSION = 7
 
 #: UDP port telemetry is broadcast to, must match mark4::TELEMETRY_PORT.
 TELEMETRY_PORT = 47801
@@ -78,6 +79,7 @@ class TelemetrySample:
     release_velocity_mps: float
     apex_timestamp_us: int
     apex_altitude_m: float
+    flight_phase: int
 
     @property
     def timestamp_s(self) -> float:
@@ -126,6 +128,7 @@ def decode_telemetry(datagram: bytes) -> Optional[TelemetrySample]:
         release_velocity_mps=fields[20],
         apex_timestamp_us=fields[21],
         apex_altitude_m=fields[22],
+        flight_phase=fields[23],
     )
 
 
@@ -179,6 +182,7 @@ def encode_telemetry(sample: TelemetrySample, version: int = PROTOCOL_VERSION) -
         sample.release_velocity_mps,
         sample.apex_timestamp_us,
         sample.apex_altitude_m,
+        sample.flight_phase,
     )
 
 
