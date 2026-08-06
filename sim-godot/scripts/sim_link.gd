@@ -16,31 +16,39 @@ extends Node
 ##                        3x f32 accel [m/s^2], f32 baro [Pa],
 ##                        u8 kill switch, f32 throttle, u8 arm switch,
 ##                        u8 reset count
-##   actuator (17 bytes): u8 version, 4x f32 motor commands in [0, 1]
+##   actuator (25 bytes): u8 version, u64 echoed timestamp_us,
+##                        4x f32 motor commands in [0, 1]
 ##
-## Anything with another size or another version byte is dropped.
+## Anything with another size or another version byte is dropped. The echoed
+## timestamp identifies the sensor packet a reply answers: in lockstep mode
+## the tick waits for the reply to the exact packet it sent, and resends it
+## when the wait times out (UDP may drop packets, the handshake may not).
 ##
 ## Vectors on the wire use the drone body frame of the protocol (x forward,
 ## y left, z up - the accelerometer reads +1 g on z at rest), remapped here
 ## from the Godot body axes (y up, -z forward, x right).
 
 ## Keep in sync with protocol/include/protocol/version.hpp.
-const PROTOCOL_VERSION := 7
+const PROTOCOL_VERSION := 9
 
 ## Axis remap from the Godot body frame to the drone body frame: columns are
 ## the drone coordinates of the Godot x, y and z axes.
 const GODOT_TO_DRONE := Basis(Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(-1, 0, 0))
 
 const SENSOR_PACKET_SIZE := 44
-const ACTUATOR_PACKET_SIZE := 17
+const ACTUATOR_PACKET_SIZE := 25
 const MOTOR_COUNT := 4
 
-## Offset of the first motor command inside the actuator packet.
-const ACTUATOR_MOTOR_OFFSET := 1
+## Offsets inside the actuator packet.
+const ACTUATOR_ECHO_OFFSET := 1
+const ACTUATOR_MOTOR_OFFSET := 9
 const FLOAT_SIZE := 4
 
 ## Sleep between two polls while waiting for a lockstep reply.
 const LOCKSTEP_POLL_INTERVAL_US := 20
+
+## Sensor packet resends before a lockstep tick gives up.
+const LOCKSTEP_RESEND_LIMIT := 20
 
 @export_group("Endpoint")
 ## Address of the flight process (drone_sim).
@@ -67,13 +75,20 @@ var packets_received: int = 0
 var packets_dropped: int = 0
 ## Number of physics ticks that hit the lockstep timeout.
 var lockstep_timeouts: int = 0
+## Number of sensor packets resent while waiting for their echo.
+var lockstep_resends: int = 0
 
 var _socket := PacketPeerUDP.new()
 var _buffer := StreamPeerBuffer.new()
 var _ready_to_send: bool = false
+var _pending_echo_us: int = -1
+var _last_payload := PackedByteArray()
 
 
 func _ready() -> void:
+	flight_port = SimArgs.get_port("flight-port", flight_port)
+	if SimArgs.has_flag("lockstep"):
+		lockstep = true
 	_buffer.big_endian = false
 	var bind_error := _socket.bind(local_port, "0.0.0.0")
 	if bind_error != OK:
@@ -176,44 +191,55 @@ func _send_sensor_packet(
 	if payload.size() != SENSOR_PACKET_SIZE:
 		push_error("sim link: built a %d byte sensor packet" % payload.size())
 		return
+	_pending_echo_us = timestamp_us
+	_last_payload = payload
 	if _socket.put_packet(payload) == OK:
 		packets_sent += 1
 
 
 func _wait_for_reply() -> bool:
+	var resends := 0
 	var deadline_us := Time.get_ticks_usec() + int(lockstep_timeout_ms * 1000.0)
-	var received := false
-	while not received:
+	while true:
 		if _drain_replies() > 0:
-			received = true
-		elif Time.get_ticks_usec() >= deadline_us:
-			break
+			return true
+		if Time.get_ticks_usec() >= deadline_us:
+			if resends >= LOCKSTEP_RESEND_LIMIT:
+				return false
+			resends += 1
+			lockstep_resends += 1
+			var _sent := _socket.put_packet(_last_payload)
+			deadline_us = Time.get_ticks_usec() + int(lockstep_timeout_ms * 1000.0)
 		else:
 			OS.delay_usec(LOCKSTEP_POLL_INTERVAL_US)
-	return received
+	return false
 
 
+## Decode every pending reply, return how many answered the pending packet.
 func _drain_replies() -> int:
-	var accepted := 0
+	var matched := 0
 	while _socket.get_available_packet_count() > 0:
-		if _decode_actuator_packet(_socket.get_packet()):
-			accepted += 1
+		var echo := _decode_actuator_packet(_socket.get_packet())
+		if echo >= 0:
 			packets_received += 1
+			if echo == _pending_echo_us:
+				matched += 1
 		else:
 			packets_dropped += 1
-	return accepted
+	return matched
 
 
-func _decode_actuator_packet(payload: PackedByteArray) -> bool:
+## @return the echoed timestamp of a valid packet, -1 when rejected.
+func _decode_actuator_packet(payload: PackedByteArray) -> int:
 	if payload.size() != ACTUATOR_PACKET_SIZE:
-		return false
+		return -1
 	if payload.decode_u8(0) != PROTOCOL_VERSION:
-		return false
+		return -1
 	var decoded := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
 	for index: int in MOTOR_COUNT:
 		var value := payload.decode_float(ACTUATOR_MOTOR_OFFSET + index * FLOAT_SIZE)
 		if not is_finite(value):
-			return false
+			return -1
 		decoded[index] = clampf(value, 0.0, 1.0)
 	motor_commands = decoded
-	return true
+	return payload.decode_u64(ACTUATOR_ECHO_OFFSET)

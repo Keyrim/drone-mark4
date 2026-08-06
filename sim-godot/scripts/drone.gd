@@ -85,20 +85,40 @@ var _tick_rate_hz: float = 500.0
 @onready var sim_link: SimLink = $SimLink
 @onready var sim_raw: SimRawLink = $SimRawLink
 @onready var pilot: PilotInput = $PilotInput
+@onready var sim_command: SimCommand = $SimCommand
+@onready var hand: SimHand = $Hand
 
 
 func _ready() -> void:
-	_tick_rate_hz = float(Engine.physics_ticks_per_second)
+	# Ticks per SIMULATED second: under batch pacing the wall tick rate and
+	# time_scale are both scaled, their ratio is the physical rate.
+	_tick_rate_hz = float(Engine.physics_ticks_per_second) / Engine.time_scale
 	_previous_velocity = linear_velocity
 	if inertia.x <= 0.0 or inertia.y <= 0.0 or inertia.z <= 0.0:
 		push_warning("drone: inertia is not set, the engine will infer it from the shapes")
 
 
 func _physics_process(delta: float) -> void:
-	if pilot.take_reset_request():
+	if pilot.take_reset_request() or sim_command.take_reset_request():
 		_reset_pending = true
+	if pilot.take_grab_request() and not hand.is_holding():
+		hand.grab(_random_held_basis())
 	if pilot.take_throw_request():
-		_start_throw()
+		if hand.is_holding():
+			# The hand throw: swing arc, rotating grip, tilted release.
+			hand.start_swing(throw_delta_velocity_mps, throw_angular_velocity_rad_s, 0.35)
+		else:
+			_start_throw(throw_delta_velocity_mps, throw_angular_velocity_rad_s)
+	if sim_command.take_throw_request():
+		_start_throw(sim_command.throw_velocity(), sim_command.throw_angular_velocity())
+	if sim_command.take_hand_throw_request():
+		hand.grab(sim_command.held_basis(), sim_command.held_seconds())
+		hand.plan_swing(
+			sim_command.throw_velocity(),
+			sim_command.throw_angular_velocity(),
+			sim_command.swing_seconds()
+		)
+	hand.physics_update(delta)
 
 	var body_basis := global_transform.basis
 	var velocity := linear_velocity
@@ -166,16 +186,29 @@ func altitude_m() -> float:
 	return global_position.y
 
 
-## Queue a hand throw. The velocity increment is applied as a constant force
+## A plausible resting-in-hand orientation: tilted up to 60 degrees toward a
+## random azimuth, with a random heading.
+func _random_held_basis() -> Basis:
+	var tilt := randf_range(0.0, PI / 3.0)
+	var azimuth := randf_range(0.0, TAU)
+	var heading := randf_range(0.0, TAU)
+	var tilt_axis := Vector3(cos(azimuth), 0.0, sin(azimuth))
+	return Basis(Quaternion(tilt_axis, tilt)) * Basis(Quaternion(Vector3.UP, heading))
+
+
+## Queue an instant throw. The velocity increment is applied as a constant force
 ## over throw_duration_s, so the accelerometer sees a real thrust phase of a
 ## few g followed by the free fall signature once the hand lets go.
-func _start_throw() -> void:
+##
+## @param delta_velocity_mps velocity the hand gives, Godot world frame [m/s].
+## @param angular_velocity_rad_s rotation at release, Godot body frame [rad/s].
+func _start_throw(delta_velocity_mps: Vector3, angular_velocity_rad_s: Vector3) -> void:
 	if throw_duration_s <= 0.0:
 		push_error("drone: throw_duration_s must be greater than zero")
 		return
-	_throw_force_n = mass * throw_delta_velocity_mps / throw_duration_s
+	_throw_force_n = mass * delta_velocity_mps / throw_duration_s
 	_throw_remaining_s = throw_duration_s
-	var body_angular_momentum := inertia * throw_angular_velocity_rad_s
+	var body_angular_momentum := inertia * angular_velocity_rad_s
 	apply_torque_impulse(global_transform.basis * body_angular_momentum)
 
 

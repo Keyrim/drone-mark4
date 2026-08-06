@@ -10,7 +10,8 @@ extends Node
 ##
 ## Key bindings are declared as input actions in project.godot:
 ## K toggles the kill switch, A toggles the arm switch, Up and Down nudge the
-## throttle, SPACE throws, R resets and ESC quits.
+## throttle, H picks the drone up in the simulated hand, SPACE throws (a hand
+## throw when held, an instant throw otherwise), R resets and ESC quits.
 
 ## Throttle increment applied on each Up or Down key press.
 const THROTTLE_STEP := 0.05
@@ -20,6 +21,7 @@ const ACTION_ARM_TOGGLE := &"sim_arm_toggle"
 const ACTION_THROTTLE_UP := &"sim_throttle_up"
 const ACTION_THROTTLE_DOWN := &"sim_throttle_down"
 const ACTION_THROW := &"sim_throw"
+const ACTION_GRAB := &"sim_grab"
 const ACTION_RESET := &"sim_reset"
 const ACTION_QUIT := &"sim_quit"
 
@@ -35,6 +37,7 @@ var throttle: float = 0.0
 var arm_switch: bool = false
 
 var _throw_requested: bool = false
+var _grab_requested: bool = false
 var _reset_requested: bool = false
 
 
@@ -51,6 +54,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		throttle = clampf(throttle - THROTTLE_STEP, 0.0, 1.0)
 	elif event.is_action_pressed(ACTION_THROW):
 		_throw_requested = true
+	elif event.is_action_pressed(ACTION_GRAB):
+		_grab_requested = true
 	elif event.is_action_pressed(ACTION_RESET):
 		_reset_requested = true
 	else:
@@ -62,6 +67,13 @@ func _unhandled_input(event: InputEvent) -> void:
 func take_throw_request() -> bool:
 	var requested := _throw_requested
 	_throw_requested = false
+	return requested
+
+
+## Return true once per H press, then clear the request.
+func take_grab_request() -> bool:
+	var requested := _grab_requested
+	_grab_requested = false
 	return requested
 
 

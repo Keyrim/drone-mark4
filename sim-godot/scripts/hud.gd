@@ -52,5 +52,5 @@ func _refresh() -> void:
 	)
 	if link.lockstep:
 		lines.append("lockstep   on, %d timeouts" % link.lockstep_timeouts)
-	lines.append("keys       K kill  A arm  Up/Down throttle  SPACE throw  R reset  ESC quit")
+	lines.append("keys       K kill  A arm  Up/Down throttle  H hold  SPACE throw  R reset  ESC quit")
 	text = "\n".join(lines)

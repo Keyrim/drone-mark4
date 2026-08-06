@@ -14,7 +14,7 @@ extends Node
 ## the Godot axes for display.
 
 ## Keep in sync with protocol/include/protocol/version.hpp.
-const PROTOCOL_VERSION := 7
+const PROTOCOL_VERSION := 9
 
 const TELEMETRY_PACKET_SIZE := 95
 
@@ -53,6 +53,10 @@ var _estimated_gizmo: Node3D
 
 
 func _ready() -> void:
+	if DisplayServer.get_name() == "headless":
+		# Nothing to draw, and the exclusive bind on the mirror port would
+		# collide across the instances of a batch campaign.
+		return
 	_drone = get_node_or_null(drone_path)
 	if _drone == null:
 		push_error("attitude compare: drone_path does not resolve, view disabled")

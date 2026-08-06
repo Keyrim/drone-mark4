@@ -15,7 +15,7 @@ extends Node
 ## (body x forward, y left, z up; world z up), remapped from the Godot axes.
 
 ## Keep in sync with protocol/include/protocol/version.hpp.
-const PROTOCOL_VERSION := 7
+const PROTOCOL_VERSION := 9
 
 const PACKET_SIZE := 49
 
@@ -41,6 +41,7 @@ var _tick: int = 0
 
 
 func _ready() -> void:
+	port = SimArgs.get_port("raw-port", port)
 	_buffer.big_endian = false
 	_socket.set_broadcast_enabled(true)
 	var destination_error := _socket.set_dest_address(broadcast_address, port)
