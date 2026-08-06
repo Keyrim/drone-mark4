@@ -38,6 +38,18 @@ namespace mark4
         /// stream: the step is skipped instead of being integrated.
         static constexpr float MAX_STEP_S = 0.05f;
 
+        /// Clamp on each axis of the integral term [rad/s]: a real gyro bias
+        /// stays well under this, anything larger is an attitude transient
+        /// the integrator must not memorize. Bounds the standing attitude
+        /// error to BIAS_LIMIT_RADS / kp even when everything else fails.
+        static constexpr float BIAS_LIMIT_RADS = 0.05f;
+
+        /// The integral only learns while the direction error is under this
+        /// (sine of about 10 deg): a large error is the attitude converging
+        /// (after a crash, a reset, a tumble), not bias information, and
+        /// integrating it poisons the bias for the flights that follow.
+        static constexpr float KI_ERROR_GATE_SIN = 0.17f;
+
         /// @param kp proportional gain on the gravity direction error [1/s]
         /// @param ki integral gain, drives the gyro bias estimate [1/s^2]
         explicit AttitudeEstimator(float kp = DEFAULT_KP, float ki = DEFAULT_KI)
@@ -51,7 +63,12 @@ namespace mark4
         ///        first frame, a non-increasing timestamp or a gap larger than
         ///        MAX_STEP_S only re-arms the reference without integrating.
         /// @param frame sensor frame carrying gyro, accel and the timestamp
-        void update(const SensorFrame &frame);
+        /// @param allowAccelCorrection false while the caller is deliberately
+        ///        accelerating (recovery, braking): thrust then dominates the
+        ///        specific force at about 1 g along body up, which would pass
+        ///        the gate and drag the estimate toward a false level. The
+        ///        update is pure gyro integration instead.
+        void update(const SensorFrame &frame, bool allowAccelCorrection = true);
 
         /// @return body-to-world attitude
         [[nodiscard]] const Quaternion &attitude() const

@@ -15,6 +15,7 @@ namespace mark4
         entry.baroPa = sensors.baroPa;
         entry.killSwitch = sensors.rc.killSwitch ? 1U : 0U;
         entry.throttle = sensors.rc.throttle;
+        entry.armSwitch = sensors.rc.armSwitch ? 1U : 0U;
 
         std::array<std::uint8_t, BLACKBOX_RECORD_SIZE> bytes{};
         std::memcpy(bytes.data(), &entry, sizeof(entry));

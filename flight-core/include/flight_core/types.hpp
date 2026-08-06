@@ -27,6 +27,7 @@ namespace mark4
     {
         bool killSwitch = true; ///< defaults to safe: motors cut
         float throttle = 0.0f;  ///< normalized [0, 1]
+        bool armSwitch = false; ///< true = the core may fly on its own after a throw
     };
 
     /// Input of step(). Timestamped by platform at acquisition: the timestamp

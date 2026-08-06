@@ -28,10 +28,16 @@ namespace mark4
         {
         }
 
-        /// @brief Computes the body rate setpoints leveling the drone.
+        /// @brief Computes the body rate setpoints tilting the drone so its
+        ///        thrust axis reaches the desired world direction. The default
+        ///        direction is straight up: a pure leveling. A braking or
+        ///        translating flight tilts the target instead.
         /// @param attitude current body-to-world attitude estimate
+        /// @param desiredUpWorld unit direction the body up axis should reach
         /// @return rate setpoints [rad/s], zero yaw
-        [[nodiscard]] std::array<float, 3> rateSetpointRadS(const Quaternion &attitude) const;
+        [[nodiscard]] std::array<float, 3> rateSetpointRadS(
+            const Quaternion &attitude,
+            const std::array<float, 3> &desiredUpWorld = {0.0f, 0.0f, 1.0f}) const;
 
       private:
         float m_kp; ///< proportional gain [1/s]

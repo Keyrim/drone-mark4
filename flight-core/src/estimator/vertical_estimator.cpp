@@ -56,16 +56,28 @@ namespace mark4
             return; // gap in the stream: reference re-armed, nothing integrated
         }
 
-        // World vertical component of the specific force (third row of the
-        // body-to-world rotation), minus gravity: 0 at rest, -g in free fall.
+        // Specific force in the world frame (body-to-world rotation). On the
+        // vertical, minus gravity: 0 at rest, -g in free fall. Gravity has no
+        // horizontal component, so x and y integrate as they are.
         const Quaternion &q = attitude;
         const float ax = frame.accelMps2[0];
         const float ay = frame.accelMps2[1];
         const float az = frame.accelMps2[2];
+        const float accelWorldX = (1.0f - 2.0f * (q.y * q.y + q.z * q.z)) * ax +
+                                  2.0f * (q.x * q.y - q.w * q.z) * ay +
+                                  2.0f * (q.x * q.z + q.w * q.y) * az;
+        const float accelWorldY = 2.0f * (q.x * q.y + q.w * q.z) * ax +
+                                  (1.0f - 2.0f * (q.x * q.x + q.z * q.z)) * ay +
+                                  2.0f * (q.y * q.z - q.w * q.x) * az;
         const float accelWorldZ = 2.0f * (q.x * q.z - q.w * q.y) * ax +
                                   2.0f * (q.y * q.z + q.w * q.x) * ay +
                                   (1.0f - 2.0f * (q.x * q.x + q.y * q.y)) * az;
         const float verticalAccel = accelWorldZ - GRAVITY_MPS2;
+
+        // Dead reckoning, leaking toward zero: nothing measures the
+        // horizontal velocity, the leak bounds the integration drift.
+        m_horizontalMps[0] += (accelWorldX - m_horizontalMps[0] / HORIZONTAL_LEAK_S) * dt;
+        m_horizontalMps[1] += (accelWorldY - m_horizontalMps[1] / HORIZONTAL_LEAK_S) * dt;
 
         // Predict from the accelerometer, correct toward the baro altitude.
         m_velocityMps += verticalAccel * dt;

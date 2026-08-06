@@ -27,6 +27,7 @@ namespace
     constexpr std::array<float, 3> TEST_ACCEL_MPS2 = {0.0f, 0.0f, 9.80665f};
     constexpr float TEST_BARO_PA = 101325.0f;
     constexpr float TEST_THROTTLE = 0.75f;
+    constexpr std::uint8_t TEST_RESET_COUNT = 3U;
 
     /// Datagram bytes of a sensor packet, all fields distinctive.
     using SensorDatagram = std::array<std::uint8_t, mark4::SIM_SENSOR_PACKET_SIZE>;
@@ -40,6 +41,8 @@ namespace
         packet.baroPa = TEST_BARO_PA;
         packet.killSwitch = 0U;
         packet.throttle = TEST_THROTTLE;
+        packet.armSwitch = 1U;
+        packet.resetCount = TEST_RESET_COUNT;
 
         SensorDatagram wire{};
         std::memcpy(wire.data(), &packet, sizeof(packet));
@@ -139,6 +142,8 @@ TEST_CASE("a sensor packet is decoded into a sensor frame")
     REQUIRE(frame.baroPa == TEST_BARO_PA);
     REQUIRE(frame.rc.killSwitch == false);
     REQUIRE(frame.rc.throttle == TEST_THROTTLE);
+    REQUIRE(frame.rc.armSwitch == true);
+    REQUIRE(source.resetCount() == TEST_RESET_COUNT);
 }
 
 TEST_CASE("an engaged kill switch reaches the frame")

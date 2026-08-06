@@ -119,3 +119,24 @@ TEST_CASE("the vertical controller climbs on a positive setpoint around the feed
     const float sinking = controller.update(-1.0f, 0.0f, 0.002f);
     REQUIRE(sinking < hover);
 }
+
+TEST_CASE("a tilted desired up leans the drone against a forward drift")
+{
+    const mark4::AttitudeController controller;
+
+    // Drifting toward world +x, the braking target tilts the thrust toward
+    // -x: at a level attitude the commanded pitch rate must raise the nose
+    // (negative about body y, which points left), and nothing else.
+    const std::array<float, 3> brakeUp = {-0.2f, 0.0f, 0.9798f};
+    const std::array<float, 3> setpoint = controller.rateSetpointRadS(mark4::Quaternion{}, brakeUp);
+    REQUIRE(setpoint[1] < 0.0f);
+    REQUIRE(std::fabs(setpoint[0]) < 1e-6f);
+    REQUIRE(setpoint[2] == 0.0f);
+
+    // Reaching the desired lean means no more correction.
+    const float half = 0.5f * std::asin(0.2f);
+    const mark4::Quaternion leaned{std::cos(half), 0.0f, -std::sin(half), 0.0f};
+    const std::array<float, 3> settled = controller.rateSetpointRadS(leaned, brakeUp);
+    REQUIRE(std::fabs(settled[0]) < 1e-3f);
+    REQUIRE(std::fabs(settled[1]) < 1e-3f);
+}

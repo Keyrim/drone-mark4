@@ -91,6 +91,7 @@ namespace mark4
         frameOut.baroPa = record.baroPa;
         frameOut.rc.killSwitch = record.killSwitch != 0U;
         frameOut.rc.throttle = record.throttle;
+        frameOut.rc.armSwitch = record.armSwitch != 0U;
 
         if (m_speedFactor > SPEED_MAX && m_hasPrevTimestamp &&
             record.timestampUs > m_prevTimestampUs)

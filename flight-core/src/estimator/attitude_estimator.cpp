@@ -1,6 +1,7 @@
 #include "flight_core/attitude_estimator.hpp"
 
 #include <cmath>
+#include <cstddef>
 
 namespace mark4
 {
@@ -9,7 +10,7 @@ namespace mark4
         constexpr float US_PER_S = 1e6f;
     } // namespace
 
-    void AttitudeEstimator::update(const SensorFrame &frame)
+    void AttitudeEstimator::update(const SensorFrame &frame, bool allowAccelCorrection)
     {
         if (!m_hasPrevTimestamp || frame.timestampUs <= m_prevTimestampUs)
         {
@@ -33,7 +34,7 @@ namespace mark4
         const float ay = frame.accelMps2[1];
         const float az = frame.accelMps2[2];
         const float accelNorm = std::sqrt(ax * ax + ay * ay + az * az);
-        if (std::fabs(accelNorm - GRAVITY_MPS2) < ACCEL_GATE_MPS2)
+        if (allowAccelCorrection && std::fabs(accelNorm - GRAVITY_MPS2) < ACCEL_GATE_MPS2)
         {
             const float inv = 1.0f / accelNorm;
             const float vx = ax * inv;
@@ -51,9 +52,20 @@ namespace mark4
             ey = vz * hx - vx * hz;
             ez = vx * hy - vy * hx;
 
-            m_integralFb[0] += m_ki * ex * dt;
-            m_integralFb[1] += m_ki * ey * dt;
-            m_integralFb[2] += m_ki * ez * dt;
+            // The bias only learns from small errors, and stays physically
+            // plausible: reconvergence transients (crash, tumble) must not
+            // be memorized as bias, they would misalign the next flights.
+            if (ex * ex + ey * ey + ez * ez < KI_ERROR_GATE_SIN * KI_ERROR_GATE_SIN)
+            {
+                for (std::size_t axis = 0U; axis < 3U; ++axis)
+                {
+                    const float e = axis == 0U ? ex : (axis == 1U ? ey : ez);
+                    float integral = m_integralFb[axis] + m_ki * e * dt;
+                    integral = integral > BIAS_LIMIT_RADS ? BIAS_LIMIT_RADS : integral;
+                    integral = integral < -BIAS_LIMIT_RADS ? -BIAS_LIMIT_RADS : integral;
+                    m_integralFb[axis] = integral;
+                }
+            }
         }
 
         const float wx = frame.gyroRadS[0] + m_integralFb[0] + m_kp * ex;

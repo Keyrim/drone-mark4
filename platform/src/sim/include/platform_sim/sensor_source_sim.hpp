@@ -3,6 +3,8 @@
 /// @file
 /// @brief UDP sensor source for the sim variant.
 
+#include <cstdint>
+
 #include "platform/sensor_source.hpp"
 #include "platform_sim/udp_link.hpp"
 
@@ -28,7 +30,17 @@ namespace mark4
         ///         idle for the receive timeout
         bool waitFrame(mark4::SensorFrame &frameOut) override;
 
+        /// @return reset counter carried by the last decoded packet. The
+        ///         simulator increments it on every world reset (teleport), a
+        ///         sim-only event with no place in the sensor frame: the
+        ///         composition root watches it and rebuilds the flight core.
+        [[nodiscard]] std::uint8_t resetCount() const
+        {
+            return m_resetCount;
+        }
+
       private:
-        UdpLink &m_link; ///< sim link, owned by the composition root
+        UdpLink &m_link;                ///< sim link, owned by the composition root
+        std::uint8_t m_resetCount = 0U; ///< reset counter of the last packet
     };
 } // namespace mark4

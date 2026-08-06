@@ -22,6 +22,7 @@ namespace
         frame.baroPa = 101325.0f + static_cast<float>(seed);
         frame.rc.killSwitch = (seed % 2U) == 0U;
         frame.rc.throttle = 0.1f * static_cast<float>(seed);
+        frame.rc.armSwitch = (seed % 3U) == 0U;
         return frame;
     }
 } // namespace
@@ -54,6 +55,7 @@ TEST_CASE("a recorded blackbox replays into identical sensor frames")
         REQUIRE(replayed.baroPa == expected.baroPa);
         REQUIRE(replayed.rc.killSwitch == expected.rc.killSwitch);
         REQUIRE(replayed.rc.throttle == expected.rc.throttle);
+        REQUIRE(replayed.rc.armSwitch == expected.rc.armSwitch);
     }
 
     mark4::SensorFrame extra;

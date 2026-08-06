@@ -38,4 +38,8 @@ TEST_CASE("packTelemetry carries the estimated attitude next to the raw frame")
     std::array<float, 4> motor{};
     std::memcpy(motor.data(), wire.data() + offsetof(mark4::TelemetryPacket, motor), sizeof(motor));
     REQUIRE(motor == actuators.motor);
+
+    // Mid stick, kill released: the core is in stick flight.
+    REQUIRE(wire[offsetof(mark4::TelemetryPacket, flightPhase)] ==
+            static_cast<std::uint8_t>(mark4::FlightPhase::MANUAL));
 }

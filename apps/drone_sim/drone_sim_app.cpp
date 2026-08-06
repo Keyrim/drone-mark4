@@ -21,6 +21,29 @@ namespace
     /// Permissions of the log directory when it has to be created: rwxr-xr-x.
     constexpr mode_t LOG_DIRECTORY_MODE = 0755;
 
+    /// @return human readable name of a flight phase, for the console
+    const char *phaseName(mark4::FlightPhase phase)
+    {
+        switch (phase)
+        {
+            case mark4::FlightPhase::IDLE:
+                return "idle";
+            case mark4::FlightPhase::MANUAL:
+                return "manual";
+            case mark4::FlightPhase::ARMED:
+                return "armed";
+            case mark4::FlightPhase::BALLISTIC:
+                return "ballistic";
+            case mark4::FlightPhase::RECOVERY:
+                return "recovery";
+            case mark4::FlightPhase::HOVER:
+                return "hover";
+            case mark4::FlightPhase::CUTOFF:
+                return "cutoff";
+        }
+        return "?";
+    }
+
     /// @brief Creates a directory, treating an existing one as a success.
     /// @param path directory to create
     /// @return true when the directory exists afterwards
@@ -88,14 +111,33 @@ namespace mark4
         mark4::SensorFrame frame;
         mark4::ActuatorFrame actuators;
 
+        std::uint32_t steps = 0U;
         std::uint32_t announcedThrows = 0U;
-        mark4::ArmState previousArmState = mark4::ArmState::DISARMED;
-        while (m_core.stepCount() < m_maxFrames && m_sensorSource.waitFrame(frame))
+        mark4::FlightPhase previousPhase = mark4::FlightPhase::IDLE;
+        std::uint8_t lastResetCount = 0U;
+        bool resetCountSeen = false;
+        while (steps < m_maxFrames && m_sensorSource.waitFrame(frame))
         {
+            // A simulator world reset teleports the drone: no estimator can
+            // (or should) track that, so the flight core restarts from
+            // scratch, exactly like a power cycle on the bench.
+            if (resetCountSeen && m_sensorSource.resetCount() != lastResetCount)
+            {
+                m_core = mark4::FlightCore{};
+                announcedThrows = 0U;
+                previousPhase = mark4::FlightPhase::IDLE;
+                std::printf("drone_sim: simulator reset at t=%.3f s: flight core restarted\n",
+                            static_cast<double>(frame.timestampUs) / US_PER_S);
+                static_cast<void>(std::fflush(stdout));
+            }
+            lastResetCount = m_sensorSource.resetCount();
+            resetCountSeen = true;
+
+            ++steps;
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);
             m_blackbox.record(frame, actuators);
-            if (m_core.stepCount() % TELEMETRY_DECIMATION == 0U)
+            if (steps % TELEMETRY_DECIMATION == 0U)
             {
                 sendTelemetry(frame, actuators);
             }
@@ -117,19 +159,24 @@ namespace mark4
                 static_cast<void>(std::fflush(stdout));
             }
 
-            if (m_core.armState() != previousArmState)
+            if (m_core.flightPhase() != previousPhase)
             {
-                if (m_core.armState() == mark4::ArmState::CUTOFF)
+                std::printf("drone_sim: phase %s -> %s at t=%.3f s\n",
+                            phaseName(previousPhase),
+                            phaseName(m_core.flightPhase()),
+                            static_cast<double>(frame.timestampUs) / US_PER_S);
+                if (m_core.flightPhase() == mark4::FlightPhase::CUTOFF)
                 {
-                    std::printf("drone_sim: safety cutoff at t=%.3f s: motors stopped, "
-                                "lower the throttle to rearm\n",
-                                static_cast<double>(frame.timestampUs) / US_PER_S);
-                    static_cast<void>(std::fflush(stdout));
+                    std::printf("drone_sim: safety cutoff: motors stopped, release the "
+                                "arm switch and lower the throttle to rearm\n");
                 }
-                previousArmState = m_core.armState();
+                // Flushed so the line shows up immediately even when stdout is
+                // piped (VS Code debug console, redirections).
+                static_cast<void>(std::fflush(stdout));
+                previousPhase = m_core.flightPhase();
             }
         }
-        return m_core.stepCount();
+        return steps;
     }
 
     void DroneSimApp::sendTelemetry(const mark4::SensorFrame &frame,

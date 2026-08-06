@@ -139,3 +139,59 @@ TEST_CASE("a gap in the stream is skipped instead of integrated")
     REQUIRE(std::fabs(after.w - before.w) < 1e-6f);
     REQUIRE(std::fabs(after.x - before.x) < 1e-6f);
 }
+
+TEST_CASE("the accel correction can be suspended during deliberate accelerations")
+{
+    // Same tilted specific force, 1 g norm: with the correction allowed the
+    // estimate leans toward it, suspended it must not move (gyro is zero).
+    mark4::SensorFrame frame;
+    frame.accelMps2 = {0.0f, 0.174f * mark4::GRAVITY_MPS2, 0.985f * mark4::GRAVITY_MPS2};
+
+    mark4::AttitudeEstimator corrected;
+    mark4::AttitudeEstimator suspended;
+    for (std::uint32_t i = 0U; i < 500U; ++i)
+    {
+        frame.timestampUs = static_cast<std::uint64_t>(i) * 2000U;
+        corrected.update(frame, true);
+        suspended.update(frame, false);
+    }
+
+    const mark4::Quaternion &still = suspended.attitude();
+    REQUIRE(std::fabs(still.x) < 1e-6f);
+    REQUIRE(std::fabs(still.y) < 1e-6f);
+    REQUIRE(std::fabs(corrected.attitude().x) > 0.01f);
+}
+
+TEST_CASE("a large attitude transient does not poison the gyro bias")
+{
+    // The estimate starts far from the measured gravity (post crash, post
+    // reset): the attitude must reconverge WITHOUT the integral memorizing
+    // the transient as a bias - that error would misalign the next flight.
+    mark4::AttitudeEstimator estimator;
+    const std::array<float, 3> tilted = {
+        0.0f, 0.707f * mark4::GRAVITY_MPS2, 0.707f * mark4::GRAVITY_MPS2};
+    std::uint64_t timestamp = feed(estimator, 0U, 2000U, ZERO_RATES, tilted);
+
+    // Converged onto the measured direction...
+    const mark4::Quaternion &q = estimator.attitude();
+    const float upY = 2.0f * (q.w * q.x + q.y * q.z);
+    REQUIRE(std::fabs(upY - 0.707f) < 0.02f);
+
+    // ...with a near clean bias estimate: only the convergence tail under
+    // the learning gate may leak in, bounded by ki * gate / kp (about 0.009).
+    const std::array<float, 3> bias = estimator.gyroBiasRadS();
+    const float biasNorm = std::sqrt(bias[0] * bias[0] + bias[1] * bias[1] + bias[2] * bias[2]);
+    REQUIRE(biasNorm < 0.01f);
+    static_cast<void>(timestamp);
+}
+
+TEST_CASE("the bias integral is clamped to a physically plausible range")
+{
+    // An absurd persistent gyro reading: the integral must rail at the
+    // clamp instead of absorbing it entirely.
+    mark4::AttitudeEstimator estimator;
+    feed(estimator, 0U, 30000U, {0.3f, 0.0f, 0.0f}, LEVEL_ACCEL);
+
+    REQUIRE(std::fabs(estimator.gyroBiasRadS()[0]) <=
+            mark4::AttitudeEstimator::BIAS_LIMIT_RADS + 1e-6f);
+}

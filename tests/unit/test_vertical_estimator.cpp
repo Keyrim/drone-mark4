@@ -118,3 +118,33 @@ TEST_CASE("the baro altitude conversion inverts the standard atmosphere")
         REQUIRE(std::fabs(roundtrip - altitude) < 0.01f);
     }
 }
+
+TEST_CASE("a sideways push is dead reckoned and leaks back toward zero")
+{
+    mark4::VerticalEstimator estimator;
+    std::uint64_t timestamp = captureReference(estimator, 100.0f);
+    REQUIRE(estimator.horizontalVelocityMps()[0] == 0.0f);
+
+    // 2 m/s^2 sideways for 1 s, level: about 2 m/s minus the leak.
+    constexpr float PUSH_MPS2 = 2.0f;
+    for (std::uint32_t i = 0U; i < 500U; ++i)
+    {
+        mark4::SensorFrame frame = makeFrame(timestamp, 100.0f, mark4::GRAVITY_MPS2);
+        frame.accelMps2[0] = PUSH_MPS2;
+        estimator.update(frame, {});
+        timestamp += STEP_US;
+    }
+    const float pushed = estimator.horizontalVelocityMps()[0];
+    REQUIRE(pushed > 1.7f);
+    REQUIRE(pushed < 2.0f);
+    REQUIRE(std::fabs(estimator.horizontalVelocityMps()[1]) < 1e-3f);
+
+    // Back at rest, nothing measures the velocity: the leak fades it out.
+    for (std::uint32_t i = 0U; i < 1000U; ++i)
+    {
+        estimator.update(makeFrame(timestamp, 100.0f, mark4::GRAVITY_MPS2), {});
+        timestamp += STEP_US;
+    }
+    REQUIRE(estimator.horizontalVelocityMps()[0] < 0.85f * pushed);
+    REQUIRE(estimator.horizontalVelocityMps()[0] > 0.0f);
+}

@@ -38,14 +38,16 @@ namespace mark4
         float releaseVelocityMps;          ///< last release velocity [m/s]
         std::uint64_t apexTimestampUs;     ///< last predicted apex instant [us]
         float apexAltitudeM;               ///< last predicted apex altitude [m]
+        std::uint8_t flightPhase;          ///< FlightPhase of the state machine
     };
 #pragma pack(pop)
 
     /// Packed wire size: version (1) + timestamp (8) + gyro (12) + attitude
     /// quaternion (16) + gyro bias (12) + motors (16) + altitude (4) +
     /// vertical velocity (4) + throw state (1) + throw count (4) + release
-    /// velocity (4) + apex timestamp (8) + apex altitude (4).
-    inline constexpr std::size_t TELEMETRY_PACKET_SIZE = 94U;
+    /// velocity (4) + apex timestamp (8) + apex altitude (4) + flight
+    /// phase (1).
+    inline constexpr std::size_t TELEMETRY_PACKET_SIZE = 95U;
 
     static_assert(sizeof(TelemetryPacket) == TELEMETRY_PACKET_SIZE, "wire layout must be packed");
     static_assert(std::is_trivially_copyable_v<TelemetryPacket>);

@@ -16,7 +16,7 @@ namespace mark4
     /// Version byte carried by every blackbox record. It describes the on-disk
     /// log layout only and is versioned on its own: it has nothing to do with
     /// the UDP wire structs in protocol/ and the two evolve independently.
-    inline constexpr std::uint8_t BLACKBOX_VERSION = 1U;
+    inline constexpr std::uint8_t BLACKBOX_VERSION = 2U;
 
 #pragma pack(push, 1)
     /// One recorded step: the sensor frame that entered the core and the
@@ -31,13 +31,15 @@ namespace mark4
         float baroPa;                   ///< static pressure [Pa]
         std::uint8_t killSwitch;        ///< 1 = engaged (motors cut), 0 = released
         float throttle;                 ///< normalized RC throttle [0, 1]
+        std::uint8_t armSwitch;         ///< 1 = armed for an autonomous throw flight
         std::array<float, 4> motor;     ///< normalized motor commands [0, 1]
     };
 #pragma pack(pop)
 
     /// Packed record size: version (1) + timestamp (8) + gyro (12) + accel (12)
-    /// + baro (4) + kill switch (1) + throttle (4) + motors (16).
-    inline constexpr std::size_t BLACKBOX_RECORD_SIZE = 58U;
+    /// + baro (4) + kill switch (1) + throttle (4) + arm switch (1)
+    /// + motors (16).
+    inline constexpr std::size_t BLACKBOX_RECORD_SIZE = 59U;
 
     static_assert(sizeof(BlackboxRecord) == BLACKBOX_RECORD_SIZE, "record layout must be packed");
     static_assert(std::is_trivially_copyable_v<BlackboxRecord>);

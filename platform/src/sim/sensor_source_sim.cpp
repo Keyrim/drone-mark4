@@ -49,6 +49,8 @@ namespace mark4
             frameOut.baroPa = packet.baroPa;
             frameOut.rc.killSwitch = packet.killSwitch != 0U;
             frameOut.rc.throttle = packet.throttle;
+            frameOut.rc.armSwitch = packet.armSwitch != 0U;
+            m_resetCount = packet.resetCount;
             return true;
         }
     }

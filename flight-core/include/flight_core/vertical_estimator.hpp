@@ -3,6 +3,7 @@
 /// @file
 /// @brief Vertical state estimator (complementary filter, baro + accel).
 
+#include <array>
 #include <cstdint>
 
 #include "flight_core/types.hpp"
@@ -18,6 +19,12 @@ namespace mark4
     ///
     /// The altitude is relative to a baro reference averaged over the first
     /// REFERENCE_SAMPLES frames: the estimator reads zero where it woke up.
+    ///
+    /// The horizontal velocity is dead reckoned from the same world frame
+    /// projection: nothing measures it (no GPS, no flow), so the integration
+    /// leaks toward zero with HORIZONTAL_LEAK_S. Anchored by the rest before
+    /// a throw, it is accurate for the few seconds where braking the throw's
+    /// momentum matters, and harmlessly fades afterwards.
     class VerticalEstimator
     {
       public:
@@ -35,6 +42,11 @@ namespace mark4
         /// Integration steps longer than this are treated as gaps in the
         /// stream: the step is skipped instead of being integrated.
         static constexpr float MAX_STEP_S = 0.05f;
+
+        /// Leak time constant of the dead reckoned horizontal velocity [s]:
+        /// long against a throw plus its braking, short against the drift of
+        /// an unaided integration.
+        static constexpr float HORIZONTAL_LEAK_S = 8.0f;
 
         /// @param altitudeGain correction gain on the altitude [1/s]
         /// @param velocityGain correction gain on the velocity [1/s^2]
@@ -71,21 +83,28 @@ namespace mark4
             return m_velocityMps;
         }
 
+        /// @return dead reckoned world horizontal velocity, x and y [m/s]
+        [[nodiscard]] const std::array<float, 2> &horizontalVelocityMps() const
+        {
+            return m_horizontalMps;
+        }
+
         /// @brief Standard atmosphere altitude for a static pressure.
         /// @param pressurePa static pressure [Pa], clamped to a sane range
         /// @return absolute altitude above the standard sea level [m]
         static float pressureAltitudeM(float pressurePa);
 
       private:
-        float m_altitudeGain;                 ///< altitude correction gain [1/s]
-        float m_velocityGain;                 ///< velocity correction gain [1/s^2]
-        float m_altitudeM = 0.0f;             ///< estimate, relative to the reference [m]
-        float m_velocityMps = 0.0f;           ///< estimate, positive up [m/s]
-        float m_referenceAltitudeM = 0.0f;    ///< baro altitude averaged at startup [m]
-        float m_referenceSumM = 0.0f;         ///< accumulator for the reference [m]
-        std::uint32_t m_referenceCount = 0U;  ///< frames accumulated so far
-        bool m_ready = false;                 ///< reference captured
-        std::uint64_t m_prevTimestampUs = 0U; ///< integration reference [us]
-        bool m_hasPrevTimestamp = false;      ///< false until the first frame
+        float m_altitudeGain;                   ///< altitude correction gain [1/s]
+        float m_velocityGain;                   ///< velocity correction gain [1/s^2]
+        float m_altitudeM = 0.0f;               ///< estimate, relative to the reference [m]
+        float m_velocityMps = 0.0f;             ///< estimate, positive up [m/s]
+        std::array<float, 2> m_horizontalMps{}; ///< dead reckoned world velocity [m/s]
+        float m_referenceAltitudeM = 0.0f;      ///< baro altitude averaged at startup [m]
+        float m_referenceSumM = 0.0f;           ///< accumulator for the reference [m]
+        std::uint32_t m_referenceCount = 0U;    ///< frames accumulated so far
+        bool m_ready = false;                   ///< reference captured
+        std::uint64_t m_prevTimestampUs = 0U;   ///< integration reference [us]
+        bool m_hasPrevTimestamp = false;        ///< false until the first frame
     };
 } // namespace mark4

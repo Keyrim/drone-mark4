@@ -16,12 +16,18 @@
 
 namespace mark4
 {
-    /// Arming state of the motor outputs.
-    enum class ArmState : std::uint8_t
+    /// Phase of the flight state machine. The arm switch gates every phase
+    /// where the core flies on its own: switching it off always cuts the
+    /// motors and returns to IDLE, whatever was in progress.
+    enum class FlightPhase : std::uint8_t
     {
-        DISARMED = 0U, ///< throttle down: motors stopped, integrators held
-        ARMED = 1U,    ///< control active
-        CUTOFF = 2U,   ///< safety cutoff latched: motors stopped until rearm
+        IDLE = 0U,      ///< motors stopped, waiting for the pilot
+        MANUAL = 1U,    ///< stick flight: throttle commands the vertical velocity
+        ARMED = 2U,     ///< armed for a throw: motors stopped, detector watched
+        BALLISTIC = 3U, ///< throw detected, coasting until the spin-up instant
+        RECOVERY = 4U,  ///< motors on, leveling from an arbitrary attitude
+        HOVER = 5U,     ///< recovered: altitude hold until the pilot takes over
+        CUTOFF = 6U,    ///< safety cutoff latched: motors stopped until rearm
     };
 
     /// Synchronous, single-threaded flight core, paced by data arrival
@@ -97,18 +103,61 @@ namespace mark4
         /// The excessive tilt must last this long before cutting [us].
         static constexpr std::uint64_t CUTOFF_TILT_CONFIRM_US = 300000U;
 
-        /// @return arming state of the motor outputs
-        [[nodiscard]] ArmState armState() const
+        /// Motors are started this long before the predicted apex, so the
+        /// props are at speed when it is reached. A calibration knob by
+        /// nature: it covers the spool-up lag of the real motors.
+        static constexpr std::uint64_t SPINUP_LEAD_US = 100000U;
+
+        /// Cosine of the tilt under which the recovery is declared done and
+        /// the altitude hold takes over (about 25 deg).
+        static constexpr float RECOVERED_MIN_UP = 0.9f;
+
+        /// A recovery still not level after this long is aborted [us]: the
+        /// attitude estimate is likely wrong and the drone is pushing blind.
+        static constexpr std::uint64_t RECOVERY_TIMEOUT_US = 2000000U;
+
+        /// Horizontal deceleration commanded per unit of estimated horizontal
+        /// velocity in a post-throw hover [1/s]: the thrust tilts against the
+        /// throw's momentum instead of letting the drone sail away. Brisk on
+        /// purpose: the estimate is only trustworthy right after the throw,
+        /// the momentum must be spent before the estimate is.
+        static constexpr float BRAKE_GAIN = 1.0f;
+
+        /// Tangent of the maximum braking tilt (about 20 deg): braking must
+        /// stay a gentle lean, never a second acrobatic maneuver.
+        static constexpr float BRAKE_TILT_MAX = 0.36f;
+
+        /// Estimated horizontal speed under which the braking ends [m/s],
+        /// permanently: it is a one-shot maneuver. The braking itself biases
+        /// the attitude estimate (its specific force passes the Mahony gate)
+        /// and the dead reckoning then rebuilds a phantom velocity out of
+        /// that bias; chasing it would push the real drone backward forever.
+        /// Level flight is the only drift-free long term attitude.
+        static constexpr float BRAKE_DONE_MPS = 0.15f;
+
+        /// Backstop on the braking duration after the recovery [us], in case
+        /// the estimate never falls under BRAKE_DONE_MPS.
+        static constexpr std::uint64_t BRAKE_WINDOW_US = 4000000U;
+
+        /// @return current phase of the flight state machine
+        [[nodiscard]] FlightPhase flightPhase() const
         {
-            return m_armState;
+            return m_phase;
         }
 
       private:
         void updateEstimators(const SensorFrame &sensors);
+        void advancePhase(const SensorFrame &sensors);
         void runControl(const SensorFrame &sensors, ActuatorFrame &actuators);
-        [[nodiscard]] bool cutoffTripped(const SensorFrame &sensors);
+        [[nodiscard]] bool cutoffTripped(const SensorFrame &sensors, bool withTilt = true);
+        [[nodiscard]] float estimatedUpZ() const;
+        [[nodiscard]] std::array<float, 3> brakeUpWorld() const;
 
-        ArmState m_armState = ArmState::DISARMED;
+        FlightPhase m_phase = FlightPhase::IDLE;
+        std::uint32_t m_handledThrowCount = 0U;   ///< throws already acted upon
+        std::uint64_t m_recoveryStartUs = 0U;     ///< entry instant of RECOVERY [us]
+        std::uint64_t m_hoverStartUs = 0U;        ///< entry instant of HOVER [us]
+        bool m_brakeDone = false;                 ///< braking spent for this flight
         std::uint64_t m_tiltExceededSinceUs = 0U; ///< start of the tilt streak, 0 = none
         std::uint32_t m_stepCount = 0U;
         AttitudeEstimator m_attitudeEstimator;

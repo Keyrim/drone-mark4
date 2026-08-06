@@ -56,6 +56,7 @@ namespace
         frame.baroPa = TEST_BARO_PA;
         frame.rc.killSwitch = false;
         frame.rc.throttle = TEST_THROTTLE;
+        frame.rc.armSwitch = true;
         return frame;
     }
 } // namespace
@@ -63,7 +64,7 @@ namespace
 TEST_CASE("the blackbox record layout is packed and starts with the version byte")
 {
     STATIC_REQUIRE(sizeof(mark4::BlackboxRecord) == mark4::BLACKBOX_RECORD_SIZE);
-    STATIC_REQUIRE(mark4::BLACKBOX_RECORD_SIZE == 58U);
+    STATIC_REQUIRE(mark4::BLACKBOX_RECORD_SIZE == 59U);
     STATIC_REQUIRE(std::is_trivially_copyable_v<mark4::BlackboxRecord>);
 
     STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, recordVersion) == 0U);
@@ -73,7 +74,8 @@ TEST_CASE("the blackbox record layout is packed and starts with the version byte
     STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, baroPa) == 33U);
     STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, killSwitch) == 37U);
     STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, throttle) == 38U);
-    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, motor) == 42U);
+    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, armSwitch) == 42U);
+    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, motor) == 43U);
 }
 
 TEST_CASE("recording one step writes exactly one record carrying both frames")
@@ -99,6 +101,7 @@ TEST_CASE("recording one step writes exactly one record carrying both frames")
     REQUIRE(decoded.baroPa == TEST_BARO_PA);
     REQUIRE(decoded.killSwitch == 0U);
     REQUIRE(decoded.throttle == TEST_THROTTLE);
+    REQUIRE(decoded.armSwitch == 1U);
 
     /* The array fields are misaligned inside the packed struct: they are read
        straight out of the record bytes instead. */

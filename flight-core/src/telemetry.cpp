@@ -22,6 +22,7 @@ namespace mark4
         packet.releaseVelocityMps = detector.releaseVelocityMps();
         packet.apexTimestampUs = detector.apexTimestampUs();
         packet.apexAltitudeM = detector.apexAltitudeM();
+        packet.flightPhase = static_cast<std::uint8_t>(core.flightPhase());
 
         std::array<std::uint8_t, TELEMETRY_PACKET_SIZE> wire{};
         std::memcpy(wire.data(), &packet, sizeof(packet));
