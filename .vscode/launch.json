@@ -33,6 +33,28 @@
             ]
         },
         {
+            "name": "firmware (J-Link flash + debug)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "jlink",
+            "device": "STM32F405RG",
+            "interface": "swd",
+            "executable": "${workspaceFolder}/build/stm32/apps/firmware/firmware.elf",
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "CMake: build stm32",
+            "runToEntryPoint": "main"
+        },
+        {
+            "name": "firmware (J-Link attach)",
+            "type": "cortex-debug",
+            "request": "attach",
+            "servertype": "jlink",
+            "device": "STM32F405RG",
+            "interface": "swd",
+            "executable": "${workspaceFolder}/build/stm32/apps/firmware/firmware.elf",
+            "cwd": "${workspaceFolder}"
+        },
+        {
             "name": "sim_stub (python)",
             "type": "debugpy",
             "request": "launch",
