@@ -34,6 +34,13 @@ namespace mark4
         /// gravity correction is trusted.
         static constexpr float ACCEL_GATE_MPS2 = 1.0f;
 
+        /// Gyro norm above which the gravity correction is not trusted
+        /// either [rad/s]: a body rotating this fast is being maneuvered (a
+        /// hand starting a throw, a tumble) and the specific force direction
+        /// no longer points along gravity even when its norm stays near 1 g.
+        /// Hover jitter and a held hand's sway stay well under this.
+        static constexpr float GYRO_QUIET_RADS = 1.5f;
+
         /// Integration steps longer than this are treated as gaps in the
         /// stream: the step is skipped instead of being integrated.
         static constexpr float MAX_STEP_S = 0.05f;

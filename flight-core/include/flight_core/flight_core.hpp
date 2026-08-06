@@ -116,6 +116,11 @@ namespace mark4
         /// attitude estimate is likely wrong and the drone is pushing blind.
         static constexpr std::uint64_t RECOVERY_TIMEOUT_US = 2000000U;
 
+        /// Floor of the recovery collective [0, 1]: torque authority scales
+        /// with the motor commands, so some collective is always kept even
+        /// upside down, where thrust itself is useless or harmful.
+        static constexpr float RECOVERY_MIN_COLLECTIVE = 0.3f;
+
         /// Horizontal deceleration commanded per unit of estimated horizontal
         /// velocity in a post-throw hover [1/s]: the thrust tilts against the
         /// throw's momentum instead of letting the drone sail away. Brisk on

@@ -33,8 +33,13 @@ namespace mark4
         const float ax = frame.accelMps2[0];
         const float ay = frame.accelMps2[1];
         const float az = frame.accelMps2[2];
+        const float gx = frame.gyroRadS[0];
+        const float gy = frame.gyroRadS[1];
+        const float gz = frame.gyroRadS[2];
+        const float gyroNorm = std::sqrt(gx * gx + gy * gy + gz * gz);
         const float accelNorm = std::sqrt(ax * ax + ay * ay + az * az);
-        if (allowAccelCorrection && std::fabs(accelNorm - GRAVITY_MPS2) < ACCEL_GATE_MPS2)
+        if (allowAccelCorrection && gyroNorm < GYRO_QUIET_RADS &&
+            std::fabs(accelNorm - GRAVITY_MPS2) < ACCEL_GATE_MPS2)
         {
             const float inv = 1.0f / accelNorm;
             const float vx = ax * inv;

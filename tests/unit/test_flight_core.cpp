@@ -72,12 +72,15 @@ TEST_CASE("kill switch forces all motors to zero")
 
     frame.rc.killSwitch = true;
     frame.rc.throttle = 0.9f;
+    frame.timestampUs = 123456U;
     core.step(frame, actuators);
 
     for (const float m : actuators.motor)
     {
         REQUIRE(m == 0.0f);
     }
+    // Outputs are stamped with the input they answer, kill switch included.
+    REQUIRE(actuators.timestampUs == frame.timestampUs);
 }
 
 TEST_CASE("a throttle below the arming threshold keeps the motors stopped")

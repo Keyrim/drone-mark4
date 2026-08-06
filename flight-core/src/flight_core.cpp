@@ -20,6 +20,7 @@ namespace mark4
     void FlightCore::step(const SensorFrame &sensors, ActuatorFrame &actuators)
     {
         ++m_stepCount;
+        actuators.timestampUs = sensors.timestampUs;
 
         // Kill switch first, before any other logic: it decides the outputs
         // no matter what. Estimation is pure state and keeps tracking through
@@ -176,15 +177,21 @@ namespace mark4
                 m_tiltExceededSinceUs = 0U;
                 return;
             case FlightPhase::RECOVERY: {
-                // Attitude first: a fixed hover collective gives the rate loop
-                // its torque authority (torque scales with the motor commands)
-                // without the vertical loop pushing on a still arbitrary tilt.
+                // Attitude first: the rate loop levels the drone while the
+                // collective scales with the estimated tilt. A full hover
+                // collective while tilted converts thrust into horizontal
+                // momentum the hover then has to brake away (a 2.9 m/s throw
+                // was measured leaving its recovery at 5.6 m/s), and pushes
+                // toward the ground when inverted. The floor keeps torque
+                // authority (torque scales with the motor commands).
                 const std::array<float, 3> rateSetpoint =
                     m_attitudeController.rateSetpointRadS(m_attitudeEstimator.attitude());
                 const std::array<float, 3> torqueCmd =
                     m_rateController.update(rateSetpoint, sensors.gyroRadS, dt);
-                actuators.motor =
-                    mixMotors(VerticalController::DEFAULT_HOVER_COLLECTIVE, torqueCmd);
+                float collective = VerticalController::DEFAULT_HOVER_COLLECTIVE * estimatedUpZ();
+                collective =
+                    collective < RECOVERY_MIN_COLLECTIVE ? RECOVERY_MIN_COLLECTIVE : collective;
+                actuators.motor = mixMotors(collective, torqueCmd);
                 return;
             }
             case FlightPhase::MANUAL:

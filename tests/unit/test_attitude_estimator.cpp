@@ -195,3 +195,21 @@ TEST_CASE("the bias integral is clamped to a physically plausible range")
     REQUIRE(std::fabs(estimator.gyroBiasRadS()[0]) <=
             mark4::AttitudeEstimator::BIAS_LIMIT_RADS + 1e-6f);
 }
+
+TEST_CASE("a fast rotation suspends the gravity correction on its own")
+{
+    // Rotating fast with a misleading 1 g specific force (a hand starting a
+    // throw): the estimate must trust the gyro alone. Here the rotation is
+    // about z while the accel claims a roll: with the correction gated the
+    // attitude stays a pure yaw.
+    mark4::AttitudeEstimator estimator;
+    const std::array<float, 3> spinning = {0.0f, 0.0f, 3.0f};
+    const std::array<float, 3> misleading = {
+        0.0f, 0.5f * mark4::GRAVITY_MPS2, 0.866f * mark4::GRAVITY_MPS2};
+    feed(estimator, 0U, 500U, spinning, misleading);
+
+    const mark4::Quaternion &q = estimator.attitude();
+    REQUIRE(std::fabs(q.x) < 0.01f);
+    REQUIRE(std::fabs(q.y) < 0.01f);
+    REQUIRE(std::fabs(q.z) > 0.5f);
+}
