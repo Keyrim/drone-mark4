@@ -48,7 +48,10 @@ cmake --preset stm32 && cmake --build --preset stm32
 ctest --preset desktop -R "kill switch"
 
 # Run the simulator app (500 iterations by default, exit code 0 expected)
-./build/desktop/apps/drone_sim/drone_sim [iterations]
+./build/desktop/apps/drone_sim/drone_sim [iterations] [--sim-port N] [--telemetry-port N]
+
+# Monte Carlo throw campaign through headless Godot (see tools/batch/README.md)
+python3 tools/batch/run_batch.py --runs 100 --parallel 4 [--godot /path/to/godot4]
 
 # Lint (both must be clean before committing; CI runs exactly these)
 git ls-files '*.cpp' '*.hpp' '*.c' '*.h' | xargs clang-format --dry-run --Werror

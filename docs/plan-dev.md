@@ -136,8 +136,14 @@ main):
 - `drone_replay` - desktop preset. Replays a blackbox in open loop,
   re-publishes telemetry over UDP during the replay (option
   `--speed 0.1 / 1.0 / max`).
-- `drone_batch` - (future) headless internal C++ physics, Monte Carlo,
-  regression tests.
+- `drone_batch` - NOT a separate executable anymore. Monte Carlo campaigns
+  run through the real simulator: `tools/batch/run_batch.py` spawns N pairs
+  of (headless Godot, drone_sim) in lockstep, faster than real time, resets
+  and throws through the sim command channel, and judges outcomes from the
+  telemetry. Rationale: a second internal C++ physics would fork the truth -
+  the validation reference must be the ONE physics that has the collisions
+  and the calibrated sensor models. A dedicated C++ physics only becomes
+  worth it for massive parameter sweeps, if that need ever materializes.
 
 External processes (do NOT link flight-core, speak only protocol/):
 
@@ -181,7 +187,7 @@ drone-mark4/
 |       |-- stm32/                 # stm32 preset only (+ private include/)
 |       |-- sim/                   # both presets (+ private include/, udp/uart transports)
 |       `-- replay/                # desktop preset
-|-- apps/{firmware,drone_sim,drone_replay,drone_batch}/
+|-- apps/{firmware,drone_sim,drone_replay}/
 |-- tools/ground-station/
 |-- sim-godot/
 |-- esp32-bridge/
@@ -254,7 +260,8 @@ and are linked by the apps.
   5. `clang-tidy` over the desktop build's compile_commands.json.
 - CI badge in the README. Free license (MIT or Apache-2.0) from the first
   commit.
-- (Future, outside milestone 0: a drone_batch scenario job with a recovery
+- (Future, outside milestone 0: an optional Monte Carlo job (tools/batch/,
+  headless Godot in the image) with a recovery
   rate threshold.)
 
 ## 8. Conventions
@@ -285,8 +292,9 @@ and are linked by the apps.
   apex prediction; drone_replay built in parallel; validation against Godot
   ground truth.
 - **M4 - Flight**: hover first (rate PID, quaternion controller, mixer,
-  altitude hold), then the full throw state machine; drone_batch + Monte
-  Carlo in CI.
+  altitude hold), then the full throw state machine; Monte Carlo campaigns
+  through headless Godot (tools/batch/), run locally - a CI job with a
+  recovery threshold is optional and deferred.
 - **M5 - Real world** (in parallel from M2): board bring-up (SPI IMU, DShot,
   RTT, blackbox), detection validation with propellers removed, real hover,
   first throws.
