@@ -21,7 +21,8 @@ ARG GODOT_VERSION=4.7.1-stable
 # Layer 1 - base tools, native compiler, build system, debug, Python
 #   - distro gcc for the desktop presets (no clang for compiling)
 #   - Ubuntu 24.04 cmake 3.28 (>= 3.25 required) + Ninja
-#   - gdb-multiarch for cross debugging via JLinkGDBServer (runs on the host)
+#   - gdb-multiarch for cross debugging via JLinkGDBServer (both run in the
+#     container, see layer 4)
 # -----------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -87,9 +88,10 @@ ENV PATH="/opt/arm-gnu-toolchain/bin:${PATH}"
 # Layer 4 - J-Link tools (Segger)
 #   The download implies acceptance of the Segger license (--post-data):
 #   documented in the README. The .deb is extracted without running its
-#   install scripts (udev rules are useless in a container - the probe lives
-#   on the host, where JLinkGDBServer also runs; what matters here are the
-#   clients such as JLinkRTTClient).
+#   install scripts: no udev daemon runs in a container, device access comes
+#   from docker-compose.yml (privileged + /dev bind mount). The probe is
+#   attached to WSL with usbipd; the whole stack (JLinkExe, JLinkGDBServer,
+#   JLinkRTTClient) runs inside the container (see docs/bring-up.md).
 # -----------------------------------------------------------------------------
 RUN wget -q --post-data "accept_license_agreement=accepted" -O /tmp/jlink.deb \
         "https://www.segger.com/downloads/jlink/JLink_Linux_${JLINK_VERSION}_x86_64.deb" \

@@ -115,9 +115,10 @@ The development image downloads the J-Link tools from segger.com: the
 automated download (`--post-data accept_license_agreement=accepted`) implies
 acceptance of the [Segger license](https://www.segger.com/downloads/jlink).
 If that is a problem, comment out the J-Link layer in the `Dockerfile` or
-install the .deb manually. `JLinkGDBServer` runs on the HOST (USB probe);
-inside the container, `gdb-multiarch` connects to it with
-`target extended-remote host:2331`.
+install the .deb manually. The whole J-Link stack (`JLinkExe`,
+`JLinkGDBServer`, `JLinkRTTClient`) runs inside the container: the probe is
+attached to WSL with `usbipd` and reaches the container through the `/dev`
+bind mount (see `docs/bring-up.md`).
 
 ## License
 

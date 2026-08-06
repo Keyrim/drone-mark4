@@ -67,9 +67,24 @@ usbipd list
 usbipd attach --wsl --busid <BUSID>
 ```
 
-The J-Link tools live in the image (`/opt/SEGGER/JLink`). If a /dev node
-comes up root-only, install SEGGER's udev rules once in the WSL distro
-(`99-jlink.rules`, shipped with the J-Link package) or `sudo chmod` it.
+The J-Link tools live in the image (`/opt/SEGGER/JLink`). The usbipd
+device node comes up root-only, which blocks the J-Link tools as the
+container user. Persistent fix, once in the WSL distro (udev runs there,
+not in the container; the rules file is extracted in the image):
+
+```sh
+# WSL side (grab the file from the container, then reload udev)
+docker cp <container>:/etc/udev/rules.d/99-jlink.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+# then detach / re-attach the probe with usbipd
+```
+
+Quick one-shot alternative, from inside the container (the /dev bind
+mount makes it act on the WSL node, lost at the next re-plug):
+
+```sh
+sudo chmod 666 /dev/bus/usb/<bus>/<dev>
+```
 
 ## Flash and logs
 
