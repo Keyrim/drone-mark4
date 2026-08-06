@@ -11,6 +11,12 @@ services:
     command: sleep infinity
     init: true
 
+    # USB probes (J-Link) and serial dongles (FTDI) attached to WSL with
+    # usbipd reach the container through the /dev bind mount below; privileged
+    # covers the device permissions without cgroup rule bookkeeping. Personal
+    # development machine tradeoff, revisit if this compose ever leaves it.
+    privileged: true
+
     # GPU acceleration for the ground station (WSLg / native X). Optional:
     # /dev/dri only exists when the host exposes a GPU (WSL vGPU, native
     # DRI) - uncomment if so; software rendering is enough otherwise.
@@ -32,6 +38,9 @@ services:
       - gh-config:/home/dev/.config/gh
       # X11 socket (WSLg or native X) for the ground station.
       - /tmp/.X11-unix:/tmp/.X11-unix
+      # Host /dev, so USB devices hot-plugged after the container started
+      # (usbipd attach / detach cycles) appear without a restart.
+      - /dev:/dev
 
 volumes:
   claude-config:

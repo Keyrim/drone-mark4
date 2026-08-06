@@ -15,6 +15,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG ARM_TOOLCHAIN_VERSION=14.2.rel1
 ARG LLVM_VERSION=21
 ARG JLINK_VERSION=V812
+ARG GODOT_VERSION=4.7.1-stable
 
 # -----------------------------------------------------------------------------
 # Layer 1 - base tools, native compiler, build system, debug, Python
@@ -99,6 +100,18 @@ RUN wget -q --post-data "accept_license_agreement=accepted" -O /tmp/jlink.deb \
 ENV PATH="/opt/SEGGER/JLink:${PATH}"
 
 # -----------------------------------------------------------------------------
+# Layer 4b - Godot (official build, pinned)
+#   Runs the simulator inside the container: headless for the Monte Carlo
+#   batches, windowed through WSLg/X11 for interactive sessions. The editor
+#   on the host remains an option, both point at the same sim-godot/ project.
+# -----------------------------------------------------------------------------
+RUN wget -q -O /tmp/godot.zip \
+        "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip" \
+    && unzip -q /tmp/godot.zip -d /opt/godot \
+    && rm /tmp/godot.zip \
+    && ln -s "/opt/godot/Godot_v${GODOT_VERSION}_linux.x86_64" /usr/local/bin/godot
+
+# -----------------------------------------------------------------------------
 # Layer 5 - GitHub CLI (official apt repository)
 # -----------------------------------------------------------------------------
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -143,6 +156,7 @@ ARG USER_GID=1000
 RUN userdel -r ubuntu || true \
     && groupadd --gid ${USER_GID} ${USERNAME} \
     && useradd --uid ${USER_UID} --gid ${USER_GID} -m -s /bin/bash ${USERNAME} \
+    && usermod -aG dialout,plugdev ${USERNAME} \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME} \
     && chmod 0440 /etc/sudoers.d/${USERNAME}
 
