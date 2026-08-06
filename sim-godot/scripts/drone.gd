@@ -75,6 +75,9 @@ var _previous_velocity: Vector3 = Vector3.ZERO
 var _throw_force_n: Vector3 = Vector3.ZERO
 var _throw_remaining_s: float = 0.0
 var _reset_pending: bool = false
+## Incremented on every applied reset and sent in the sensor packet: the
+## flight process discards its state, a teleport is not a physical event.
+var _reset_count: int = 0
 var _tick_count: int = 0
 var _tick_rate_hz: float = 500.0
 
@@ -111,7 +114,9 @@ func _physics_process(delta: float) -> void:
 		sensors.accel_mps2,
 		sensors.baro_pa,
 		pilot.kill_switch,
-		pilot.throttle
+		pilot.throttle,
+		pilot.arm_switch,
+		_reset_count
 	)
 	sim_raw.publish(simulated_time_us(), body_basis, global_position, velocity)
 
@@ -128,6 +133,7 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 	if not _reset_pending:
 		return
 	_reset_pending = false
+	_reset_count = (_reset_count + 1) % 256
 	state.transform = Transform3D(Basis.IDENTITY, start_position)
 	state.linear_velocity = Vector3.ZERO
 	state.angular_velocity = Vector3.ZERO

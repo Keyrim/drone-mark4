@@ -39,6 +39,7 @@ func _refresh() -> void:
 	var lines := PackedStringArray()
 	lines.append("sim time   %8.3f s" % _drone.simulated_time_s())
 	lines.append("kill       %s" % _drone.pilot.kill_switch_text())
+	lines.append("arm        %s" % _drone.pilot.arm_switch_text())
 	lines.append("throttle   %.2f" % _drone.pilot.throttle)
 	lines.append("motors     %s" % link.motor_commands_text())
 	lines.append("accel      %6.2f g" % _drone.sensors.accel_magnitude_g())
@@ -51,5 +52,5 @@ func _refresh() -> void:
 	)
 	if link.lockstep:
 		lines.append("lockstep   on, %d timeouts" % link.lockstep_timeouts)
-	lines.append("keys       K kill  Up/Down throttle  SPACE throw  R reset  ESC quit")
+	lines.append("keys       K kill  A arm  Up/Down throttle  SPACE throw  R reset  ESC quit")
 	text = "\n".join(lines)

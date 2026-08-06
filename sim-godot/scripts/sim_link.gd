@@ -12,9 +12,10 @@ extends Node
 ## protocol/include/protocol/version.hpp, which are the source of truth. Both
 ## packets are packed, little endian, version byte first:
 ##
-##   sensor   (42 bytes): u8 version, u64 timestamp_us, 3x f32 gyro [rad/s],
+##   sensor   (44 bytes): u8 version, u64 timestamp_us, 3x f32 gyro [rad/s],
 ##                        3x f32 accel [m/s^2], f32 baro [Pa],
-##                        u8 kill switch, f32 throttle
+##                        u8 kill switch, f32 throttle, u8 arm switch,
+##                        u8 reset count
 ##   actuator (17 bytes): u8 version, 4x f32 motor commands in [0, 1]
 ##
 ## Anything with another size or another version byte is dropped.
@@ -24,13 +25,13 @@ extends Node
 ## from the Godot body axes (y up, -z forward, x right).
 
 ## Keep in sync with protocol/include/protocol/version.hpp.
-const PROTOCOL_VERSION := 5
+const PROTOCOL_VERSION := 7
 
 ## Axis remap from the Godot body frame to the drone body frame: columns are
 ## the drone coordinates of the Godot x, y and z axes.
 const GODOT_TO_DRONE := Basis(Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(-1, 0, 0))
 
-const SENSOR_PACKET_SIZE := 42
+const SENSOR_PACKET_SIZE := 44
 const ACTUATOR_PACKET_SIZE := 17
 const MOTOR_COUNT := 4
 
@@ -112,17 +113,23 @@ func _exit_tree() -> void:
 ## @param baro_pa static pressure [Pa].
 ## @param kill_switch true when the kill switch is engaged.
 ## @param throttle normalized RC throttle in [0, 1].
+## @param arm_switch true when the drone is armed for an autonomous throw flight.
+## @param reset_count world reset counter, tells the flight process to restart.
 func exchange(
 	timestamp_us: int,
 	gyro_rad_s: Vector3,
 	accel_mps2: Vector3,
 	baro_pa: float,
 	kill_switch: bool,
-	throttle: float
+	throttle: float,
+	arm_switch: bool,
+	reset_count: int
 ) -> void:
 	if not _ready_to_send:
 		return
-	_send_sensor_packet(timestamp_us, gyro_rad_s, accel_mps2, baro_pa, kill_switch, throttle)
+	_send_sensor_packet(
+		timestamp_us, gyro_rad_s, accel_mps2, baro_pa, kill_switch, throttle, arm_switch, reset_count
+	)
 	if lockstep:
 		if not _wait_for_reply():
 			lockstep_timeouts += 1
@@ -144,7 +151,9 @@ func _send_sensor_packet(
 	accel_mps2: Vector3,
 	baro_pa: float,
 	kill_switch: bool,
-	throttle: float
+	throttle: float,
+	arm_switch: bool,
+	reset_count: int
 ) -> void:
 	var gyro_drone := GODOT_TO_DRONE * gyro_rad_s
 	var accel_drone := GODOT_TO_DRONE * accel_mps2
@@ -160,6 +169,8 @@ func _send_sensor_packet(
 	_buffer.put_float(baro_pa)
 	_buffer.put_u8(1 if kill_switch else 0)
 	_buffer.put_float(throttle)
+	_buffer.put_u8(1 if arm_switch else 0)
+	_buffer.put_u8(reset_count)
 
 	var payload := _buffer.data_array
 	if payload.size() != SENSOR_PACKET_SIZE:
