@@ -13,6 +13,12 @@ namespace mark4
     /// UDP port the simulator listens on for scenario commands.
     inline constexpr std::uint16_t SIM_COMMAND_PORT = 47804U;
 
+    /// UDP port the serial bridge (PC script today, ESP32 later) listens
+    /// on for the pilot RC commands to relay to the real board. Distinct
+    /// from SIM_COMMAND_PORT: the simulator binds its port exclusively,
+    /// and the ghost view use case runs both at once.
+    inline constexpr std::uint16_t RC_COMMAND_PORT = 47805U;
+
     /// Teleports the drone back to its start pose, velocities zeroed. The
     /// flight process restarts through the reset counter of the sim link.
     inline constexpr std::uint8_t SIM_COMMAND_RESET = 1U;
@@ -58,4 +64,23 @@ namespace mark4
     static_assert(sizeof(SimCommandPacket) == SIM_COMMAND_PACKET_SIZE,
                   "wire layout must be packed");
     static_assert(std::is_trivially_copyable_v<SimCommandPacket>);
+
+#pragma pack(push, 1)
+    /// Pilot state for the firmware uplink. Streamed periodically (10 Hz),
+    /// never fired once: the firmware treats a silent link as a kill
+    /// (fail-safe), so holding a state means repeating it.
+    struct RcCommandPacket
+    {
+        std::uint8_t version;    ///< = PROTOCOL_VERSION
+        std::uint8_t killSwitch; ///< 1 = engaged (motors cut)
+        std::uint8_t armSwitch;  ///< 1 = armed for an autonomous throw flight
+        float throttle;          ///< normalized [0, 1]
+    };
+#pragma pack(pop)
+
+    /// version (1) + kill switch (1) + arm switch (1) + throttle (4).
+    inline constexpr std::size_t RC_COMMAND_PACKET_SIZE = 7U;
+
+    static_assert(sizeof(RcCommandPacket) == RC_COMMAND_PACKET_SIZE, "wire layout must be packed");
+    static_assert(std::is_trivially_copyable_v<RcCommandPacket>);
 } // namespace mark4
