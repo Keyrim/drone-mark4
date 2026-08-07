@@ -93,8 +93,11 @@ namespace mark4
         static constexpr float CUTOFF_ACCEL_MPS2 = 8.0f * GRAVITY_MPS2;
 
         /// Gyro norm above which the motors are cut (sensor near saturation,
-        /// nothing controlled is happening at such rates).
-        static constexpr float CUTOFF_GYRO_RADS = 60.0f;
+        /// nothing controlled is happening at such rates). Sits below the
+        /// +/-2000 deg/s (34.9 rad/s) clip of the flight gyro, so one
+        /// saturated axis alone always trips it, and well above real hand
+        /// throw tumbling (measured at 10 rad/s or less).
+        static constexpr float CUTOFF_GYRO_RADS = 30.0f;
 
         /// Cosine of the tilt beyond which the hover stack gives up (75 deg):
         /// it can only push the drone into the ground from there.
