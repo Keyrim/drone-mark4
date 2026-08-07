@@ -132,9 +132,16 @@ Incremental, one observable win per step:
    baud (about 40 % of the line), each wrapped in the serial framing of
    `protocol/serial_framing.hpp` (a UART has no datagram boundaries),
    interrupt-driven behind a ring buffer, demuxed by payload size on
-   the PC. `tools/telemetry/read_serial.py` checks the link,
-   `tools/telemetry/record_blackbox.py` captures `.m4bb` files that
-   `drone_replay` plays back.
+   the PC. `tools/telemetry/read_serial.py` checks the link;
+   `tools/telemetry/serial_bridge.py` is the single serial consumer of
+   a session: it re-broadcasts telemetry over UDP (ground station and
+   Godot ghost work unchanged) and captures `.m4bb` files that
+   `drone_replay` plays back. The uplink carries the pilot state
+   (RcCommandPacket: kill, arm, throttle): the Godot simulator is the
+   cockpit (K = kill, A = arm), its RcUplink node streams the state at
+   10 Hz to udp/47805 and the bridge relays it to the UART; 500 ms of
+   silence trips the fail-safe (kill engaged, disarmed), so closing
+   the simulator or the bridge is itself a safe action.
 4. **Detection on real hands**: board armed and shaken in hand (no
    false spin-up expected), then thrown and caught - throw detection
    and apex prediction on real sensor data, compared against the
