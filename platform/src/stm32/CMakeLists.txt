@@ -4,7 +4,8 @@ add_library(platform_stm32 STATIC
     startup.c
     board.cpp
     rtt.cpp
-    i2c_bus.cpp)
+    i2c_bus.cpp
+    mpu6050.cpp)
 target_include_directories(platform_stm32 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(platform_stm32
     PUBLIC platform

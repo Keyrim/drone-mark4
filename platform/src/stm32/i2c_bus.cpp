@@ -19,9 +19,14 @@ namespace mark4
         constexpr std::uint32_t I2C_CR1_PE = 1U << 0U;
         constexpr std::uint32_t I2C_CR1_START = 1U << 8U;
         constexpr std::uint32_t I2C_CR1_STOP = 1U << 9U;
+        constexpr std::uint32_t I2C_CR1_ACK = 1U << 10U;
+        constexpr std::uint32_t I2C_CR1_POS = 1U << 11U;
         constexpr std::uint32_t I2C_CR1_SWRST = 1U << 15U;
         constexpr std::uint32_t I2C_SR1_SB = 1U << 0U;
         constexpr std::uint32_t I2C_SR1_ADDR = 1U << 1U;
+        constexpr std::uint32_t I2C_SR1_BTF = 1U << 2U;
+        constexpr std::uint32_t I2C_SR1_RXNE = 1U << 6U;
+        constexpr std::uint32_t I2C_SR1_TXE = 1U << 7U;
         constexpr std::uint32_t I2C_SR1_AF = 1U << 10U;
         constexpr std::uint32_t I2C_SR2_BUSY = 1U << 1U;
 
@@ -50,6 +55,147 @@ namespace mark4
                 }
             }
             return false;
+        }
+
+        /// @brief Polls SR1 for an event flag, giving up on NACK.
+        /// @param mask SR1 flag(s) waited for
+        /// @return true when a flag rose; false on NACK or timeout
+        bool waitEvent(std::uint32_t mask)
+        {
+            for (std::uint32_t loop = 0U; loop < FLAG_TIMEOUT_LOOPS; ++loop)
+            {
+                const std::uint32_t sr1 = I2C1->SR1;
+                if ((sr1 & mask) != 0U)
+                {
+                    return true;
+                }
+                if ((sr1 & I2C_SR1_AF) != 0U)
+                {
+                    return false;
+                }
+            }
+            return false;
+        }
+
+        /// @brief Releases the bus after a failed transfer: NACK flag
+        ///        cleared, POS restored, STOP queued, BUSY waited out.
+        void abortTransfer()
+        {
+            I2C1->SR1 = ~I2C_SR1_AF;
+            I2C1->CR1 = (I2C1->CR1 | I2C_CR1_STOP) & ~I2C_CR1_POS;
+            static_cast<void>(waitMasked(I2C1->SR2, I2C_SR2_BUSY, 0U));
+        }
+
+        /// @brief START (or repeated START) plus the address byte.
+        /// @param address 7-bit device address
+        /// @param readDirection true for a receive transfer
+        /// @return true when the device acknowledged; ADDR left uncleared
+        bool sendStart(std::uint8_t address, bool readDirection)
+        {
+            I2C1->CR1 = I2C1->CR1 | I2C_CR1_START;
+            if (!waitEvent(I2C_SR1_SB))
+            {
+                return false;
+            }
+            I2C1->DR = (static_cast<std::uint32_t>(address) << 1U) | (readDirection ? 1U : 0U);
+            return waitEvent(I2C_SR1_ADDR);
+        }
+
+        /// @brief Clears ADDR with the SR1-then-SR2 read sequence.
+        void clearAddr()
+        {
+            const std::uint32_t sr1 = I2C1->SR1;
+            const std::uint32_t sr2 = I2C1->SR2;
+            static_cast<void>(sr1);
+            static_cast<void>(sr2);
+        }
+
+        /// @brief Receive phase of a transfer, RM0090 master receiver
+        ///        sequences: dedicated ACK/STOP choreography for 1 byte,
+        ///        2 bytes (POS trick) and N >= 3 (NACK on N-2 after BTF).
+        /// @param address 7-bit device address
+        /// @param data receives the bytes read
+        /// @param length number of bytes, at least 1
+        /// @return true when the transfer completed
+        bool receive(std::uint8_t address, std::uint8_t *data, std::uint32_t length)
+        {
+            if (length == 1U)
+            {
+                I2C1->CR1 = I2C1->CR1 & ~I2C_CR1_ACK;
+                if (!sendStart(address, true))
+                {
+                    abortTransfer();
+                    return false;
+                }
+                clearAddr();
+                I2C1->CR1 = I2C1->CR1 | I2C_CR1_STOP;
+                if (!waitEvent(I2C_SR1_RXNE))
+                {
+                    abortTransfer();
+                    return false;
+                }
+                data[0] = static_cast<std::uint8_t>(I2C1->DR);
+            }
+            else if (length == 2U)
+            {
+                I2C1->CR1 = (I2C1->CR1 | I2C_CR1_POS) & ~I2C_CR1_ACK;
+                if (!sendStart(address, true))
+                {
+                    abortTransfer();
+                    return false;
+                }
+                clearAddr();
+                if (!waitEvent(I2C_SR1_BTF))
+                {
+                    abortTransfer();
+                    return false;
+                }
+                I2C1->CR1 = I2C1->CR1 | I2C_CR1_STOP;
+                data[0] = static_cast<std::uint8_t>(I2C1->DR);
+                data[1] = static_cast<std::uint8_t>(I2C1->DR);
+                I2C1->CR1 = I2C1->CR1 & ~I2C_CR1_POS;
+            }
+            else
+            {
+                I2C1->CR1 = I2C1->CR1 | I2C_CR1_ACK;
+                if (!sendStart(address, true))
+                {
+                    abortTransfer();
+                    return false;
+                }
+                clearAddr();
+                std::uint32_t index = 0U;
+                for (std::uint32_t remaining = length; remaining > 3U; --remaining)
+                {
+                    if (!waitEvent(I2C_SR1_RXNE))
+                    {
+                        abortTransfer();
+                        return false;
+                    }
+                    data[index] = static_cast<std::uint8_t>(I2C1->DR);
+                    ++index;
+                }
+                // Three bytes left: after BTF, byte N-2 sits in DR and N-1
+                // in the shift register; NACK then STOP around reading them.
+                if (!waitEvent(I2C_SR1_BTF))
+                {
+                    abortTransfer();
+                    return false;
+                }
+                I2C1->CR1 = I2C1->CR1 & ~I2C_CR1_ACK;
+                data[index] = static_cast<std::uint8_t>(I2C1->DR);
+                ++index;
+                I2C1->CR1 = I2C1->CR1 | I2C_CR1_STOP;
+                data[index] = static_cast<std::uint8_t>(I2C1->DR);
+                ++index;
+                if (!waitEvent(I2C_SR1_RXNE))
+                {
+                    abortTransfer();
+                    return false;
+                }
+                data[index] = static_cast<std::uint8_t>(I2C1->DR);
+            }
+            return waitMasked(I2C1->SR2, I2C_SR2_BUSY, 0U);
         }
     } // namespace
 
@@ -131,5 +277,80 @@ namespace mark4
         I2C1->CR1 = I2C1->CR1 | I2C_CR1_STOP;
         static_cast<void>(waitMasked(I2C1->SR2, I2C_SR2_BUSY, 0U));
         return acked;
+    }
+
+    bool I2cBus::write(std::uint8_t address, const std::uint8_t *data, std::uint32_t length)
+    {
+        if (!m_ready || !waitMasked(I2C1->SR2, I2C_SR2_BUSY, 0U))
+        {
+            return false;
+        }
+        if (!sendStart(address, false))
+        {
+            abortTransfer();
+            return false;
+        }
+        clearAddr();
+        for (std::uint32_t index = 0U; index < length; ++index)
+        {
+            if (!waitEvent(I2C_SR1_TXE))
+            {
+                abortTransfer();
+                return false;
+            }
+            I2C1->DR = data[index];
+        }
+        if (!waitEvent(I2C_SR1_BTF))
+        {
+            abortTransfer();
+            return false;
+        }
+        I2C1->CR1 = I2C1->CR1 | I2C_CR1_STOP;
+        return waitMasked(I2C1->SR2, I2C_SR2_BUSY, 0U);
+    }
+
+    bool I2cBus::read(std::uint8_t address, std::uint8_t *data, std::uint32_t length)
+    {
+        if (!m_ready || (length == 0U) || !waitMasked(I2C1->SR2, I2C_SR2_BUSY, 0U))
+        {
+            return false;
+        }
+        return receive(address, data, length);
+    }
+
+    bool I2cBus::writeRegister(std::uint8_t address, std::uint8_t reg, std::uint8_t value)
+    {
+        const std::uint8_t frame[2] = {reg, value};
+        return write(address, frame, sizeof(frame));
+    }
+
+    bool I2cBus::readRegisters(std::uint8_t address,
+                               std::uint8_t reg,
+                               std::uint8_t *data,
+                               std::uint32_t length)
+    {
+        if (!m_ready || (length == 0U) || !waitMasked(I2C1->SR2, I2C_SR2_BUSY, 0U))
+        {
+            return false;
+        }
+        if (!sendStart(address, false))
+        {
+            abortTransfer();
+            return false;
+        }
+        clearAddr();
+        if (!waitEvent(I2C_SR1_TXE))
+        {
+            abortTransfer();
+            return false;
+        }
+        I2C1->DR = reg;
+        if (!waitEvent(I2C_SR1_BTF))
+        {
+            abortTransfer();
+            return false;
+        }
+        // Repeated start: the register pointer phase ends without a STOP.
+        return receive(address, data, length);
     }
 } // namespace mark4

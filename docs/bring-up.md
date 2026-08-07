@@ -30,12 +30,16 @@ the UART telemetry.
 
 ### Sensors
 
-The mark1 Sensors board is not used. A commercial **MPU6050 breakout**
-is wired to the `sensor_board` connector and speaks on **I2C1**. The
-breakout carries two more chips (barometer and compass, exact models
-unknown); the first bring-up firmware runs an I2C scan to identify them.
-Expected addresses: 0x68 (MPU6050), 0x77 (MS5611 or BMP180), 0x1E
-(HMC5883L).
+The mark1 Sensors board is not used. A commercial **GY-86 breakout**
+(identified on the bus by the bring-up firmware) is wired to the
+`sensor_board` connector and speaks on **I2C1**:
+
+- **MPU6050** at 0x68 (confirmed by WHO_AM_I; no ID register on the
+  MS5611, its PROM answered instead).
+- **MS5611** barometer at 0x77.
+- **HMC5883L** compass at 0x1E, wired behind the MPU6050 auxiliary bus:
+  it only appears on the main bus once the MPU I2C bypass
+  (INT_PIN_CFG.I2C_BYPASS_EN) is open.
 
 Constraints this hardware puts on the firmware:
 
