@@ -149,6 +149,47 @@ def decode_sim_raw(datagram: bytes) -> Optional[SimRawSample]:
     )
 
 
+class StreamClock:
+    """Maps one stream's timestamps onto the receiver's clock.
+
+    Every source stamps with its own clock and its own zero (the board
+    counts from boot, the simulator from launch), so timestamps from two
+    streams cannot share a plot axis directly. The receiver's clock is the
+    only one every stream has in common: the first sample anchors the
+    stream (local time, source time), later samples are placed relative to
+    that anchor, so the source keeps pacing the samples and only the zero
+    comes from the receiver.
+
+    A timestamp going backward means the source rebooted (or was
+    restarted): the stream is re-anchored at the current local time and
+    the reboot is counted, so a consumer can mark it.
+    """
+
+    def __init__(self) -> None:
+        self._anchor_local_s: float = 0.0
+        self._anchor_source_us: Optional[int] = None
+        self._last_source_us: int = 0
+        #: Number of re-anchors caused by a backward timestamp.
+        self.reboots: int = 0
+
+    def to_local(self, timestamp_us: int, local_now_s: float) -> float:
+        """Place one source timestamp on the receiver's time axis.
+
+        Returns seconds in the same base as local_now_s. Detects and
+        absorbs source reboots; check reboots (or rebooted()) around the
+        call to mark them.
+        """
+        if self._anchor_source_us is None:
+            self._anchor_local_s = local_now_s
+            self._anchor_source_us = timestamp_us
+        elif timestamp_us < self._last_source_us:
+            self.reboots += 1
+            self._anchor_local_s = local_now_s
+            self._anchor_source_us = timestamp_us
+        self._last_source_us = timestamp_us
+        return self._anchor_local_s + (timestamp_us - self._anchor_source_us) * 1e-6
+
+
 def euler_deg(quat: Tuple[float, float, float, float]) -> Tuple[float, float, float]:
     """Roll, pitch, yaw in degrees from a w-x-y-z body-to-world quaternion."""
     w, x, y, z = quat

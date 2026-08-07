@@ -18,6 +18,7 @@ import argparse
 import errno
 import socket
 import sys
+import time
 from collections import deque
 from typing import Deque, List, Optional, Tuple
 
@@ -27,6 +28,7 @@ from PyQt6 import QtCore, QtWidgets
 from telemetry_wire import (
     SIM_RAW_PORT,
     TELEMETRY_PORT,
+    StreamClock,
     decode_sim_raw,
     decode_telemetry,
     error_angle_deg,
@@ -103,7 +105,13 @@ class GroundStationWindow(pg.GraphicsLayoutWidget):
         self._window_s = window_s
         self._received = 0
         self._dropped = 0
-        self._first_timestamp_us: Optional[int] = None
+        # Each stream has its own clock and zero (the board counts from
+        # boot, the simulator from launch): one anchor per stream maps both
+        # onto the local session time, and a re-anchor marks a reboot.
+        self._session_start = time.monotonic()
+        self._telemetry_clock = StreamClock()
+        self._sim_raw_clock = StreamClock()
+        self._marked_reboots = 0
         self._last_true_quat: Optional[Tuple[float, float, float, float]] = None
         self._last_throw: Optional[Tuple[int, float, float]] = None  # count, vz0, apex m
 
@@ -184,19 +192,30 @@ class GroundStationWindow(pg.GraphicsLayoutWidget):
 
     def _on_tick(self) -> None:
         """Drain both sockets, then redraw."""
-        appended = self._drain_sim_raw()
-        appended = self._drain_telemetry() or appended
+        now = time.monotonic() - self._session_start
+        appended = self._drain_sim_raw(now)
+        appended = self._drain_telemetry(now) or appended
+        self._mark_reboots()
         if appended:
             self._refresh_plot()
         self._refresh_title()
 
-    def _elapsed_s(self, timestamp_us: int) -> float:
-        """Seconds since the first sample seen, both streams share the clock."""
-        if self._first_timestamp_us is None:
-            self._first_timestamp_us = timestamp_us
-        return (timestamp_us - self._first_timestamp_us) * 1e-6
+    def _mark_reboots(self) -> None:
+        """Draw one vertical marker per source reboot seen by the clocks."""
+        reboots = self._telemetry_clock.reboots + self._sim_raw_clock.reboots
+        while self._marked_reboots < reboots:
+            self._marked_reboots += 1
+            position = time.monotonic() - self._session_start
+            for plot in self._plots:
+                plot.addItem(
+                    pg.InfiniteLine(
+                        pos=position,
+                        angle=90,
+                        pen=pg.mkPen("#999999", style=QtCore.Qt.PenStyle.DashLine),
+                    )
+                )
 
-    def _drain_sim_raw(self) -> bool:
+    def _drain_sim_raw(self, now: float) -> bool:
         appended = False
         for datagram in drain(self._sim_raw_socket):
             sample = decode_sim_raw(datagram)
@@ -205,7 +224,9 @@ class GroundStationWindow(pg.GraphicsLayoutWidget):
                 continue
             self._received += 1
             self._last_true_quat = sample.attitude_quat
-            self._sim_raw_times.append(self._elapsed_s(sample.timestamp_us))
+            self._sim_raw_times.append(
+                self._sim_raw_clock.to_local(sample.timestamp_us, now)
+            )
             for axis, angle in enumerate(euler_deg(sample.attitude_quat)):
                 self._euler_true[axis].append(angle)
             self._vertical_true[0].append(sample.position_m[2])
@@ -213,7 +234,7 @@ class GroundStationWindow(pg.GraphicsLayoutWidget):
             appended = True
         return appended
 
-    def _drain_telemetry(self) -> bool:
+    def _drain_telemetry(self, now: float) -> bool:
         appended = False
         for datagram in drain(self._telemetry_socket):
             sample = decode_telemetry(datagram)
@@ -221,7 +242,9 @@ class GroundStationWindow(pg.GraphicsLayoutWidget):
                 self._dropped += 1
                 continue
             self._received += 1
-            self._telemetry_times.append(self._elapsed_s(sample.timestamp_us))
+            self._telemetry_times.append(
+                self._telemetry_clock.to_local(sample.timestamp_us, now)
+            )
             for axis, rate in enumerate(sample.gyro_rad_s):
                 self._gyro[axis].append(rate)
             for axis, angle in enumerate(euler_deg(sample.attitude_quat)):
