@@ -15,6 +15,9 @@ see `Flight_Controller/Board/Docs/Flight_Controller_Schematic.md`).
   preset, `startup.c` and `stm32f405.ld` already target.
 - **BOOT0 tied to GND**: no USB, no DFU. Flashing goes through SWD only.
 - LDO 5V -> 3V3 (MCP1826). Status LEDs: LED1 = PC13, LED2 = PC14.
+  **LED2 is dead on this unit** (PC14 measures 3.3 V on IDR when driven,
+  the LED never lights: dead, reversed or never fitted): all the LED
+  signalling goes through LED1 (see `apps/firmware/status_leds.hpp`).
 - `Prog` header, 6 pins: `3V3, SWCLK, GND, SWDIO, NRST, SWO` - the same
   pinout as the CN2 connector of ST Discovery boards, so the probe cable
   is 1:1.

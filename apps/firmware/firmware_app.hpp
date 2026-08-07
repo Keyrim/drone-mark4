@@ -28,10 +28,6 @@ namespace mark4
         /// Frames between two status lines over RTT: one per second.
         static constexpr std::uint32_t FRAMES_PER_STATUS = SensorSourceStm32::FRAME_RATE_HZ;
 
-        /// Frames between two heartbeat LED toggles: 1 Hz blink.
-        static constexpr std::uint32_t FRAMES_PER_LED_TOGGLE =
-            SensorSourceStm32::FRAME_RATE_HZ / 2U;
-
         /// Frames between two telemetry packets: 50 Hz, the same
         /// decimation as the simulator app.
         static constexpr std::uint32_t FRAMES_PER_TELEMETRY = 10U;

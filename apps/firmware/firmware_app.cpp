@@ -6,6 +6,7 @@
 #include "flight_core/types.hpp"
 #include "platform_stm32/board.hpp"
 #include "platform_stm32/rtt.hpp"
+#include "status_leds.hpp"
 
 namespace
 {
@@ -14,6 +15,10 @@ namespace
     constexpr std::uint32_t FRAME_PERIOD_US = 1000000U / mark4::SensorSourceStm32::FRAME_RATE_HZ;
     static_assert(mark4::Ms5611::CONVERSION_WAIT_UPDATES * FRAME_PERIOD_US >= 9040U,
                   "MS5611 conversion outlasts the wait budget");
+
+    static_assert(mark4::LED_FRAMES_PER_SLOT * mark4::LED_PATTERN_SLOTS ==
+                      mark4::SensorSourceStm32::FRAME_RATE_HZ,
+                  "the LED pattern cycle must span exactly one second");
 
     /// @brief Millis of a float for integer-only printf: "%d.%03d".
     /// @param value converted value
@@ -75,6 +80,8 @@ namespace mark4
 
         std::uint32_t frames = 0U;
         std::uint64_t lastStatusUs = 0U;
+        std::uint32_t lastFailureCount = 0U;
+        bool degraded = false;
         for (;;)
         {
             if (!m_sensorSource.waitFrame(frame))
@@ -84,6 +91,7 @@ namespace mark4
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);
             m_blackbox.record(frame, actuators);
+            updateStatusLeds(m_core.flightPhase(), degraded, frames);
 
             ++frames;
             if ((frames % FRAMES_PER_TELEMETRY) == 0U)
@@ -91,12 +99,15 @@ namespace mark4
                 const auto wire = packTelemetry(frame, actuators, m_core);
                 m_telemetrySender.send(wire.data(), wire.size());
             }
-            if ((frames % FRAMES_PER_LED_TOGGLE) == 0U)
-            {
-                toggleLed1();
-            }
             if ((frames % FRAMES_PER_STATUS) == 0U)
             {
+                // A health counter that moved during the last window keeps
+                // LED1 on the degraded pattern for the next one.
+                const std::uint32_t failureCount =
+                    m_sensorSource.overruns() + m_sensorSource.readFailures() + m_baro.failures() +
+                    m_telemetrySender.packetsDropped();
+                degraded = failureCount != lastFailureCount;
+                lastFailureCount = failureCount;
                 const std::uint64_t nowUs = frame.timestampUs;
                 const std::uint32_t periodUs =
                     static_cast<std::uint32_t>((nowUs - lastStatusUs) / FRAMES_PER_STATUS);

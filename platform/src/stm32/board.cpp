@@ -142,4 +142,15 @@ namespace mark4
     {
         GPIOC->ODR = GPIOC->ODR ^ (1U << LED1_PIN);
     }
+
+    void setLed1(bool on)
+    {
+        // BSRR: low half sets the pin, high half resets it, atomically.
+        GPIOC->BSRR = on ? (1U << LED1_PIN) : (1U << (LED1_PIN + 16U));
+    }
+
+    void setLed2(bool on)
+    {
+        GPIOC->BSRR = on ? (1U << LED2_PIN) : (1U << (LED2_PIN + 16U));
+    }
 } // namespace mark4

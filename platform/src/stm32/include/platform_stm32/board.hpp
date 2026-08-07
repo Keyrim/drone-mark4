@@ -40,4 +40,13 @@ namespace mark4
 
     /// @brief Toggles LED1, the heartbeat LED.
     void toggleLed1();
+
+    /// @brief Drives LED1, the health LED. Assumes the LED lights when the
+    ///        pin is driven high.
+    /// @param on true lights the LED
+    void setLed1(bool on);
+
+    /// @brief Drives LED2, the flight state LED. Same polarity as LED1.
+    /// @param on true lights the LED
+    void setLed2(bool on);
 } // namespace mark4
