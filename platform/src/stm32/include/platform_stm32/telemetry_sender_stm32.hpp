@@ -19,7 +19,9 @@ namespace mark4
     class TelemetrySenderStm32 final : public AbsTelemetrySender
     {
       public:
-        static constexpr std::uint32_t BAUD_RATE = 115200U;
+        /// Fast enough for the full-rate blackbox stream plus telemetry
+        /// (about 40 % of the line), and a standard FTDI rate.
+        static constexpr std::uint32_t BAUD_RATE = 921600U;
 
         /// @brief Configures PB6/PB7, the USART and its interrupt. Assumes
         ///        the 84 MHz APB2 clock set by initSystemClock().

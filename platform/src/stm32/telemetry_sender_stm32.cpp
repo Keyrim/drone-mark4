@@ -26,9 +26,10 @@ namespace mark4
         constexpr std::uint32_t APB2_CLOCK_HZ = 84000000U;
         constexpr std::uint32_t USART1_IRQ_NUMBER = 37U;
 
-        /// Ring capacity; must be a power of two. Holds a handful of
-        /// telemetry frames, the drop policy covers the rest.
-        constexpr std::uint32_t RING_SIZE = 1024U;
+        /// Ring capacity; must be a power of two. Holds about 45 ms of a
+        /// saturated line (blackbox records plus telemetry), the drop
+        /// policy covers the rest.
+        constexpr std::uint32_t RING_SIZE = 4096U;
         constexpr std::uint32_t RING_MASK = RING_SIZE - 1U;
         static_assert((RING_SIZE & RING_MASK) == 0U);
 
@@ -58,6 +59,8 @@ namespace mark4
 
         // Oversampling by 16 (reset default): BRR is simply the clock
         // divided by the baud rate, mantissa and fraction packed as one.
+        // At 921600 the truncation lands on 923077 baud, +0.16 % - well
+        // inside the USART tolerance.
         USART1->BRR = APB2_CLOCK_HZ / BAUD_RATE;
         USART1->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE;
 

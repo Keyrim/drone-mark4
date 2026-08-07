@@ -60,7 +60,8 @@ namespace mark4
             rttWrite("telemetry: uart init failed\n");
             return false;
         }
-        rttPrintf("loop: %lu Hz, timer paced; telemetry: %lu baud, 1 packet / %lu frames\n",
+        rttPrintf("loop: %lu Hz, timer paced; telemetry: %lu baud, 1 packet / %lu frames; "
+                  "blackbox: every frame, same link\n",
                   static_cast<unsigned long>(SensorSourceStm32::FRAME_RATE_HZ),
                   static_cast<unsigned long>(TelemetrySenderStm32::BAUD_RATE),
                   static_cast<unsigned long>(FRAMES_PER_TELEMETRY));
@@ -82,6 +83,7 @@ namespace mark4
             }
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);
+            m_blackbox.record(frame, actuators);
 
             ++frames;
             if ((frames % FRAMES_PER_TELEMETRY) == 0U)

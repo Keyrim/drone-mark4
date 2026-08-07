@@ -1,5 +1,6 @@
-"""Quick check of the UART telemetry: sync on the serial framing, unpack
-TelemetryPacket (protocol/telemetry.hpp) and print a summary."""
+"""Quick check of the UART link: sync on the serial framing, unpack
+TelemetryPacket (protocol/telemetry.hpp), count the interleaved blackbox
+records, and print a summary."""
 
 import os
 import struct
@@ -8,13 +9,14 @@ import termios
 import time
 
 PORT = "/dev/ttyUSB0"
-BAUD = termios.B115200
+BAUD = termios.B921600
 # version u8, timestampUs u64, gyro 3f, quat 4f, bias 3f, motor 4f,
 # altitude f, vz f, throwState u8, throwCount u32, releaseVel f,
 # apexTimestampUs u64, apexAlt f, flightPhase u8  -> packed little-endian
 FMT = "<BQ3f4f3f4fffBIfQfB"
 SIZE = struct.calcsize(FMT)
 assert SIZE == 95, SIZE
+BLACKBOX_RECORD_SIZE = 59  # flight_core/blackbox.hpp, demuxed by size
 
 fd = os.open(PORT, os.O_RDONLY | os.O_NOCTTY)
 attrs = termios.tcgetattr(fd)
@@ -30,7 +32,7 @@ termios.tcsetattr(fd, termios.TCSAFLUSH, attrs)
 
 SYNC0, SYNC1 = 0xA5, 0x5A
 state, length, payload = 0, 0, bytearray()
-packets, bad, last_ts = [], 0, None
+packets, records, bad, last_ts = [], 0, 0, None
 deadline = time.time() + 4.0
 
 while time.time() < deadline and len(packets) < 60:
@@ -52,14 +54,18 @@ while time.time() < deadline and len(packets) < 60:
             checksum = 0
             for b in payload:
                 checksum ^= b
-            if checksum == byte and length == SIZE:
+            if checksum != byte:
+                bad += 1
+            elif length == SIZE:
                 packets.append(struct.unpack(FMT, bytes(payload)))
+            elif length == BLACKBOX_RECORD_SIZE:
+                records += 1
             else:
                 bad += 1
             state = 0
 os.close(fd)
 
-print(f"packets: {len(packets)} valid, {bad} bad")
+print(f"packets: {len(packets)} valid, {records} blackbox records, {bad} bad")
 if packets:
     deltas = [
         (b[1] - a[1]) for a, b in zip(packets, packets[1:])

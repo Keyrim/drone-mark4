@@ -5,9 +5,11 @@
 
 #include <cstdint>
 
+#include "flight_core/blackbox.hpp"
 #include "flight_core/flight_core.hpp"
 #include "platform_stm32/clock_stm32.hpp"
 #include "platform_stm32/i2c_bus.hpp"
+#include "platform_stm32/log_sink_uart.hpp"
 #include "platform_stm32/motor_sink_null.hpp"
 #include "platform_stm32/mpu6050.hpp"
 #include "platform_stm32/ms5611.hpp"
@@ -58,6 +60,8 @@ namespace mark4
         mark4::SensorSourceStm32 m_sensorSource{m_imu, m_baro, m_clock};
         mark4::MotorSinkNull m_motorSink;
         mark4::TelemetrySenderStm32 m_telemetrySender;
+        mark4::LogSinkUart m_logSink{m_telemetrySender};
+        mark4::Blackbox m_blackbox{m_logSink};
         mark4::FlightCore m_core;
     };
 } // namespace mark4
