@@ -14,9 +14,11 @@ set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
 set(DRONE_MCU_FLAGS "-mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard")
 
-set(CMAKE_C_FLAGS_INIT "${DRONE_MCU_FLAGS} -ffunction-sections -fdata-sections")
+# -g costs nothing on target: debug info lives in the ELF only, never in
+# the sections loaded to flash. It feeds gdb/addr2line on every build type.
+set(CMAKE_C_FLAGS_INIT "${DRONE_MCU_FLAGS} -g -ffunction-sections -fdata-sections")
 set(CMAKE_CXX_FLAGS_INIT
-    "${DRONE_MCU_FLAGS} -ffunction-sections -fdata-sections -fno-exceptions -fno-rtti")
+    "${DRONE_MCU_FLAGS} -g -ffunction-sections -fdata-sections -fno-exceptions -fno-rtti")
 
 # newlib-nano + nosys stubs; startup provided by platform_stm32 (-nostartfiles).
 set(CMAKE_EXE_LINKER_FLAGS_INIT

@@ -29,7 +29,13 @@
 				// clangd is the language server; cpptools is kept for its
 				// desktop debugger (cppdbg) only; cortex-debug drives the
 				// on-target sessions through JLinkGDBServer.
-				"C_Cpp.intelliSenseEngine": "disabled"
+				"C_Cpp.intelliSenseEngine": "disabled",
+				// Cross builds: clangd asks arm-none-eabi-g++ for its system
+				// include paths and target defines instead of guessing from
+				// the host clang.
+				"clangd.arguments": [
+					"--query-driver=/opt/arm-gnu-toolchain/bin/arm-none-eabi-*"
+				]
 			}
 		}
 	}
