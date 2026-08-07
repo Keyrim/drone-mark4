@@ -83,4 +83,28 @@ namespace mark4
 
     static_assert(sizeof(RcCommandPacket) == RC_COMMAND_PACKET_SIZE, "wire layout must be packed");
     static_assert(std::is_trivially_copyable_v<RcCommandPacket>);
+
+    /// Second byte of RebootCommandPacket: one XOR checksum is thin
+    /// protection for a packet that reboots the board, the magic makes a
+    /// stray line glitch decoding into a reboot implausible.
+    inline constexpr std::uint8_t BOARD_REBOOT_MAGIC = 0xB7U;
+
+#pragma pack(push, 1)
+    /// Reboots the flight controller (NVIC system reset), the serial
+    /// counterpart of the simulator reset: one bench gesture restarts
+    /// whichever world is listening. Telemetry, blackbox bytes in flight
+    /// and the RC state are all lost, which is the point.
+    struct RebootCommandPacket
+    {
+        std::uint8_t version; ///< = PROTOCOL_VERSION
+        std::uint8_t magic;   ///< = BOARD_REBOOT_MAGIC
+    };
+#pragma pack(pop)
+
+    /// version (1) + magic (1).
+    inline constexpr std::size_t REBOOT_COMMAND_PACKET_SIZE = 2U;
+
+    static_assert(sizeof(RebootCommandPacket) == REBOOT_COMMAND_PACKET_SIZE,
+                  "wire layout must be packed");
+    static_assert(std::is_trivially_copyable_v<RebootCommandPacket>);
 } // namespace mark4
