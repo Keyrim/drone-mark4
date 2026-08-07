@@ -33,8 +33,10 @@ TELEMETRY_MIRROR_PORT = 47803
 BLACKBOX_RECORD_SIZE = 59  # flight_core/blackbox.hpp
 BLACKBOX_VERSION = 2
 RC_COMMAND_PORT = 47805  # protocol/commands.hpp
+SIM_COMMAND_RESET = 1
 SIM_COMMAND_RC = 2
 COMMAND_STRUCT = struct.Struct("<BBBBf3f3f4f")  # SimCommandPacket
+BOARD_REBOOT_MAGIC = 0xB7  # RebootCommandPacket
 
 if len(sys.argv) > 1:
     out_path = sys.argv[1]
@@ -82,13 +84,19 @@ try:
                 continue
             fields = COMMAND_STRUCT.unpack(datagram)
             version, command, kill, arm, throttle = fields[:5]
-            if version != PROTOCOL_VERSION or command != SIM_COMMAND_RC:
+            if version != PROTOCOL_VERSION:
                 continue
-            rc = struct.pack("<BBBf", PROTOCOL_VERSION, kill, arm, throttle)
+            if command == SIM_COMMAND_RC:
+                up_payload = struct.pack("<BBBf", PROTOCOL_VERSION, kill, arm, throttle)
+            elif command == SIM_COMMAND_RESET:
+                up_payload = struct.pack("<BB", PROTOCOL_VERSION, BOARD_REBOOT_MAGIC)
+            else:
+                continue
             checksum = 0
-            for b in rc:
+            for b in up_payload:
                 checksum ^= b
-            os.write(fd, bytes([SYNC0, SYNC1, len(rc)]) + rc + bytes([checksum]))
+            os.write(fd, bytes([SYNC0, SYNC1, len(up_payload)]) + up_payload
+                     + bytes([checksum]))
             rc_sent += 1
 
         chunk = os.read(fd, 4096)

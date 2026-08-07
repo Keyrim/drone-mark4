@@ -7,9 +7,11 @@ extends Node
 ## packed as a SimCommandPacket RC command (protocol/include/protocol/
 ## commands.hpp) and sent at 10 Hz over UDP to the serial bridge
 ## (tools/telemetry/serial_bridge.py, RC_COMMAND_PORT), which relays it to
-## the flight controller over the UART. Streaming is the contract: the
-## firmware reverts to kill+disarmed after 500 ms of silence, so closing
-## the simulator is itself a safe action.
+## the flight controller over the UART. R sends a RESET command on top of
+## the stream: the bridge turns it into a board reboot, so the key that
+## restarts the sim world also restarts the real board. Streaming is the
+## contract: the firmware reverts to kill+disarmed after 500 ms of
+## silence, so closing the simulator is itself a safe action.
 ##
 ## The port is distinct from the scenario command port this simulator
 ## listens on (the sim binds its port exclusively, and the ghost view use
@@ -21,6 +23,7 @@ const PROTOCOL_VERSION := 9
 
 const PACKET_SIZE := 48
 
+const COMMAND_RESET := 1
 const COMMAND_RC := 2
 
 ## Seconds between two packets: 10 Hz, five packets per fail-safe window.
@@ -68,14 +71,26 @@ func _exit_tree() -> void:
 func _process(delta: float) -> void:
 	if not _ready_to_send:
 		return
+
+	# R reboots the board too: same key as the sim world reset, relayed by
+	# the bridge as a reboot command, sent immediately (not paced).
+	if _pilot.take_board_reset_request():
+		_send(COMMAND_RESET)
+
 	_since_last_send += delta
 	if _since_last_send < SEND_PERIOD_S:
 		return
 	_since_last_send = 0.0
+	_send(COMMAND_RC)
 
+
+## Pack and send one SimCommandPacket carrying the pilot state.
+##
+## @param command COMMAND_RC for the periodic state, COMMAND_RESET on R.
+func _send(command: int) -> void:
 	_buffer.clear()
 	_buffer.put_u8(PROTOCOL_VERSION)
-	_buffer.put_u8(COMMAND_RC)
+	_buffer.put_u8(command)
 	_buffer.put_u8(1 if _pilot.kill_switch else 0)
 	_buffer.put_u8(1 if _pilot.arm_switch else 0)
 	_buffer.put_float(_pilot.throttle)

@@ -39,6 +39,7 @@ var arm_switch: bool = false
 var _throw_requested: bool = false
 var _grab_requested: bool = false
 var _reset_requested: bool = false
+var _board_reset_requested: bool = false
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -57,7 +58,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed(ACTION_GRAB):
 		_grab_requested = true
 	elif event.is_action_pressed(ACTION_RESET):
+		# One key, both worlds: the sim consumes the first flag, the RC
+		# uplink turns the second into a board reboot command.
 		_reset_requested = true
+		_board_reset_requested = true
 	else:
 		return
 	get_viewport().set_input_as_handled()
@@ -81,6 +85,14 @@ func take_grab_request() -> bool:
 func take_reset_request() -> bool:
 	var requested := _reset_requested
 	_reset_requested = false
+	return requested
+
+
+## Return true once per R press, then clear the request. Separate flag from
+## take_reset_request so the sim and the RC uplink each see every press.
+func take_board_reset_request() -> bool:
+	var requested := _board_reset_requested
+	_board_reset_requested = false
 	return requested
 
 
