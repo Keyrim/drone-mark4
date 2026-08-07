@@ -7,12 +7,13 @@ add_library(platform_stm32 STATIC
     i2c_bus.cpp
     mpu6050.cpp
     ms5611.cpp
+    telemetry_sender_stm32.cpp
     clock_stm32.cpp
     sensor_source_stm32.cpp)
 target_include_directories(platform_stm32 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(platform_stm32
     PUBLIC platform
-    PRIVATE drone_warnings drone_strict)
+    PRIVATE protocol drone_warnings drone_strict)
 
 # The linker script describes the chip: it belongs to the stm32 variant and
 # propagates to the executables that link it.

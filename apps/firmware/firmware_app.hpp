@@ -12,6 +12,7 @@
 #include "platform_stm32/mpu6050.hpp"
 #include "platform_stm32/ms5611.hpp"
 #include "platform_stm32/sensor_source_stm32.hpp"
+#include "platform_stm32/telemetry_sender_stm32.hpp"
 
 namespace mark4
 {
@@ -28,6 +29,10 @@ namespace mark4
         /// Frames between two heartbeat LED toggles: 1 Hz blink.
         static constexpr std::uint32_t FRAMES_PER_LED_TOGGLE =
             SensorSourceStm32::FRAME_RATE_HZ / 2U;
+
+        /// Frames between two telemetry packets: 50 Hz, the same
+        /// decimation as the simulator app.
+        static constexpr std::uint32_t FRAMES_PER_TELEMETRY = 10U;
 
         FirmwareApp() = default;
 
@@ -52,6 +57,7 @@ namespace mark4
         mark4::Ms5611 m_baro{m_bus};
         mark4::SensorSourceStm32 m_sensorSource{m_imu, m_baro, m_clock};
         mark4::MotorSinkNull m_motorSink;
+        mark4::TelemetrySenderStm32 m_telemetrySender;
         mark4::FlightCore m_core;
     };
 } // namespace mark4

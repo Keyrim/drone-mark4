@@ -124,7 +124,12 @@ Incremental, one observable win per step:
 2. **IMU driver**: MPU6050 over I2C, timer-paced sampling into
    SensorFrames; barometer driver for whatever the scan identified.
 3. **Telemetry**: SensorFrames streamed over UART1 through the FTDI to
-   the ground station; blackbox over the same link.
+   the ground station; blackbox over the same link. Telemetry is done:
+   50 Hz TelemetryPacket stream at 115200 baud, wrapped in the serial
+   framing of `protocol/serial_framing.hpp` (a UART has no datagram
+   boundaries), interrupt-driven behind a ring buffer.
+   `tools/telemetry/read_serial.py` decodes it on the PC. Blackbox over
+   the link remains.
 4. **Detection on real hands**: board armed and shaken in hand (no
    false spin-up expected), then thrown and caught - throw detection
    and apex prediction on real sensor data, compared against the

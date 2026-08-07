@@ -38,6 +38,7 @@ void Default_Handler(void)
  * above; a strong definition next to the driver that owns the IRQ takes
  * over at link time. */
 void TIM3_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
+void USART1_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
 
 void Reset_Handler(void)
 {
@@ -65,9 +66,9 @@ void Reset_Handler(void)
 }
 
 /* 16 system exceptions plus the peripheral IRQs up to the highest one in
- * use (TIM3, position 29 in RM0090 table 61). Unused positions trap in
+ * use (USART1, position 37 in RM0090 table 61). Unused positions trap in
  * Default_Handler; extend the table when a driver needs a higher IRQ. */
-__attribute__((section(".isr_vector"), used)) void *const g_vector_table[16 + 30] = {
+__attribute__((section(".isr_vector"), used)) void *const g_vector_table[16 + 38] = {
     (void *)&_estack,        /* MSP initial */
     (void *)Reset_Handler,   /* Reset */
     (void *)Default_Handler, /* NMI */
@@ -78,40 +79,48 @@ __attribute__((section(".isr_vector"), used)) void *const g_vector_table[16 + 30
     0,
     0,
     0,
-    0,                       /* reserved */
-    (void *)Default_Handler, /* SVCall */
-    (void *)Default_Handler, /* DebugMonitor */
-    0,                       /* reserved */
-    (void *)Default_Handler, /* PendSV */
-    (void *)Default_Handler, /* SysTick */
-    (void *)Default_Handler, /* 0: WWDG */
-    (void *)Default_Handler, /* 1: PVD */
-    (void *)Default_Handler, /* 2: TAMP_STAMP */
-    (void *)Default_Handler, /* 3: RTC_WKUP */
-    (void *)Default_Handler, /* 4: FLASH */
-    (void *)Default_Handler, /* 5: RCC */
-    (void *)Default_Handler, /* 6: EXTI0 */
-    (void *)Default_Handler, /* 7: EXTI1 */
-    (void *)Default_Handler, /* 8: EXTI2 */
-    (void *)Default_Handler, /* 9: EXTI3 */
-    (void *)Default_Handler, /* 10: EXTI4 */
-    (void *)Default_Handler, /* 11: DMA1_Stream0 */
-    (void *)Default_Handler, /* 12: DMA1_Stream1 */
-    (void *)Default_Handler, /* 13: DMA1_Stream2 */
-    (void *)Default_Handler, /* 14: DMA1_Stream3 */
-    (void *)Default_Handler, /* 15: DMA1_Stream4 */
-    (void *)Default_Handler, /* 16: DMA1_Stream5 */
-    (void *)Default_Handler, /* 17: DMA1_Stream6 */
-    (void *)Default_Handler, /* 18: ADC */
-    (void *)Default_Handler, /* 19: CAN1_TX */
-    (void *)Default_Handler, /* 20: CAN1_RX0 */
-    (void *)Default_Handler, /* 21: CAN1_RX1 */
-    (void *)Default_Handler, /* 22: CAN1_SCE */
-    (void *)Default_Handler, /* 23: EXTI9_5 */
-    (void *)Default_Handler, /* 24: TIM1_BRK_TIM9 */
-    (void *)Default_Handler, /* 25: TIM1_UP_TIM10 */
-    (void *)Default_Handler, /* 26: TIM1_TRG_COM_TIM11 */
-    (void *)Default_Handler, /* 27: TIM1_CC */
-    (void *)Default_Handler, /* 28: TIM2 */
-    (void *)TIM3_IRQHandler, /* 29: TIM3, paces the sensor loop */
+    0,                         /* reserved */
+    (void *)Default_Handler,   /* SVCall */
+    (void *)Default_Handler,   /* DebugMonitor */
+    0,                         /* reserved */
+    (void *)Default_Handler,   /* PendSV */
+    (void *)Default_Handler,   /* SysTick */
+    (void *)Default_Handler,   /* 0: WWDG */
+    (void *)Default_Handler,   /* 1: PVD */
+    (void *)Default_Handler,   /* 2: TAMP_STAMP */
+    (void *)Default_Handler,   /* 3: RTC_WKUP */
+    (void *)Default_Handler,   /* 4: FLASH */
+    (void *)Default_Handler,   /* 5: RCC */
+    (void *)Default_Handler,   /* 6: EXTI0 */
+    (void *)Default_Handler,   /* 7: EXTI1 */
+    (void *)Default_Handler,   /* 8: EXTI2 */
+    (void *)Default_Handler,   /* 9: EXTI3 */
+    (void *)Default_Handler,   /* 10: EXTI4 */
+    (void *)Default_Handler,   /* 11: DMA1_Stream0 */
+    (void *)Default_Handler,   /* 12: DMA1_Stream1 */
+    (void *)Default_Handler,   /* 13: DMA1_Stream2 */
+    (void *)Default_Handler,   /* 14: DMA1_Stream3 */
+    (void *)Default_Handler,   /* 15: DMA1_Stream4 */
+    (void *)Default_Handler,   /* 16: DMA1_Stream5 */
+    (void *)Default_Handler,   /* 17: DMA1_Stream6 */
+    (void *)Default_Handler,   /* 18: ADC */
+    (void *)Default_Handler,   /* 19: CAN1_TX */
+    (void *)Default_Handler,   /* 20: CAN1_RX0 */
+    (void *)Default_Handler,   /* 21: CAN1_RX1 */
+    (void *)Default_Handler,   /* 22: CAN1_SCE */
+    (void *)Default_Handler,   /* 23: EXTI9_5 */
+    (void *)Default_Handler,   /* 24: TIM1_BRK_TIM9 */
+    (void *)Default_Handler,   /* 25: TIM1_UP_TIM10 */
+    (void *)Default_Handler,   /* 26: TIM1_TRG_COM_TIM11 */
+    (void *)Default_Handler,   /* 27: TIM1_CC */
+    (void *)Default_Handler,   /* 28: TIM2 */
+    (void *)TIM3_IRQHandler,   /* 29: TIM3, paces the sensor loop */
+    (void *)Default_Handler,   /* 30: TIM4 */
+    (void *)Default_Handler,   /* 31: I2C1_EV */
+    (void *)Default_Handler,   /* 32: I2C1_ER */
+    (void *)Default_Handler,   /* 33: I2C2_EV */
+    (void *)Default_Handler,   /* 34: I2C2_ER */
+    (void *)Default_Handler,   /* 35: SPI1 */
+    (void *)Default_Handler,   /* 36: SPI2 */
+    (void *)USART1_IRQHandler, /* 37: USART1, telemetry TX ring */
 };

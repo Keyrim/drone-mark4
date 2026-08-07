@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "flight_core/telemetry.hpp"
 #include "flight_core/types.hpp"
 #include "platform_stm32/board.hpp"
 #include "platform_stm32/rtt.hpp"
@@ -54,8 +55,15 @@ namespace mark4
         }
         m_clock.init();
         m_sensorSource.init();
-        rttPrintf("loop: %lu Hz, timer paced\n",
-                  static_cast<unsigned long>(SensorSourceStm32::FRAME_RATE_HZ));
+        if (!m_telemetrySender.init())
+        {
+            rttWrite("telemetry: uart init failed\n");
+            return false;
+        }
+        rttPrintf("loop: %lu Hz, timer paced; telemetry: %lu baud, 1 packet / %lu frames\n",
+                  static_cast<unsigned long>(SensorSourceStm32::FRAME_RATE_HZ),
+                  static_cast<unsigned long>(TelemetrySenderStm32::BAUD_RATE),
+                  static_cast<unsigned long>(FRAMES_PER_TELEMETRY));
         return true;
     }
 
@@ -76,6 +84,11 @@ namespace mark4
             m_motorSink.push(actuators);
 
             ++frames;
+            if ((frames % FRAMES_PER_TELEMETRY) == 0U)
+            {
+                const auto wire = packTelemetry(frame, actuators, m_core);
+                m_telemetrySender.send(wire.data(), wire.size());
+            }
             if ((frames % FRAMES_PER_LED_TOGGLE) == 0U)
             {
                 toggleLed1();
@@ -103,6 +116,9 @@ namespace mark4
                           static_cast<unsigned long>(m_sensorSource.overruns()),
                           static_cast<unsigned long>(m_sensorSource.readFailures()),
                           static_cast<unsigned long>(m_baro.failures()));
+                rttPrintf("tx: %lu sent %lu dropped\n",
+                          static_cast<unsigned long>(m_telemetrySender.packetsSent()),
+                          static_cast<unsigned long>(m_telemetrySender.packetsDropped()));
             }
         }
     }

@@ -84,6 +84,19 @@ namespace mark4
         volatile std::uint32_t ARR;   ///< auto-reload
     };
 
+    /// Universal synchronous/asynchronous receiver transmitter (RM0090
+    /// section 30).
+    struct UsartRegisters
+    {
+        volatile std::uint32_t SR;   ///< status (TXE, TC, RXNE)
+        volatile std::uint32_t DR;   ///< data
+        volatile std::uint32_t BRR;  ///< baud rate divisor
+        volatile std::uint32_t CR1;  ///< control 1 (UE, TE, RE, TXEIE)
+        volatile std::uint32_t CR2;  ///< control 2 (stop bits)
+        volatile std::uint32_t CR3;  ///< control 3 (flow control, DMA)
+        volatile std::uint32_t GTPR; ///< guard time and prescaler
+    };
+
     /// Data watchpoint and trace unit (ARMv7-M, cycle counter only).
     struct DwtRegisters
     {
@@ -98,6 +111,7 @@ namespace mark4
     inline I2cRegisters *const I2C1 = reinterpret_cast<I2cRegisters *>(0x40005400U);
     inline TimRegisters *const TIM2 = reinterpret_cast<TimRegisters *>(0x40000000U);
     inline TimRegisters *const TIM3 = reinterpret_cast<TimRegisters *>(0x40000400U);
+    inline UsartRegisters *const USART1 = reinterpret_cast<UsartRegisters *>(0x40011000U);
     inline DwtRegisters *const DWT = reinterpret_cast<DwtRegisters *>(0xE0001000U);
 
     /// Debug exception and monitor control register: TRCENA gates the DWT.
