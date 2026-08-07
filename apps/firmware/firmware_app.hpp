@@ -10,6 +10,7 @@
 #include "platform_stm32/i2c_bus.hpp"
 #include "platform_stm32/motor_sink_null.hpp"
 #include "platform_stm32/mpu6050.hpp"
+#include "platform_stm32/ms5611.hpp"
 #include "platform_stm32/sensor_source_stm32.hpp"
 
 namespace mark4
@@ -48,7 +49,8 @@ namespace mark4
         mark4::ClockStm32 m_clock;
         mark4::I2cBus m_bus;
         mark4::Mpu6050 m_imu{m_bus};
-        mark4::SensorSourceStm32 m_sensorSource{m_imu, m_clock};
+        mark4::Ms5611 m_baro{m_bus};
+        mark4::SensorSourceStm32 m_sensorSource{m_imu, m_baro, m_clock};
         mark4::MotorSinkNull m_motorSink;
         mark4::FlightCore m_core;
     };

@@ -8,6 +8,7 @@
 #include "platform/sensor_source.hpp"
 #include "platform_stm32/clock_stm32.hpp"
 #include "platform_stm32/mpu6050.hpp"
+#include "platform_stm32/ms5611.hpp"
 
 namespace mark4
 {
@@ -23,9 +24,11 @@ namespace mark4
         static constexpr std::uint32_t FRAME_RATE_HZ = 500U;
 
         /// @param imu initialized IMU the samples come from
+        /// @param baro initialized barometer, pumped once per tick
         /// @param clock started clock stamping the frames
-        SensorSourceStm32(Mpu6050 &imu, ClockStm32 &clock)
+        SensorSourceStm32(Mpu6050 &imu, Ms5611 &baro, ClockStm32 &clock)
             : m_imu(imu),
+              m_baro(baro),
               m_clock(clock)
         {
         }
@@ -58,6 +61,7 @@ namespace mark4
 
       private:
         Mpu6050 &m_imu;                     ///< sample producer, not owned
+        Ms5611 &m_baro;                     ///< pressure producer, not owned
         ClockStm32 &m_clock;                ///< frame timestamps, not owned
         Mpu6050Sample m_lastSample{};       ///< reused when a burst fails
         std::uint32_t m_consumedTicks = 0U; ///< ticks turned into frames

@@ -8,6 +8,12 @@
 
 namespace
 {
+    /// The barometer wait states must outlast its 9.04 ms OSR-4096
+    /// conversion at the loop rate the state machine is pumped at.
+    constexpr std::uint32_t FRAME_PERIOD_US = 1000000U / mark4::SensorSourceStm32::FRAME_RATE_HZ;
+    static_assert(mark4::Ms5611::CONVERSION_WAIT_UPDATES * FRAME_PERIOD_US >= 9040U,
+                  "MS5611 conversion outlasts the wait budget");
+
     /// @brief Millis of a float for integer-only printf: "%d.%03d".
     /// @param value converted value
     /// @return value scaled by 1000, rounded toward zero
@@ -39,6 +45,10 @@ namespace mark4
             return false;
         }
         if (!m_imu.init())
+        {
+            return false; // the driver logged the reason
+        }
+        if (!m_baro.init())
         {
             return false; // the driver logged the reason
         }
@@ -77,7 +87,7 @@ namespace mark4
                     static_cast<std::uint32_t>((nowUs - lastStatusUs) / FRAMES_PER_STATUS);
                 lastStatusUs = nowUs;
                 rttPrintf("t %lu us/frame  gyro %ld %ld %ld mrad/s  acc %ld %ld %ld mm/s2  "
-                          "motors %ld %ld %ld %ld  ovr %lu err %lu\n",
+                          "baro %ld Pa  motors %ld %ld %ld %ld  ovr %lu err %lu/%lu\n",
                           static_cast<unsigned long>(periodUs),
                           milli(frame.gyroRadS[0]),
                           milli(frame.gyroRadS[1]),
@@ -85,12 +95,14 @@ namespace mark4
                           milli(frame.accelMps2[0]),
                           milli(frame.accelMps2[1]),
                           milli(frame.accelMps2[2]),
+                          static_cast<long>(frame.baroPa),
                           milli(m_motorSink.last().motor[0]),
                           milli(m_motorSink.last().motor[1]),
                           milli(m_motorSink.last().motor[2]),
                           milli(m_motorSink.last().motor[3]),
                           static_cast<unsigned long>(m_sensorSource.overruns()),
-                          static_cast<unsigned long>(m_sensorSource.readFailures()));
+                          static_cast<unsigned long>(m_sensorSource.readFailures()),
+                          static_cast<unsigned long>(m_baro.failures()));
             }
         }
     }

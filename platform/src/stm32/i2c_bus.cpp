@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "platform_stm32/board.hpp"
 #include "registers.hpp"
 
 namespace mark4
@@ -14,7 +15,15 @@ namespace mark4
         constexpr std::uint32_t SCL_PIN = 8U;
         constexpr std::uint32_t SDA_PIN = 9U;
         constexpr std::uint32_t GPIO_AF4 = 4U;
+        constexpr std::uint32_t GPIO_MODER_OUTPUT = 1U;
         constexpr std::uint32_t GPIO_MODER_AF = 2U;
+
+        /// SCL pulses freeing a slave stuck mid-transaction (one byte plus
+        /// ACK is the worst case before it releases SDA).
+        constexpr std::uint32_t RECOVERY_CLOCKS = 9U;
+
+        /// Half-period of the recovery clocking; leisurely on purpose.
+        constexpr std::uint32_t RECOVERY_HALF_PERIOD_MS = 1U;
 
         constexpr std::uint32_t I2C_CR1_PE = 1U << 0U;
         constexpr std::uint32_t I2C_CR1_START = 1U << 8U;
@@ -202,12 +211,55 @@ namespace mark4
         }
     } // namespace
 
+    namespace
+    {
+        /// @brief Frees a slave left holding SDA by an MCU reset that cut a
+        ///        transaction short (a peripheral SWRST cannot help there):
+        ///        SDA released and watched as input, SCL hand-clocked until
+        ///        the slave lets go, then a manual STOP. Pins must still be
+        ///        plain GPIO.
+        /// @return true when SDA ended up high (bus idle)
+        bool recoverBus()
+        {
+            // Both pins open-drain outputs, released high; an open-drain
+            // output pin still reads the line level through IDR.
+            GPIOB->OTYPER = GPIOB->OTYPER | (1U << SCL_PIN) | (1U << SDA_PIN);
+            GPIOB->BSRR = (1U << SCL_PIN) | (1U << SDA_PIN);
+            constexpr std::uint32_t MODE_MASK = (3U << (2U * SCL_PIN)) | (3U << (2U * SDA_PIN));
+            constexpr std::uint32_t MODE_OUTPUT =
+                (GPIO_MODER_OUTPUT << (2U * SCL_PIN)) | (GPIO_MODER_OUTPUT << (2U * SDA_PIN));
+            GPIOB->MODER = (GPIOB->MODER & ~MODE_MASK) | MODE_OUTPUT;
+
+            for (std::uint32_t pulse = 0U;
+                 pulse < RECOVERY_CLOCKS && (GPIOB->IDR & (1U << SDA_PIN)) == 0U;
+                 ++pulse)
+            {
+                GPIOB->BSRR = 1U << (SCL_PIN + 16U); // SCL low
+                delayMs(RECOVERY_HALF_PERIOD_MS);
+                GPIOB->BSRR = 1U << SCL_PIN; // SCL high
+                delayMs(RECOVERY_HALF_PERIOD_MS);
+            }
+
+            // Manual STOP: SDA low then released while SCL is high, so the
+            // slave sees a clean end of transaction.
+            GPIOB->BSRR = 1U << (SDA_PIN + 16U);
+            delayMs(RECOVERY_HALF_PERIOD_MS);
+            GPIOB->BSRR = 1U << SDA_PIN;
+            delayMs(RECOVERY_HALF_PERIOD_MS);
+
+            return (GPIOB->IDR & (1U << SDA_PIN)) != 0U;
+        }
+    } // namespace
+
     bool I2cBus::init()
     {
         RCC->AHB1ENR = RCC->AHB1ENR | RCC_AHB1ENR_GPIOBEN;
         RCC->APB1ENR = RCC->APB1ENR | RCC_APB1ENR_I2C1EN;
 
-        GPIOB->OTYPER = GPIOB->OTYPER | (1U << SCL_PIN) | (1U << SDA_PIN);
+        if (!recoverBus())
+        {
+            return false;
+        }
 
         constexpr std::uint32_t AF_MASK = (0xFU << (4U * (SCL_PIN - 8U))) | //
                                           (0xFU << (4U * (SDA_PIN - 8U)));

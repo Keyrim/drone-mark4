@@ -68,7 +68,11 @@ namespace mark4
             frameOut.accelMps2[axis] =
                 static_cast<float>(sample.accel[axis]) * Mpu6050::ACCEL_MPS2_PER_LSB;
         }
-        frameOut.baroPa = 0.0f;
+        // The barometer state machine advances one step per tick; the
+        // frame carries its latest completed solution (~50 Hz), 0.0 until
+        // the first one lands.
+        m_baro.update();
+        frameOut.baroPa = m_baro.pressurePa();
         frameOut.rc = RcInput{}; // no receiver yet: kill switch engaged
         return true;
     }

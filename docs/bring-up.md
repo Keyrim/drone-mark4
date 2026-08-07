@@ -36,7 +36,12 @@ The mark1 Sensors board is not used. A commercial **GY-86 breakout**
 
 - **MPU6050** at 0x68 (confirmed by WHO_AM_I; no ID register on the
   MS5611, its PROM answered instead).
-- **MS5611** barometer at 0x77.
+- **MS5611** barometer at 0x77. **The cell is faulty (or counterfeit)**:
+  the I2C protocol is fully functional (PROM CRC valid, conversions
+  answer, a second ADC read returns 0 exactly per the datasheet), but D1
+  sits at 99 % of the ADC full scale and the solved pressure is negative.
+  The driver gates implausible solutions and the frame carries 0 Pa; the
+  breakout needs replacing before altitude work.
 - **HMC5883L** compass at 0x1E, wired behind the MPU6050 auxiliary bus:
   it only appears on the main bus once the MPU I2C bypass
   (INT_PIN_CFG.I2C_BYPASS_EN) is open.
