@@ -30,12 +30,15 @@ namespace mark4
         constexpr std::uint32_t I2C_SR1_AF = 1U << 10U;
         constexpr std::uint32_t I2C_SR2_BUSY = 1U << 1U;
 
-        // Standard mode timing on the 42 MHz APB1 clock: CCR holds the SCL
-        // half-period (42 MHz / (2 * 100 kHz)), TRISE the 1000 ns maximum
-        // rise time plus one, both from RM0090.
+        // Fast mode timing on the 42 MHz APB1 clock (all three breakout
+        // chips are fast-mode capable, and a 14-byte IMU burst at 100 kHz
+        // would eat 1.5 ms of a 2 ms loop budget). F/S=1, DUTY=0: SCL
+        // period is 3 * CCR ticks, so 42 MHz / (3 * 35) = 400 kHz. TRISE
+        // is the 300 ns fast-mode maximum rise time in ticks, plus one.
         constexpr std::uint32_t APB1_CLOCK_MHZ = 42U;
-        constexpr std::uint32_t I2C_CCR_100KHZ = 210U;
-        constexpr std::uint32_t I2C_TRISE_100KHZ = APB1_CLOCK_MHZ + 1U;
+        constexpr std::uint32_t I2C_CCR_FS = 1U << 15U;
+        constexpr std::uint32_t I2C_CCR_400KHZ = 35U;
+        constexpr std::uint32_t I2C_TRISE_400KHZ = 13U;
 
         /// Poll budget per flag: a few SCL periods at 100 kHz, with margin.
         constexpr std::uint32_t FLAG_TIMEOUT_LOOPS = 50000U;
@@ -222,8 +225,8 @@ namespace mark4
         I2C1->CR1 = I2C_CR1_SWRST;
         I2C1->CR1 = 0U;
         I2C1->CR2 = APB1_CLOCK_MHZ;
-        I2C1->CCR = I2C_CCR_100KHZ;
-        I2C1->TRISE = I2C_TRISE_100KHZ;
+        I2C1->CCR = I2C_CCR_FS | I2C_CCR_400KHZ;
+        I2C1->TRISE = I2C_TRISE_400KHZ;
         I2C1->CR1 = I2C_CR1_PE;
 
         m_ready = waitMasked(I2C1->SR2, I2C_SR2_BUSY, 0U);

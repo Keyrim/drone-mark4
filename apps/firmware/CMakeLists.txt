@@ -1,4 +1,6 @@
-add_executable(firmware main.cpp)
+add_executable(firmware
+    main.cpp
+    firmware_app.cpp)
 set_target_properties(firmware PROPERTIES SUFFIX ".elf")
 target_link_libraries(firmware PRIVATE flight_core platform_stm32 drone_warnings)
 

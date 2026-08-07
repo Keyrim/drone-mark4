@@ -8,13 +8,13 @@
 
 namespace mark4
 {
-    /// I2C1 in standard mode (100 kHz), polling with timeouts: a stuck bus
+    /// I2C1 in fast mode (400 kHz), polling with timeouts: a stuck bus
     /// degrades into failed transfers, never into a hung loop.
     class I2cBus
     {
       public:
         /// @brief Enables the clocks, routes PB8/PB9 to the peripheral
-        ///        (open-drain alternate function) and configures 100 kHz
+        ///        (open-drain alternate function) and configures 400 kHz
         ///        timing. Assumes the 42 MHz APB1 clock set by
         ///        initSystemClock().
         /// @return true when the bus is idle and ready

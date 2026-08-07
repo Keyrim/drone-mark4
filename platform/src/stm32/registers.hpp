@@ -67,6 +67,23 @@ namespace mark4
         volatile std::uint32_t FLTR;  ///< noise filters
     };
 
+    /// General-purpose timer, TIM2..TIM5 layout (RM0090 section 18).
+    struct TimRegisters
+    {
+        volatile std::uint32_t CR1;   ///< control 1 (CEN)
+        volatile std::uint32_t CR2;   ///< control 2
+        volatile std::uint32_t SMCR;  ///< slave mode control
+        volatile std::uint32_t DIER;  ///< interrupt enable (UIE)
+        volatile std::uint32_t SR;    ///< status (UIF)
+        volatile std::uint32_t EGR;   ///< event generation (UG)
+        volatile std::uint32_t CCMR1; ///< capture/compare mode 1
+        volatile std::uint32_t CCMR2; ///< capture/compare mode 2
+        volatile std::uint32_t CCER;  ///< capture/compare enable
+        volatile std::uint32_t CNT;   ///< counter
+        volatile std::uint32_t PSC;   ///< prescaler
+        volatile std::uint32_t ARR;   ///< auto-reload
+    };
+
     /// Data watchpoint and trace unit (ARMv7-M, cycle counter only).
     struct DwtRegisters
     {
@@ -79,9 +96,15 @@ namespace mark4
     inline GpioRegisters *const GPIOB = reinterpret_cast<GpioRegisters *>(0x40020400U);
     inline GpioRegisters *const GPIOC = reinterpret_cast<GpioRegisters *>(0x40020800U);
     inline I2cRegisters *const I2C1 = reinterpret_cast<I2cRegisters *>(0x40005400U);
+    inline TimRegisters *const TIM2 = reinterpret_cast<TimRegisters *>(0x40000000U);
+    inline TimRegisters *const TIM3 = reinterpret_cast<TimRegisters *>(0x40000400U);
     inline DwtRegisters *const DWT = reinterpret_cast<DwtRegisters *>(0xE0001000U);
 
     /// Debug exception and monitor control register: TRCENA gates the DWT.
     inline volatile std::uint32_t *const DEMCR =
         reinterpret_cast<volatile std::uint32_t *>(0xE000EDFCU);
+
+    /// NVIC interrupt set-enable registers, one bit per IRQ number.
+    inline volatile std::uint32_t *const NVIC_ISER =
+        reinterpret_cast<volatile std::uint32_t *>(0xE000E100U);
 } // namespace mark4
