@@ -213,11 +213,15 @@ namespace mark4
 
     namespace
     {
-        /// @brief Frees a slave left holding SDA by an MCU reset that cut a
-        ///        transaction short (a peripheral SWRST cannot help there):
-        ///        SDA released and watched as input, SCL hand-clocked until
-        ///        the slave lets go, then a manual STOP. Pins must still be
-        ///        plain GPIO.
+        /// @brief Frees a slave left desynchronized by an MCU reset or a
+        ///        debugger flash that cut a transaction short (a peripheral
+        ///        SWRST cannot help there): SDA released, SCL hand-clocked
+        ///        a full byte plus ACK, then a manual STOP. The clocks are
+        ///        sent unconditionally: a slave can be stuck mid-byte while
+        ///        letting SDA float high (its current bit is a 1), which a
+        ///        STOP alone does not always clear (seen for real on the
+        ///        MPU6050, deaf after a reflash until re-clocked). Pins
+        ///        must still be plain GPIO.
         /// @return true when SDA ended up high (bus idle)
         bool recoverBus()
         {
@@ -230,9 +234,7 @@ namespace mark4
                 (GPIO_MODER_OUTPUT << (2U * SCL_PIN)) | (GPIO_MODER_OUTPUT << (2U * SDA_PIN));
             GPIOB->MODER = (GPIOB->MODER & ~MODE_MASK) | MODE_OUTPUT;
 
-            for (std::uint32_t pulse = 0U;
-                 pulse < RECOVERY_CLOCKS && (GPIOB->IDR & (1U << SDA_PIN)) == 0U;
-                 ++pulse)
+            for (std::uint32_t pulse = 0U; pulse < RECOVERY_CLOCKS; ++pulse)
             {
                 GPIOB->BSRR = 1U << (SCL_PIN + 16U); // SCL low
                 delayMs(RECOVERY_HALF_PERIOD_MS);

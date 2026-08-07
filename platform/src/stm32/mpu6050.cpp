@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "platform_stm32/board.hpp"
 #include "platform_stm32/rtt.hpp"
 
 namespace mark4
@@ -41,6 +42,13 @@ namespace mark4
 
         constexpr std::uint32_t SAMPLE_BURST_SIZE = 14U;
 
+        /// A transaction cut short by a reflash or reset can leave the
+        /// chip's I2C engine desynchronized; the failed reads themselves
+        /// resynchronize it, so the first contact gets a few attempts.
+        /// Seen for real when flashing over a running firmware.
+        constexpr std::uint32_t WHO_AM_I_ATTEMPTS = 5U;
+        constexpr std::uint32_t WHO_AM_I_RETRY_DELAY_MS = 2U;
+
         /// @brief Recomposes a big-endian sensor word.
         /// @param high most significant byte
         /// @param low least significant byte
@@ -56,9 +64,19 @@ namespace mark4
     bool Mpu6050::init()
     {
         std::uint8_t who = 0U;
-        if (!m_bus.readRegisters(I2C_ADDRESS, REG_WHO_AM_I, &who, 1U))
+        bool answered = false;
+        for (std::uint32_t attempt = 0U; attempt < WHO_AM_I_ATTEMPTS && !answered; ++attempt)
         {
-            rttWrite("mpu6050: WHO_AM_I read failed\n");
+            answered = m_bus.readRegisters(I2C_ADDRESS, REG_WHO_AM_I, &who, 1U);
+            if (!answered)
+            {
+                delayMs(WHO_AM_I_RETRY_DELAY_MS);
+            }
+        }
+        if (!answered)
+        {
+            rttPrintf("mpu6050: WHO_AM_I read failed after %u attempts\n",
+                      static_cast<unsigned>(WHO_AM_I_ATTEMPTS));
             return false;
         }
         if (who != WHO_AM_I_VALUE)
