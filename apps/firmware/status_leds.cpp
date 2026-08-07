@@ -10,6 +10,10 @@ namespace
     /// IDLE but degraded: two short flashes per second.
     constexpr std::uint32_t PATTERN_DEGRADED = 0b00000000000000110011U;
 
+    /// Kill engaged (the RC fail-safe included): three short flashes per
+    /// second, the safety lock is visible from across the room.
+    constexpr std::uint32_t PATTERN_KILL = 0b00000000001100110011U;
+
     /// ARMED: 2 Hz blink, the detector may spin the motors up on its own.
     constexpr std::uint32_t PATTERN_ARMED = 0b00000111110000011111U;
 
@@ -31,13 +35,19 @@ namespace
         return ((pattern >> slot) & 1U) != 0U;
     }
 
-    /// @brief Selects the pattern: the flight state has priority, health
-    ///        only shows while the board is idle.
+    /// @brief Selects the pattern: the kill lock first (the phase is
+    ///        always IDLE under a kill), then the flight state, health
+    ///        only while the board is idle and free.
     /// @param phase current phase of the flight state machine
+    /// @param killEngaged true while the kill switch or fail-safe applies
     /// @param degraded true while a service reports failures
     /// @return 20-slot pattern
-    std::uint32_t selectPattern(mark4::FlightPhase phase, bool degraded)
+    std::uint32_t selectPattern(mark4::FlightPhase phase, bool killEngaged, bool degraded)
     {
+        if (killEngaged)
+        {
+            return PATTERN_KILL;
+        }
         switch (phase)
         {
             case mark4::FlightPhase::IDLE:
@@ -58,8 +68,11 @@ namespace
 
 namespace mark4
 {
-    void updateStatusLeds(FlightPhase phase, bool degraded, std::uint32_t frameIndex)
+    void updateStatusLeds(FlightPhase phase,
+                          bool killEngaged,
+                          bool degraded,
+                          std::uint32_t frameIndex)
     {
-        setLed1(patternBit(selectPattern(phase, degraded), frameIndex));
+        setLed1(patternBit(selectPattern(phase, killEngaged, degraded), frameIndex));
     }
 } // namespace mark4

@@ -83,6 +83,34 @@ TEST_CASE("kill switch forces all motors to zero")
     REQUIRE(actuators.timestampUs == frame.timestampUs);
 }
 
+TEST_CASE("the kill switch ends the mission and disarms the state machine")
+{
+    mark4::FlightCore core;
+    mark4::SensorFrame frame;
+    mark4::ActuatorFrame actuators;
+
+    frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
+    frame.rc.killSwitch = false;
+    frame.rc.armSwitch = true;
+    frame.timestampUs = 1000U;
+    core.step(frame, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ARMED);
+
+    // A kill (the RC fail-safe state included) returns to IDLE: releasing
+    // the switch must never resume an armed or flying phase on its own.
+    frame.rc.killSwitch = true;
+    frame.rc.armSwitch = false;
+    frame.timestampUs = 3000U;
+    core.step(frame, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
+
+    // Releasing the kill alone stays IDLE until a deliberate rearm.
+    frame.rc.killSwitch = false;
+    frame.timestampUs = 5000U;
+    core.step(frame, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
+}
+
 TEST_CASE("a throttle below the arming threshold keeps the motors stopped")
 {
     mark4::FlightCore core;

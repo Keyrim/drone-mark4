@@ -3,7 +3,7 @@ add_executable(firmware
     firmware_app.cpp
     status_leds.cpp)
 set_target_properties(firmware PROPERTIES SUFFIX ".elf")
-target_link_libraries(firmware PRIVATE flight_core platform_stm32 drone_warnings)
+target_link_libraries(firmware PRIVATE flight_core platform_stm32 protocol drone_warnings)
 
 find_program(DRONE_ARM_SIZE arm-none-eabi-size)
 if(DRONE_ARM_SIZE)

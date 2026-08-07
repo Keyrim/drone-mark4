@@ -2,11 +2,12 @@
 
 /// @file
 /// @brief Board LED policy on LED1 alone (LED2 is dead on this unit, see
-///        docs/bring-up.md): one pattern at a time, the flight state has
-///        priority and health only shows while idle. Safety logic: solid
+///        docs/bring-up.md): one pattern at a time. Safety logic: solid
 ///        means the motors are commanded or imminent, a slow blink means
-///        they may start on their own, short flashes mean inert, a fast
-///        blink means a latched incident.
+///        they may start on their own, a fast blink means a latched
+///        incident, and short flashes mean inert - their count is the
+///        detail (one: healthy, two: a service reports failures, three:
+///        kill switch or RC fail-safe engaged).
 
 #include <cstdint>
 
@@ -23,8 +24,13 @@ namespace mark4
 
     /// @brief Drives the status LED for one frame.
     /// @param phase current phase of the flight state machine
+    /// @param killEngaged true while the kill switch is engaged, whether
+    ///        by the pilot or by the RC fail-safe
     /// @param degraded true while a service reports failures (I2C errors,
     ///        frame overruns, dropped packets); doubles the idle flash
     /// @param frameIndex frames since boot, drives the pattern cycle
-    void updateStatusLeds(FlightPhase phase, bool degraded, std::uint32_t frameIndex);
+    void updateStatusLeds(FlightPhase phase,
+                          bool killEngaged,
+                          bool degraded,
+                          std::uint32_t frameIndex);
 } // namespace mark4

@@ -8,6 +8,7 @@
 #include "flight_core/blackbox.hpp"
 #include "flight_core/flight_core.hpp"
 #include "platform_stm32/clock_stm32.hpp"
+#include "platform_stm32/command_receiver_stm32.hpp"
 #include "platform_stm32/i2c_bus.hpp"
 #include "platform_stm32/log_sink_uart.hpp"
 #include "platform_stm32/motor_sink_null.hpp"
@@ -31,6 +32,11 @@ namespace mark4
         /// Frames between two telemetry packets: 50 Hz, the same
         /// decimation as the simulator app.
         static constexpr std::uint32_t FRAMES_PER_TELEMETRY = 10U;
+
+        /// Fail-safe: silence on the RC uplink longer than this reverts
+        /// to the safe state (kill engaged, disarmed). Five missed
+        /// packets at the 10 Hz the sender streams at.
+        static constexpr std::uint64_t RC_TIMEOUT_US = 500000U;
 
         FirmwareApp() = default;
 
@@ -56,6 +62,7 @@ namespace mark4
         mark4::SensorSourceStm32 m_sensorSource{m_imu, m_baro, m_clock};
         mark4::MotorSinkNull m_motorSink;
         mark4::TelemetrySenderStm32 m_telemetrySender;
+        mark4::CommandReceiverStm32 m_commandReceiver;
         mark4::LogSinkUart m_logSink{m_telemetrySender};
         mark4::Blackbox m_blackbox{m_logSink};
         mark4::FlightCore m_core;

@@ -1,11 +1,16 @@
 #include "firmware_app.hpp"
 
 #include <cstdint>
+#include <cstring>
 
 #include "flight_core/telemetry.hpp"
 #include "flight_core/types.hpp"
 #include "platform_stm32/board.hpp"
 #include "platform_stm32/rtt.hpp"
+#include "platform_stm32/uart1.hpp"
+#include "protocol/commands.hpp"
+#include "protocol/serial_framing.hpp"
+#include "protocol/version.hpp"
 #include "status_leds.hpp"
 
 namespace
@@ -65,11 +70,17 @@ namespace mark4
             rttWrite("telemetry: uart init failed\n");
             return false;
         }
+        if (!m_commandReceiver.init())
+        {
+            rttWrite("rc: uart init failed\n");
+            return false;
+        }
         rttPrintf("loop: %lu Hz, timer paced; telemetry: %lu baud, 1 packet / %lu frames; "
-                  "blackbox: every frame, same link\n",
+                  "blackbox: every frame, same link; rc uplink armed with %lu ms fail-safe\n",
                   static_cast<unsigned long>(SensorSourceStm32::FRAME_RATE_HZ),
-                  static_cast<unsigned long>(TelemetrySenderStm32::BAUD_RATE),
-                  static_cast<unsigned long>(FRAMES_PER_TELEMETRY));
+                  static_cast<unsigned long>(UART1_BAUD_RATE),
+                  static_cast<unsigned long>(FRAMES_PER_TELEMETRY),
+                  static_cast<unsigned long>(RC_TIMEOUT_US / 1000U));
         return true;
     }
 
@@ -82,16 +93,46 @@ namespace mark4
         std::uint64_t lastStatusUs = 0U;
         std::uint32_t lastFailureCount = 0U;
         bool degraded = false;
+
+        // Last pilot state seen on the uplink, safe until proven fresh:
+        // the SensorFrame defaults (kill engaged, disarmed) apply before
+        // the first packet and whenever the fail-safe trips.
+        mark4::RcInput rc;
+        std::uint64_t lastRcUs = 0U;
+        bool rcEverReceived = false;
         for (;;)
         {
             if (!m_sensorSource.waitFrame(frame))
             {
                 continue;
             }
+
+            std::uint8_t packet[SERIAL_MAX_PAYLOAD];
+            for (;;)
+            {
+                const std::size_t size = m_commandReceiver.poll(packet, sizeof(packet));
+                if (size == 0U)
+                {
+                    break;
+                }
+                if (size == RC_COMMAND_PACKET_SIZE && packet[0] == PROTOCOL_VERSION)
+                {
+                    RcCommandPacket command{};
+                    std::memcpy(&command, packet, sizeof(command));
+                    rc.killSwitch = command.killSwitch != 0U;
+                    rc.armSwitch = command.armSwitch != 0U;
+                    rc.throttle = command.throttle;
+                    lastRcUs = frame.timestampUs;
+                    rcEverReceived = true;
+                }
+            }
+            const bool rcLost = !rcEverReceived || (frame.timestampUs - lastRcUs) > RC_TIMEOUT_US;
+            frame.rc = rcLost ? mark4::RcInput{} : rc;
+
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);
             m_blackbox.record(frame, actuators);
-            updateStatusLeds(m_core.flightPhase(), degraded, frames);
+            updateStatusLeds(m_core.flightPhase(), frame.rc.killSwitch, degraded, frames);
 
             ++frames;
             if ((frames % FRAMES_PER_TELEMETRY) == 0U)
@@ -129,9 +170,12 @@ namespace mark4
                           static_cast<unsigned long>(m_sensorSource.overruns()),
                           static_cast<unsigned long>(m_sensorSource.readFailures()),
                           static_cast<unsigned long>(m_baro.failures()));
-                rttPrintf("tx: %lu sent %lu dropped\n",
+                rttPrintf("tx: %lu sent %lu dropped  rc: %lu received%s  phase %u\n",
                           static_cast<unsigned long>(m_telemetrySender.packetsSent()),
-                          static_cast<unsigned long>(m_telemetrySender.packetsDropped()));
+                          static_cast<unsigned long>(m_telemetrySender.packetsDropped()),
+                          static_cast<unsigned long>(m_commandReceiver.packetsReceived()),
+                          rcLost ? " (failsafe)" : "",
+                          static_cast<unsigned>(m_core.flightPhase()));
             }
         }
     }

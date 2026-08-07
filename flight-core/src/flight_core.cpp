@@ -24,13 +24,17 @@ namespace mark4
 
         // Kill switch first, before any other logic: it decides the outputs
         // no matter what. Estimation is pure state and keeps tracking through
-        // a kill, so the attitude is fresh when the switch is released.
+        // a kill, so the attitude is fresh when the switch is released. A
+        // kill also ends the mission: back to IDLE, so releasing the switch
+        // never resumes an autonomous flight and flying again takes a
+        // deliberate rearm.
         if (sensors.rc.killSwitch)
         {
             actuators.motor.fill(0.0f);
             updateEstimators(sensors);
             m_rateController.reset();
             m_verticalController.reset();
+            m_phase = FlightPhase::IDLE;
             return;
         }
 

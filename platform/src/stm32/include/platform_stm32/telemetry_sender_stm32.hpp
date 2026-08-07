@@ -10,21 +10,15 @@
 
 namespace mark4
 {
-    /// Sends protocol/ packets on USART1 (PB6 TX / PB7 RX), each wrapped
-    /// in a serial frame (protocol/serial_framing.hpp) so the receiver can
-    /// find packet boundaries in the byte stream. Transmission is fully
-    /// interrupt driven behind a ring buffer: send() only copies bytes and
-    /// never waits on the wire. A packet that does not fit is dropped
-    /// whole and counted, keeping frames self-consistent.
+    /// Sends protocol/ packets on the shared USART1 transport (uart1.hpp),
+    /// each wrapped in a serial frame (protocol/serial_framing.hpp) so the
+    /// receiver can find packet boundaries in the byte stream. send() only
+    /// copies bytes and never waits on the wire. A packet that does not
+    /// fit is dropped whole and counted, keeping frames self-consistent.
     class TelemetrySenderStm32 final : public AbsTelemetrySender
     {
       public:
-        /// Fast enough for the full-rate blackbox stream plus telemetry
-        /// (about 40 % of the line), and a standard FTDI rate.
-        static constexpr std::uint32_t BAUD_RATE = 921600U;
-
-        /// @brief Configures PB6/PB7, the USART and its interrupt. Assumes
-        ///        the 84 MHz APB2 clock set by initSystemClock().
+        /// @brief Brings the shared USART1 transport up.
         /// @return true, kept bool for the app init contract
         bool init();
 
