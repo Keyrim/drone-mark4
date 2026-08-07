@@ -121,4 +121,9 @@ namespace mark4
     /// NVIC interrupt set-enable registers, one bit per IRQ number.
     inline volatile std::uint32_t *const NVIC_ISER =
         reinterpret_cast<volatile std::uint32_t *>(0xE000E100U);
+
+    /// Application interrupt and reset control register (SCB): VECTKEY in
+    /// the high half, SYSRESETREQ requests a system reset.
+    inline volatile std::uint32_t *const SCB_AIRCR =
+        reinterpret_cast<volatile std::uint32_t *>(0xE000ED0CU);
 } // namespace mark4

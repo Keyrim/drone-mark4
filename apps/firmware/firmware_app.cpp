@@ -125,6 +125,12 @@ namespace mark4
                     lastRcUs = frame.timestampUs;
                     rcEverReceived = true;
                 }
+                else if (size == REBOOT_COMMAND_PACKET_SIZE && packet[0] == PROTOCOL_VERSION &&
+                         packet[1] == BOARD_REBOOT_MAGIC)
+                {
+                    rttWrite("rc: reboot command, resetting\n");
+                    systemReset();
+                }
             }
             const bool rcLost = !rcEverReceived || (frame.timestampUs - lastRcUs) > RC_TIMEOUT_US;
             frame.rc = rcLost ? mark4::RcInput{} : rc;

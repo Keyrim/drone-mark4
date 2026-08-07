@@ -49,4 +49,8 @@ namespace mark4
     /// @brief Drives LED2, the flight state LED. Same polarity as LED1.
     /// @param on true lights the LED
     void setLed2(bool on);
+
+    /// @brief Requests an NVIC system reset and never returns: the whole
+    ///        chip restarts through the reset vector, peripherals included.
+    [[noreturn]] void systemReset();
 } // namespace mark4

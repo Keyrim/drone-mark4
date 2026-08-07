@@ -153,4 +153,19 @@ namespace mark4
     {
         GPIOC->BSRR = on ? (1U << LED2_PIN) : (1U << (LED2_PIN + 16U));
     }
+
+    void systemReset()
+    {
+        constexpr std::uint32_t AIRCR_VECTKEY = 0x05FAU << 16U;
+        constexpr std::uint32_t AIRCR_SYSRESETREQ = 1U << 2U;
+
+        // The barrier makes sure every outstanding write landed before the
+        // reset request; the reset itself is asynchronous, so wait for it.
+        __asm volatile("dsb" ::: "memory");
+        *SCB_AIRCR = AIRCR_VECTKEY | AIRCR_SYSRESETREQ;
+        for (;;)
+        {
+            __asm volatile("wfi");
+        }
+    }
 } // namespace mark4
