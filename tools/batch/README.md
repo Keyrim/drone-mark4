@@ -1,10 +1,16 @@
 # Monte Carlo throw campaigns
 
 `run_batch.py` measures the recovery rate of the flight core over randomized
-throws, using the real Godot physics as the single reference: it spawns N
-(godot headless, drone_sim) pairs in lockstep, resets the world before every
-run, plays a randomized throw through the sim command channel and judges the
+throws, using the real Godot physics as the single reference: it starts N
+scenarios through `hub up sim --no-serve`, resets the world before every run,
+plays a randomized throw through the sim command channel and judges the
 outcome from the telemetry.
+
+One launcher process per instance, one port range per instance. The hub owns
+the pair (Godot import, start order, teardown of the whole group when it is
+asked to stop); the campaign only picks the ports, drives the scenario and
+judges. `--no-serve` keeps the hub off the sockets: it supervises and nothing
+else, so the campaign is the only reader of its telemetry port.
 
 Arming and the kill switch do not go through the simulator: they are streamed
 as `RcCommandPacket` straight at each `drone_sim` command receiver, the same
@@ -15,12 +21,15 @@ port, so a campaign never lands on the port a bench session may be using.
 
 ## Requirements
 
-- `drone_sim` built for the desktop preset.
+- `hub` and `drone_sim` built for the desktop preset. Override their paths
+  with `--hub` and `--drone-sim`.
 - A Godot 4 binary able to open `sim-godot/` (same version as the editor).
   Headless needs no GPU: a Linux build works inside WSL or a container.
   Pass it with `--godot /path/to/godot` if it is not on the PATH.
 
-The first run on a fresh checkout imports the Godot project automatically.
+The first run on a fresh checkout imports the Godot project automatically
+(the launcher does it). Run one instance first on such a checkout: parallel
+instances would otherwise import the same project at the same time.
 
 ## Usage
 
