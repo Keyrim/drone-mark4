@@ -77,10 +77,7 @@ class GoldenSimLink(unittest.TestCase):
         self.assertEqual(fields[3:6], (0.5, -1.5, 2.5))  # gyro
         self.assertEqual(fields[6:9], (0.25, -0.75, 9.5))  # accel
         self.assertEqual(fields[9], 101325.0)  # baro
-        self.assertEqual(fields[10], 1)  # kill
-        self.assertEqual(fields[11], 0.625)  # throttle
-        self.assertEqual(fields[12], 0)  # arm
-        self.assertEqual(fields[13], 9)  # reset count
+        self.assertEqual(fields[10], 9)  # reset count
 
     def test_actuator(self):
         data = read("sim_actuator.bin")
@@ -123,6 +120,13 @@ class GoldenCommands(unittest.TestCase):
         fields = tw.RC_COMMAND_STRUCT.unpack(data)
         self.assertEqual(fields[2:5], (0, 1, tw.RC_MODE_ALTITUDE_AUTO))
         self.assertEqual(fields[5], f32(0.8125))
+
+    def test_encode_rc_matches_fixture(self):
+        # The encoder streaming RC at the flight process must produce the
+        # golden bytes.
+        packet = tw.encode_rc_command(
+            kill=0, arm=1, mode=tw.RC_MODE_ALTITUDE_AUTO, throttle=0.8125)
+        self.assertEqual(packet, read("rc_command.bin"))
 
     def test_reboot(self):
         data = read("reboot_command.bin")

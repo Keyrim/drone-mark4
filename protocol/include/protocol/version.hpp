@@ -9,5 +9,5 @@ namespace mark4
 {
     /// First byte of every packet, checked by every consumer; the packet
     /// type byte (protocol/header.hpp) follows it.
-    inline constexpr std::uint8_t PROTOCOL_VERSION = 10U;
+    inline constexpr std::uint8_t PROTOCOL_VERSION = 11U;
 } // namespace mark4

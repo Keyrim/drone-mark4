@@ -24,9 +24,12 @@ extends RigidBody3D
 ## forces for the step that follows. The single exception is the reset, which
 ## teleports the body and must go through _integrate_forces.
 ##
-## The kill switch is never enforced here: it travels in the sensor packet and
-## the flight process is expected to answer with zero motor commands, which is
-## exactly what the simulator wants to exercise.
+## The kill switch is never enforced here. It does not travel in the sensor
+## packet either: RcUplink streams the pilot state out-of-band to the flight
+## process command receiver, exactly the path the real board is flown
+## through. The flight process is expected to answer with zero motor
+## commands, which is what the simulator wants to exercise - including when
+## the stream stops and its fail-safe takes over.
 
 const MOTOR_COUNT := 4
 
@@ -133,9 +136,6 @@ func _physics_process(delta: float) -> void:
 		sensors.gyro_rad_s,
 		sensors.accel_mps2,
 		sensors.baro_pa,
-		pilot.kill_switch,
-		pilot.throttle,
-		pilot.arm_switch,
 		_reset_count
 	)
 	sim_raw.publish(simulated_time_us(), body_basis, global_position, velocity)

@@ -115,9 +115,6 @@ namespace
         packet.type = static_cast<std::uint8_t>(mark4::PacketType::SIM_SENSOR);
         packet.timestampUs = 555666777ULL;
         packet.baroPa = 101325.0f;
-        packet.killSwitch = 1U;
-        packet.throttle = 0.625f;
-        packet.armSwitch = 0U;
         packet.resetCount = 9U;
         auto bytes = toBytes(packet);
         patch(bytes,

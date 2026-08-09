@@ -24,7 +24,8 @@ namespace mark4
 
         /// @brief Blocks until a valid sensor packet arrives. Datagrams of an
         ///        unexpected size or protocol version are dropped silently and
-        ///        the wait resumes.
+        ///        the wait resumes. The RC fields of the frame are not written
+        ///        here: RC arrives out-of-band through the command receiver.
         /// @param[out] frameOut frame decoded from the packet
         /// @return FRAME when a packet was decoded, TIMEOUT when the link
         ///         stayed idle for the receive timeout of the underlying

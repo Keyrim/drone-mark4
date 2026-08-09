@@ -9,13 +9,15 @@ ghost view work unchanged on real flights; blackbox records
 (self-framing protocol/ records, checked sync to CRC) are appended to a
 .m4bb file that drone_replay plays back.
 
-Uplink: SimCommandPacket RC datagrams received on udp/47805 (the same
-packet the Godot simulator consumes on 47804, on a port of its own
-because the sim binds exclusively and the ghost view runs both at once)
-are translated to RcCommandPacket on the serial line, one for one: the
-pilot tool streams, and its silence propagates to the board fail-safe.
+Uplink: the bridge IS the real board's command receiver stand-in, so it
+binds RC_COMMAND_PORT (udp/47805 by default) exactly like a flight
+process does and forwards what lands there to the UART: RcCommandPacket
+verbatim, one for one, plus RebootCommandPacket passthrough. The pilot
+tool streams, and its silence propagates to the board fail-safe. Use
+--rc-port when a sim and the board share one host (ghost view): each
+receiver needs a port of its own.
 
-Usage: python3 tools/telemetry/serial_bridge.py [output.m4bb]
+Usage: python3 tools/telemetry/serial_bridge.py [output.m4bb] [--rc-port N]
 Stops on Ctrl-C; prints a one-line status every second."""
 
 import os
@@ -26,24 +28,18 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ground-station"))
 from telemetry_wire import (
-    BOARD_REBOOT_MAGIC,
     CRC16_INIT,
     SERIAL_SYNC0,
     SERIAL_SYNC1,
-    PROTOCOL_VERSION,
+    RC_COMMAND_PACKET_SIZE,
     RC_COMMAND_PORT,
-    RC_COMMAND_STRUCT,
-    REBOOT_COMMAND_STRUCT,
-    SIM_COMMAND_RC,
-    SIM_COMMAND_RESET,
-    SIM_COMMAND_STRUCT,
+    REBOOT_COMMAND_PACKET_SIZE,
     TELEMETRY_MIRROR_PORT,
     TELEMETRY_PACKET_SIZE,
     TELEMETRY_PORT,
     BLACKBOX_RECORD_SIZE,
     TYPE_RC_COMMAND,
     TYPE_REBOOT_COMMAND,
-    TYPE_SIM_COMMAND,
     TYPE_TELEMETRY,
     crc16,
     encode_serial_frame,
@@ -54,8 +50,15 @@ from telemetry_wire import (
 PORT = "/dev/ttyUSB0"
 BAUD = termios.B921600
 
-if len(sys.argv) > 1:
-    out_path = sys.argv[1]
+argv = sys.argv[1:]
+rc_port = RC_COMMAND_PORT
+if "--rc-port" in argv:
+    index = argv.index("--rc-port")
+    rc_port = int(argv[index + 1])
+    del argv[index:index + 2]
+
+if argv:
+    out_path = argv[0]
 else:
     os.makedirs("logs", exist_ok=True)
     out_path = time.strftime("logs/board_%Y%m%d_%H%M%S.m4bb")
@@ -77,7 +80,7 @@ udp.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
 commands = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 commands.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-commands.bind(("", RC_COMMAND_PORT))
+commands.bind(("", rc_port))
 commands.setblocking(False)
 
 SYNC0, SYNC1 = SERIAL_SYNC0, SERIAL_SYNC1
@@ -87,30 +90,25 @@ next_status = time.time() + 1.0
 
 out = open(out_path, "wb")
 print(f"bridging {PORT}: telemetry -> udp/{TELEMETRY_PORT}+{TELEMETRY_MIRROR_PORT}, "
-      f"blackbox -> {out_path}, rc <- udp/{RC_COMMAND_PORT}, Ctrl-C to stop")
+      f"blackbox -> {out_path}, rc <- udp/{rc_port}, Ctrl-C to stop")
 try:
     while True:
-        # Uplink first: translate pending RC commands, one for one.
+        # Uplink first: the packets the board's own command receiver would
+        # have taken, forwarded onto the serial line verbatim.
         while True:
             try:
                 datagram = commands.recv(256)
             except BlockingIOError:
                 break
-            if len(datagram) != SIM_COMMAND_STRUCT.size:
-                continue
-            if not has_header(datagram, TYPE_SIM_COMMAND):
-                continue
-            fields = SIM_COMMAND_STRUCT.unpack(datagram)
-            command, kill, arm, mode, throttle = fields[2:7]
-            if command == SIM_COMMAND_RC:
-                up_payload = RC_COMMAND_STRUCT.pack(
-                    PROTOCOL_VERSION, TYPE_RC_COMMAND, kill, arm, mode, throttle)
-            elif command == SIM_COMMAND_RESET:
-                up_payload = REBOOT_COMMAND_STRUCT.pack(
-                    PROTOCOL_VERSION, TYPE_REBOOT_COMMAND, BOARD_REBOOT_MAGIC)
+            if (len(datagram) == RC_COMMAND_PACKET_SIZE
+                    and has_header(datagram, TYPE_RC_COMMAND)):
+                pass
+            elif (len(datagram) == REBOOT_COMMAND_PACKET_SIZE
+                  and has_header(datagram, TYPE_REBOOT_COMMAND)):
+                pass
             else:
                 continue
-            os.write(fd, encode_serial_frame(up_payload))
+            os.write(fd, encode_serial_frame(datagram))
             rc_sent += 1
 
         chunk = os.read(fd, 4096)

@@ -35,5 +35,9 @@ ignored and streaming continues.
 Source of truth: `protocol/include/protocol/sim_link.hpp`, mirrored by the
 shared `tools/ground-station/telemetry_wire.py` module the stub imports.
 Both packets are little-endian and packed, version byte then type byte:
-sensor packet 45 bytes, actuator packet 26 bytes. Datagrams with the
+sensor packet 39 bytes, actuator packet 26 bytes. Datagrams with the
 wrong size, version or type are ignored.
+
+The sensor packet carries sensors only. The stub therefore streams no
+pilot state at all, and the flight process it feeds stays in its RC
+fail-safe (kill engaged): the stub is a sensor source, not a cockpit.

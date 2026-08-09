@@ -42,9 +42,6 @@ namespace
         packet.type = static_cast<std::uint8_t>(mark4::PacketType::SIM_SENSOR);
         packet.timestampUs = TEST_TIMESTAMP_US;
         packet.baroPa = TEST_BARO_PA;
-        packet.killSwitch = 0U;
-        packet.throttle = TEST_THROTTLE;
-        packet.armSwitch = 1U;
         packet.resetCount = TEST_RESET_COUNT;
 
         SensorDatagram wire{};
@@ -170,27 +167,10 @@ TEST_CASE("a sensor packet is decoded into a sensor frame")
     REQUIRE(frame.gyroRadS == TEST_GYRO_RAD_S);
     REQUIRE(frame.accelMps2 == TEST_ACCEL_MPS2);
     REQUIRE(frame.baroPa == TEST_BARO_PA);
-    REQUIRE(frame.rc.killSwitch == false);
-    REQUIRE(frame.rc.throttle == TEST_THROTTLE);
-    REQUIRE(frame.rc.armSwitch == true);
-    REQUIRE(source.resetCount() == TEST_RESET_COUNT);
-}
-
-TEST_CASE("an engaged kill switch reaches the frame")
-{
-    mark4::UdpLink link;
-    REQUIRE(link.open(0U, TEST_TIMEOUT_MS));
-
-    mark4::SensorSourceSim source(link);
-    SimulatorStub simulator;
-
-    SensorDatagram datagram = makeSensorDatagram();
-    datagram[offsetof(mark4::SimSensorPacket, killSwitch)] = 1U;
-    REQUIRE(simulator.sendTo(link.boundPort(), datagram.data(), datagram.size()));
-
-    mark4::SensorFrame frame;
-    REQUIRE(source.waitFrame(frame) == mark4::FrameWait::FRAME);
+    // The sensor packet carries no RC: the decoded frame keeps the safe
+    // defaults until the composition root grafts the tracked state onto it.
     REQUIRE(frame.rc.killSwitch == true);
+    REQUIRE(source.resetCount() == TEST_RESET_COUNT);
 }
 
 TEST_CASE("malformed datagrams are skipped and the next valid one is delivered")
@@ -218,7 +198,6 @@ TEST_CASE("malformed datagrams are skipped and the next valid one is delivered")
     mark4::SensorFrame frame;
     REQUIRE(source.waitFrame(frame) == mark4::FrameWait::FRAME);
     REQUIRE(frame.timestampUs == TEST_TIMESTAMP_US);
-    REQUIRE(frame.rc.throttle == TEST_THROTTLE);
 }
 
 TEST_CASE("a stray datagram cannot redirect the motor replies")

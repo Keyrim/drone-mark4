@@ -48,9 +48,9 @@ namespace mark4
                         wire.data() + offsetof(mark4::SimSensorPacket, accelMps2),
                         sizeof(frameOut.accelMps2));
             frameOut.baroPa = packet.baroPa;
-            frameOut.rc.killSwitch = packet.killSwitch != 0U;
-            frameOut.rc.throttle = packet.throttle;
-            frameOut.rc.armSwitch = packet.armSwitch != 0U;
+            // The RC fields of the frame are deliberately left alone: RC is
+            // not a sensor reading, and the composition root grafts it from
+            // its RcTracker after this call returns.
             m_resetCount = packet.resetCount;
             // Only a validated sensor packet may steer the motor replies:
             // a stray datagram on the port must not stall the lockstep.

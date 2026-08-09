@@ -16,7 +16,9 @@ namespace mark4
     /// flight process restarts through the reset counter of the sim link.
     inline constexpr std::uint8_t SIM_COMMAND_RESET = 1U;
 
-    /// Applies the RC fields of the packet as the pilot state.
+    /// Retired: interactive and scripted RC both travel as RcCommandPacket
+    /// to the flight process command receiver since v11; the value stays
+    /// reserved so the neighbors keep their numbers.
     inline constexpr std::uint8_t SIM_COMMAND_RC = 2U;
 
     /// Plays an instant throw with the velocity and rotation of the packet.
