@@ -19,7 +19,8 @@
         "CMAKE_C_COMPILER": "gcc",
         "CMAKE_CXX_COMPILER": "g++",
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "DRONE_BUILD_TESTS": "ON"
+        "DRONE_BUILD_TESTS": "ON",
+        "DRONE_PLATFORM": "desktop"
       }
     },
     {
@@ -38,7 +39,8 @@
       "toolchainFile": "${sourceDir}/cmake/toolchain-arm-none-eabi.cmake",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "MinSizeRel",
-        "DRONE_BUILD_TESTS": "OFF"
+        "DRONE_BUILD_TESTS": "OFF",
+        "DRONE_PLATFORM": "stm32"
       }
     }
   ],
