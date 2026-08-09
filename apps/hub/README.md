@@ -154,9 +154,10 @@ arrives.
 
 ## Known limitations
 
-- An RC message aimed at a simulator is refused with `no process of kind
-  drone_sim` until such a process announces itself with a command port and
-  accepts `RcCommandPacket` there.
+- An RC message aimed at a kind no process has announced is refused with
+  `no process of kind <kind>`; a scenario has to be up first.
+- Every announce carries `sessionId` 0 for now, so a process that restarts
+  on the same ports is not seen as a new session.
 - Acks are broadcast to every connected client rather than sent back to the
   one that asked: a client correlates the answer with the `id` it sent and
   ignores the rest. This keeps the endpoint free of any per-client state
