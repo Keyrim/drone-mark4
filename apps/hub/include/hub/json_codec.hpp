@@ -22,6 +22,7 @@
 #include "protocol/header.hpp"
 #include "protocol/sim_raw.hpp"
 #include "protocol/telemetry.hpp"
+#include "protocol/tuning.hpp"
 
 namespace mark4
 {
@@ -31,7 +32,10 @@ namespace mark4
         RC,          ///< pilot state to forward to a flight process
         SIM_COMMAND, ///< scenario command for the simulator
         REBOOT,      ///< reset the real board
-        RECORD       ///< start or stop the CSV recording
+        RECORD,      ///< start or stop the CSV recording
+        TUNING_SET,  ///< write one tunable parameter
+        TUNING_GET,  ///< read one tunable parameter
+        TUNING_LIST  ///< walk the parameter table
     };
 
     /// One decoded client request. The wire packets are already built: the
@@ -46,6 +50,9 @@ namespace mark4
         SimCommandPacket simCommand{};                  ///< SIM_COMMAND: packet to send
         RebootCommandPacket reboot{};                   ///< REBOOT: packet to send, magic included
         bool recordStart = false;                       ///< RECORD: true = start, false = stop
+        TuningSetPacket tuningSet{};                    ///< TUNING_SET: packet to forward
+        TuningGetPacket tuningGet{};                    ///< TUNING_GET: packet to forward
+        TuningListPacket tuningList{};                  ///< TUNING_LIST: packet to forward
     };
 
     /// Counters and flags the hub publishes once per second.
@@ -84,6 +91,20 @@ namespace mark4
     /// @param packet packet to render
     /// @return one line of JSON, keys named exactly like the struct fields
     std::string simRawToJson(const SimRawPacket &packet);
+
+    /// @brief Renders one tuning acknowledgement as a JSON object.
+    /// @param packet packet to render
+    /// @param source process the answer came from
+    /// @return one line of JSON
+    std::string tuningAckToJson(const TuningAckPacket &packet, StreamSource source);
+
+    /// @brief Renders one parameter description as a JSON object. The wire
+    ///        name is zero-padded and a full-length one carries no
+    ///        terminator, so it is read by bounded length, never by strlen.
+    /// @param packet packet to render
+    /// @param source process the description came from
+    /// @return one line of JSON
+    std::string tuningInfoToJson(const TuningInfoPacket &packet, StreamSource source);
 
     /// @brief Renders the whole discovery table as a JSON object.
     /// @param processes live entries

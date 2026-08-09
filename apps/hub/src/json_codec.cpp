@@ -85,6 +85,56 @@ namespace mark4
             return true;
         }
 
+        /// @brief Reads an optional unsigned integer field into a u16.
+        /// @param object object to read from
+        /// @param key field name
+        /// @param valueOut receives the value, untouched when the field is absent
+        /// @param errorOut receives the reason on failure
+        /// @return true when the field is absent or an integer in [0, 65535]
+        bool readUint16(const Json &object,
+                        const char *key,
+                        std::uint16_t &valueOut,
+                        std::string &errorOut)
+        {
+            static constexpr int MAX_UINT16 = 65535;
+            const auto found = object.find(key);
+            if (found == object.end())
+            {
+                return true;
+            }
+            if (!found->is_number_integer())
+            {
+                errorOut = std::string("field '") + key + "' must be an integer";
+                return false;
+            }
+            const auto raw = found->get<std::int64_t>();
+            if (raw < 0 || raw > MAX_UINT16)
+            {
+                errorOut = std::string("field '") + key + "' must be in [0, 65535]";
+                return false;
+            }
+            valueOut = static_cast<std::uint16_t>(raw);
+            return true;
+        }
+
+        /// @brief Reads the mandatory parameter id of a tuning request. The
+        ///        key is "paramId", never "id": "id" is the correlation id
+        ///        every message may carry, and confusing the two would match
+        ///        an answer to the wrong request.
+        /// @param object object to read from
+        /// @param valueOut receives the id
+        /// @param errorOut receives the reason on failure
+        /// @return true when the field is present and in range
+        bool readParamId(const Json &object, std::uint16_t &valueOut, std::string &errorOut)
+        {
+            if (object.find("paramId") == object.end())
+            {
+                errorOut = "field 'paramId' must be a parameter id";
+                return false;
+            }
+            return readUint16(object, "paramId", valueOut, errorOut);
+        }
+
         /// @brief Reads an optional three-number array field.
         /// @param object object to read from
         /// @param key field name
@@ -260,6 +310,107 @@ namespace mark4
             return true;
         }
 
+        /// @brief Names one wire-level tuning status.
+        /// @param status one of the TUNING_ACK_* values
+        /// @return static name, "unknown" outside the enumeration
+        const char *tuningStatusName(std::uint8_t status)
+        {
+            switch (status)
+            {
+                case TUNING_ACK_OK:
+                    return "ok";
+                case TUNING_ACK_UNKNOWN_ID:
+                    return "unknownId";
+                case TUNING_ACK_OUT_OF_BOUNDS:
+                    return "outOfBounds";
+                case TUNING_ACK_LOCKED_WHILE_ARMED:
+                    return "lockedWhileArmed";
+                default:
+                    return "unknown";
+            }
+        }
+
+        /// @brief Reads a wire parameter name, which is zero-padded and
+        ///        carries no terminator when it fills the field. strlen would
+        ///        run off the end of that one, so the length is bounded here.
+        /// @param name name field, already copied out of the packed struct
+        /// @return the name, at most TUNING_NAME_SIZE characters
+        std::string boundedName(const std::array<char, TUNING_NAME_SIZE> &name)
+        {
+            std::size_t length = 0U;
+            while (length < name.size() && name[length] != '\0')
+            {
+                ++length;
+            }
+            return {name.data(), length};
+        }
+
+        /// @brief Fills the parameter write part of a client request.
+        /// @param object message object
+        /// @param message message being decoded
+        /// @param errorOut receives the reason on failure
+        /// @return true when every field decoded
+        bool parseTuningSet(const Json &object, ClientMessage &message, std::string &errorOut)
+        {
+            message.tuningSet.version = PROTOCOL_VERSION;
+            message.tuningSet.type = static_cast<std::uint8_t>(PacketType::TUNING_SET);
+            std::uint16_t id = 0U;
+            float value = 0.0f;
+            if (!readTarget(object, message.target, errorOut) || !readParamId(object, id, errorOut))
+            {
+                return false;
+            }
+            if (object.find("value") == object.end())
+            {
+                errorOut = "field 'value' must be a number";
+                return false;
+            }
+            if (!readFloat(object, "value", value, errorOut))
+            {
+                return false;
+            }
+            message.tuningSet.id = id;
+            message.tuningSet.value = value;
+            return true;
+        }
+
+        /// @brief Fills the parameter read part of a client request.
+        /// @param object message object
+        /// @param message message being decoded
+        /// @param errorOut receives the reason on failure
+        /// @return true when every field decoded
+        bool parseTuningGet(const Json &object, ClientMessage &message, std::string &errorOut)
+        {
+            message.tuningGet.version = PROTOCOL_VERSION;
+            message.tuningGet.type = static_cast<std::uint8_t>(PacketType::TUNING_GET);
+            std::uint16_t id = 0U;
+            if (!readTarget(object, message.target, errorOut) || !readParamId(object, id, errorOut))
+            {
+                return false;
+            }
+            message.tuningGet.id = id;
+            return true;
+        }
+
+        /// @brief Fills the table walk part of a client request.
+        /// @param object message object
+        /// @param message message being decoded
+        /// @param errorOut receives the reason on failure
+        /// @return true when every field decoded
+        bool parseTuningList(const Json &object, ClientMessage &message, std::string &errorOut)
+        {
+            message.tuningList.version = PROTOCOL_VERSION;
+            message.tuningList.type = static_cast<std::uint8_t>(PacketType::TUNING_LIST);
+            std::uint16_t startIndex = 0U;
+            if (!readTarget(object, message.target, errorOut) ||
+                !readUint16(object, "startIndex", startIndex, errorOut))
+            {
+                return false;
+            }
+            message.tuningList.startIndex = startIndex;
+            return true;
+        }
+
         /// @brief Fills the recording part of a client request.
         /// @param object message object
         /// @param message message being decoded
@@ -381,6 +532,46 @@ namespace mark4
         return message.dump();
     }
 
+    std::string tuningAckToJson(const TuningAckPacket &packet, StreamSource source)
+    {
+        // Copied out of the packed struct before the JSON library sees them.
+        const std::uint16_t id = packet.id;
+        const float value = packet.value;
+
+        Json message;
+        message["type"] = "tuningAck";
+        message["source"] = streamSourceName(source);
+        message["paramId"] = id;
+        message["value"] = static_cast<double>(value);
+        message["status"] = packet.status;
+        message["statusName"] = tuningStatusName(packet.status);
+        return message.dump();
+    }
+
+    std::string tuningInfoToJson(const TuningInfoPacket &packet, StreamSource source)
+    {
+        const std::uint16_t index = packet.index;
+        const std::uint16_t count = packet.count;
+        const std::uint16_t id = packet.id;
+        const std::array<char, TUNING_NAME_SIZE> name = readPackedField(&packet.name);
+        const float value = packet.value;
+        const float minValue = packet.minValue;
+        const float maxValue = packet.maxValue;
+
+        Json message;
+        message["type"] = "tuningInfo";
+        message["source"] = streamSourceName(source);
+        message["index"] = index;
+        message["count"] = count;
+        message["paramId"] = id;
+        message["name"] = boundedName(name);
+        message["value"] = static_cast<double>(value);
+        message["minValue"] = static_cast<double>(minValue);
+        message["maxValue"] = static_cast<double>(maxValue);
+        message["armedChange"] = (packet.flags & TUNING_FLAG_ARMED_CHANGE) != 0U;
+        return message.dump();
+    }
+
     std::variant<ClientMessage, std::string> parseClientMessage(std::string_view text)
     {
         const Json root = Json::parse(text.begin(), text.end(), nullptr, false);
@@ -433,6 +624,30 @@ namespace mark4
         {
             message.type = ClientMessageType::RECORD;
             if (!parseRecord(root, message, error))
+            {
+                return error;
+            }
+        }
+        else if (typeName == "tuningSet")
+        {
+            message.type = ClientMessageType::TUNING_SET;
+            if (!parseTuningSet(root, message, error))
+            {
+                return error;
+            }
+        }
+        else if (typeName == "tuningGet")
+        {
+            message.type = ClientMessageType::TUNING_GET;
+            if (!parseTuningGet(root, message, error))
+            {
+                return error;
+            }
+        }
+        else if (typeName == "tuningList")
+        {
+            message.type = ClientMessageType::TUNING_LIST;
+            if (!parseTuningList(root, message, error))
             {
                 return error;
             }

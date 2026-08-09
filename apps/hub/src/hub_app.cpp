@@ -15,6 +15,7 @@
 #include <variant>
 
 #include "protocol/blackbox.hpp"
+#include "protocol/tuning.hpp"
 
 namespace mark4
 {
@@ -139,6 +140,14 @@ namespace mark4
         {
             onSimRawPacket(data);
         }
+        else
+        {
+            // Tuning answers ride the telemetry stream: they carry no source
+            // byte of their own, so the arrival path is what names them. A
+            // datagram landing on a UDP telemetry port came from the
+            // simulator side, never from the board.
+            static_cast<void>(onTuningAnswer(data, size, StreamSource::DRONE_SIM));
+        }
     }
 
     void HubApp::onSerialPayload(const std::uint8_t *payload, std::size_t size)
@@ -166,7 +175,53 @@ namespace mark4
             }
             return;
         }
+        if (onTuningAnswer(payload, size, StreamSource::FIRMWARE))
+        {
+            return;
+        }
         m_recorder.countBadFrame();
+    }
+
+    bool HubApp::onTuningAnswer(const std::uint8_t *data, std::size_t size, StreamSource source)
+    {
+        if (size == TUNING_ACK_PACKET_SIZE && hasHeader(data, size, PacketType::TUNING_ACK))
+        {
+            TuningAckPacket packet{};
+            std::memcpy(&packet, data, sizeof(packet));
+            m_ws.broadcastText(tuningAckToJson(packet, source));
+            return true;
+        }
+        if (size == TUNING_INFO_PACKET_SIZE && hasHeader(data, size, PacketType::TUNING_INFO))
+        {
+            TuningInfoPacket packet{};
+            std::memcpy(&packet, data, sizeof(packet));
+            m_ws.broadcastText(tuningInfoToJson(packet, source));
+            return true;
+        }
+        return false;
+    }
+
+    bool HubApp::sendToTarget(StreamSource target,
+                              const std::uint8_t *data,
+                              std::size_t size,
+                              std::string &errorOut)
+    {
+        if (target == StreamSource::FIRMWARE)
+        {
+            if (!m_serial.isOpen())
+            {
+                errorOut = "no serial link to the board";
+                return false;
+            }
+            return m_serial.sendPacket(data, size);
+        }
+        const std::uint16_t port = m_registry.commandPortOf(target);
+        if (port == 0U)
+        {
+            errorOut = std::string("no process of kind ") + streamSourceName(target);
+            return false;
+        }
+        return m_udp.sendTo(data, size, "127.0.0.1", port);
     }
 
     void HubApp::onTelemetryPacket(const std::uint8_t *data)
@@ -281,23 +336,22 @@ namespace mark4
                 // synthesizes it: a silent link means kill downstream, and
                 // that silence is the pilot's, not the hub's to fill in.
                 const auto bytes = wireBytes(message.rc);
-                if (message.target == StreamSource::FIRMWARE)
-                {
-                    if (!m_serial.isOpen())
-                    {
-                        errorOut = "no serial link to the board";
-                        return false;
-                    }
-                    return m_serial.sendPacket(bytes.data(), bytes.size());
-                }
-                const std::uint16_t port = m_registry.commandPortOf(message.target);
-                if (port == 0U)
-                {
-                    errorOut =
-                        std::string("no process of kind ") + streamSourceName(message.target);
-                    return false;
-                }
-                return m_udp.sendTo(bytes.data(), bytes.size(), "127.0.0.1", port);
+                return sendToTarget(message.target, bytes.data(), bytes.size(), errorOut);
+            }
+            case ClientMessageType::TUNING_SET: {
+                const auto bytes = wireBytes(message.tuningSet);
+                return sendToTarget(message.target, bytes.data(), bytes.size(), errorOut);
+            }
+            case ClientMessageType::TUNING_GET: {
+                const auto bytes = wireBytes(message.tuningGet);
+                return sendToTarget(message.target, bytes.data(), bytes.size(), errorOut);
+            }
+            case ClientMessageType::TUNING_LIST: {
+                // The ack the client gets back says the request went out, not
+                // that the table arrived: the descriptions come as their own
+                // messages, one per flight frame, as the process unrolls them.
+                const auto bytes = wireBytes(message.tuningList);
+                return sendToTarget(message.target, bytes.data(), bytes.size(), errorOut);
             }
             case ClientMessageType::SIM_COMMAND: {
                 const auto bytes = wireBytes(message.simCommand);
@@ -310,13 +364,8 @@ namespace mark4
                     errorOut = std::string("cannot reboot ") + streamSourceName(message.target);
                     return false;
                 }
-                if (!m_serial.isOpen())
-                {
-                    errorOut = "no serial link to the board";
-                    return false;
-                }
                 const auto bytes = wireBytes(message.reboot);
-                return m_serial.sendPacket(bytes.data(), bytes.size());
+                return sendToTarget(message.target, bytes.data(), bytes.size(), errorOut);
             }
             case ClientMessageType::RECORD: {
                 if (message.recordStart)

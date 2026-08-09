@@ -137,10 +137,36 @@ TEST_CASE("a packet whose fields are misaligned encodes like any other")
     simRaw.velocityMps = {4.5f, -5.5f, 6.5f};
     const std::string simRawText = mark4::simRawToJson(simRaw);
 
+    mark4::TuningAckPacket ack{};
+    ack.version = mark4::PROTOCOL_VERSION;
+    ack.type = static_cast<std::uint8_t>(mark4::PacketType::TUNING_ACK);
+    ack.id = 101U;
+    ack.value = 0.028f;
+    ack.status = mark4::TUNING_ACK_OK;
+    const std::string ackText = mark4::tuningAckToJson(ack, mark4::StreamSource::DRONE_SIM);
+
+    mark4::TuningInfoPacket info{};
+    info.version = mark4::PROTOCOL_VERSION;
+    info.type = static_cast<std::uint8_t>(mark4::PacketType::TUNING_INFO);
+    info.index = 3U;
+    info.count = 12U;
+    info.id = 401U;
+    info.name = {'a', 'h', 'r', 's', '_', 'k', 'p', '\0'};
+    info.value = 2.0f;
+    info.minValue = 0.5f;
+    info.maxValue = 8.0f;
+    const std::string infoText = mark4::tuningInfoToJson(info, mark4::StreamSource::DRONE_SIM);
+
+    std::vector<std::uint8_t> ackStorage;
+    std::vector<std::uint8_t> infoStorage;
     for (std::size_t offset = 0U; offset < OFFSET_COUNT; ++offset)
     {
         CHECK(mark4::telemetryToJson(atOffset(telemetry, storage, offset)) == telemetryText);
         CHECK(mark4::simRawToJson(atOffset(simRaw, storage, offset)) == simRawText);
+        CHECK(mark4::tuningAckToJson(atOffset(ack, ackStorage, offset),
+                                     mark4::StreamSource::DRONE_SIM) == ackText);
+        CHECK(mark4::tuningInfoToJson(atOffset(info, infoStorage, offset),
+                                      mark4::StreamSource::DRONE_SIM) == infoText);
     }
 }
 
@@ -297,6 +323,135 @@ TEST_CASE("a record message toggles the csv session")
     CHECK(!(std::get<mark4::ClientMessage>(stop).recordStart));
 }
 
+TEST_CASE("a tuning set message becomes the exact tuning set wire packet")
+{
+    const auto decoded = mark4::parseClientMessage(
+        R"({"type":"tuningSet","id":7,"target":"drone_sim","paramId":101,"value":0.028})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(decoded));
+    const auto &message = std::get<mark4::ClientMessage>(decoded);
+    CHECK(message.type == mark4::ClientMessageType::TUNING_SET);
+    CHECK(message.id == 7);
+    CHECK(message.target == mark4::StreamSource::DRONE_SIM);
+
+    const auto bytes = mark4::wireBytes(message.tuningSet);
+    REQUIRE(bytes.size() == mark4::TUNING_SET_PACKET_SIZE);
+    CHECK(bytes[0] == mark4::PROTOCOL_VERSION);
+    CHECK(bytes[1] == static_cast<std::uint8_t>(mark4::PacketType::TUNING_SET));
+    std::uint16_t paramId = 0U;
+    std::memcpy(&paramId, &bytes[2], sizeof(paramId));
+    CHECK(paramId == 101U);
+    float value = 0.0f;
+    std::memcpy(&value, &bytes[4], sizeof(value));
+    CHECK(value == 0.028f);
+}
+
+TEST_CASE("a tuning get and a tuning list become their exact wire packets")
+{
+    const auto get = mark4::parseClientMessage(
+        R"({"type":"tuningGet","id":8,"target":"firmware","paramId":303})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(get));
+    const auto &getMessage = std::get<mark4::ClientMessage>(get);
+    CHECK(getMessage.type == mark4::ClientMessageType::TUNING_GET);
+    const auto getBytes = mark4::wireBytes(getMessage.tuningGet);
+    REQUIRE(getBytes.size() == mark4::TUNING_GET_PACKET_SIZE);
+    CHECK(getBytes[1] == static_cast<std::uint8_t>(mark4::PacketType::TUNING_GET));
+    std::uint16_t paramId = 0U;
+    std::memcpy(&paramId, &getBytes[2], sizeof(paramId));
+    CHECK(paramId == 303U);
+
+    // startIndex is optional and defaults to the top of the table.
+    const auto list =
+        mark4::parseClientMessage(R"({"type":"tuningList","id":9,"target":"drone_sim"})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(list));
+    const auto &listMessage = std::get<mark4::ClientMessage>(list);
+    CHECK(listMessage.type == mark4::ClientMessageType::TUNING_LIST);
+    const auto listBytes = mark4::wireBytes(listMessage.tuningList);
+    REQUIRE(listBytes.size() == mark4::TUNING_LIST_PACKET_SIZE);
+    std::uint16_t startIndex = 1U;
+    std::memcpy(&startIndex, &listBytes[2], sizeof(startIndex));
+    CHECK(startIndex == 0U);
+
+    const auto paged =
+        mark4::parseClientMessage(R"({"type":"tuningList","target":"drone_sim","startIndex":4})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(paged));
+    const auto pagedBytes = mark4::wireBytes(std::get<mark4::ClientMessage>(paged).tuningList);
+    std::memcpy(&startIndex, &pagedBytes[2], sizeof(startIndex));
+    CHECK(startIndex == 4U);
+}
+
+TEST_CASE("tuning ack json names the status it carries")
+{
+    mark4::TuningAckPacket packet{};
+    packet.version = mark4::PROTOCOL_VERSION;
+    packet.type = static_cast<std::uint8_t>(mark4::PacketType::TUNING_ACK);
+    packet.id = 101U;
+    packet.value = 0.028f;
+    packet.status = mark4::TUNING_ACK_OK;
+
+    const nlohmann::json message =
+        parsed(mark4::tuningAckToJson(packet, mark4::StreamSource::DRONE_SIM));
+    CHECK(message["type"] == "tuningAck");
+    CHECK(message["source"] == "drone_sim");
+    // The parameter id key is never "id": that one is the correlation id.
+    CHECK(message["paramId"] == 101U);
+    CHECK(message["value"] == 0.028f);
+    CHECK(message["status"] == 0U);
+    CHECK(message["statusName"] == "ok");
+    CHECK(message.size() == 6U);
+
+    const char *names[] = {"ok", "unknownId", "outOfBounds", "lockedWhileArmed", "unknown"};
+    for (std::uint8_t status = 0U; status < 5U; ++status)
+    {
+        packet.status = status;
+        const nlohmann::json named =
+            parsed(mark4::tuningAckToJson(packet, mark4::StreamSource::FIRMWARE));
+        INFO("status " << static_cast<unsigned>(status));
+        CHECK(named["statusName"] == names[status]);
+        CHECK(named["source"] == "firmware");
+    }
+}
+
+TEST_CASE("tuning info json reads a name that fills the whole wire field")
+{
+    mark4::TuningInfoPacket packet{};
+    packet.version = mark4::PROTOCOL_VERSION;
+    packet.type = static_cast<std::uint8_t>(mark4::PacketType::TUNING_INFO);
+    packet.index = 3U;
+    packet.count = 12U;
+    packet.id = 401U;
+    packet.name = {'a', 'h', 'r', 's', '_', 'k', 'p', '\0'};
+    packet.value = 2.0f;
+    packet.minValue = 0.5f;
+    packet.maxValue = 8.0f;
+    packet.flags = 0U;
+
+    const nlohmann::json message =
+        parsed(mark4::tuningInfoToJson(packet, mark4::StreamSource::DRONE_SIM));
+    CHECK(message["type"] == "tuningInfo");
+    CHECK(message["source"] == "drone_sim");
+    CHECK(message["index"] == 3U);
+    CHECK(message["count"] == 12U);
+    CHECK(message["paramId"] == 401U);
+    CHECK(message["name"] == "ahrs_kp");
+    CHECK(message["value"] == 2.0);
+    CHECK(message["minValue"] == 0.5);
+    CHECK(message["maxValue"] == 8.0);
+    CHECK(message["armedChange"] == false);
+    CHECK(message.size() == 10U);
+
+    // A name filling the field carries no terminator: reading it must stop
+    // at the field boundary rather than run off the end of the struct.
+    for (char &character : packet.name)
+    {
+        character = 'x';
+    }
+    packet.flags = mark4::TUNING_FLAG_ARMED_CHANGE;
+    const nlohmann::json full =
+        parsed(mark4::tuningInfoToJson(packet, mark4::StreamSource::DRONE_SIM));
+    CHECK(full["name"] == std::string(mark4::TUNING_NAME_SIZE, 'x'));
+    CHECK(full["armedChange"] == true);
+}
+
 TEST_CASE("a malformed client message is refused, never thrown")
 {
     const char *rejected[] = {
@@ -320,6 +475,16 @@ TEST_CASE("a malformed client message is refused, never thrown")
         R"({"type":"reboot"})",
         R"({"type":"record"})",
         R"({"type":"record","action":"pause"})",
+        R"({"type":"tuningSet","target":"drone_sim","value":1.0})",
+        R"({"type":"tuningSet","target":"drone_sim","paramId":101})",
+        R"({"type":"tuningSet","target":"drone_sim","paramId":101,"value":"fast"})",
+        R"({"type":"tuningSet","target":"drone_sim","paramId":-1,"value":1.0})",
+        R"({"type":"tuningSet","target":"drone_sim","paramId":70000,"value":1.0})",
+        R"({"type":"tuningSet","paramId":101,"value":1.0})",
+        R"({"type":"tuningGet","target":"drone_sim"})",
+        R"({"type":"tuningGet","target":"ghost","paramId":101})",
+        R"({"type":"tuningList"})",
+        R"({"type":"tuningList","target":"drone_sim","startIndex":"first"})",
     };
     for (const char *text : rejected)
     {

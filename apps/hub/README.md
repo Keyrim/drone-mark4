@@ -106,7 +106,19 @@ structs in `protocol/`.
            "badFrames":0,"rejectedAnnounces":0},"clients":1}
 
 {"type":"ack","id":7,"ok":true,"error":""}
+
+{"type":"tuningAck","source":"drone_sim","paramId":101,"value":0.028,
+ "status":0,"statusName":"ok"}
+
+{"type":"tuningInfo","source":"drone_sim","index":0,"count":12,"paramId":101,
+ "name":"rate_kp_rp","value":0.028,"minValue":0.0,"maxValue":0.5,
+ "armedChange":true}
 ```
+
+`statusName` is one of `ok`, `unknownId`, `outOfBounds`, `lockedWhileArmed`.
+`source` is inferred from the path the answer arrived by: the serial link
+means the board, a telemetry port means the simulator side. Tuning answers
+share the telemetry stream and carry no source byte of their own.
 
 A client that connects gets a `discovery` and a `status` message
 immediately; `status` is then republished once per second and whenever the
@@ -124,7 +136,16 @@ disappears.
  "heldAzimuthRad":0.0,"swingSeconds":0.35}
 {"type":"reboot","id":9,"target":"firmware"}
 {"type":"record","id":10,"action":"start"}
+{"type":"tuningSet","id":11,"target":"drone_sim","paramId":101,"value":0.028}
+{"type":"tuningGet","id":12,"target":"drone_sim","paramId":101}
+{"type":"tuningList","id":13,"target":"drone_sim","startIndex":0}
 ```
+
+The parameter id key is `paramId`, never `id`: `id` is the correlation id
+every message may carry. `startIndex` is optional and defaults to 0. The
+`ack` to a `tuningList` says the request went out, not that the table
+arrived: the descriptions follow as their own `tuningInfo` messages, one per
+flight frame as the process unrolls them.
 
 `target` is a process kind name: `firmware`, `drone_sim`, `drone_replay`,
 `sim_plant`. `kill`, `arm` and `mode` are integers, `throttle` a number in

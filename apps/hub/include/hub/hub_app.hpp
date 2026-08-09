@@ -114,6 +114,28 @@ namespace mark4
         /// @param data packet bytes
         void onSimRawPacket(const std::uint8_t *data);
 
+        /// @brief Renders one tuning answer to the clients.
+        /// @param data packet bytes
+        /// @param size packet size in bytes
+        /// @param source process the answer came from, inferred from the path
+        ///        it arrived by
+        /// @return true when the packet was a tuning answer
+        bool onTuningAnswer(const std::uint8_t *data, std::size_t size, StreamSource source);
+
+        /// @brief Sends one command packet to a process, by the route that
+        ///        kind of process is reachable on: the board is at the end of
+        ///        the serial cable, everything else at the command port it
+        ///        announced.
+        /// @param target kind of process to reach
+        /// @param data packet bytes
+        /// @param size packet size in bytes
+        /// @param errorOut receives the reason when the target is unreachable
+        /// @return true when the bytes went out
+        bool sendToTarget(StreamSource target,
+                          const std::uint8_t *data,
+                          std::size_t size,
+                          std::string &errorOut);
+
         /// @brief Applies one discovery event: follows the telemetry port the
         ///        process serves, and tells the clients what changed.
         /// @param change event to apply
