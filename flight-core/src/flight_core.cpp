@@ -105,7 +105,18 @@ namespace mark4
 
     void FlightCore::advancePhase(const SensorFrame &sensors)
     {
-        const bool stickDown = sensors.rc.throttle < ARM_THROTTLE;
+        // Hysteresis on the stick-down boundary: between the two thresholds
+        // the stick keeps its previous state, so RC noise cannot flip the
+        // arming and takeover gestures at frame rate.
+        if (sensors.rc.throttle < ARM_THROTTLE)
+        {
+            m_stickDown = true;
+        }
+        else if (sensors.rc.throttle > STICK_UP_THROTTLE)
+        {
+            m_stickDown = false;
+        }
+        const bool stickDown = m_stickDown;
         switch (m_phase)
         {
             case FlightPhase::IDLE:

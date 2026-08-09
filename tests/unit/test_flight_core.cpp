@@ -394,6 +394,47 @@ TEST_CASE("a sustained unrecoverable tilt cuts the motors")
     REQUIRE(actuators.motor[0] == 0.0f);
 }
 
+TEST_CASE("the stick-down boundary has hysteresis and cannot chatter")
+{
+    mark4::FlightCore core;
+    mark4::SensorFrame frame;
+    mark4::ActuatorFrame actuators;
+    std::uint64_t timestamp = settle(core, actuators);
+    frame.rc.killSwitch = false;
+    frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
+    frame.baroPa = HELPER_BARO_PA;
+
+    auto stepWithThrottle = [&](float throttle) {
+        frame.rc.throttle = throttle;
+        frame.timestampUs = timestamp;
+        core.step(frame, actuators);
+        timestamp += STEP_US;
+    };
+
+    stepWithThrottle(0.5f);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+
+    // Crossing below ARM_THROTTLE disarms; RC noise hovering inside the
+    // hysteresis band afterwards must not re-enter stick flight.
+    stepWithThrottle(0.04f);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
+    for (std::uint32_t i = 0U; i < 10U; ++i)
+    {
+        stepWithThrottle(i % 2U == 0U ? 0.06f : 0.09f);
+        REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
+    }
+
+    // Only a deliberate raise past the release threshold flies again, and
+    // noise back inside the band must not disarm mid-flight.
+    stepWithThrottle(0.12f);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    for (std::uint32_t i = 0U; i < 10U; ++i)
+    {
+        stepWithThrottle(i % 2U == 0U ? 0.09f : 0.06f);
+        REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    }
+}
+
 TEST_CASE("a core with a dead baro never flies")
 {
     mark4::FlightCore core;

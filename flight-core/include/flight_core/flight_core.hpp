@@ -117,6 +117,13 @@ namespace mark4
         /// control integrators held at zero.
         static constexpr float ARM_THROTTLE = 0.05f;
 
+        /// Throttle above which the stick counts as raised again. The band
+        /// between ARM_THROTTLE and this is hysteresis: inside it the stick
+        /// keeps its previous state, so RC noise sitting on the boundary
+        /// cannot chatter the state machine (arming, hover takeover, cutoff
+        /// release) at frame rate.
+        static constexpr float STICK_UP_THROTTLE = 0.10f;
+
         /// Vertical velocity setpoint at full stick deflection [m/s]; mid
         /// stick holds the altitude.
         static constexpr float STICK_VZ_RANGE_MPS = 2.0f;
@@ -205,6 +212,7 @@ namespace mark4
         [[nodiscard]] std::array<float, 3> brakeUpWorld() const;
 
         FlightPhase m_phase = FlightPhase::IDLE;
+        bool m_stickDown = true;                  ///< throttle state, with hysteresis
         std::uint32_t m_handledThrowCount = 0U;   ///< throws already acted upon
         std::uint64_t m_recoveryStartUs = 0U;     ///< entry instant of RECOVERY [us]
         std::uint64_t m_hoverStartUs = 0U;        ///< entry instant of HOVER [us]
