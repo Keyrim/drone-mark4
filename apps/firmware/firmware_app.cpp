@@ -8,8 +8,8 @@
 #include "platform_stm32/rtt.hpp"
 #include "platform_stm32/uart1.hpp"
 #include "protocol/commands.hpp"
+#include "protocol/header.hpp"
 #include "protocol/serial_framing.hpp"
-#include "protocol/version.hpp"
 #include "status_leds.hpp"
 
 namespace
@@ -123,7 +123,8 @@ namespace mark4
                 {
                     break;
                 }
-                if (size == RC_COMMAND_PACKET_SIZE && packet[0] == PROTOCOL_VERSION)
+                if (size == RC_COMMAND_PACKET_SIZE &&
+                    hasHeader(packet, size, PacketType::RC_COMMAND))
                 {
                     RcCommandPacket command{};
                     std::memcpy(&command, packet, sizeof(command));
@@ -133,8 +134,9 @@ namespace mark4
                     lastRcUs = frame.timestampUs;
                     rcEverReceived = true;
                 }
-                else if (size == REBOOT_COMMAND_PACKET_SIZE && packet[0] == PROTOCOL_VERSION &&
-                         packet[1] == BOARD_REBOOT_MAGIC)
+                else if (size == REBOOT_COMMAND_PACKET_SIZE &&
+                         hasHeader(packet, size, PacketType::REBOOT_COMMAND) &&
+                         packet[2] == BOARD_REBOOT_MAGIC)
                 {
                     rttWrite("rc: reboot command, resetting\n");
                     systemReset();

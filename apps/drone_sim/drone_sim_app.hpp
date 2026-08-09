@@ -16,6 +16,7 @@
 #include "platform_sim/sensor_source_sim.hpp"
 #include "platform_sim/telemetry_sender_sim.hpp"
 #include "platform_sim/udp_link.hpp"
+#include "protocol/header.hpp"
 
 namespace mark4
 {
@@ -96,7 +97,7 @@ namespace mark4
         mark4::SensorSourceSim m_sensorSource;
         mark4::MotorSinkSim m_motorSink;
         mark4::TelemetrySenderSim m_telemetrySender;
-        mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender};
+        mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender, StreamSource::DRONE_SIM};
         std::array<char, LOG_PATH_SIZE> m_logFilePath; ///< one file per run, outlives m_logSink
         mark4::LogSinkFile m_logSink;
         mark4::FlightCore m_core;

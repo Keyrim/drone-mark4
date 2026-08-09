@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <type_traits>
 
+#include "protocol/header.hpp"
+
 namespace mark4
 {
 #pragma pack(push, 1)
@@ -17,6 +19,9 @@ namespace mark4
     struct TelemetryPacket
     {
         std::uint8_t version;              ///< = PROTOCOL_VERSION
+        std::uint8_t type;                 ///< = PacketType::TELEMETRY
+        std::uint8_t sourceId;             ///< StreamSource of the sender
+        std::uint16_t sequence;            ///< increments per packet sent, wraps
         std::uint64_t timestampUs;         ///< acquisition time [us]
         std::array<float, 3> gyroRadS;     ///< body angular rates [rad/s]
         std::array<float, 4> attitudeQuat; ///< estimated attitude, w x y z
@@ -33,12 +38,12 @@ namespace mark4
     };
 #pragma pack(pop)
 
-    /// Packed wire size: version (1) + timestamp (8) + gyro (12) + attitude
-    /// quaternion (16) + gyro bias (12) + motors (16) + altitude (4) +
-    /// vertical velocity (4) + throw state (1) + throw count (4) + release
-    /// velocity (4) + apex timestamp (8) + apex altitude (4) + flight
-    /// phase (1).
-    inline constexpr std::size_t TELEMETRY_PACKET_SIZE = 95U;
+    /// Packed wire size: version (1) + type (1) + source (1) + sequence (2)
+    /// + timestamp (8) + gyro (12) + attitude quaternion (16) + gyro bias
+    /// (12) + motors (16) + altitude (4) + vertical velocity (4) + throw
+    /// state (1) + throw count (4) + release velocity (4) + apex timestamp
+    /// (8) + apex altitude (4) + flight phase (1).
+    inline constexpr std::size_t TELEMETRY_PACKET_SIZE = 99U;
 
     static_assert(sizeof(TelemetryPacket) == TELEMETRY_PACKET_SIZE, "wire layout must be packed");
     static_assert(std::is_trivially_copyable_v<TelemetryPacket>);

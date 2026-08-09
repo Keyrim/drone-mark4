@@ -17,6 +17,7 @@
 #include "platform_stm32/ms5611.hpp"
 #include "platform_stm32/sensor_source_stm32.hpp"
 #include "platform_stm32/telemetry_sender_stm32.hpp"
+#include "protocol/header.hpp"
 
 namespace mark4
 {
@@ -59,7 +60,7 @@ namespace mark4
         mark4::SensorSourceStm32 m_sensorSource{m_imu, m_baro, m_clock};
         mark4::MotorSinkNull m_motorSink;
         mark4::TelemetrySenderStm32 m_telemetrySender;
-        mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender};
+        mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender, StreamSource::FIRMWARE};
         mark4::CommandReceiverStm32 m_commandReceiver;
         mark4::LogSinkUart m_logSink{m_telemetrySender};
         mark4::Blackbox m_blackbox{m_logSink};

@@ -7,8 +7,8 @@
 #include "flight_core/flight_core.hpp"
 #include "flight_core/telemetry.hpp"
 #include "flight_core/types.hpp"
+#include "protocol/header.hpp"
 #include "protocol/telemetry.hpp"
-#include "protocol/version.hpp"
 
 TEST_CASE("packTelemetry carries the estimated attitude next to the raw frame")
 {
@@ -28,9 +28,17 @@ TEST_CASE("packTelemetry carries the estimated attitude next to the raw frame")
         core.step(frame, actuators);
     }
 
-    const auto wire = mark4::packTelemetry(frame, actuators, core);
+    constexpr std::uint16_t TEST_SEQUENCE = 0xA1B2U;
+    const auto wire =
+        mark4::packTelemetry(frame, actuators, core, mark4::StreamSource::DRONE_SIM, TEST_SEQUENCE);
     REQUIRE(wire.size() == mark4::TELEMETRY_PACKET_SIZE);
     REQUIRE(wire[0] == mark4::PROTOCOL_VERSION);
+    REQUIRE(wire[1] == static_cast<std::uint8_t>(mark4::PacketType::TELEMETRY));
+    REQUIRE(wire[2] == static_cast<std::uint8_t>(mark4::StreamSource::DRONE_SIM));
+    std::uint16_t sequence = 0U;
+    std::memcpy(
+        &sequence, wire.data() + offsetof(mark4::TelemetryPacket, sequence), sizeof(sequence));
+    REQUIRE(sequence == TEST_SEQUENCE);
 
     std::array<float, 4> quat{};
     std::memcpy(

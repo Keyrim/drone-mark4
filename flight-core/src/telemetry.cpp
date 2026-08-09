@@ -9,10 +9,15 @@ namespace mark4
 {
     std::array<std::uint8_t, TELEMETRY_PACKET_SIZE> packTelemetry(const SensorFrame &frame,
                                                                   const ActuatorFrame &actuators,
-                                                                  const FlightCore &core)
+                                                                  const FlightCore &core,
+                                                                  StreamSource source,
+                                                                  std::uint16_t sequence)
     {
         TelemetryPacket packet{};
         packet.version = PROTOCOL_VERSION;
+        packet.type = static_cast<std::uint8_t>(PacketType::TELEMETRY);
+        packet.sourceId = static_cast<std::uint8_t>(source);
+        packet.sequence = sequence;
         packet.timestampUs = frame.timestampUs;
         packet.altitudeM = core.altitudeM();
         packet.verticalVelocityMps = core.verticalVelocityMps();

@@ -1,9 +1,14 @@
-"""Decoding of the drone UDP broadcasts: telemetry and raw simulator state.
+"""Single Python source of the wire protocol: constants and codecs.
 
 This module is pure Python and has no GUI dependency, so it can be imported
-and tested headless. Keep it in sync with the wire formats defined in
-protocol/include/protocol/telemetry.hpp and protocol/include/protocol/
-sim_raw.hpp (and the version byte in protocol/include/protocol/version.hpp).
+and tested headless. It mirrors protocol/include/protocol/ (version.hpp,
+header.hpp, ports.hpp and the packet headers), which are the source of
+truth; every Python tool imports the constants from here and nowhere else.
+The golden packet fixtures in CI catch any drift against the C++ layout.
+
+All packets are packed, little-endian, and open with a version byte then a
+type byte: nothing is ever demultiplexed by size alone. Stream packets
+(telemetry, sim raw) follow with a source id byte and a u16 sequence number.
 """
 
 import math
@@ -11,8 +16,53 @@ import struct
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+#: First byte of every packet, must match mark4::PROTOCOL_VERSION.
+PROTOCOL_VERSION = 10
+
+# Packet types, the second byte of every packet (mark4::PacketType).
+TYPE_SIM_SENSOR = 1
+TYPE_SIM_ACTUATOR = 2
+TYPE_TELEMETRY = 3
+TYPE_SIM_RAW = 4
+TYPE_SIM_COMMAND = 5
+TYPE_RC_COMMAND = 6
+TYPE_REBOOT_COMMAND = 7
+TYPE_BLACKBOX_RECORD = 8
+TYPE_ANNOUNCE = 9
+
+# Stream source identities (mark4::StreamSource).
+SOURCE_FIRMWARE = 1
+SOURCE_DRONE_SIM = 2
+SOURCE_DRONE_REPLAY = 3
+SOURCE_SIM_PLANT = 4
+
+# Scenario commands carried by SimCommandPacket (commands.hpp).
+SIM_COMMAND_RESET = 1
+SIM_COMMAND_RC = 2
+SIM_COMMAND_THROW = 3
+SIM_COMMAND_HAND_THROW = 4
+
+# Piloting modes carried next to the RC state (commands.hpp). Reserved:
+# consumed by the mode feature, defined so the wire never breaks again.
+RC_MODE_MANUAL = 0
+RC_MODE_ALTITUDE_AUTO = 1
+
+# Third byte of RebootCommandPacket (commands.hpp).
+BOARD_REBOOT_MAGIC = 0xB7
+
+# Default UDP ports (ports.hpp).
+SIM_LINK_PORT = 47800
+TELEMETRY_PORT = 47801
+SIM_RAW_PORT = 47802
+TELEMETRY_MIRROR_PORT = 47803
+SIM_COMMAND_PORT = 47804
+RC_COMMAND_PORT = 47805
+
 # Wire format, little-endian and packed, mirroring mark4::TelemetryPacket:
 #   uint8   version          = PROTOCOL_VERSION
+#   uint8   type             = TYPE_TELEMETRY
+#   uint8   sourceId         SOURCE_* of the sender
+#   uint16  sequence         increments per packet sent, wraps
 #   uint64  timestampUs      acquisition time [us]
 #   float   gyroRadS[3]      body angular rates [rad/s]
 #   float   attitudeQuat[4]  estimated attitude, w x y z
@@ -26,47 +76,76 @@ from typing import Optional, Tuple
 #   uint64  apexTimestampUs  last predicted apex instant [us]
 #   float   apexAltitudeM    last predicted apex altitude [m]
 #   uint8   flightPhase      FlightPhase of the state machine
-TELEMETRY_STRUCT = struct.Struct("<BQ3f4f3f4f2fBIfQfB")
+TELEMETRY_STRUCT = struct.Struct("<BBBHQ3f4f3f4f2fBIfQfB")
 
-#: Packed wire size: version (1) + timestamp (8) + gyro (12) + attitude
-#: quaternion (16) + gyro bias (12) + motors (16) + altitude (4) + vz (4)
-#: + throw state (1) + throw count (4) + release velocity (4)
-#: + apex timestamp (8) + apex altitude (4) + flight phase (1).
-TELEMETRY_PACKET_SIZE = 95
+#: Packed wire size, mirroring mark4::TELEMETRY_PACKET_SIZE.
+TELEMETRY_PACKET_SIZE = 99
 
 # Wire format mirroring mark4::SimRawPacket, the exact simulator state:
-#   uint8   version          = PROTOCOL_VERSION
+#   uint8   version, uint8 type = TYPE_SIM_RAW
+#   uint8   sourceId = SOURCE_SIM_PLANT, uint16 sequence
 #   uint64  timestampUs      simulated time [us]
 #   float   attitudeQuat[4]  exact attitude, w x y z
 #   float   positionM[3]     world position [m]
 #   float   velocityMps[3]   world linear velocity [m/s]
-SIM_RAW_STRUCT = struct.Struct("<BQ4f3f3f")
+SIM_RAW_STRUCT = struct.Struct("<BBBHQ4f3f3f")
 
-#: Packed wire size: version (1) + timestamp (8) + quaternion (16)
-#: + position (12) + velocity (12).
-SIM_RAW_PACKET_SIZE = 49
+#: Packed wire size, mirroring mark4::SIM_RAW_PACKET_SIZE.
+SIM_RAW_PACKET_SIZE = 53
 
-#: First byte of every packet, must match mark4::PROTOCOL_VERSION.
-PROTOCOL_VERSION = 9
+# Wire format mirroring mark4::SimSensorPacket (sim_link.hpp): version,
+# type, timestampUs, gyro[3], accel[3], baro, kill, throttle, arm, reset.
+SIM_SENSOR_STRUCT = struct.Struct("<BBQ3f3ffBfBB")
+SIM_SENSOR_PACKET_SIZE = 45
 
-#: UDP port telemetry is broadcast to, must match mark4::TELEMETRY_PORT.
-TELEMETRY_PORT = 47801
+# Wire format mirroring mark4::SimActuatorPacket (sim_link.hpp): version,
+# type, echoed timestampUs, motor[4].
+SIM_ACTUATOR_STRUCT = struct.Struct("<BBQ4f")
+SIM_ACTUATOR_PACKET_SIZE = 26
 
-#: UDP port the simulator broadcasts its raw state to (mark4::SIM_RAW_PORT).
-SIM_RAW_PORT = 47802
+# Wire format mirroring mark4::SimCommandPacket (commands.hpp): version,
+# type, command, kill, arm, mode, throttle, velocity[3], angular[3],
+# held, held tilt, held azimuth, swing.
+SIM_COMMAND_STRUCT = struct.Struct("<BBBBBBf3f3f4f")
+SIM_COMMAND_PACKET_SIZE = 50
 
-assert TELEMETRY_STRUCT.size == TELEMETRY_PACKET_SIZE, (
-    "telemetry wire layout out of sync with protocol/include/protocol/telemetry.hpp"
-)
-assert SIM_RAW_STRUCT.size == SIM_RAW_PACKET_SIZE, (
-    "sim raw wire layout out of sync with protocol/include/protocol/sim_raw.hpp"
-)
+# Wire format mirroring mark4::RcCommandPacket (commands.hpp): version,
+# type, kill, arm, mode, throttle.
+RC_COMMAND_STRUCT = struct.Struct("<BBBBBf")
+RC_COMMAND_PACKET_SIZE = 9
+
+# Wire format mirroring mark4::RebootCommandPacket (commands.hpp).
+REBOOT_COMMAND_STRUCT = struct.Struct("<BBB")
+REBOOT_COMMAND_PACKET_SIZE = 3
+
+for _wire_struct, _wire_size, _name in (
+    (TELEMETRY_STRUCT, TELEMETRY_PACKET_SIZE, "telemetry"),
+    (SIM_RAW_STRUCT, SIM_RAW_PACKET_SIZE, "sim raw"),
+    (SIM_SENSOR_STRUCT, SIM_SENSOR_PACKET_SIZE, "sim sensor"),
+    (SIM_ACTUATOR_STRUCT, SIM_ACTUATOR_PACKET_SIZE, "sim actuator"),
+    (SIM_COMMAND_STRUCT, SIM_COMMAND_PACKET_SIZE, "sim command"),
+    (RC_COMMAND_STRUCT, RC_COMMAND_PACKET_SIZE, "rc command"),
+    (REBOOT_COMMAND_STRUCT, REBOOT_COMMAND_PACKET_SIZE, "reboot command"),
+):
+    assert _wire_struct.size == _wire_size, (
+        f"{_name} wire layout out of sync with protocol/include/protocol/"
+    )
+
+
+def telemetry_mirror_port(telemetry_port: int) -> int:
+    """Mirror of a telemetry port, mark4::telemetryMirrorPort."""
+    return telemetry_port + 2
+
+
+assert telemetry_mirror_port(TELEMETRY_PORT) == TELEMETRY_MIRROR_PORT
 
 
 @dataclass(frozen=True)
 class TelemetrySample:
     """One decoded telemetry packet."""
 
+    source_id: int
+    sequence: int
     timestamp_us: int
     gyro_rad_s: Tuple[float, float, float]
     attitude_quat: Tuple[float, float, float, float]
@@ -91,6 +170,8 @@ class TelemetrySample:
 class SimRawSample:
     """One decoded raw simulator state packet."""
 
+    source_id: int
+    sequence: int
     timestamp_us: int
     attitude_quat: Tuple[float, float, float, float]
     position_m: Tuple[float, float, float]
@@ -102,33 +183,43 @@ class SimRawSample:
         return self.timestamp_us * 1e-6
 
 
+def has_header(datagram: bytes, packet_type: int) -> bool:
+    """True when the datagram opens with the protocol version and type."""
+    return (
+        len(datagram) >= 2
+        and datagram[0] == PROTOCOL_VERSION
+        and datagram[1] == packet_type
+    )
+
+
 def decode_telemetry(datagram: bytes) -> Optional[TelemetrySample]:
     """Decode one telemetry datagram.
 
-    Returns the decoded sample, or None if the datagram has the wrong size or
-    an unknown protocol version. Callers are expected to count and drop those.
+    Returns the decoded sample, or None if the datagram has the wrong size,
+    version or type. Callers are expected to count and drop those.
     """
     if len(datagram) != TELEMETRY_PACKET_SIZE:
         return None
-
-    fields = TELEMETRY_STRUCT.unpack(datagram)
-    if fields[0] != PROTOCOL_VERSION:
+    if not has_header(datagram, TYPE_TELEMETRY):
         return None
 
+    fields = TELEMETRY_STRUCT.unpack(datagram)
     return TelemetrySample(
-        timestamp_us=fields[1],
-        gyro_rad_s=fields[2:5],
-        attitude_quat=fields[5:9],
-        gyro_bias_rad_s=fields[9:12],
-        motor=fields[12:16],
-        altitude_m=fields[16],
-        vertical_velocity_mps=fields[17],
-        throw_state=fields[18],
-        throw_count=fields[19],
-        release_velocity_mps=fields[20],
-        apex_timestamp_us=fields[21],
-        apex_altitude_m=fields[22],
-        flight_phase=fields[23],
+        source_id=fields[2],
+        sequence=fields[3],
+        timestamp_us=fields[4],
+        gyro_rad_s=fields[5:8],
+        attitude_quat=fields[8:12],
+        gyro_bias_rad_s=fields[12:15],
+        motor=fields[15:19],
+        altitude_m=fields[19],
+        vertical_velocity_mps=fields[20],
+        throw_state=fields[21],
+        throw_count=fields[22],
+        release_velocity_mps=fields[23],
+        apex_timestamp_us=fields[24],
+        apex_altitude_m=fields[25],
+        flight_phase=fields[26],
     )
 
 
@@ -136,16 +227,17 @@ def decode_sim_raw(datagram: bytes) -> Optional[SimRawSample]:
     """Decode one raw simulator state datagram, None when not one."""
     if len(datagram) != SIM_RAW_PACKET_SIZE:
         return None
-
-    fields = SIM_RAW_STRUCT.unpack(datagram)
-    if fields[0] != PROTOCOL_VERSION:
+    if not has_header(datagram, TYPE_SIM_RAW):
         return None
 
+    fields = SIM_RAW_STRUCT.unpack(datagram)
     return SimRawSample(
-        timestamp_us=fields[1],
-        attitude_quat=fields[2:6],
-        position_m=fields[6:9],
-        velocity_mps=fields[9:12],
+        source_id=fields[2],
+        sequence=fields[3],
+        timestamp_us=fields[4],
+        attitude_quat=fields[5:9],
+        position_m=fields[9:12],
+        velocity_mps=fields[12:15],
     )
 
 
@@ -211,6 +303,9 @@ def encode_telemetry(sample: TelemetrySample, version: int = PROTOCOL_VERSION) -
     """Pack a sample back into a datagram. Useful for tests and fake sources."""
     return TELEMETRY_STRUCT.pack(
         version,
+        TYPE_TELEMETRY,
+        sample.source_id,
+        sample.sequence,
         sample.timestamp_us,
         *sample.gyro_rad_s,
         *sample.attitude_quat,
@@ -231,8 +326,31 @@ def encode_sim_raw(sample: SimRawSample, version: int = PROTOCOL_VERSION) -> byt
     """Pack a raw state sample back into a datagram."""
     return SIM_RAW_STRUCT.pack(
         version,
+        TYPE_SIM_RAW,
+        sample.source_id,
+        sample.sequence,
         sample.timestamp_us,
         *sample.attitude_quat,
         *sample.position_m,
         *sample.velocity_mps,
+    )
+
+
+def encode_sim_command(
+    command: int,
+    kill: int = 0,
+    arm: int = 0,
+    mode: int = RC_MODE_MANUAL,
+    throttle: float = 0.0,
+    velocity: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+    angular: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+    held_s: float = 0.0,
+    held_tilt: float = 0.0,
+    held_azimuth: float = 0.0,
+    swing_s: float = 0.0,
+) -> bytes:
+    """Pack one SimCommandPacket; fields unused by the command are ignored."""
+    return SIM_COMMAND_STRUCT.pack(
+        PROTOCOL_VERSION, TYPE_SIM_COMMAND, command, kill, arm, mode, throttle,
+        *velocity, *angular, held_s, held_tilt, held_azimuth, swing_s,
     )

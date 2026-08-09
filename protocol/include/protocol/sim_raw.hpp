@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <type_traits>
 
+#include "protocol/header.hpp"
+
 namespace mark4
 {
 #pragma pack(push, 1)
@@ -18,6 +20,9 @@ namespace mark4
     struct SimRawPacket
     {
         std::uint8_t version;              ///< = PROTOCOL_VERSION
+        std::uint8_t type;                 ///< = PacketType::SIM_RAW
+        std::uint8_t sourceId;             ///< = StreamSource::SIM_PLANT
+        std::uint16_t sequence;            ///< increments per packet sent, wraps
         std::uint64_t timestampUs;         ///< simulated time [us]
         std::array<float, 4> attitudeQuat; ///< exact attitude, w x y z
         std::array<float, 3> positionM;    ///< world position [m]
@@ -25,9 +30,10 @@ namespace mark4
     };
 #pragma pack(pop)
 
-    /// Packed wire size: version (1) + timestamp (8) + attitude quaternion
-    /// (16) + position (12) + velocity (12).
-    inline constexpr std::size_t SIM_RAW_PACKET_SIZE = 49U;
+    /// Packed wire size: version (1) + type (1) + source (1) + sequence (2)
+    /// + timestamp (8) + attitude quaternion (16) + position (12)
+    /// + velocity (12).
+    inline constexpr std::size_t SIM_RAW_PACKET_SIZE = 53U;
 
     static_assert(sizeof(SimRawPacket) == SIM_RAW_PACKET_SIZE, "wire layout must be packed");
     static_assert(std::is_trivially_copyable_v<SimRawPacket>);

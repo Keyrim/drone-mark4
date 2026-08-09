@@ -3,25 +3,22 @@ extends Node
 
 ## UDP listener for scripted scenario commands (batch campaigns).
 ##
-## The wire layout is defined by protocol/include/protocol/commands.hpp
-## (32 bytes, packed, little endian): u8 version, u8 command, u8 kill switch,
-## u8 arm switch, f32 throttle, 3x f32 velocity [m/s], 3x f32 angular
-## velocity [rad/s]. Vectors arrive in the drone frame convention of the
-## protocol and are remapped to the Godot axes here.
+## The wire layout is defined by protocol/include/protocol/commands.hpp,
+## mirrored by the constants in protocol.gd (the single GDScript copy):
+## u8 version, u8 type, u8 command, u8 kill switch, u8 arm switch, u8 mode,
+## f32 throttle, 3x f32 velocity [m/s], 3x f32 angular velocity [rad/s],
+## then the hand throw floats. Vectors arrive in the drone frame convention
+## of the protocol and are remapped to the Godot axes here.
 ##
 ## RC commands are applied to the pilot state immediately; reset and throw
 ## are one-shot requests the drone consumes at its next physics tick, exactly
 ## like the keyboard pilot: commands never touch the physics state directly.
 
-## Keep in sync with protocol/include/protocol/version.hpp.
-const PROTOCOL_VERSION := 9
-
-const PACKET_SIZE := 48
-
-const COMMAND_RESET := 1
-const COMMAND_RC := 2
-const COMMAND_THROW := 3
-const COMMAND_HAND_THROW := 4
+## Offsets inside SimCommandPacket, after the RC byte block.
+const THROTTLE_OFFSET := 6
+const VELOCITY_OFFSET := 10
+const ANGULAR_OFFSET := 22
+const HELD_OFFSET := 34
 
 ## Axis remap from the drone frame to the Godot frame: the inverse of the
 ## GODOT_TO_DRONE basis used on the sensor path.
@@ -123,27 +120,27 @@ func swing_seconds() -> float:
 
 
 func _decode(payload: PackedByteArray) -> bool:
-	if payload.size() != PACKET_SIZE:
+	if payload.size() != Protocol.SIM_COMMAND_PACKET_SIZE:
 		return false
-	if payload.decode_u8(0) != PROTOCOL_VERSION:
+	if not Protocol.has_header(payload, Protocol.TYPE_SIM_COMMAND):
 		return false
-	match payload.decode_u8(1):
-		COMMAND_RESET:
+	match payload.decode_u8(2):
+		Protocol.SIM_COMMAND_RESET:
 			_reset_requested = true
-		COMMAND_RC:
+		Protocol.SIM_COMMAND_RC:
 			if _pilot != null:
-				_pilot.kill_switch = payload.decode_u8(2) != 0
-				_pilot.arm_switch = payload.decode_u8(3) != 0
-				_pilot.throttle = clampf(payload.decode_float(4), 0.0, 1.0)
-		COMMAND_THROW:
+				_pilot.kill_switch = payload.decode_u8(3) != 0
+				_pilot.arm_switch = payload.decode_u8(4) != 0
+				_pilot.throttle = clampf(payload.decode_float(THROTTLE_OFFSET), 0.0, 1.0)
+		Protocol.SIM_COMMAND_THROW:
 			_decode_throw_vectors(payload)
 			_throw_requested = true
-		COMMAND_HAND_THROW:
+		Protocol.SIM_COMMAND_HAND_THROW:
 			_decode_throw_vectors(payload)
-			_held_seconds = payload.decode_float(32)
-			var tilt := payload.decode_float(36)
-			var azimuth := payload.decode_float(40)
-			_swing_seconds = payload.decode_float(44)
+			_held_seconds = payload.decode_float(HELD_OFFSET)
+			var tilt := payload.decode_float(HELD_OFFSET + 4)
+			var azimuth := payload.decode_float(HELD_OFFSET + 8)
+			_swing_seconds = payload.decode_float(HELD_OFFSET + 12)
 			# Tilt about a horizontal axis at the given azimuth, expressed in
 			# the drone world convention and remapped to the Godot axes.
 			var axis_drone := Vector3(cos(azimuth), sin(azimuth), 0.0)
@@ -157,10 +154,14 @@ func _decode(payload: PackedByteArray) -> bool:
 
 func _decode_throw_vectors(payload: PackedByteArray) -> void:
 	var velocity_drone := Vector3(
-		payload.decode_float(8), payload.decode_float(12), payload.decode_float(16)
+		payload.decode_float(VELOCITY_OFFSET),
+		payload.decode_float(VELOCITY_OFFSET + 4),
+		payload.decode_float(VELOCITY_OFFSET + 8)
 	)
 	var angular_drone := Vector3(
-		payload.decode_float(20), payload.decode_float(24), payload.decode_float(28)
+		payload.decode_float(ANGULAR_OFFSET),
+		payload.decode_float(ANGULAR_OFFSET + 4),
+		payload.decode_float(ANGULAR_OFFSET + 8)
 	)
 	_throw_velocity = DRONE_TO_GODOT * velocity_drone
 	_throw_angular_velocity = DRONE_TO_GODOT * angular_drone

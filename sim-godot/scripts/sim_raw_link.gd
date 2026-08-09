@@ -4,20 +4,16 @@ extends Node
 ## Broadcasts the exact simulator state over UDP so plotting tools can compare
 ## the estimated state (telemetry broadcast) against it, sample by sample.
 ##
-## The wire layout is defined by protocol/include/protocol/sim_raw.hpp, which
-## is the source of truth. Packed, little endian, version byte first:
+## The wire layout is defined by protocol/include/protocol/sim_raw.hpp,
+## mirrored by the constants in protocol.gd (the single GDScript copy):
 ##
-##   sim raw (49 bytes): u8 version, u64 timestamp_us,
+##   sim raw (53 bytes): u8 version, u8 type, u8 source id, u16 sequence,
+##                       u64 timestamp_us,
 ##                       4x f32 attitude quaternion (w x y z),
 ##                       3x f32 position [m], 3x f32 velocity [m/s]
 ##
 ## Everything is expressed in the drone frame convention of the protocol
 ## (body x forward, y left, z up; world z up), remapped from the Godot axes.
-
-## Keep in sync with protocol/include/protocol/version.hpp.
-const PROTOCOL_VERSION := 9
-
-const PACKET_SIZE := 49
 
 ## One packet every DECIMATION physics ticks: 50 Hz at the 500 Hz tick.
 const DECIMATION := 10
@@ -38,6 +34,7 @@ var _socket := PacketPeerUDP.new()
 var _buffer := StreamPeerBuffer.new()
 var _ready_to_send: bool = false
 var _tick: int = 0
+var _sequence: int = 0
 
 
 func _ready() -> void:
@@ -78,7 +75,11 @@ func publish(timestamp_us: int, body_basis: Basis, position: Vector3, velocity: 
 	var velocity_drone := GODOT_TO_DRONE * velocity
 
 	_buffer.clear()
-	_buffer.put_u8(PROTOCOL_VERSION)
+	_buffer.put_u8(Protocol.VERSION)
+	_buffer.put_u8(Protocol.TYPE_SIM_RAW)
+	_buffer.put_u8(Protocol.SOURCE_SIM_PLANT)
+	_buffer.put_u16(_sequence)
+	_sequence = (_sequence + 1) % 65536
 	_buffer.put_u64(timestamp_us)
 	_buffer.put_float(attitude.w)
 	_buffer.put_float(attitude.x)
@@ -92,7 +93,7 @@ func publish(timestamp_us: int, body_basis: Basis, position: Vector3, velocity: 
 	_buffer.put_float(velocity_drone.z)
 
 	var payload := _buffer.data_array
-	if payload.size() != PACKET_SIZE:
+	if payload.size() != Protocol.SIM_RAW_PACKET_SIZE:
 		push_error("sim raw: built a %d byte packet" % payload.size())
 		return
 	if _socket.put_packet(payload) == OK:

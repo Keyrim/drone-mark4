@@ -23,14 +23,6 @@ extends Node
 ## real-board bridge port a bench session may be using. Interactive
 ## sessions can opt out with --no-rc-uplink.
 
-## Keep in sync with protocol/include/protocol/version.hpp.
-const PROTOCOL_VERSION := 9
-
-const PACKET_SIZE := 48
-
-const COMMAND_RESET := 1
-const COMMAND_RC := 2
-
 ## Seconds between two packets: 10 Hz, five packets per fail-safe window.
 const SEND_PERIOD_S := 0.1
 
@@ -87,29 +79,32 @@ func _process(delta: float) -> void:
 	# R reboots the board too: same key as the sim world reset, relayed by
 	# the bridge as a reboot command, sent immediately (not paced).
 	if _pilot.take_board_reset_request():
-		_send(COMMAND_RESET)
+		_send(Protocol.SIM_COMMAND_RESET)
 
 	_since_last_send += delta
 	if _since_last_send < SEND_PERIOD_S:
 		return
 	_since_last_send = 0.0
-	_send(COMMAND_RC)
+	_send(Protocol.SIM_COMMAND_RC)
 
 
 ## Pack and send one SimCommandPacket carrying the pilot state.
 ##
-## @param command COMMAND_RC for the periodic state, COMMAND_RESET on R.
+## @param command SIM_COMMAND_RC for the periodic state, SIM_COMMAND_RESET
+##        on R.
 func _send(command: int) -> void:
 	_buffer.clear()
-	_buffer.put_u8(PROTOCOL_VERSION)
+	_buffer.put_u8(Protocol.VERSION)
+	_buffer.put_u8(Protocol.TYPE_SIM_COMMAND)
 	_buffer.put_u8(command)
 	_buffer.put_u8(1 if _pilot.kill_switch else 0)
 	_buffer.put_u8(1 if _pilot.arm_switch else 0)
+	_buffer.put_u8(Protocol.RC_MODE_MANUAL)
 	_buffer.put_float(_pilot.throttle)
 	for _index in range(10):
 		_buffer.put_float(0.0)
 
 	var payload := _buffer.data_array
-	assert(payload.size() == PACKET_SIZE)
+	assert(payload.size() == Protocol.SIM_COMMAND_PACKET_SIZE)
 	if _socket.put_packet(payload) == OK:
 		packets_sent += 1

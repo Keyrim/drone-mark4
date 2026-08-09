@@ -5,8 +5,8 @@
 #include <cstdint>
 #include <cstring>
 
+#include "protocol/header.hpp"
 #include "protocol/sim_link.hpp"
-#include "protocol/version.hpp"
 
 namespace mark4
 {
@@ -28,7 +28,8 @@ namespace mark4
             {
                 return FrameWait::TIMEOUT; // idle link: the caller decides
             }
-            if (received != mark4::SIM_SENSOR_PACKET_SIZE || wire[0] != mark4::PROTOCOL_VERSION)
+            if (received != mark4::SIM_SENSOR_PACKET_SIZE ||
+                !mark4::hasHeader(wire.data(), received, mark4::PacketType::SIM_SENSOR))
             {
                 continue; // not a sensor packet we understand: keep waiting
             }

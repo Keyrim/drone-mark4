@@ -18,7 +18,6 @@ import math
 import os
 import random
 import socket
-import struct
 import subprocess
 import sys
 import threading
@@ -27,16 +26,16 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ground-station"))
-from telemetry_wire import PROTOCOL_VERSION, decode_telemetry
+from telemetry_wire import (
+    SIM_COMMAND_HAND_THROW,
+    SIM_COMMAND_RC,
+    SIM_COMMAND_RESET,
+    SIM_COMMAND_THROW,
+    decode_telemetry,
+    encode_sim_command,
+)
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-# Wire format mirroring mark4::SimCommandPacket (commands.hpp).
-COMMAND_STRUCT = struct.Struct("<BBBBf3f3f4f")
-COMMAND_RESET = 1
-COMMAND_RC = 2
-COMMAND_THROW = 3
-COMMAND_HAND_THROW = 4
 
 # mark4::FlightPhase values, carried in the telemetry.
 PHASE_IDLE = 0
@@ -181,9 +180,11 @@ class Instance:
         held_azimuth: float = 0.0,
         swing_s: float = 0.0,
     ) -> None:
-        packet = COMMAND_STRUCT.pack(
-            PROTOCOL_VERSION, command, kill, arm, throttle, *velocity, *angular,
-            held_s, held_tilt, held_azimuth, swing_s,
+        packet = encode_sim_command(
+            command, kill=kill, arm=arm, throttle=throttle,
+            velocity=velocity, angular=angular,
+            held_s=held_s, held_tilt=held_tilt,
+            held_azimuth=held_azimuth, swing_s=swing_s,
         )
         self.command.sendto(packet, ("127.0.0.1", self.command_port))
 
@@ -261,14 +262,14 @@ class Instance:
         # A fresh world and a fresh flight core, then let the estimators
         # settle exactly like a drone powered up on the ground.
         self.drain_telemetry()
-        self.send_command(COMMAND_RC, kill=0, arm=0, throttle=0.0)
-        self.send_command(COMMAND_RESET)
+        self.send_command(SIM_COMMAND_RC, kill=0, arm=0, throttle=0.0)
+        self.send_command(SIM_COMMAND_RESET)
         if not self.wait_sim_seconds(SETTLE_SIM_S):
             result.outcome = "stalled"
             result.detail = "no telemetry while settling"
             return result
 
-        self.send_command(COMMAND_RC, kill=0, arm=1, throttle=0.0)
+        self.send_command(SIM_COMMAND_RC, kill=0, arm=1, throttle=0.0)
         if not self._wait_phase(PHASE_ARMED, ARM_BUDGET_SIM_S):
             result.outcome = "setup-failed"
             result.detail = "arming was not acknowledged"
@@ -276,7 +277,7 @@ class Instance:
 
         if args.held_only:
             self.send_command(
-                COMMAND_HAND_THROW,
+                SIM_COMMAND_HAND_THROW,
                 held_s=999.0,
                 held_tilt=held_tilt,
                 held_azimuth=held_azimuth,
@@ -287,7 +288,7 @@ class Instance:
 
         if args.hand:
             self.send_command(
-                COMMAND_HAND_THROW,
+                SIM_COMMAND_HAND_THROW,
                 velocity=(vx, vy, vz),
                 angular=(wx / 3.0, wy / 3.0, wz / 3.0),
                 held_s=held_s,
@@ -297,7 +298,7 @@ class Instance:
             )
             self._judge_flight(result, extra_budget_s=1.0 + held_s + swing_s)
         else:
-            self.send_command(COMMAND_THROW, velocity=(vx, vy, vz), angular=(wx, wy, wz))
+            self.send_command(SIM_COMMAND_THROW, velocity=(vx, vy, vz), angular=(wx, wy, wz))
             self._judge_flight(result)
         return result
 

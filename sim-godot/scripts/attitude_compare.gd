@@ -13,14 +13,10 @@ extends Node
 ## travels in the drone frame convention of the protocol and is remapped to
 ## the Godot axes for display.
 
-## Keep in sync with protocol/include/protocol/version.hpp.
-const PROTOCOL_VERSION := 9
-
-const TELEMETRY_PACKET_SIZE := 95
-
 ## Offset of the attitude quaternion (w x y z) inside the telemetry packet:
-## version (1) + timestamp (8) + gyro (12).
-const QUAT_OFFSET := 21
+## version (1) + type (1) + source (1) + sequence (2) + timestamp (8)
+## + gyro (12).
+const QUAT_OFFSET := 25
 const FLOAT_SIZE := 4
 
 ## Axis remap from the Godot frame to the drone frame: columns are the drone
@@ -87,9 +83,9 @@ func _process(_delta: float) -> void:
 
 
 func _apply_estimate(payload: PackedByteArray) -> bool:
-	if payload.size() != TELEMETRY_PACKET_SIZE:
+	if payload.size() != Protocol.TELEMETRY_PACKET_SIZE:
 		return false
-	if payload.decode_u8(0) != PROTOCOL_VERSION:
+	if not Protocol.has_header(payload, Protocol.TYPE_TELEMETRY):
 		return false
 	var w := payload.decode_float(QUAT_OFFSET)
 	var x := payload.decode_float(QUAT_OFFSET + FLOAT_SIZE)

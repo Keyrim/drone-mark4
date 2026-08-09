@@ -15,7 +15,8 @@ namespace mark4
     /// Packs one telemetry snapshot every DECIMATION frames and hands it to
     /// the sender. Owns the frame counter, so every composition decimates the
     /// same stream the same way instead of each keeping a drifting copy of
-    /// the counter and the factor.
+    /// the counter and the factor; owns the wire sequence counter for the
+    /// same reason.
     class TelemetryPublisher
     {
       public:
@@ -23,8 +24,10 @@ namespace mark4
         static constexpr std::uint32_t DECIMATION = 10U;
 
         /// @param sender telemetry output the packed snapshots go to
-        explicit TelemetryPublisher(AbsTelemetrySender &sender)
-            : m_sender(sender)
+        /// @param source stream identity stamped on every packet
+        TelemetryPublisher(AbsTelemetrySender &sender, StreamSource source)
+            : m_sender(sender),
+              m_source(source)
         {
         }
 
@@ -41,12 +44,15 @@ namespace mark4
             {
                 return;
             }
-            const auto wire = packTelemetry(frame, actuators, core);
+            const auto wire = packTelemetry(frame, actuators, core, m_source, m_sequence);
+            ++m_sequence;
             m_sender.send(wire.data(), wire.size());
         }
 
       private:
         AbsTelemetrySender &m_sender;    ///< output link, not owned
+        StreamSource m_source;           ///< identity stamped on the stream
         std::uint32_t m_frameCount = 0U; ///< frames seen since construction
+        std::uint16_t m_sequence = 0U;   ///< wire sequence of the next packet
     };
 } // namespace mark4

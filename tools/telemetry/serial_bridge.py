@@ -2,11 +2,12 @@
 the ESP32 bridge will hold: the single owner of the serial port, keeping
 every other tool on the UDP boundary of protocol/.
 
-Downlink, demuxed by payload size: TelemetryPacket (95 bytes) is
+Downlink: TelemetryPacket (identified by its version + type header) is
 re-broadcast over UDP exactly like drone_sim emits it (broadcast on 47801
 plus the 47803 mirror for Godot), so the ground station and the simulator
-ghost view work unchanged on real flights; blackbox records (59 bytes)
-are appended to a .m4bb file that drone_replay plays back.
+ghost view work unchanged on real flights; blackbox records (still
+demuxed by size until the record format moves into protocol/) are
+appended to a .m4bb file that drone_replay plays back.
 
 Uplink: SimCommandPacket RC datagrams received on udp/47805 (the same
 packet the Godot simulator consumes on 47804, on a port of its own
@@ -19,24 +20,34 @@ Stops on Ctrl-C; prints a one-line status every second."""
 
 import os
 import socket
-import struct
 import sys
 import termios
 import time
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ground-station"))
+from telemetry_wire import (
+    BOARD_REBOOT_MAGIC,
+    PROTOCOL_VERSION,
+    RC_COMMAND_PORT,
+    RC_COMMAND_STRUCT,
+    REBOOT_COMMAND_STRUCT,
+    SIM_COMMAND_RC,
+    SIM_COMMAND_RESET,
+    SIM_COMMAND_STRUCT,
+    TELEMETRY_MIRROR_PORT,
+    TELEMETRY_PACKET_SIZE,
+    TELEMETRY_PORT,
+    TYPE_RC_COMMAND,
+    TYPE_REBOOT_COMMAND,
+    TYPE_SIM_COMMAND,
+    TYPE_TELEMETRY,
+    has_header,
+)
+
 PORT = "/dev/ttyUSB0"
 BAUD = termios.B921600
-PROTOCOL_VERSION = 9  # protocol/version.hpp
-TELEMETRY_PACKET_SIZE = 95  # protocol/telemetry.hpp
-TELEMETRY_PORT = 47801
-TELEMETRY_MIRROR_PORT = 47803
 BLACKBOX_RECORD_SIZE = 59  # flight_core/blackbox.hpp
 BLACKBOX_VERSION = 2
-RC_COMMAND_PORT = 47805  # protocol/commands.hpp
-SIM_COMMAND_RESET = 1
-SIM_COMMAND_RC = 2
-COMMAND_STRUCT = struct.Struct("<BBBBf3f3f4f")  # SimCommandPacket
-BOARD_REBOOT_MAGIC = 0xB7  # RebootCommandPacket
 
 if len(sys.argv) > 1:
     out_path = sys.argv[1]
@@ -80,16 +91,18 @@ try:
                 datagram = commands.recv(256)
             except BlockingIOError:
                 break
-            if len(datagram) != COMMAND_STRUCT.size:
+            if len(datagram) != SIM_COMMAND_STRUCT.size:
                 continue
-            fields = COMMAND_STRUCT.unpack(datagram)
-            version, command, kill, arm, throttle = fields[:5]
-            if version != PROTOCOL_VERSION:
+            if not has_header(datagram, TYPE_SIM_COMMAND):
                 continue
+            fields = SIM_COMMAND_STRUCT.unpack(datagram)
+            command, kill, arm, mode, throttle = fields[2:7]
             if command == SIM_COMMAND_RC:
-                up_payload = struct.pack("<BBBf", PROTOCOL_VERSION, kill, arm, throttle)
+                up_payload = RC_COMMAND_STRUCT.pack(
+                    PROTOCOL_VERSION, TYPE_RC_COMMAND, kill, arm, mode, throttle)
             elif command == SIM_COMMAND_RESET:
-                up_payload = struct.pack("<BB", PROTOCOL_VERSION, BOARD_REBOOT_MAGIC)
+                up_payload = REBOOT_COMMAND_STRUCT.pack(
+                    PROTOCOL_VERSION, TYPE_REBOOT_COMMAND, BOARD_REBOOT_MAGIC)
             else:
                 continue
             checksum = 0
@@ -128,7 +141,8 @@ try:
                       and payload[0] == BLACKBOX_VERSION):
                     out.write(payload)
                     records += 1
-                elif length == TELEMETRY_PACKET_SIZE:
+                elif (length == TELEMETRY_PACKET_SIZE
+                      and has_header(payload, TYPE_TELEMETRY)):
                     datagram = bytes(payload)
                     udp.sendto(datagram, ("255.255.255.255", TELEMETRY_PORT))
                     udp.sendto(datagram,

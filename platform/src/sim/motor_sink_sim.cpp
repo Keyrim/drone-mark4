@@ -5,8 +5,8 @@
 #include <cstdint>
 #include <cstring>
 
+#include "protocol/header.hpp"
 #include "protocol/sim_link.hpp"
-#include "protocol/version.hpp"
 
 namespace mark4
 {
@@ -17,6 +17,7 @@ namespace mark4
 
         mark4::SimActuatorPacket packet{};
         packet.version = mark4::PROTOCOL_VERSION;
+        packet.type = static_cast<std::uint8_t>(mark4::PacketType::SIM_ACTUATOR);
         packet.echoTimestampUs = frame.timestampUs;
 
         std::array<std::uint8_t, sizeof(packet)> wire{};

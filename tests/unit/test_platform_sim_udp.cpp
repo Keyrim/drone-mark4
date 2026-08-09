@@ -14,8 +14,8 @@
 #include "platform_sim/motor_sink_sim.hpp"
 #include "platform_sim/sensor_source_sim.hpp"
 #include "platform_sim/udp_link.hpp"
+#include "protocol/header.hpp"
 #include "protocol/sim_link.hpp"
-#include "protocol/version.hpp"
 
 namespace
 {
@@ -37,6 +37,7 @@ namespace
     {
         mark4::SimSensorPacket packet{};
         packet.version = mark4::PROTOCOL_VERSION;
+        packet.type = static_cast<std::uint8_t>(mark4::PacketType::SIM_SENSOR);
         packet.timestampUs = TEST_TIMESTAMP_US;
         packet.baroPa = TEST_BARO_PA;
         packet.killSwitch = 0U;
@@ -176,6 +177,11 @@ TEST_CASE("malformed datagrams are skipped and the next valid one is delivered")
         static_cast<std::uint8_t>(mark4::PROTOCOL_VERSION + 1U);
     REQUIRE(simulator.sendTo(link.boundPort(), wrongVersion.data(), wrongVersion.size()));
 
+    SensorDatagram wrongType = makeSensorDatagram();
+    wrongType[offsetof(mark4::SimSensorPacket, type)] =
+        static_cast<std::uint8_t>(mark4::PacketType::SIM_ACTUATOR);
+    REQUIRE(simulator.sendTo(link.boundPort(), wrongType.data(), wrongType.size()));
+
     const SensorDatagram valid = makeSensorDatagram();
     REQUIRE(simulator.sendTo(link.boundPort(), valid.data(), 8U));           // too short
     REQUIRE(simulator.sendTo(link.boundPort(), valid.data(), valid.size())); // good one
@@ -256,6 +262,8 @@ TEST_CASE("pushed motors are sent back to the sensor sender")
     std::array<std::uint8_t, 64> wire{};
     REQUIRE(simulator.receive(wire.data(), wire.size()) == mark4::SIM_ACTUATOR_PACKET_SIZE);
     REQUIRE(wire[offsetof(mark4::SimActuatorPacket, version)] == mark4::PROTOCOL_VERSION);
+    REQUIRE(wire[offsetof(mark4::SimActuatorPacket, type)] ==
+            static_cast<std::uint8_t>(mark4::PacketType::SIM_ACTUATOR));
 
     // The reply echoes the sensor timestamp: the lockstep handshake.
     std::uint64_t echo = 0U;

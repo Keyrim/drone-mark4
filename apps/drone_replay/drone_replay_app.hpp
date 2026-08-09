@@ -9,6 +9,7 @@
 #include "platform_common/telemetry_publisher.hpp"
 #include "platform_replay/sensor_source_replay.hpp"
 #include "platform_sim/telemetry_sender_sim.hpp"
+#include "protocol/header.hpp"
 
 namespace mark4
 {
@@ -54,7 +55,8 @@ namespace mark4
         // reference, so a service may only depend on those declared above it.
         mark4::SensorSourceReplay m_sensorSource;
         mark4::TelemetrySenderSim m_telemetrySender;
-        mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender};
+        mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender,
+                                                       StreamSource::DRONE_REPLAY};
         mark4::FlightCore m_core;
     };
 } // namespace mark4

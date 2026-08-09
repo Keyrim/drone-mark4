@@ -7,8 +7,8 @@ packets the flight process sends back to the sender address. Simulated time
 comes from the frame counter and the requested rate, so the stream content is
 deterministic regardless of how the host schedules the process.
 
-Wire layout must stay in sync with protocol/include/protocol/sim_link.hpp
-(little-endian, packed, version byte first).
+The wire layout comes from the shared telemetry_wire module, the single
+Python copy of protocol/include/protocol/.
 
 Python 3 standard library only.
 """
@@ -16,31 +16,27 @@ Python 3 standard library only.
 import argparse
 import errno
 import math
+import os
 import select
 import socket
-import struct
 import sys
 import time
 from typing import List, Optional, Tuple
 
-# Keep in sync with protocol/include/protocol/sim_link.hpp and
-# protocol/include/protocol/version.hpp.
-PROTOCOL_VERSION = 9
-
-# version (1) + timestamp (8) + gyro (12) + accel (12) + baro (4)
-# + kill switch (1) + throttle (4).
-SENSOR_FORMAT = "<BQ3f3ffBfBB"
-SENSOR_PACKET_SIZE = 44
-
-# version (1) + motors (16).
-ACTUATOR_FORMAT = "<BQ4f"
-ACTUATOR_PACKET_SIZE = 25
-
-assert struct.calcsize(SENSOR_FORMAT) == SENSOR_PACKET_SIZE
-assert struct.calcsize(ACTUATOR_FORMAT) == ACTUATOR_PACKET_SIZE
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ground-station"))
+from telemetry_wire import (
+    PROTOCOL_VERSION,
+    SIM_ACTUATOR_PACKET_SIZE,
+    SIM_ACTUATOR_STRUCT,
+    SIM_LINK_PORT,
+    SIM_SENSOR_STRUCT,
+    TYPE_SIM_ACTUATOR,
+    TYPE_SIM_SENSOR,
+    has_header,
+)
 
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 47800
+DEFAULT_PORT = SIM_LINK_PORT
 DEFAULT_RATE_HZ = 1000.0
 DEFAULT_DURATION_S = 10.0
 DEFAULT_AMPLITUDE_RAD_S = 0.5
@@ -108,9 +104,9 @@ def build_sensor_packet(
     simulated_time_s = frame_index / rate_hz
     timestamp_us = int(round(simulated_time_s * 1e6))
     phase_rad = 2.0 * math.pi * frequency_hz * simulated_time_s
-    return struct.pack(
-        SENSOR_FORMAT,
+    return SIM_SENSOR_STRUCT.pack(
         PROTOCOL_VERSION,
+        TYPE_SIM_SENSOR,
         timestamp_us,
         amplitude_rad_s * math.sin(phase_rad),
         amplitude_rad_s * math.cos(phase_rad),
@@ -129,14 +125,13 @@ def build_sensor_packet(
 def decode_actuator_packet(payload: bytes) -> Optional[Tuple[float, ...]]:
     """Return the four motor commands, or None if the datagram is not ours.
 
-    The echoed timestamp (fields[1]) is ignored here: the stub free-runs.
+    The echoed timestamp is ignored here: the stub free-runs.
     """
-    if len(payload) != ACTUATOR_PACKET_SIZE:
+    if len(payload) != SIM_ACTUATOR_PACKET_SIZE:
         return None
-    fields = struct.unpack(ACTUATOR_FORMAT, payload)
-    if fields[0] != PROTOCOL_VERSION:
+    if not has_header(payload, TYPE_SIM_ACTUATOR):
         return None
-    return fields[2:]
+    return SIM_ACTUATOR_STRUCT.unpack(payload)[3:]
 
 
 def drain_replies(

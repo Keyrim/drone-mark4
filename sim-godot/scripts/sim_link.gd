@@ -8,18 +8,17 @@ extends Node
 ## A single unconnected socket is therefore enough: the local port is picked by
 ## the operating system unless local_port says otherwise.
 ##
-## The wire layout is defined by protocol/include/protocol/sim_link.hpp and
-## protocol/include/protocol/version.hpp, which are the source of truth. Both
-## packets are packed, little endian, version byte first:
+## The wire layout is defined by protocol/include/protocol/sim_link.hpp,
+## mirrored by the constants in protocol.gd (the single GDScript copy):
 ##
-##   sensor   (44 bytes): u8 version, u64 timestamp_us, 3x f32 gyro [rad/s],
-##                        3x f32 accel [m/s^2], f32 baro [Pa],
-##                        u8 kill switch, f32 throttle, u8 arm switch,
-##                        u8 reset count
-##   actuator (25 bytes): u8 version, u64 echoed timestamp_us,
+##   sensor   (45 bytes): u8 version, u8 type, u64 timestamp_us,
+##                        3x f32 gyro [rad/s], 3x f32 accel [m/s^2],
+##                        f32 baro [Pa], u8 kill switch, f32 throttle,
+##                        u8 arm switch, u8 reset count
+##   actuator (26 bytes): u8 version, u8 type, u64 echoed timestamp_us,
 ##                        4x f32 motor commands in [0, 1]
 ##
-## Anything with another size or another version byte is dropped. The echoed
+## Anything with another size, version or type byte is dropped. The echoed
 ## timestamp identifies the sensor packet a reply answers: in lockstep mode
 ## the tick waits for the reply to the exact packet it sent, and resends it
 ## when the wait times out (UDP may drop packets, the handshake may not).
@@ -28,20 +27,15 @@ extends Node
 ## y left, z up - the accelerometer reads +1 g on z at rest), remapped here
 ## from the Godot body axes (y up, -z forward, x right).
 
-## Keep in sync with protocol/include/protocol/version.hpp.
-const PROTOCOL_VERSION := 9
-
 ## Axis remap from the Godot body frame to the drone body frame: columns are
 ## the drone coordinates of the Godot x, y and z axes.
 const GODOT_TO_DRONE := Basis(Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(-1, 0, 0))
 
-const SENSOR_PACKET_SIZE := 44
-const ACTUATOR_PACKET_SIZE := 25
 const MOTOR_COUNT := 4
 
-## Offsets inside the actuator packet.
-const ACTUATOR_ECHO_OFFSET := 1
-const ACTUATOR_MOTOR_OFFSET := 9
+## Offsets inside the actuator packet: version + type, then the echo.
+const ACTUATOR_ECHO_OFFSET := 2
+const ACTUATOR_MOTOR_OFFSET := 10
 const FLOAT_SIZE := 4
 
 ## Sleep between two polls while waiting for a lockstep reply.
@@ -173,7 +167,8 @@ func _send_sensor_packet(
 	var gyro_drone := GODOT_TO_DRONE * gyro_rad_s
 	var accel_drone := GODOT_TO_DRONE * accel_mps2
 	_buffer.clear()
-	_buffer.put_u8(PROTOCOL_VERSION)
+	_buffer.put_u8(Protocol.VERSION)
+	_buffer.put_u8(Protocol.TYPE_SIM_SENSOR)
 	_buffer.put_u64(timestamp_us)
 	_buffer.put_float(gyro_drone.x)
 	_buffer.put_float(gyro_drone.y)
@@ -188,7 +183,7 @@ func _send_sensor_packet(
 	_buffer.put_u8(reset_count)
 
 	var payload := _buffer.data_array
-	if payload.size() != SENSOR_PACKET_SIZE:
+	if payload.size() != Protocol.SIM_SENSOR_PACKET_SIZE:
 		push_error("sim link: built a %d byte sensor packet" % payload.size())
 		return
 	_pending_echo_us = timestamp_us
@@ -231,9 +226,9 @@ func _drain_replies() -> int:
 
 ## @return the echoed timestamp of a valid packet, -1 when rejected.
 func _decode_actuator_packet(payload: PackedByteArray) -> int:
-	if payload.size() != ACTUATOR_PACKET_SIZE:
+	if payload.size() != Protocol.SIM_ACTUATOR_PACKET_SIZE:
 		return -1
-	if payload.decode_u8(0) != PROTOCOL_VERSION:
+	if not Protocol.has_header(payload, Protocol.TYPE_SIM_ACTUATOR):
 		return -1
 	var decoded := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
 	for index: int in MOTOR_COUNT:

@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <type_traits>
 
+#include "protocol/header.hpp"
+
 namespace mark4
 {
 #pragma pack(push, 1)
@@ -16,6 +18,7 @@ namespace mark4
     struct SimSensorPacket
     {
         std::uint8_t version;           ///< = PROTOCOL_VERSION
+        std::uint8_t type;              ///< = PacketType::SIM_SENSOR
         std::uint64_t timestampUs;      ///< simulation time at acquisition [us]
         std::array<float, 3> gyroRadS;  ///< body angular rates [rad/s]
         std::array<float, 3> accelMps2; ///< specific force [m/s^2] (0 g in free fall)
@@ -38,17 +41,19 @@ namespace mark4
     struct SimActuatorPacket
     {
         std::uint8_t version;          ///< = PROTOCOL_VERSION
+        std::uint8_t type;             ///< = PacketType::SIM_ACTUATOR
         std::uint64_t echoTimestampUs; ///< timestamp of the sensor packet answered
         std::array<float, 4> motor;    ///< normalized motor commands [0, 1]
     };
 #pragma pack(pop)
 
-    /// version (1) + timestamp (8) + gyro (12) + accel (12) + baro (4)
-    /// + kill switch (1) + throttle (4) + arm switch (1) + reset count (1).
-    inline constexpr std::size_t SIM_SENSOR_PACKET_SIZE = 44U;
+    /// version (1) + type (1) + timestamp (8) + gyro (12) + accel (12)
+    /// + baro (4) + kill switch (1) + throttle (4) + arm switch (1)
+    /// + reset count (1).
+    inline constexpr std::size_t SIM_SENSOR_PACKET_SIZE = 45U;
 
-    /// version (1) + echoed timestamp (8) + motors (16).
-    inline constexpr std::size_t SIM_ACTUATOR_PACKET_SIZE = 25U;
+    /// version (1) + type (1) + echoed timestamp (8) + motors (16).
+    inline constexpr std::size_t SIM_ACTUATOR_PACKET_SIZE = 26U;
 
     static_assert(sizeof(SimSensorPacket) == SIM_SENSOR_PACKET_SIZE, "wire layout must be packed");
     static_assert(sizeof(SimActuatorPacket) == SIM_ACTUATOR_PACKET_SIZE,

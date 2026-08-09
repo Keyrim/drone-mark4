@@ -3,19 +3,20 @@ TelemetryPacket (protocol/telemetry.hpp), count the interleaved blackbox
 records, and print a summary."""
 
 import os
-import struct
 import sys
 import termios
 import time
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ground-station"))
+from telemetry_wire import (
+    TELEMETRY_PACKET_SIZE,
+    TELEMETRY_STRUCT,
+    TYPE_TELEMETRY,
+    has_header,
+)
+
 PORT = "/dev/ttyUSB0"
 BAUD = termios.B921600
-# version u8, timestampUs u64, gyro 3f, quat 4f, bias 3f, motor 4f,
-# altitude f, vz f, throwState u8, throwCount u32, releaseVel f,
-# apexTimestampUs u64, apexAlt f, flightPhase u8  -> packed little-endian
-FMT = "<BQ3f4f3f4fffBIfQfB"
-SIZE = struct.calcsize(FMT)
-assert SIZE == 95, SIZE
 BLACKBOX_RECORD_SIZE = 59  # flight_core/blackbox.hpp, demuxed by size
 
 fd = os.open(PORT, os.O_RDONLY | os.O_NOCTTY)
@@ -56,8 +57,9 @@ while time.time() < deadline and len(packets) < 60:
                 checksum ^= b
             if checksum != byte:
                 bad += 1
-            elif length == SIZE:
-                packets.append(struct.unpack(FMT, bytes(payload)))
+            elif (length == TELEMETRY_PACKET_SIZE
+                  and has_header(payload, TYPE_TELEMETRY)):
+                packets.append(TELEMETRY_STRUCT.unpack(bytes(payload)))
             elif length == BLACKBOX_RECORD_SIZE:
                 records += 1
             else:
@@ -68,13 +70,13 @@ os.close(fd)
 print(f"packets: {len(packets)} valid, {records} blackbox records, {bad} bad")
 if packets:
     deltas = [
-        (b[1] - a[1]) for a, b in zip(packets, packets[1:])
+        (b[4] - a[4]) for a, b in zip(packets, packets[1:])
     ]
     print(f"timestamp delta: min {min(deltas)} max {max(deltas)} us")
     p = packets[-1]
-    print(f"version {p[0]}  t {p[1]} us")
-    print(f"gyro {p[2]:+.4f} {p[3]:+.4f} {p[4]:+.4f} rad/s")
-    print(f"quat w {p[5]:+.4f}  alt {p[16]:+.3f} m  vz {p[17]:+.3f} m/s")
-    print(f"motors {p[12]:.2f} {p[13]:.2f} {p[14]:.2f} {p[15]:.2f}  "
-          f"throwState {p[18]} throws {p[19]} phase {p[23]}")
+    print(f"version {p[0]}  source {p[2]}  seq {p[3]}  t {p[4]} us")
+    print(f"gyro {p[5]:+.4f} {p[6]:+.4f} {p[7]:+.4f} rad/s")
+    print(f"quat w {p[8]:+.4f}  alt {p[19]:+.3f} m  vz {p[20]:+.3f} m/s")
+    print(f"motors {p[15]:.2f} {p[16]:.2f} {p[17]:.2f} {p[18]:.2f}  "
+          f"throwState {p[21]} throws {p[22]} phase {p[26]}")
 sys.exit(0 if len(packets) > 20 else 1)
