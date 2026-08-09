@@ -181,6 +181,42 @@ TEST_CASE("a sim raw row holds the columns the python reader expects")
     CHECK(recorder.stats().simRawRows == 1U);
 }
 
+TEST_CASE("a packet whose fields are misaligned records like any other")
+{
+    // The wire structs are packed to the byte, so a float array of theirs
+    // sits wherever the layout puts it. Recording a packet shifted by every
+    // byte offset in turn fails the sanitizer build the moment something
+    // binds a reference to one of those fields.
+    static constexpr std::size_t OFFSET_COUNT = 8U;
+    mark4::StreamRecorder recorder(scratchDirectory("hub_recorder_misaligned"));
+    REQUIRE(recorder.startCsvSession());
+
+    mark4::TelemetryPacket packet{};
+    packet.timestampUs = 7U;
+    packet.gyroRadS = {0.25f, -0.5f, 0.75f};
+    packet.attitudeQuat = {1.0f, 0.0f, 0.0f, 0.0f};
+    packet.gyroBiasRadS = {0.1f, 0.0f, -0.1f};
+    packet.motor = {0.0f, 0.25f, 0.5f, 1.0f};
+    packet.altitudeM = 12.5f;
+    packet.verticalVelocityMps = -3.25f;
+
+    recorder.onTelemetry(packet);
+    std::vector<std::uint8_t> storage(sizeof(packet) + OFFSET_COUNT, 0U);
+    for (std::size_t offset = 0U; offset < OFFSET_COUNT; ++offset)
+    {
+        std::memcpy(&storage[offset], &packet, sizeof(packet));
+        recorder.onTelemetry(*reinterpret_cast<const mark4::TelemetryPacket *>(&storage[offset]));
+    }
+    recorder.stopCsvSession();
+
+    const std::vector<std::string> lines = crlfLines(readFile(recorder.telemetryCsvPath()));
+    REQUIRE(lines.size() == OFFSET_COUNT + 2U);
+    for (std::size_t row = 2U; row < lines.size(); ++row)
+    {
+        CHECK(lines[row] == lines[1]);
+    }
+}
+
 TEST_CASE("nothing is written while no csv session is open")
 {
     mark4::StreamRecorder recorder(scratchDirectory("hub_recorder_idle"));

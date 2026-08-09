@@ -3,9 +3,11 @@
 ///        bytes it builds out of what a client asks for.
 
 #include <catch2/catch_test_macros.hpp>
+#include <cstring>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include "hub/json_codec.hpp"
 
@@ -43,6 +45,27 @@ namespace
     nlohmann::json parsed(const std::string &text)
     {
         return nlohmann::json::parse(text);
+    }
+
+    /// Number of byte offsets a relocated packet is tried at: eight covers
+    /// every residue, so each field of the struct is misaligned by at least
+    /// one of them.
+    constexpr std::size_t OFFSET_COUNT = 8U;
+
+    /// @brief Copies a packed wire struct a few bytes further along.
+    ///        A packet arrives as bytes, so nothing ever guarantees its
+    ///        fields land aligned; this reproduces that on demand.
+    /// @tparam T wire struct type
+    /// @param packet packet to relocate
+    /// @param storage buffer the copy lives in, resized here
+    /// @param offset how far into the buffer the copy starts
+    /// @return a reference to the copy
+    template <typename T>
+    const T &atOffset(const T &packet, std::vector<std::uint8_t> &storage, std::size_t offset)
+    {
+        storage.assign(sizeof(T) + OFFSET_COUNT, 0U);
+        std::memcpy(&storage[offset], &packet, sizeof(T));
+        return *reinterpret_cast<const T *>(&storage[offset]);
     }
 } // namespace
 
@@ -91,6 +114,34 @@ TEST_CASE("sim raw json carries every field of the packet")
     CHECK(message["positionM"] == nlohmann::json({-1.5, 2.5, 3.5}));
     CHECK(message["velocityMps"] == nlohmann::json({4.5, -5.5, 6.5}));
     CHECK(message.size() == 7U);
+}
+
+TEST_CASE("a packet whose fields are misaligned encodes like any other")
+{
+    // The wire structs are packed to the byte: a sequence number or a float
+    // array of theirs sits wherever the layout puts it. Encoding a packet
+    // shifted by every byte offset in turn fails the sanitizer build the
+    // moment something binds a reference to one of those fields.
+    std::vector<std::uint8_t> storage;
+
+    const mark4::TelemetryPacket telemetry = asymmetricTelemetry();
+    const std::string telemetryText = mark4::telemetryToJson(telemetry);
+
+    mark4::SimRawPacket simRaw{};
+    simRaw.version = mark4::PROTOCOL_VERSION;
+    simRaw.type = static_cast<std::uint8_t>(mark4::PacketType::SIM_RAW);
+    simRaw.sequence = 77U;
+    simRaw.timestampUs = 424'242U;
+    simRaw.attitudeQuat = {1.0f, 0.5f, 0.25f, 0.125f};
+    simRaw.positionM = {-1.5f, 2.5f, 3.5f};
+    simRaw.velocityMps = {4.5f, -5.5f, 6.5f};
+    const std::string simRawText = mark4::simRawToJson(simRaw);
+
+    for (std::size_t offset = 0U; offset < OFFSET_COUNT; ++offset)
+    {
+        CHECK(mark4::telemetryToJson(atOffset(telemetry, storage, offset)) == telemetryText);
+        CHECK(mark4::simRawToJson(atOffset(simRaw, storage, offset)) == simRawText);
+    }
 }
 
 TEST_CASE("discovery json describes every live process")

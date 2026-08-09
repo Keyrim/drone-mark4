@@ -8,6 +8,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "hub/packed_field.hpp"
+
 namespace mark4
 {
     namespace
@@ -176,19 +178,24 @@ namespace mark4
         {
             message.rc.version = PROTOCOL_VERSION;
             message.rc.type = static_cast<std::uint8_t>(PacketType::RC_COMMAND);
+            // The byte fields are read in place: a byte is aligned wherever
+            // the packed layout puts it. The throttle is not, so it is read
+            // into a local and stored afterwards.
+            float throttle = message.rc.throttle;
             if (!readTarget(object, message.target, errorOut) ||
                 !readByte(object, "kill", message.rc.killSwitch, errorOut) ||
                 !readByte(object, "arm", message.rc.armSwitch, errorOut) ||
                 !readByte(object, "mode", message.rc.mode, errorOut) ||
-                !readFloat(object, "throttle", message.rc.throttle, errorOut))
+                !readFloat(object, "throttle", throttle, errorOut))
             {
                 return false;
             }
-            if (!(message.rc.throttle >= 0.0f) || !(message.rc.throttle <= 1.0f))
+            if (!(throttle >= 0.0f) || !(throttle <= 1.0f))
             {
                 errorOut = "field 'throttle' must be in [0, 1]";
                 return false;
             }
+            message.rc.throttle = throttle;
             return true;
         }
 
@@ -226,16 +233,31 @@ namespace mark4
 
             message.simCommand.version = PROTOCOL_VERSION;
             message.simCommand.type = static_cast<std::uint8_t>(PacketType::SIM_COMMAND);
-            return readVector(object, "velocityMps", message.simCommand.velocityMps, errorOut) &&
-                   readVector(object,
-                              "angularVelocityRadS",
-                              message.simCommand.angularVelocityRadS,
-                              errorOut) &&
-                   readFloat(object, "heldSeconds", message.simCommand.heldSeconds, errorOut) &&
-                   readFloat(object, "heldTiltRad", message.simCommand.heldTiltRad, errorOut) &&
-                   readFloat(
-                       object, "heldAzimuthRad", message.simCommand.heldAzimuthRad, errorOut) &&
-                   readFloat(object, "swingSeconds", message.simCommand.swingSeconds, errorOut);
+            // Everything wider than a byte is decoded into aligned locals
+            // first: the wire struct is packed, and nothing may hold a
+            // reference to one of its fields.
+            std::array<float, 3> velocity = readPackedField(&message.simCommand.velocityMps);
+            std::array<float, 3> angular = readPackedField(&message.simCommand.angularVelocityRadS);
+            float heldSeconds = message.simCommand.heldSeconds;
+            float heldTiltRad = message.simCommand.heldTiltRad;
+            float heldAzimuthRad = message.simCommand.heldAzimuthRad;
+            float swingSeconds = message.simCommand.swingSeconds;
+            if (!readVector(object, "velocityMps", velocity, errorOut) ||
+                !readVector(object, "angularVelocityRadS", angular, errorOut) ||
+                !readFloat(object, "heldSeconds", heldSeconds, errorOut) ||
+                !readFloat(object, "heldTiltRad", heldTiltRad, errorOut) ||
+                !readFloat(object, "heldAzimuthRad", heldAzimuthRad, errorOut) ||
+                !readFloat(object, "swingSeconds", swingSeconds, errorOut))
+            {
+                return false;
+            }
+            writePackedField(&message.simCommand.velocityMps, velocity);
+            writePackedField(&message.simCommand.angularVelocityRadS, angular);
+            message.simCommand.heldSeconds = heldSeconds;
+            message.simCommand.heldTiltRad = heldTiltRad;
+            message.simCommand.heldAzimuthRad = heldAzimuthRad;
+            message.simCommand.swingSeconds = swingSeconds;
+            return true;
         }
 
         /// @brief Fills the recording part of a client request.
@@ -264,21 +286,28 @@ namespace mark4
 
     std::string telemetryToJson(const TelemetryPacket &packet)
     {
+        // Every field wider than a byte is copied out of the packed struct
+        // before the JSON library takes a reference to it.
+        const std::uint16_t sequence = packet.sequence;
+        const std::uint64_t timestampUs = packet.timestampUs;
+        const std::uint32_t throwCount = packet.throwCount;
+        const std::uint64_t apexTimestampUs = packet.apexTimestampUs;
+
         Json message;
         message["type"] = "telemetry";
         message["sourceId"] = packet.sourceId;
-        message["sequence"] = packet.sequence;
-        message["timestampUs"] = packet.timestampUs;
-        message["gyroRadS"] = floatsToJson(packet.gyroRadS);
-        message["attitudeQuat"] = floatsToJson(packet.attitudeQuat);
-        message["gyroBiasRadS"] = floatsToJson(packet.gyroBiasRadS);
-        message["motor"] = floatsToJson(packet.motor);
+        message["sequence"] = sequence;
+        message["timestampUs"] = timestampUs;
+        message["gyroRadS"] = floatsToJson(readPackedField(&packet.gyroRadS));
+        message["attitudeQuat"] = floatsToJson(readPackedField(&packet.attitudeQuat));
+        message["gyroBiasRadS"] = floatsToJson(readPackedField(&packet.gyroBiasRadS));
+        message["motor"] = floatsToJson(readPackedField(&packet.motor));
         message["altitudeM"] = static_cast<double>(packet.altitudeM);
         message["verticalVelocityMps"] = static_cast<double>(packet.verticalVelocityMps);
         message["throwState"] = packet.throwState;
-        message["throwCount"] = packet.throwCount;
+        message["throwCount"] = throwCount;
         message["releaseVelocityMps"] = static_cast<double>(packet.releaseVelocityMps);
-        message["apexTimestampUs"] = packet.apexTimestampUs;
+        message["apexTimestampUs"] = apexTimestampUs;
         message["apexAltitudeM"] = static_cast<double>(packet.apexAltitudeM);
         message["flightPhase"] = packet.flightPhase;
         return message.dump();
@@ -286,14 +315,17 @@ namespace mark4
 
     std::string simRawToJson(const SimRawPacket &packet)
     {
+        const std::uint16_t sequence = packet.sequence;
+        const std::uint64_t timestampUs = packet.timestampUs;
+
         Json message;
         message["type"] = "simRaw";
         message["sourceId"] = packet.sourceId;
-        message["sequence"] = packet.sequence;
-        message["timestampUs"] = packet.timestampUs;
-        message["attitudeQuat"] = floatsToJson(packet.attitudeQuat);
-        message["positionM"] = floatsToJson(packet.positionM);
-        message["velocityMps"] = floatsToJson(packet.velocityMps);
+        message["sequence"] = sequence;
+        message["timestampUs"] = timestampUs;
+        message["attitudeQuat"] = floatsToJson(readPackedField(&packet.attitudeQuat));
+        message["positionM"] = floatsToJson(readPackedField(&packet.positionM));
+        message["velocityMps"] = floatsToJson(readPackedField(&packet.velocityMps));
         return message.dump();
     }
 

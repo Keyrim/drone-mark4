@@ -12,6 +12,8 @@
 #include <system_error>
 #include <utility>
 
+#include "hub/packed_field.hpp"
+
 namespace mark4
 {
     namespace
@@ -193,11 +195,13 @@ namespace mark4
         {
             return;
         }
+        // The arrays are copied out of the packed struct first: nothing may
+        // hold a reference to a field of one.
         std::string row = std::to_string(packet.timestampUs);
-        appendCells(row, packet.gyroRadS);
-        appendCells(row, packet.attitudeQuat);
-        appendCells(row, packet.gyroBiasRadS);
-        appendCells(row, packet.motor);
+        appendCells(row, readPackedField(&packet.gyroRadS));
+        appendCells(row, readPackedField(&packet.attitudeQuat));
+        appendCells(row, readPackedField(&packet.gyroBiasRadS));
+        appendCells(row, readPackedField(&packet.motor));
         appendCell(row, packet.altitudeM);
         appendCell(row, packet.verticalVelocityMps);
         m_telemetryCsv << row << CSV_LINE_END;
@@ -211,9 +215,9 @@ namespace mark4
             return;
         }
         std::string row = std::to_string(packet.timestampUs);
-        appendCells(row, packet.attitudeQuat);
-        appendCells(row, packet.positionM);
-        appendCells(row, packet.velocityMps);
+        appendCells(row, readPackedField(&packet.attitudeQuat));
+        appendCells(row, readPackedField(&packet.positionM));
+        appendCells(row, readPackedField(&packet.velocityMps));
         m_simRawCsv << row << CSV_LINE_END;
         ++m_stats.simRawRows;
     }
