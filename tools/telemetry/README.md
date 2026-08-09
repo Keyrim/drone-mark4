@@ -2,9 +2,10 @@
 
 The board multiplexes two streams on the same UART link (FTDI dongle on
 `/dev/ttyUSB0`, 921600 baud), each wrapped in the serial framing of
-`protocol/serial_framing.hpp`: 50 Hz `TelemetryPacket` (95 bytes,
-`protocol/telemetry.hpp`) and full-rate blackbox records (59 bytes,
-`flight_core/blackbox.hpp`). Receivers demux by payload size.
+`protocol/serial_framing.hpp` (CRC-16 covering length + payload): 50 Hz
+`TelemetryPacket` (`protocol/telemetry.hpp`) and full-rate blackbox
+records (`protocol/blackbox.hpp`). Receivers demux on the version + type
+header of each payload.
 
 `read_serial.py` is the quick link check: it unpacks the telemetry
 packets, counts the blackbox records, and prints a summary: packet
@@ -39,6 +40,6 @@ binds exclusively), and the bridge relays them to the board as
 kill+disarmed after 500 ms of silence, so closing either the bridge
 or the simulator is a safe action.
 
-The struct format string and the two payload sizes must be kept in sync
-with the headers; the assert on the packed size (95) catches a drift at
-startup.
+Both tools import the wire constants from the shared
+`tools/ground-station/telemetry_wire.py` module, the single python copy
+of the protocol; the golden packet fixtures catch any drift in CI.

@@ -9,8 +9,10 @@ python3 tools/blackbox/blackbox_dump.py --csv         # full CSV on stdout
 python3 tools/blackbox/blackbox_dump.py logs/x.m4bb   # a specific file
 ```
 
-The record layout is defined by `flight_core/blackbox.hpp`; the struct format
-string here must be kept in sync with it (the version byte is checked).
+The record layout is defined by `protocol/blackbox.hpp` (self-framing:
+sync marker, version, type, length, CRC-16); the decoder comes from the
+shared `tools/ground-station/telemetry_wire.py` module and resynchronizes
+on the sync marker, so a torn record costs only itself.
 
 `stream_record.py` captures the telemetry (udp/47801) and sim raw (udp/47802)
 broadcasts of a live session into a timestamped CSV pair under `logs/`; it

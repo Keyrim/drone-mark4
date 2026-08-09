@@ -32,8 +32,8 @@ ignored and streaming continues.
 
 ## Packet formats
 
-Source of truth: `protocol/include/protocol/sim_link.hpp` and
-`protocol/include/protocol/version.hpp`. Both packets are little-endian and
-packed, version byte first: sensor packet 42 bytes (`<BQ3f3ffBf`), actuator
-packet 17 bytes (`<B4f`). Datagrams with the wrong size or version are
-ignored.
+Source of truth: `protocol/include/protocol/sim_link.hpp`, mirrored by the
+shared `tools/ground-station/telemetry_wire.py` module the stub imports.
+Both packets are little-endian and packed, version byte then type byte:
+sensor packet 45 bytes, actuator packet 26 bytes. Datagrams with the
+wrong size, version or type are ignored.

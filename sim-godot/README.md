@@ -125,16 +125,17 @@ once at startup, so the same seed replays the same sensor stream.
 
 ## UDP contract
 
-The layout is defined by `protocol/include/protocol/sim_link.hpp` and
-`protocol/include/protocol/version.hpp`, which are the source of truth. Both
-packets are packed, little endian, version byte first, and `scripts/sim_link.gd`
-mirrors them:
+The layout is defined by `protocol/include/protocol/sim_link.hpp`, which is
+the source of truth; `scripts/protocol.gd` is the single GDScript copy of
+its constants and `scripts/sim_link.gd` packs with them. Both packets are
+packed, little endian, version byte then type byte:
 
-- sensor packet, 42 bytes, simulator to flight process: `u8` version, `u64`
-  timestamp in microseconds, 3 `f32` gyro [rad/s], 3 `f32` accelerometer
-  [m/s^2], `f32` pressure [Pa], `u8` kill switch (1 engaged), `f32` throttle.
-- actuator packet, 17 bytes, flight process to simulator: `u8` version, 4 `f32`
-  motor commands in [0, 1].
+- sensor packet, 45 bytes, simulator to flight process: `u8` version, `u8`
+  type, `u64` timestamp in microseconds, 3 `f32` gyro [rad/s], 3 `f32`
+  accelerometer [m/s^2], `f32` pressure [Pa], `u8` kill switch (1 engaged),
+  `f32` throttle, `u8` arm switch, `u8` reset count.
+- actuator packet, 26 bytes, flight process to simulator: `u8` version,
+  `u8` type, `u64` echoed timestamp, 4 `f32` motor commands in [0, 1].
 
 Datagrams with another size or another version byte are counted as dropped and
 ignored. Motor commands are clamped to [0, 1] on arrival.

@@ -53,6 +53,11 @@ ctest --preset desktop -R "kill switch"
 # Monte Carlo throw campaign through headless Godot (see tools/batch/README.md)
 python3 tools/batch/run_batch.py --runs 100 --parallel 4 [--godot /path/to/godot4]
 
+# Golden packet decode tests (the ctest suite already checks the C++ side;
+# CI runs all three in the desktop job)
+python3 tests/golden/test_golden.py
+godot --path sim-godot --headless --script res://tests/golden_check.gd -- "$(pwd)/tests/golden/fixtures"
+
 # Lint (all must be clean before committing; CI runs exactly these)
 git ls-files '*.cpp' '*.hpp' '*.c' '*.h' | xargs clang-format --dry-run --Werror
 run-clang-tidy -p build/desktop -quiet "$(pwd)/(apps|flight-core|platform|protocol|tests)/"
@@ -75,6 +80,9 @@ Three libraries, one rule of dependency flow:
   core never reads a clock). The RC kill switch is a frame field handled
   first in step(). `flight_core_types` is a separate INTERFACE target so
   platform headers can use SensorFrame/ActuatorFrame without a cycle.
+  flight_core links flight_core_types alone: no platform, no protocol/
+  (the telemetry packer and the Blackbox recorder are IO adapters and
+  live in `platform_common`).
 - `platform/` - 6 abstract services in `platform/include/platform/`
   (AbsSensorSource, AbsMotorSink, AbsCommandReceiver, AbsTelemetrySender,
   AbsLogSink, AbsClock). `AbsSensorSource::waitFrame()` is the single wait
@@ -82,12 +90,21 @@ Three libraries, one rule of dependency flow:
   passed to FlightCore. Implementations live in `platform/src/<variant>/`
   (sim, stm32, replay later); each variant's headers stay under its own
   `src/<variant>/include/`. The `platform` INTERFACE target (headers only)
-  is what flight_core links; impl libs (`platform_sim`, `platform_stm32`)
+  carries the interfaces; `platform_common` (header-only) holds the
+  composed helpers shared by every variant (TelemetryPublisher,
+  packTelemetry, Blackbox); impl libs (`platform_sim`, `platform_stm32`)
   are declared only in the presets where they make sense (the
-  CMAKE_CROSSCOMPILING switch in `platform/CMakeLists.txt` and
+  DRONE_PLATFORM switch in `platform/CMakeLists.txt` and
   `apps/CMakeLists.txt`) and are linked by the apps.
-- `protocol/` - header-only packed wire structs, version byte first,
-  static_assert on packed sizes. External processes (Godot sim, ground
+- `protocol/` - header-only packed wire structs. Every packet opens with
+  a version byte then a type byte (nothing is demuxed by size); streams
+  (telemetry, sim raw) add sourceId + u16 sequence; sizes, field offsets
+  and little-endianness are static_asserted. The wire has exactly one
+  copy per language: the C++ headers (source of truth),
+  `tools/ground-station/telemetry_wire.py` (all python tools import it)
+  and `sim-godot/scripts/protocol.gd` (all Godot scripts read it), both
+  guarded by the golden fixtures in `tests/golden/fixtures/` that CI
+  decodes in all three languages. External processes (Godot sim, ground
   station, ESP32 bridge) speak ONLY protocol/ over UDP and never link
   flight-core.
 
@@ -114,8 +131,9 @@ every project target, not by FetchContent deps such as Catch2).
 
 `.github/workflows/devcontainer-image.yml` rebuilds the dev image and pushes
 it to GHCR (`ghcr.io/keyrim/drone-mark4-devcontainer`) when `.devcontainer/`
-changes; `ci.yml` runs 5 jobs (desktop+tests, stm32, desktop-san,
-format+ascii, tidy desktop+stm32) inside that image, pinned by digest.
+changes; `ci.yml` runs 5 jobs (desktop+tests+golden decode in python and
+GDScript, stm32, desktop-san, format+ascii, tidy desktop+stm32) inside
+that image, pinned by digest.
 After a `.devcontainer/` change, bump the digest in `ci.yml` to the one the
 image workflow pushed (`docker manifest inspect ...:latest`). Container jobs need `options: --user root` (the
 image defaults to user `dev`, the runner mounts workdirs for another UID).
