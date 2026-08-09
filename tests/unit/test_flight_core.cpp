@@ -716,6 +716,108 @@ TEST_CASE("a kill clears the tilt streak: a rearm needs a fresh confirmation")
     REQUIRE(core.flightPhase() == mark4::FlightPhase::CUTOFF);
 }
 
+TEST_CASE("a recovery that never levels times out into a cutoff")
+{
+    mark4::FlightCore core;
+    mark4::ActuatorFrame actuators;
+    std::uint64_t timestamp = playThrow(core, actuators);
+
+    // Tumble slowly through the coast and into the recovery: pure gyro
+    // integration (0 g gates the accel correction) rolls the estimate far
+    // from level, and the simulated gyro then goes quiet, so the rate loop
+    // never sees the drone actually leveling.
+    mark4::SensorFrame frame;
+    frame.rc.killSwitch = false;
+    frame.rc.armSwitch = true;
+    frame.gyroRadS = {3.0f, 0.0f, 0.0f};
+    frame.baroPa = HELPER_BARO_PA;
+    for (std::uint32_t i = 0U; i < 250U; ++i)
+    {
+        frame.timestampUs = timestamp;
+        core.step(frame, actuators);
+        timestamp += STEP_US;
+    }
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::RECOVERY);
+
+    frame.gyroRadS = {0.0f, 0.0f, 0.0f};
+    std::uint32_t elapsed = 0U;
+    while (core.flightPhase() == mark4::FlightPhase::RECOVERY && elapsed < 1500U)
+    {
+        frame.timestampUs = timestamp;
+        core.step(frame, actuators);
+        timestamp += STEP_US;
+        ++elapsed;
+    }
+
+    // About RECOVERY_TIMEOUT_US of pushing blind in total (part of the
+    // window elapsed while still tumbling), then the cutoff - never an
+    // instant trip, never a hover.
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::CUTOFF);
+    REQUIRE(elapsed >= 700U);
+    REQUIRE(actuators.motor[0] == 0.0f);
+}
+
+TEST_CASE("saturated rates during the ballistic coast cut instead of spinning up")
+{
+    mark4::FlightCore core;
+    mark4::ActuatorFrame actuators;
+    std::uint64_t timestamp = playThrow(core, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::BALLISTIC);
+
+    // The gyro pegs near its full scale mid-coast: the attitude is lost,
+    // spinning up would fly blind. The core must fall inert.
+    mark4::SensorFrame frame;
+    frame.timestampUs = timestamp;
+    frame.rc.killSwitch = false;
+    frame.rc.armSwitch = true;
+    frame.gyroRadS = {35.0f, 0.0f, 0.0f};
+    frame.baroPa = HELPER_BARO_PA;
+    core.step(frame, actuators);
+
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::CUTOFF);
+    REQUIRE(actuators.motor[0] == 0.0f);
+
+    // Still latched on the next quiet frame.
+    frame.gyroRadS = {0.0f, 0.0f, 0.0f};
+    frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
+    frame.timestampUs = timestamp + STEP_US;
+    core.step(frame, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::CUTOFF);
+    REQUIRE(actuators.motor[0] == 0.0f);
+}
+
+TEST_CASE("the manual throttle maps to a vertical velocity setpoint around mid stick")
+{
+    // Three cores at rest, three stick positions: the commanded collective
+    // must order climb > hold > sink, with hold near the hover collective.
+    auto collectiveFor = [](float throttle) {
+        mark4::FlightCore core;
+        mark4::ActuatorFrame actuators;
+        std::uint64_t timestamp = settle(core, actuators);
+        mark4::SensorFrame frame;
+        frame.rc.killSwitch = false;
+        frame.rc.throttle = throttle;
+        frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
+        frame.baroPa = HELPER_BARO_PA;
+        for (std::uint32_t i = 0U; i < 5U; ++i)
+        {
+            frame.timestampUs = timestamp;
+            core.step(frame, actuators);
+            timestamp += STEP_US;
+        }
+        REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+        return actuators.motor[0];
+    };
+
+    const float sink = collectiveFor(0.15f);
+    const float hold = collectiveFor(0.5f);
+    const float climb = collectiveFor(1.0f);
+    REQUIRE(climb > hold);
+    REQUIRE(hold > sink);
+    REQUIRE(hold > 0.3f);
+    REQUIRE(hold < 0.8f);
+}
+
 TEST_CASE("the post-throw hover leans against the momentum then levels for good")
 {
     mark4::FlightCore core;

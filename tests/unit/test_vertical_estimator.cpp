@@ -205,6 +205,27 @@ TEST_CASE("a plausible baro jump is bounded by the innovation clamp")
     REQUIRE(std::fabs(estimator.verticalVelocityMps()) <= maxVelocityStep + 1e-4f);
 }
 
+TEST_CASE("a zero dt is a no-op: the caller's gap policy holds the vertical state")
+{
+    mark4::VerticalEstimator estimator;
+    std::uint64_t timestamp = captureReference(estimator, 100.0f);
+    for (std::uint32_t i = 0U; i < 500U; ++i)
+    {
+        estimator.update(makeFrame(timestamp, 100.0f, mark4::GRAVITY_MPS2), STEP_S, {});
+        timestamp += STEP_US;
+    }
+    const float altitudeBefore = estimator.altitudeM();
+    const float velocityBefore = estimator.verticalVelocityMps();
+
+    // FlightCore hands dt = 0 across a gap: a violent frame on the far side
+    // of the hole must not integrate anything.
+    mark4::SensorFrame frame = makeFrame(timestamp + 1000000U, 400.0f, 5.0f * mark4::GRAVITY_MPS2);
+    estimator.update(frame, 0.0f, {});
+
+    REQUIRE(estimator.altitudeM() == altitudeBefore);
+    REQUIRE(estimator.verticalVelocityMps() == velocityBefore);
+}
+
 TEST_CASE("the baro altitude conversion inverts the standard atmosphere")
 {
     for (const float altitude : {0.0f, 50.0f, 500.0f, 2000.0f})
