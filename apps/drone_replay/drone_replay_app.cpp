@@ -30,7 +30,7 @@ namespace mark4
         mark4::SensorFrame frame;
         mark4::ActuatorFrame actuators;
 
-        while (m_sensorSource.waitFrame(frame))
+        while (m_sensorSource.waitFrame(frame) == mark4::FrameWait::FRAME)
         {
             m_core.step(frame, actuators);
             if (m_core.stepCount() % TELEMETRY_DECIMATION == 0U)

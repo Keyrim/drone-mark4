@@ -48,7 +48,7 @@ TEST_CASE("a recorded blackbox replays into identical sensor frames")
     {
         const mark4::SensorFrame expected = makeFrame(seed);
         mark4::SensorFrame replayed;
-        REQUIRE(source.waitFrame(replayed));
+        REQUIRE(source.waitFrame(replayed) == mark4::FrameWait::FRAME);
         REQUIRE(replayed.timestampUs == expected.timestampUs);
         REQUIRE(replayed.gyroRadS == expected.gyroRadS);
         REQUIRE(replayed.accelMps2 == expected.accelMps2);
@@ -61,7 +61,7 @@ TEST_CASE("a recorded blackbox replays into identical sensor frames")
     mark4::SensorFrame extra;
     // REQUIRE(!x) rather than REQUIRE_FALSE: the FalseTest flag combination
     // trips clang-analyzer's enum-cast check inside Catch2's own headers.
-    REQUIRE(!source.waitFrame(extra));
+    REQUIRE(source.waitFrame(extra) == mark4::FrameWait::EXHAUSTED);
 
     REQUIRE(std::remove(TEST_LOG_PATH) == 0);
 }
@@ -72,5 +72,5 @@ TEST_CASE("a missing replay file fails init without producing frames")
     REQUIRE(!source.init("does_not_exist.m4bb"));
 
     mark4::SensorFrame frame;
-    REQUIRE(!source.waitFrame(frame));
+    REQUIRE(source.waitFrame(frame) == mark4::FrameWait::EXHAUSTED);
 }

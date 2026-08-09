@@ -43,7 +43,7 @@ namespace mark4
         ///        is delivered anyway: one glitch must not stop the loop.
         /// @param[out] frameOut filled frame
         /// @return always true, the source never runs dry
-        bool waitFrame(mark4::SensorFrame &frameOut) override;
+        FrameWait waitFrame(mark4::SensorFrame &frameOut) override;
 
         /// @return ticks that fired while the previous frame was still
         ///         being processed (deadline misses)

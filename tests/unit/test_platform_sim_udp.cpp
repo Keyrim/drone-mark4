@@ -135,7 +135,7 @@ TEST_CASE("a sensor packet is decoded into a sensor frame")
     REQUIRE(simulator.sendTo(link.boundPort(), datagram.data(), datagram.size()));
 
     mark4::SensorFrame frame;
-    REQUIRE(source.waitFrame(frame));
+    REQUIRE(source.waitFrame(frame) == mark4::FrameWait::FRAME);
     REQUIRE(frame.timestampUs == TEST_TIMESTAMP_US);
     REQUIRE(frame.gyroRadS == TEST_GYRO_RAD_S);
     REQUIRE(frame.accelMps2 == TEST_ACCEL_MPS2);
@@ -159,7 +159,7 @@ TEST_CASE("an engaged kill switch reaches the frame")
     REQUIRE(simulator.sendTo(link.boundPort(), datagram.data(), datagram.size()));
 
     mark4::SensorFrame frame;
-    REQUIRE(source.waitFrame(frame));
+    REQUIRE(source.waitFrame(frame) == mark4::FrameWait::FRAME);
     REQUIRE(frame.rc.killSwitch == true);
 }
 
@@ -181,7 +181,7 @@ TEST_CASE("malformed datagrams are skipped and the next valid one is delivered")
     REQUIRE(simulator.sendTo(link.boundPort(), valid.data(), valid.size())); // good one
 
     mark4::SensorFrame frame;
-    REQUIRE(source.waitFrame(frame));
+    REQUIRE(source.waitFrame(frame) == mark4::FrameWait::FRAME);
     REQUIRE(frame.timestampUs == TEST_TIMESTAMP_US);
     REQUIRE(frame.rc.throttle == TEST_THROTTLE);
 }
@@ -194,7 +194,7 @@ TEST_CASE("an idle link ends the run")
     mark4::SensorSourceSim source(link);
 
     mark4::SensorFrame frame;
-    REQUIRE(!source.waitFrame(frame));
+    REQUIRE(source.waitFrame(frame) == mark4::FrameWait::TIMEOUT);
 }
 
 TEST_CASE("pushed motors are sent back to the sensor sender")
@@ -210,7 +210,7 @@ TEST_CASE("pushed motors are sent back to the sensor sender")
     REQUIRE(simulator.sendTo(link.boundPort(), datagram.data(), datagram.size()));
 
     mark4::SensorFrame frame;
-    REQUIRE(source.waitFrame(frame));
+    REQUIRE(source.waitFrame(frame) == mark4::FrameWait::FRAME);
 
     mark4::ActuatorFrame actuators;
     actuators.timestampUs = frame.timestampUs;

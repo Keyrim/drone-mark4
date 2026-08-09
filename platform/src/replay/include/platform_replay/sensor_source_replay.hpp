@@ -45,7 +45,7 @@ namespace mark4
         /// @param[out] frameOut frame decoded from the record
         /// @return true when a frame was decoded, false at end of file or on a
         ///         record of an unsupported version
-        bool waitFrame(mark4::SensorFrame &frameOut) override;
+        FrameWait waitFrame(mark4::SensorFrame &frameOut) override;
 
       private:
         float m_speedFactor;                  ///< replay tempo scale, SPEED_MAX = unpaced

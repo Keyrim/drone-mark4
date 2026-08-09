@@ -94,6 +94,14 @@ int main(int argc, char **argv)
                 static_cast<unsigned>(telemetryPort));
 
     const std::uint32_t steps = app.run();
+    if (steps == 0U)
+    {
+        static_cast<void>(std::fprintf(
+            stderr,
+            "drone_sim: no sensor packet ever arrived on udp/%u: is the simulator running?\n",
+            static_cast<unsigned>(simPort)));
+        return 1;
+    }
     const std::uint64_t elapsedMs = app.accessClock().nowUs() / US_PER_MS;
 
     const auto &telemetry = app.accessTelemetrySender();

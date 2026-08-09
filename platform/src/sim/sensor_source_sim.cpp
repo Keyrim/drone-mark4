@@ -17,7 +17,7 @@ namespace mark4
         constexpr std::size_t RECEIVE_BUFFER_SIZE = 256U;
     } // namespace
 
-    bool SensorSourceSim::waitFrame(mark4::SensorFrame &frameOut)
+    FrameWait SensorSourceSim::waitFrame(mark4::SensorFrame &frameOut)
     {
         std::array<std::uint8_t, RECEIVE_BUFFER_SIZE> wire{};
 
@@ -26,7 +26,7 @@ namespace mark4
             const std::size_t received = m_link.receive(wire.data(), wire.size());
             if (received == 0U)
             {
-                return false; // idle link: the source is exhausted
+                return FrameWait::TIMEOUT; // idle link: the caller decides
             }
             if (received != mark4::SIM_SENSOR_PACKET_SIZE || wire[0] != mark4::PROTOCOL_VERSION)
             {
@@ -51,7 +51,7 @@ namespace mark4
             frameOut.rc.throttle = packet.throttle;
             frameOut.rc.armSwitch = packet.armSwitch != 0U;
             m_resetCount = packet.resetCount;
-            return true;
+            return FrameWait::FRAME;
         }
     }
 } // namespace mark4

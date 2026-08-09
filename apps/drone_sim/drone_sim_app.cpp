@@ -120,8 +120,15 @@ namespace mark4
         mark4::FlightPhase previousPhase = mark4::FlightPhase::IDLE;
         std::uint8_t lastResetCount = 0U;
         bool resetCountSeen = false;
-        while (steps < m_maxFrames && m_sensorSource.waitFrame(frame))
+        while (steps < m_maxFrames)
         {
+            if (m_sensorSource.waitFrame(frame) != mark4::FrameWait::FRAME)
+            {
+                // TIMEOUT after IDLE_TIMEOUT_MS of silence: the simulator is
+                // gone, or never came. This composition treats it as the end
+                // of the run; main() turns a zero-frame run into a failure.
+                break;
+            }
             // A simulator world reset teleports the drone: no estimator can
             // (or should) track that, so the flight core restarts from
             // scratch, exactly like a power cycle on the bench.

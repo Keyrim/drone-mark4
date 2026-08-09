@@ -36,7 +36,7 @@ namespace mark4
         TIM3->CR1 = TIM_CR1_CEN;
     }
 
-    bool SensorSourceStm32::waitFrame(mark4::SensorFrame &frameOut)
+    FrameWait SensorSourceStm32::waitFrame(mark4::SensorFrame &frameOut)
     {
         while (g_ticks == m_consumedTicks)
         {
@@ -74,7 +74,7 @@ namespace mark4
         m_baro.update();
         frameOut.baroPa = m_baro.pressurePa();
         frameOut.rc = RcInput{}; // no receiver yet: kill switch engaged
-        return true;
+        return FrameWait::FRAME;
     }
 } // namespace mark4
 

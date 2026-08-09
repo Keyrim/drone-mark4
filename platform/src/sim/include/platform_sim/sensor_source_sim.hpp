@@ -26,9 +26,10 @@ namespace mark4
         ///        unexpected size or protocol version are dropped silently and
         ///        the wait resumes.
         /// @param[out] frameOut frame decoded from the packet
-        /// @return true when a frame was decoded, false when the link stayed
-        ///         idle for the receive timeout
-        bool waitFrame(mark4::SensorFrame &frameOut) override;
+        /// @return FRAME when a packet was decoded, TIMEOUT when the link
+        ///         stayed idle for the receive timeout of the underlying
+        ///         socket; never EXHAUSTED (a simulator may always reconnect)
+        FrameWait waitFrame(mark4::SensorFrame &frameOut) override;
 
         /// @return reset counter carried by the last decoded packet. The
         ///         simulator increments it on every world reset (teleport), a

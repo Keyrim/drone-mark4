@@ -56,23 +56,23 @@ namespace mark4
         return true;
     }
 
-    bool SensorSourceReplay::waitFrame(mark4::SensorFrame &frameOut)
+    FrameWait SensorSourceReplay::waitFrame(mark4::SensorFrame &frameOut)
     {
         if (m_file == nullptr)
         {
-            return false;
+            return FrameWait::EXHAUSTED;
         }
 
         std::array<std::uint8_t, BLACKBOX_RECORD_SIZE> bytes{};
         if (std::fread(bytes.data(), 1U, bytes.size(), m_file) != bytes.size())
         {
-            return false; // end of file (a trailing partial record is dropped)
+            return FrameWait::EXHAUSTED; // end of file (a trailing partial record is dropped)
         }
         if (bytes[0] != BLACKBOX_VERSION)
         {
             static_cast<void>(std::fprintf(
                 stderr, "SensorSourceReplay: unsupported record version %u\n", bytes[0]));
-            return false;
+            return FrameWait::EXHAUSTED;
         }
 
         BlackboxRecord record{};
@@ -101,6 +101,6 @@ namespace mark4
         }
         m_prevTimestampUs = record.timestampUs;
         m_hasPrevTimestamp = true;
-        return true;
+        return FrameWait::FRAME;
     }
 } // namespace mark4

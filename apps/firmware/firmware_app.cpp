@@ -102,9 +102,9 @@ namespace mark4
         bool rcEverReceived = false;
         for (;;)
         {
-            if (!m_sensorSource.waitFrame(frame))
+            if (m_sensorSource.waitFrame(frame) != FrameWait::FRAME)
             {
-                continue;
+                continue; // the timer-paced source only ever produces FRAME
             }
 
             std::uint8_t packet[SERIAL_MAX_PAYLOAD];
