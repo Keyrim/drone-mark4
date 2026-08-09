@@ -15,6 +15,7 @@
 #include "hub/serial_transport.hpp"
 #include "hub/stream_recorder.hpp"
 #include "hub/udp_transport.hpp"
+#include "hub/ws_bridge.hpp"
 #include "protocol/ports.hpp"
 
 namespace mark4
@@ -126,6 +127,29 @@ namespace mark4
         /// @param port port to release, 0 to do nothing
         void releasePort(std::uint16_t port);
 
+        /// @brief Decodes and routes everything the clients have sent.
+        void handleClientMessages();
+
+        /// @brief Carries out one decoded client request.
+        /// @param message request to carry out
+        /// @param errorOut receives the refusal reason when it cannot be
+        /// @return true when the request was carried out
+        bool applyClientMessage(const ClientMessage &message, std::string &errorOut);
+
+        /// @brief Answers one request, when the client asked to be answered.
+        ///        The answer is broadcast: it carries the correlation id the
+        ///        client sent, and a client ignores what is not its own.
+        /// @param id correlation id, -1 for a request that wants no answer
+        /// @param ok true when the request was carried out
+        /// @param error refusal reason, empty when ok
+        void answer(int id, bool ok, const std::string &error);
+
+        /// @brief Sends the current discovery table to the clients.
+        void broadcastDiscovery();
+
+        /// @brief Sends the current counters to the clients.
+        void broadcastStatus();
+
         /// @brief Expiry, status message and serial reopen.
         /// @param nowUs current time [us]
         void housekeeping(std::uint64_t nowUs);
@@ -145,6 +169,7 @@ namespace mark4
         DiscoveryRegistry m_registry;            ///< live processes
         UdpTransport m_udp;                      ///< every UDP socket
         SerialTransport m_serial;                ///< board UART, when one is configured
+        WsBridge m_ws;                           ///< websocket endpoint
         std::vector<PortUse> m_followedPorts;    ///< refcount behind every subscription
         std::atomic_bool m_stopRequested{false}; ///< set by a signal handler
         std::uint64_t m_nextStatusUs = 0U;       ///< next status message instant [us]

@@ -10,7 +10,9 @@
 #include <cstdio>
 #include <cstring>
 #include <poll.h>
+#include <string>
 #include <utility>
+#include <variant>
 
 #include "protocol/blackbox.hpp"
 
@@ -38,6 +40,10 @@ namespace mark4
     bool HubApp::init()
     {
         if (!m_udp.init(m_config.announcePort))
+        {
+            return false;
+        }
+        if (!m_ws.start(m_config.wsPort))
         {
             return false;
         }
@@ -97,6 +103,7 @@ namespace mark4
             m_serial.drain([this](const std::uint8_t *payload, std::size_t size) {
                 onSerialPayload(payload, size);
             });
+            handleClientMessages();
             housekeeping(monotonicUs());
         }
         return 0;
@@ -167,6 +174,7 @@ namespace mark4
         TelemetryPacket packet{};
         std::memcpy(&packet, data, sizeof(packet));
         m_recorder.onTelemetry(packet);
+        m_ws.broadcastText(telemetryToJson(packet));
     }
 
     void HubApp::onSimRawPacket(const std::uint8_t *data)
@@ -174,6 +182,7 @@ namespace mark4
         SimRawPacket packet{};
         std::memcpy(&packet, data, sizeof(packet));
         m_recorder.onSimRaw(packet);
+        m_ws.broadcastText(simRawToJson(packet));
     }
 
     void HubApp::onDiscoveryChange(const DiscoveryChange &change)
@@ -200,6 +209,7 @@ namespace mark4
                 break;
         }
         static_cast<void>(std::fflush(stdout));
+        broadcastDiscovery();
     }
 
     void HubApp::retainPort(std::uint16_t port)
@@ -245,6 +255,111 @@ namespace mark4
         }
     }
 
+    void HubApp::handleClientMessages()
+    {
+        for (const std::string &text : m_ws.drainInbound())
+        {
+            const auto decoded = parseClientMessage(text);
+            if (const auto *reason = std::get_if<std::string>(&decoded))
+            {
+                answer(clientMessageId(text), false, *reason);
+                continue;
+            }
+            const auto &message = std::get<ClientMessage>(decoded);
+            std::string error;
+            const bool done = applyClientMessage(message, error);
+            answer(message.id, done, error);
+        }
+    }
+
+    bool HubApp::applyClientMessage(const ClientMessage &message, std::string &errorOut)
+    {
+        switch (message.type)
+        {
+            case ClientMessageType::RC: {
+                // The hub forwards RC one for one and never repeats or
+                // synthesizes it: a silent link means kill downstream, and
+                // that silence is the pilot's, not the hub's to fill in.
+                const auto bytes = wireBytes(message.rc);
+                if (message.target == StreamSource::FIRMWARE)
+                {
+                    if (!m_serial.isOpen())
+                    {
+                        errorOut = "no serial link to the board";
+                        return false;
+                    }
+                    return m_serial.sendPacket(bytes.data(), bytes.size());
+                }
+                const std::uint16_t port = m_registry.commandPortOf(message.target);
+                if (port == 0U)
+                {
+                    errorOut =
+                        std::string("no process of kind ") + streamSourceName(message.target);
+                    return false;
+                }
+                return m_udp.sendTo(bytes.data(), bytes.size(), "127.0.0.1", port);
+            }
+            case ClientMessageType::SIM_COMMAND: {
+                const auto bytes = wireBytes(message.simCommand);
+                return m_udp.sendTo(
+                    bytes.data(), bytes.size(), "127.0.0.1", m_config.simCommandPort);
+            }
+            case ClientMessageType::REBOOT: {
+                if (message.target != StreamSource::FIRMWARE)
+                {
+                    errorOut = std::string("cannot reboot ") + streamSourceName(message.target);
+                    return false;
+                }
+                if (!m_serial.isOpen())
+                {
+                    errorOut = "no serial link to the board";
+                    return false;
+                }
+                const auto bytes = wireBytes(message.reboot);
+                return m_serial.sendPacket(bytes.data(), bytes.size());
+            }
+            case ClientMessageType::RECORD: {
+                if (message.recordStart)
+                {
+                    if (!m_recorder.startCsvSession())
+                    {
+                        errorOut = "cannot open a recording in " + m_config.logDirectory;
+                        return false;
+                    }
+                }
+                else
+                {
+                    m_recorder.stopCsvSession();
+                }
+                broadcastStatus();
+                return true;
+            }
+        }
+        errorOut = "unsupported request";
+        return false;
+    }
+
+    void HubApp::answer(int id, bool ok, const std::string &error)
+    {
+        // Streams are never acknowledged, and neither is a request that
+        // carried no correlation id: there would be nothing to match it to.
+        if (id < 0)
+        {
+            return;
+        }
+        m_ws.broadcastText(ackToJson(id, ok, error));
+    }
+
+    void HubApp::broadcastDiscovery()
+    {
+        m_ws.broadcastText(discoveryToJson(m_registry.processes(), monotonicUs()));
+    }
+
+    void HubApp::broadcastStatus()
+    {
+        m_ws.broadcastText(statusToJson(status()));
+    }
+
     void HubApp::housekeeping(std::uint64_t nowUs)
     {
         for (const DiscoveryChange &change : m_registry.expire(nowUs, DISCOVERY_EXPIRY_US))
@@ -253,9 +368,18 @@ namespace mark4
         }
         m_serial.maintain(nowUs / US_PER_MS);
 
+        // A client that just connected knows nothing yet: it gets the table
+        // and the counters as they stand, without waiting for a change.
+        if (m_ws.takeConnectedFlag())
+        {
+            broadcastDiscovery();
+            broadcastStatus();
+        }
+
         if (nowUs >= m_nextStatusUs)
         {
             m_nextStatusUs = nowUs + STATUS_PERIOD_MS * US_PER_MS;
+            broadcastStatus();
         }
     }
 
@@ -270,7 +394,7 @@ namespace mark4
         snapshot.blackboxRecords = stats.blackboxRecords;
         snapshot.badFrames = stats.badFrames;
         snapshot.rejectedAnnounces = m_registry.rejectedAnnounces();
-        snapshot.clients = 0U;
+        snapshot.clients = m_ws.clientCount();
         return snapshot;
     }
 } // namespace mark4
