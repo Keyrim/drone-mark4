@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>mark4 attitude</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .stage {
+            flex: 1;
+            display: flex;
+            min-height: 0;
+            gap: 10px;
+            padding: 10px;
+        }
+
+        .canvas-box {
+            flex: 1;
+            min-width: 0;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            touch-action: none;
+        }
+
+        .canvas-box canvas {
+            display: block;
+        }
+
+        .readouts {
+            width: 250px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .readout-value {
+            font-family: var(--mono);
+            font-size: 14px;
+            padding-top: 4px;
+        }
+    </style>
+    <script type="module" src="attitude.js"></script>
+</head>
+
+<body></body>
+
+</html>
