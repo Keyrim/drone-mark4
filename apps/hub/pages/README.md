@@ -20,6 +20,9 @@ pnpm test
   (`quat.ts`) and the series catalog (`series.ts`).
 - `src/lanes/` - the lane viewer: time-axis math, sample buffers, the uPlot
   charts, the ruler and the lane configuration panel.
+- `src/console/` - the console: target selection, state readout, scenarios,
+  recording, tuning and profiles, replaying a recording, and keyboard
+  piloting. `rc.ts` is the piloting state machine, pure and unit tested.
 - `src/<page>/main.ts` - one page. Every directory holding a `main.ts`
   becomes its own bundle, so adding a page is adding a directory and an
   `.html` file next to `esbuild.js`.
@@ -71,6 +74,38 @@ A streams recording replays through the latch rule above, so a value read in
 replay is the value that was on screen live. A blackbox recording has no
 estimate and no exact state: its series are its columns, and its lanes are
 built from the header the hub sent rather than from the catalog.
+
+## Keyboard piloting
+
+The console can stream RC from the keyboard, and the rules around it are the
+feature: a browser tab is not a transmitter, so the design assumes it will
+stop paying attention at the worst moment.
+
+There is exactly one RC state, mutated by the buttons and the keys alike,
+streamed at 10 Hz and only while the pilot toggle is engaged. While it is
+off, the kill, arm and mode buttons are disabled - a one-shot arm would die
+at the drone's own RC timeout anyway, and that timeout is the whole point.
+
+`K` toggles the kill, `Space` is a panic kill that can never un-kill, `Esc`
+disengages, `A` toggles the arm, `M` toggles the mode, the arrows ramp the
+throttle at 40 percent per second (`Shift` for 8), `0` or `Home` zeroes it
+and `C` centers it at 50 percent, which is what altitude-auto arming wants.
+Auto-repeat is ignored: the ramp is applied at the stream tick, not at the
+key event, so a held key ramps at a known rate.
+
+Disengaging resets the state to kill-engaged, disarmed, stick down; the page
+sends that twice and then stops streaming. **The stop is the fail-safe**: the
+drone cuts on its own RC timeout, so a frozen browser is covered by the same
+mechanism as a clean exit. It happens on the toggle, `Esc`, the window losing
+focus, the tab going to the background, the page unloading, the hub link
+dropping, a tick more than 300 ms late, and a 60 s deadman.
+
+While engaged a red banner shows the measured stream rate, the commanded
+throttle against the motor outputs telemetry reports, and a warning when the
+hub has more than one client - another tab could be streaming RC too.
+
+`rc.ts` holds all of that as a pure `(state, event) -> state` function, so
+the rules are covered by `test/rc.test.ts` rather than by a click-through.
 
 ## View configs
 
