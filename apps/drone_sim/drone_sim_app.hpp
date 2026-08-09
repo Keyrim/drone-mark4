@@ -12,6 +12,7 @@
 #include "platform_common/blackbox.hpp"
 #include "platform_common/rc_tracker.hpp"
 #include "platform_common/telemetry_publisher.hpp"
+#include "platform_common/tuning_service.hpp"
 #include "platform_sim/clock_sim.hpp"
 #include "platform_sim/command_receiver_sim.hpp"
 #include "platform_sim/log_sink_file.hpp"
@@ -114,6 +115,7 @@ namespace mark4
         std::array<char, LOG_PATH_SIZE> m_logFilePath; ///< one file per run, outlives m_logSink
         mark4::LogSinkFile m_logSink;
         mark4::FlightCore m_core;
+        mark4::TuningService m_tuningService{m_core, m_telemetrySender};
         mark4::Blackbox m_blackbox;
     };
 } // namespace mark4

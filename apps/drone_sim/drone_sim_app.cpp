@@ -166,12 +166,21 @@ namespace mark4
             lastResetCount = m_sensorSource.resetCount();
             resetCountSeen = true;
 
-            // Drain the command uplink. Nothing in this composition consumes
-            // the packets the tracker hands back yet (reboot, tuning later),
-            // so they are dropped on the floor.
+            // Drain the command uplink. The tracker consumes the RC packets
+            // and hands back everything else; the tuning service claims what
+            // it recognizes out of that, before the step below, so a value
+            // written from the ground is in effect for the whole of the next
+            // step and never changes one halfway through.
             std::array<std::uint8_t, RC_BUFFER_SIZE> command{};
-            while (m_rcTracker.pump(command.data(), command.size(), frame.timestampUs) != 0U)
+            for (;;)
             {
+                const std::size_t size =
+                    m_rcTracker.pump(command.data(), command.size(), frame.timestampUs);
+                if (size == 0U)
+                {
+                    break;
+                }
+                static_cast<void>(m_tuningService.handle(command.data(), size));
             }
             // Grafted on every frame, not only when a packet arrived: the
             // frame is reused across iterations, so skipping this would leave
@@ -183,6 +192,10 @@ namespace mark4
             m_motorSink.push(actuators);
             m_blackbox.record(frame, actuators);
             m_telemetryPublisher.publish(frame, actuators, m_core);
+            // Paced answers to a list request: one description per frame, so
+            // a table dump never bursts ahead of the telemetry it shares the
+            // link with.
+            m_tuningService.pump();
             // Wall clock, not simulated time: one announce per second of real
             // time whatever the sim time scale, which is the cadence the
             // ground side counts on.
