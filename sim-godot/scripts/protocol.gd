@@ -37,11 +37,10 @@ const SOURCE_DRONE_SIM := 2
 const SOURCE_DRONE_REPLAY := 3
 const SOURCE_SIM_PLANT := 4
 
-## Packed packet sizes (sim_link.hpp, telemetry.hpp, sim_raw.hpp,
-## commands.hpp, sim_stats.hpp).
+## Packed packet sizes (sim_link.hpp, sim_raw.hpp, commands.hpp,
+## sim_stats.hpp).
 const SIM_SENSOR_PACKET_SIZE := 45
 const SIM_ACTUATOR_PACKET_SIZE := 84
-const TELEMETRY_PACKET_SIZE := 99
 const SIM_RAW_PACKET_SIZE := 53
 const SIM_SCENARIO_PACKET_SIZE := 60
 const SIM_SCENARIO_SIZE := 58
@@ -71,7 +70,6 @@ const SIM_ACTUATOR_MOTOR_OFFSET := 10
 ## Where the scenario block starts inside the lockstep reply, the only
 ## path this project decodes a scenario on.
 const SIM_ACTUATOR_SCENARIO_OFFSET := 26
-const TELEMETRY_QUAT_OFFSET := 25
 
 ## Offsets inside the SimScenario block, counted from its own start.
 const SCENARIO_SEED_OFFSET := 2

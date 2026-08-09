@@ -25,7 +25,6 @@ func _init() -> void:
 	var fixtures: String = args[0]
 
 	_check_actuator(fixtures)
-	_check_telemetry(fixtures)
 	_check_sensor_and_raw_sizes(fixtures)
 	_check_scenario_in_actuator(fixtures)
 
@@ -59,17 +58,6 @@ func _check_actuator(fixtures: String) -> void:
 	for index: int in 4:
 		var offset: int = Protocol.SIM_ACTUATOR_MOTOR_OFFSET + index * Protocol.FLOAT_SIZE
 		_expect(payload.decode_float(offset) == motors[index], "actuator motor %d" % index)
-
-
-## The telemetry quaternion is what AttitudeCompare reads for the ghost.
-func _check_telemetry(fixtures: String) -> void:
-	var payload := _read(fixtures, "telemetry.bin")
-	_expect(payload.size() == Protocol.TELEMETRY_PACKET_SIZE, "telemetry size")
-	_expect(Protocol.has_header(payload, Protocol.TYPE_TELEMETRY), "telemetry header")
-	var quat := [0.5, -0.25, 0.125, -0.0625]
-	for index: int in 4:
-		var offset: int = Protocol.TELEMETRY_QUAT_OFFSET + index * Protocol.FLOAT_SIZE
-		_expect(payload.decode_float(offset) == quat[index], "telemetry quat %d" % index)
 
 
 ## The packets Godot produces: their frozen sizes and headers must match

@@ -8,7 +8,6 @@
 [ext_resource type="Script" uid="uid://dy04qmk16a81u" path="res://scripts/hud.gd" id="6_hud"]
 [ext_resource type="Shader" uid="uid://c5twv73xgqfvg" path="res://shaders/ground_grid.gdshader" id="7_grid"]
 [ext_resource type="Script" uid="uid://bq76fgxbwppll" path="res://scripts/sim_raw_link.gd" id="8_sim_raw"]
-[ext_resource type="Script" uid="uid://drwvoj2om14y3" path="res://scripts/attitude_compare.gd" id="9_attitude"]
 [ext_resource type="Script" uid="uid://d2i3x0xebgka7" path="res://scripts/arena.gd" id="11_arena"]
 [ext_resource type="Script" path="res://scripts/hand.gd" id="12_hand"]
 
@@ -221,10 +220,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 3)
 current = true
 script = ExtResource("5_camera")
 target_path = NodePath("../Drone")
-
-[node name="AttitudeCompare" type="Node" parent="." unique_id=1290028369]
-script = ExtResource("9_attitude")
-drone_path = NodePath("../Drone")
 
 [node name="Hud" type="CanvasLayer" parent="." unique_id=188000430]
 
