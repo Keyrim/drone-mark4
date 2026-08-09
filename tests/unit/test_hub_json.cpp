@@ -533,6 +533,28 @@ TEST_CASE("profile messages decode and render")
     CHECK(profile["values"]["101"] == 0.028f);
 }
 
+TEST_CASE("a replay message names a recording and a validated tempo")
+{
+    const auto plain =
+        mark4::parseClientMessage(R"({"type":"replay","id":18,"name":"board_1.m4bb"})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(plain));
+    const auto &plainMessage = std::get<mark4::ClientMessage>(plain);
+    CHECK(plainMessage.type == mark4::ClientMessageType::REPLAY);
+    CHECK(plainMessage.recordingName == "board_1.m4bb");
+    // Empty means "the tempo the run was recorded at", so no --speed goes out
+    CHECK(plainMessage.replaySpeed.empty());
+
+    const auto fast =
+        mark4::parseClientMessage(R"({"type":"replay","name":"board_1.m4bb","speed":"max"})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(fast));
+    CHECK(std::get<mark4::ClientMessage>(fast).replaySpeed == "max");
+
+    const auto slow =
+        mark4::parseClientMessage(R"({"type":"replay","name":"board_1.m4bb","speed":"0.25"})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(slow));
+    CHECK(std::get<mark4::ClientMessage>(slow).replaySpeed == "0.25");
+}
+
 TEST_CASE("a malformed client message is refused, never thrown")
 {
     const char *rejected[] = {
@@ -580,6 +602,16 @@ TEST_CASE("a malformed client message is refused, never thrown")
         R"({"type":"profileLoad"})",
         R"({"type":"profilePush","name":"bench"})",
         R"({"type":"profilePush","name":"bench","target":"ghost"})",
+        R"({"type":"replay"})",
+        R"({"type":"replay","name":""})",
+        R"({"type":"replay","name":42})",
+        // The tempo becomes an argument of a child process: only "max" or a
+        // positive number ever gets that far.
+        R"({"type":"replay","name":"board_1.m4bb","speed":"max; rm -rf /"})",
+        R"({"type":"replay","name":"board_1.m4bb","speed":"-1"})",
+        R"({"type":"replay","name":"board_1.m4bb","speed":"0"})",
+        R"({"type":"replay","name":"board_1.m4bb","speed":"2x"})",
+        R"({"type":"replay","name":"board_1.m4bb","speed":2})",
     };
     for (const char *text : rejected)
     {

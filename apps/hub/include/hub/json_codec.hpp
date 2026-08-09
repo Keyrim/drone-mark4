@@ -42,7 +42,8 @@ namespace mark4
         PROFILE_LIST, ///< name the stored tuning profiles
         PROFILE_SAVE, ///< store one named set of values
         PROFILE_LOAD, ///< read one named set of values back
-        PROFILE_PUSH  ///< send one named set to a flight process
+        PROFILE_PUSH, ///< send one named set to a flight process
+        REPLAY        ///< replay one stored blackbox recording
     };
 
     /// One decoded client request. The wire packets are already built: the
@@ -62,6 +63,9 @@ namespace mark4
         TuningListPacket tuningList{};                  ///< TUNING_LIST: packet to forward
         std::string profileName;                        ///< PROFILE_*: profile concerned
         TuningValues profileValues;                     ///< PROFILE_SAVE: values to store
+        std::string recordingName;                      ///< REPLAY: recording to play back
+        std::string replaySpeed;                        ///< REPLAY: tempo, "max" or a positive
+                                                        ///< number, empty = the recorded one
     };
 
     /// Counters and flags the hub publishes once per second.

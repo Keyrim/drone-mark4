@@ -18,6 +18,7 @@
 
 #include "hub/launcher.hpp"
 #include "hub/packed_field.hpp"
+#include "hub/recordings.hpp"
 #include "protocol/blackbox.hpp"
 #include "protocol/tuning.hpp"
 
@@ -362,6 +363,46 @@ namespace mark4
         return true;
     }
 
+    bool HubApp::startReplay(const std::string &name,
+                             const std::string &speed,
+                             std::string &errorOut)
+    {
+        Recording recording;
+        if (!findRecording(listRecordings(m_config.logDirectory), name, recording))
+        {
+            errorOut = "no recording named '" + name + "'";
+            return false;
+        }
+        if (recording.kind != "blackbox")
+        {
+            // A streams pair is two CSV files of what a run published; only
+            // a blackbox holds the sensor frames a replay steps through.
+            errorOut = "'" + name + "' is a streams recording, not a blackbox";
+            return false;
+        }
+
+        // One replay at a time: two of them would broadcast telemetry on the
+        // same port and the ground side would read one interleaved run.
+        static_cast<void>(m_replays.terminateAll());
+
+        ChildSpec child;
+        child.program = defaultBinaryPath("drone_replay");
+        child.arguments.push_back(m_config.logDirectory + "/" + recording.name);
+        if (!speed.empty())
+        {
+            child.arguments.emplace_back("--speed");
+            child.arguments.push_back(speed);
+        }
+        child.arguments.emplace_back("--announce-port");
+        child.arguments.push_back(std::to_string(m_config.announcePort));
+        if (!m_replays.spawn(child))
+        {
+            errorOut = "cannot start " + child.program;
+            return false;
+        }
+        return true;
+    }
+
     void HubApp::retainPort(std::uint16_t port)
     {
         if (port == 0U)
@@ -498,6 +539,9 @@ namespace mark4
             case ClientMessageType::PROFILE_PUSH: {
                 return pushProfile(message.profileName, message.target, errorOut);
             }
+            case ClientMessageType::REPLAY: {
+                return startReplay(message.recordingName, message.replaySpeed, errorOut);
+            }
             case ClientMessageType::RECORD: {
                 if (message.recordStart)
                 {
@@ -555,6 +599,9 @@ namespace mark4
             onDiscoveryChange(change);
         }
         m_serial.maintain(nowUs / US_PER_MS);
+        // A replay that reached the end of its file must be reaped, or it
+        // stays a zombie for as long as the hub runs.
+        static_cast<void>(m_replays.anyExited());
         emitCompare();
 
         // A client that just connected knows nothing yet: it gets the table

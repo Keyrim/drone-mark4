@@ -12,6 +12,7 @@
 
 #include "hub/discovery.hpp"
 #include "hub/json_codec.hpp"
+#include "hub/launcher.hpp"
 #include "hub/serial_transport.hpp"
 #include "hub/stream_health.hpp"
 #include "hub/stream_recorder.hpp"
@@ -192,6 +193,15 @@ namespace mark4
         /// @return true when every value went out
         bool pushProfile(const std::string &name, StreamSource target, std::string &errorOut);
 
+        /// @brief Starts a drone_replay on one stored blackbox recording. The
+        ///        replay then announces itself like any other flight process,
+        ///        so discovery and the telemetry stream do the rest.
+        /// @param name recording to play back, as the listing names it
+        /// @param speed tempo argument, empty for the recorded one
+        /// @param errorOut receives the reason when it cannot be started
+        /// @return true when the child started
+        bool startReplay(const std::string &name, const std::string &speed, std::string &errorOut);
+
         /// @brief Sends every comparison that has come due to the clients.
         void emitCompare();
 
@@ -229,5 +239,6 @@ namespace mark4
         std::uint64_t m_nextStatusUs = 0U;       ///< next status message instant [us]
         std::uint8_t m_scenarioSequence = 0U;    ///< rolling number stamped on a
                                                  ///< scenario the client left at 0
+        ProcessGroup m_replays;                  ///< drone_replay children a client asked for
     };
 } // namespace mark4

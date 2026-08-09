@@ -6,6 +6,7 @@
 
 #include "hub/json_codec.hpp"
 
+#include <cstdlib>
 #include <limits>
 #include <nlohmann/json.hpp>
 
@@ -458,6 +459,51 @@ namespace mark4
             return true;
         }
 
+        /// @brief Fills the playback part of a client request. The name is
+        ///        looked up in the recording listing further down, which is
+        ///        the whole address space: nothing here builds a path. The
+        ///        speed does become an argument of a child process, so it is
+        ///        validated here, at the boundary: "max" or a positive number
+        ///        and nothing else ever reaches a command line.
+        /// @param object message object
+        /// @param message message being decoded
+        /// @param errorOut receives the reason on failure
+        /// @return true when every field decoded
+        bool parseReplay(const Json &object, ClientMessage &message, std::string &errorOut)
+        {
+            const auto name = object.find("name");
+            if (name == object.end() || !name->is_string() || name->get<std::string>().empty())
+            {
+                errorOut = "field 'name' must be a recording name";
+                return false;
+            }
+            message.recordingName = name->get<std::string>();
+
+            const auto speed = object.find("speed");
+            if (speed == object.end() || speed->is_null())
+            {
+                return true;
+            }
+            if (!speed->is_string())
+            {
+                errorOut = "field 'speed' must be 'max' or a positive number as a string";
+                return false;
+            }
+            const auto text = speed->get<std::string>();
+            if (text != "max")
+            {
+                char *end = nullptr;
+                const float factor = std::strtof(text.c_str(), &end);
+                if (text.empty() || end != text.c_str() + text.size() || !(factor > 0.0f))
+                {
+                    errorOut = "field 'speed' must be 'max' or a positive number as a string";
+                    return false;
+                }
+            }
+            message.replaySpeed = text;
+            return true;
+        }
+
         /// @brief Reads the values object of a profile save request: keys are
         ///        parameter ids as decimal strings, values are numbers.
         /// @param object object to read from
@@ -830,6 +876,14 @@ namespace mark4
             message.type = ClientMessageType::PROFILE_PUSH;
             if (!readProfileName(root, message.profileName, error) ||
                 !readTarget(root, message.target, error))
+            {
+                return error;
+            }
+        }
+        else if (typeName == "replay")
+        {
+            message.type = ClientMessageType::REPLAY;
+            if (!parseReplay(root, message, error))
             {
                 return error;
             }

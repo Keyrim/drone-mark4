@@ -264,6 +264,7 @@ disappears.
 {"type":"profileSave","id":15,"name":"bench","values":{"101":0.028}}
 {"type":"profileLoad","id":16,"name":"bench"}
 {"type":"profilePush","id":17,"name":"bench","target":"drone_sim"}
+{"type":"replay","id":18,"name":"board_20260807_150143.m4bb","speed":"max"}
 ```
 
 The parameter id key is `paramId`, never `id`: `id` is the correlation id
@@ -283,6 +284,15 @@ generator of the run, `throwDelayUs` places the throw after the reset, and
 `hashWindowUs` sets how much of the run the flight process hashes. The
 `sequence` byte is what makes a scenario idempotent - leave it out and the
 hub stamps a rolling one, so two scenarios in a row are two runs.
+
+A `replay` starts a `drone_replay` next to the hub on one blackbox recording
+of the log directory, addressed by the exact `name` `/api/recordings` gave
+it: `hub up replay` without leaving the page. The child announces itself, so
+discovery names it and its telemetry joins the usual stream; the `ack` says
+it started, not that it finished. `speed` is optional, `"max"` or a positive
+number as a string, and nothing else ever reaches the command line. One
+replay at a time: starting a second one ends the first, because both would
+broadcast on the same telemetry port.
 
 Routing: an RC message for `firmware` goes out serial-framed on the UART; an
 RC message for any other kind goes to the command port that process
@@ -311,6 +321,9 @@ arrives.
   `no process of kind <kind>`; a scenario has to be up first.
 - Every announce carries `sessionId` 0 for now, so a process that restarts
   on the same ports is not seen as a new session.
+- A `replay` message inside a `hub up sim` or `hub up replay` session starts
+  a second broadcaster on the telemetry port: the hub only owns the children
+  a client asked it for, not the ones the command line brought.
 - Acks are broadcast to every connected client rather than sent back to the
   one that asked: a client correlates the answer with the `id` it sent and
   ignores the rest. This keeps the endpoint free of any per-client state
