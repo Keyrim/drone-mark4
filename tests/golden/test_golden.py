@@ -15,10 +15,7 @@ import struct
 import sys
 import unittest
 
-sys.path.insert(
-    0,
-    os.path.join(os.path.dirname(__file__), "..", "..", "tools", "ground-station"),
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "tools"))
 import telemetry_wire as tw
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")

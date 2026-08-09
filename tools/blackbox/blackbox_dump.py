@@ -11,7 +11,7 @@ import os
 import pathlib
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ground-station"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from telemetry_wire import BLACKBOX_RECORD_SIZE, iter_blackbox_records
 
 CSV_HEADER = (

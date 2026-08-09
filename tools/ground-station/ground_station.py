@@ -16,6 +16,7 @@ testable without a GUI. Run with --help for the available options.
 
 import argparse
 import errno
+import os
 import socket
 import sys
 import time
@@ -25,6 +26,7 @@ from typing import Deque, List, Optional, Tuple
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtWidgets
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from telemetry_wire import (
     SIM_RAW_PORT,
     TELEMETRY_PORT,

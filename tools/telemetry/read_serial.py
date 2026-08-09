@@ -7,7 +7,7 @@ import sys
 import termios
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ground-station"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from telemetry_wire import (
     BLACKBOX_RECORD_SIZE,
     CRC16_INIT,

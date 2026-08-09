@@ -14,7 +14,7 @@ import math
 import pathlib
 import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).parent / ".." / "ground-station"))
+sys.path.insert(0, str(pathlib.Path(__file__).parent / ".."))
 from telemetry_wire import error_angle_deg
 
 #: A telemetry sample matches the closest sim raw sample within this delta.

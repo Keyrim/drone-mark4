@@ -49,7 +49,7 @@ import time
 from dataclasses import dataclass
 from typing import List, Optional
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ground-station"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from telemetry_wire import (
     RC_MODE_ALTITUDE_AUTO,
     SIM_SCENARIO_HAND_THROW,

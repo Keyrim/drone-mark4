@@ -10,7 +10,7 @@ Real-time viewer for the drone UDP broadcasts. Four stacked plots:
 - altitude and vertical velocity, estimated against exact.
 
 Without a simulator the sim raw stream stays silent and only the estimated
-curves draw. Packet decoding (`telemetry_wire.py`) is kept separate from the
+curves draw. Packet decoding (`../telemetry_wire.py`) is kept separate from the
 GUI (`ground_station.py`) and can be tested headless.
 
 ## Install
@@ -60,5 +60,5 @@ truth:
   simulator state.
 - `protocol/include/protocol/version.hpp`: protocol version byte.
 
-`telemetry_wire.py` mirrors those layouts and asserts the packed sizes at
+`tools/telemetry_wire.py` mirrors those layouts and asserts the packed sizes at
 import time. Update it whenever the headers change.

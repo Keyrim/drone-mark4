@@ -23,7 +23,7 @@ import sys
 import time
 from typing import List, Optional, Tuple
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ground-station"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from telemetry_wire import (
     PROTOCOL_VERSION,
     SIM_ACTUATOR_PACKET_SIZE,
