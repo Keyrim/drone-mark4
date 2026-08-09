@@ -24,10 +24,11 @@ namespace mark4
         std::uint8_t version;        ///< = PROTOCOL_VERSION
         std::uint8_t type;           ///< = PacketType::ANNOUNCE
         std::uint8_t kind;           ///< StreamSource of the announcing process
-        std::uint32_t sessionId;     ///< random per-process-start identity,
-                                     ///< 0 until session identity is assigned;
-                                     ///< lets a consumer detect a restart
-                                     ///< behind an unchanged kind and port
+        std::uint32_t sessionId;     ///< identity of this process start, drawn
+                                     ///< once at startup, 0 when the process
+                                     ///< assigns none; lets a consumer detect
+                                     ///< a restart behind an unchanged kind
+                                     ///< and port pair
         std::uint16_t telemetryPort; ///< port the process broadcasts telemetry
                                      ///< to, 0 when it has none
         std::uint16_t commandPort;   ///< port the process listens on for

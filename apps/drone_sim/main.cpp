@@ -1,10 +1,13 @@
 /// @file
 /// @brief drone_sim entry point: parses arguments, builds the app, runs it.
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+#include <unistd.h>
 
 #include "drone_sim_app.hpp"
 #include "protocol/ports.hpp"
@@ -15,6 +18,25 @@ namespace
     constexpr int STRTOL_BASE = 10;
     constexpr std::uint64_t US_PER_MS = 1000U;
     constexpr long MAX_PORT = 65535L;
+
+    /// Odd 32-bit multiplier (Knuth) spreading a process id over the whole
+    /// word, so two instances started in the same microsecond still differ.
+    constexpr std::uint32_t SESSION_MIX = 2654435761U;
+
+    /// @brief Draws the identity of this process start. No random_device and
+    ///        no exceptions: a process id and the monotonic clock already
+    ///        separate two instances of a batch campaign, which is all a
+    ///        consumer needs to tell a restart from a refresh.
+    /// @return the session identity, never 0 (0 means "assigns none")
+    std::uint32_t makeSessionId()
+    {
+        const auto now = std::chrono::steady_clock::now().time_since_epoch();
+        const auto ticks = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(now).count());
+        const std::uint32_t mixed = (static_cast<std::uint32_t>(::getpid()) * SESSION_MIX) ^
+                                    static_cast<std::uint32_t>(ticks);
+        return mixed == 0U ? 1U : mixed;
+    }
 
     void printUsage(const char *program)
     {
@@ -93,7 +115,8 @@ int main(int argc, char **argv)
         }
     }
 
-    mark4::DroneSimApp app(maxFrames, simPort, telemetryPort, rcPort);
+    const std::uint32_t sessionId = makeSessionId();
+    mark4::DroneSimApp app(maxFrames, simPort, telemetryPort, rcPort, sessionId);
     if (!app.init())
     {
         static_cast<void>(std::fprintf(stderr, "drone_sim: initialization failed\n"));
@@ -101,11 +124,12 @@ int main(int argc, char **argv)
     }
 
     std::printf("drone_sim: waiting for sensor packets on udp/%u, telemetry broadcast on udp/%u, "
-                "rc uplink on udp/%u, announcing on udp/%u\n",
+                "rc uplink on udp/%u, announcing on udp/%u as session %u\n",
                 static_cast<unsigned>(simPort),
                 static_cast<unsigned>(telemetryPort),
                 static_cast<unsigned>(rcPort),
-                static_cast<unsigned>(mark4::ANNOUNCE_PORT));
+                static_cast<unsigned>(mark4::ANNOUNCE_PORT),
+                static_cast<unsigned>(sessionId));
 
     const std::uint32_t steps = app.run();
     if (steps == 0U)

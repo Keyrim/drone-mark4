@@ -30,16 +30,21 @@ namespace mark4
 
         /// @param sender output the announces are broadcast on
         /// @param kind StreamSource identity of the announcing process
+        /// @param sessionId identity of this process start, drawn once by the
+        ///        composition root; a consumer reads a change of it as a
+        ///        restart behind an unchanged kind and port pair
         /// @param telemetryPort port this process broadcasts telemetry to,
         ///        0 when it has none
         /// @param commandPort port this process listens on for commands,
         ///        0 when it has none
         AnnouncePublisher(AbsTelemetrySender &sender,
                           StreamSource kind,
+                          std::uint32_t sessionId,
                           std::uint16_t telemetryPort,
                           std::uint16_t commandPort)
             : m_sender(sender),
               m_kind(kind),
+              m_sessionId(sessionId),
               m_telemetryPort(telemetryPort),
               m_commandPort(commandPort)
         {
@@ -61,7 +66,7 @@ namespace mark4
             packet.version = PROTOCOL_VERSION;
             packet.type = static_cast<std::uint8_t>(PacketType::ANNOUNCE);
             packet.kind = static_cast<std::uint8_t>(m_kind);
-            packet.sessionId = 0U; // 0 until session identity is assigned
+            packet.sessionId = m_sessionId;
             packet.telemetryPort = m_telemetryPort;
             packet.commandPort = m_commandPort;
 
@@ -80,6 +85,7 @@ namespace mark4
       private:
         AbsTelemetrySender &m_sender;       ///< output link, not owned
         StreamSource m_kind;                ///< identity of this process
+        std::uint32_t m_sessionId;          ///< identity of this process start
         std::uint16_t m_telemetryPort;      ///< announced telemetry port
         std::uint16_t m_commandPort;        ///< announced command port
         std::uint64_t m_lastSentUs = 0U;    ///< wall time of the last send [us]

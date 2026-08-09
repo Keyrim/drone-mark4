@@ -46,10 +46,13 @@ namespace mark4
         ///        copies go to telemetryPort + 2)
         /// @param rcPort UDP port the command receiver binds, for the RC
         ///        stream the pilot keeps up
+        /// @param sessionId identity of this process start, announced so the
+        ///        ground side tells a restart from a refresh
         explicit DroneSimApp(std::uint32_t maxFrames,
                              std::uint16_t simPort,
                              std::uint16_t telemetryPort,
-                             std::uint16_t rcPort);
+                             std::uint16_t rcPort,
+                             std::uint32_t sessionId);
 
         /// @brief Initializes services in declaration order: binds the sim link,
         ///        opens the telemetry socket and the blackbox file. The first
@@ -97,6 +100,7 @@ namespace mark4
         std::uint16_t m_simPort;       ///< sim link listen port
         std::uint16_t m_telemetryPort; ///< telemetry broadcast port
         std::uint16_t m_rcPort;        ///< command receiver listen port
+        std::uint32_t m_sessionId;     ///< identity of this process start
 
         // Declaration order = construction order; dependencies are injected by
         // reference, so a service may only depend on those declared above it.
@@ -111,7 +115,7 @@ namespace mark4
         mark4::RcTracker m_rcTracker{m_commandReceiver};
         mark4::TelemetrySenderSim m_announceSender;
         mark4::AnnouncePublisher m_announcePublisher{
-            m_announceSender, StreamSource::DRONE_SIM, m_telemetryPort, m_rcPort};
+            m_announceSender, StreamSource::DRONE_SIM, m_sessionId, m_telemetryPort, m_rcPort};
         std::array<char, LOG_PATH_SIZE> m_logFilePath; ///< one file per run, outlives m_logSink
         mark4::LogSinkFile m_logSink;
         mark4::FlightCore m_core;

@@ -88,11 +88,13 @@ namespace mark4
     DroneSimApp::DroneSimApp(std::uint32_t maxFrames,
                              std::uint16_t simPort,
                              std::uint16_t telemetryPort,
-                             std::uint16_t rcPort)
+                             std::uint16_t rcPort,
+                             std::uint32_t sessionId)
         : m_maxFrames(maxFrames),
           m_simPort(simPort),
           m_telemetryPort(telemetryPort),
           m_rcPort(rcPort),
+          m_sessionId(sessionId),
           m_sensorSource(m_simLink),
           m_motorSink(m_simLink),
           m_logFilePath(makeLogFilePath()),

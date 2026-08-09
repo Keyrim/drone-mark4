@@ -15,6 +15,10 @@ namespace
 {
     constexpr std::uint64_t T0_US = 5000000U;
 
+    /// Asymmetric session identity: every byte differs, so a swapped pair
+    /// inside the packed field cannot go unnoticed.
+    constexpr std::uint32_t TEST_SESSION_ID = 0xCAFEBABEU;
+
     /// Telemetry sender keeping every datagram handed to it, so a test can
     /// check the exact bytes that went out. Allocates freely: this is a
     /// test, not flight code.
@@ -43,7 +47,7 @@ namespace
         packet.version = mark4::PROTOCOL_VERSION;
         packet.type = static_cast<std::uint8_t>(mark4::PacketType::ANNOUNCE);
         packet.kind = static_cast<std::uint8_t>(mark4::StreamSource::DRONE_SIM);
-        packet.sessionId = 0U;
+        packet.sessionId = TEST_SESSION_ID;
         packet.telemetryPort = mark4::TELEMETRY_PORT;
         packet.commandPort = mark4::RC_COMMAND_PORT;
 
@@ -56,8 +60,11 @@ namespace
 TEST_CASE("the first announce goes out immediately, with the expected bytes")
 {
     FakeTelemetrySender sender;
-    mark4::AnnouncePublisher publisher(
-        sender, mark4::StreamSource::DRONE_SIM, mark4::TELEMETRY_PORT, mark4::RC_COMMAND_PORT);
+    mark4::AnnouncePublisher publisher(sender,
+                                       mark4::StreamSource::DRONE_SIM,
+                                       TEST_SESSION_ID,
+                                       mark4::TELEMETRY_PORT,
+                                       mark4::RC_COMMAND_PORT);
 
     publisher.publish(T0_US);
 
@@ -73,10 +80,10 @@ TEST_CASE("the first announce goes out immediately, with the expected bytes")
     REQUIRE(wire[1] == static_cast<std::uint8_t>(mark4::PacketType::ANNOUNCE));
     REQUIRE(wire[2] == static_cast<std::uint8_t>(mark4::StreamSource::DRONE_SIM));
 
-    std::uint32_t sessionId = 1U;
+    std::uint32_t sessionId = 0U;
     std::memcpy(
         &sessionId, wire.data() + offsetof(mark4::AnnouncePacket, sessionId), sizeof(sessionId));
-    REQUIRE(sessionId == 0U);
+    REQUIRE(sessionId == TEST_SESSION_ID);
 
     std::uint16_t telemetryPort = 0U;
     std::memcpy(&telemetryPort,
@@ -94,8 +101,11 @@ TEST_CASE("the first announce goes out immediately, with the expected bytes")
 TEST_CASE("announces are broadcast once per period")
 {
     FakeTelemetrySender sender;
-    mark4::AnnouncePublisher publisher(
-        sender, mark4::StreamSource::DRONE_SIM, mark4::TELEMETRY_PORT, mark4::RC_COMMAND_PORT);
+    mark4::AnnouncePublisher publisher(sender,
+                                       mark4::StreamSource::DRONE_SIM,
+                                       TEST_SESSION_ID,
+                                       mark4::TELEMETRY_PORT,
+                                       mark4::RC_COMMAND_PORT);
 
     publisher.publish(T0_US);
     REQUIRE(sender.sent().size() == 1U);
