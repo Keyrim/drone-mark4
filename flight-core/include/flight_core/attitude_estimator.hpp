@@ -41,10 +41,6 @@ namespace mark4
         /// Hover jitter and a held hand's sway stay well under this.
         static constexpr float GYRO_QUIET_RADS = 1.5f;
 
-        /// Integration steps longer than this are treated as gaps in the
-        /// stream: the step is skipped instead of being integrated.
-        static constexpr float MAX_STEP_S = 0.05f;
-
         /// Clamp on each axis of the integral term [rad/s]: a real gyro bias
         /// stays well under this, anything larger is an attitude transient
         /// the integrator must not memorize. Bounds the standing attitude
@@ -65,17 +61,18 @@ namespace mark4
         {
         }
 
-        /// @brief Advances the estimate with one sensor frame. The integration
-        ///        step is the timestamp delta between consecutive frames; the
-        ///        first frame, a non-increasing timestamp or a gap larger than
-        ///        MAX_STEP_S only re-arms the reference without integrating.
-        /// @param frame sensor frame carrying gyro, accel and the timestamp
+        /// @brief Advances the estimate with one sensor frame. The caller owns
+        ///        the time policy (monotonicity, gap handling) and hands the
+        ///        integration step down; a non-positive dt is a no-op.
+        /// @param frame sensor frame carrying gyro and accel
+        /// @param dtS integration step [s], 0 when nothing may integrate
+        ///        (first frame or gap in the stream)
         /// @param allowAccelCorrection false while the caller is deliberately
         ///        accelerating (recovery, braking): thrust then dominates the
         ///        specific force at about 1 g along body up, which would pass
         ///        the gate and drag the estimate toward a false level. The
         ///        update is pure gyro integration instead.
-        void update(const SensorFrame &frame, bool allowAccelCorrection = true);
+        void update(const SensorFrame &frame, float dtS, bool allowAccelCorrection = true);
 
         /// @return body-to-world attitude
         [[nodiscard]] const Quaternion &attitude() const
@@ -90,11 +87,9 @@ namespace mark4
         }
 
       private:
-        float m_kp;                           ///< proportional gain [1/s]
-        float m_ki;                           ///< integral gain [1/s^2]
-        Quaternion m_attitude;                ///< body-to-world estimate
-        std::array<float, 3> m_integralFb{};  ///< PI integral term = -gyro bias [rad/s]
-        std::uint64_t m_prevTimestampUs = 0U; ///< integration reference [us]
-        bool m_hasPrevTimestamp = false;      ///< false until the first frame
+        float m_kp;                          ///< proportional gain [1/s]
+        float m_ki;                          ///< integral gain [1/s^2]
+        Quaternion m_attitude;               ///< body-to-world estimate
+        std::array<float, 3> m_integralFb{}; ///< PI integral term = -gyro bias [rad/s]
     };
 } // namespace mark4

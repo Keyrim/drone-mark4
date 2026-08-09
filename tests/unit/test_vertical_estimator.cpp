@@ -35,7 +35,7 @@ namespace
         std::uint64_t timestamp = 0U;
         for (std::uint32_t i = 0U; i < mark4::VerticalEstimator::REFERENCE_SAMPLES; ++i)
         {
-            estimator.update(makeFrame(timestamp, altitudeM, mark4::GRAVITY_MPS2), {});
+            estimator.update(makeFrame(timestamp, altitudeM, mark4::GRAVITY_MPS2), STEP_S, {});
             timestamp += STEP_US;
         }
         return timestamp;
@@ -48,7 +48,7 @@ TEST_CASE("the estimate is not ready before the baro reference is captured")
     mark4::SensorFrame frame = makeFrame(0U, 120.0f, mark4::GRAVITY_MPS2);
 
     REQUIRE(!estimator.ready());
-    estimator.update(frame, {});
+    estimator.update(frame, STEP_S, {});
     REQUIRE(!estimator.ready());
 
     captureReference(estimator, 120.0f);
@@ -62,7 +62,7 @@ TEST_CASE("at rest the altitude reads zero wherever the estimator woke up")
 
     for (std::uint32_t i = 0U; i < 2500U; ++i)
     {
-        estimator.update(makeFrame(timestamp, 350.0f, mark4::GRAVITY_MPS2), {});
+        estimator.update(makeFrame(timestamp, 350.0f, mark4::GRAVITY_MPS2), STEP_S, {});
         timestamp += STEP_US;
     }
 
@@ -82,7 +82,7 @@ TEST_CASE("a steady baro climb converges to the climb rate")
     for (std::uint32_t i = 0U; i < 5000U; ++i)
     {
         altitude += CLIMB_RATE_MPS * STEP_S;
-        estimator.update(makeFrame(timestamp, altitude, mark4::GRAVITY_MPS2), {});
+        estimator.update(makeFrame(timestamp, altitude, mark4::GRAVITY_MPS2), STEP_S, {});
         timestamp += STEP_US;
     }
 
@@ -102,7 +102,7 @@ TEST_CASE("free fall drives the velocity to minus g times t through the accelero
     {
         time += STEP_S;
         const float altitude = 200.0f - 0.5f * mark4::GRAVITY_MPS2 * time * time;
-        estimator.update(makeFrame(timestamp, altitude, 0.0f), {});
+        estimator.update(makeFrame(timestamp, altitude, 0.0f), STEP_S, {});
         timestamp += STEP_US;
     }
 
@@ -131,7 +131,7 @@ TEST_CASE("a sideways push is dead reckoned and leaks back toward zero")
     {
         mark4::SensorFrame frame = makeFrame(timestamp, 100.0f, mark4::GRAVITY_MPS2);
         frame.accelMps2[0] = PUSH_MPS2;
-        estimator.update(frame, {});
+        estimator.update(frame, STEP_S, {});
         timestamp += STEP_US;
     }
     const float pushed = estimator.horizontalVelocityMps()[0];
@@ -142,7 +142,7 @@ TEST_CASE("a sideways push is dead reckoned and leaks back toward zero")
     // Back at rest, nothing measures the velocity: the leak fades it out.
     for (std::uint32_t i = 0U; i < 1000U; ++i)
     {
-        estimator.update(makeFrame(timestamp, 100.0f, mark4::GRAVITY_MPS2), {});
+        estimator.update(makeFrame(timestamp, 100.0f, mark4::GRAVITY_MPS2), STEP_S, {});
         timestamp += STEP_US;
     }
     REQUIRE(estimator.horizontalVelocityMps()[0] < 0.85f * pushed);

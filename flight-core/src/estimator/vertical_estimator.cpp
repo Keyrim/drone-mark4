@@ -6,8 +6,6 @@ namespace mark4
 {
     namespace
     {
-        constexpr float US_PER_S = 1e6f;
-
         // Standard atmosphere, inverse of pressure(altitude); the constants
         // mirror the simulator's sensor model.
         constexpr float SEA_LEVEL_PRESSURE_PA = 101325.0f;
@@ -25,7 +23,7 @@ namespace mark4
         return (1.0f - std::pow(ratio, ATMOSPHERE_EXPONENT_INV)) / ATMOSPHERE_LAPSE_PER_M;
     }
 
-    void VerticalEstimator::update(const SensorFrame &frame, const Quaternion &attitude)
+    void VerticalEstimator::update(const SensorFrame &frame, float dtS, const Quaternion &attitude)
     {
         const float baroAltitudeM = pressureAltitudeM(frame.baroPa);
 
@@ -38,22 +36,12 @@ namespace mark4
                 m_referenceAltitudeM = m_referenceSumM / static_cast<float>(m_referenceCount);
                 m_ready = true;
             }
-            m_prevTimestampUs = frame.timestampUs;
-            m_hasPrevTimestamp = true;
             return;
         }
 
-        if (!m_hasPrevTimestamp || frame.timestampUs <= m_prevTimestampUs)
+        if (dtS <= 0.0f)
         {
-            m_prevTimestampUs = frame.timestampUs;
-            m_hasPrevTimestamp = true;
-            return;
-        }
-        const float dt = static_cast<float>(frame.timestampUs - m_prevTimestampUs) / US_PER_S;
-        m_prevTimestampUs = frame.timestampUs;
-        if (dt > MAX_STEP_S)
-        {
-            return; // gap in the stream: reference re-armed, nothing integrated
+            return; // first frame or gap: nothing may integrate
         }
 
         // Specific force in the world frame (body-to-world rotation). On the
@@ -76,15 +64,15 @@ namespace mark4
 
         // Dead reckoning, leaking toward zero: nothing measures the
         // horizontal velocity, the leak bounds the integration drift.
-        m_horizontalMps[0] += (accelWorldX - m_horizontalMps[0] / HORIZONTAL_LEAK_S) * dt;
-        m_horizontalMps[1] += (accelWorldY - m_horizontalMps[1] / HORIZONTAL_LEAK_S) * dt;
+        m_horizontalMps[0] += (accelWorldX - m_horizontalMps[0] / HORIZONTAL_LEAK_S) * dtS;
+        m_horizontalMps[1] += (accelWorldY - m_horizontalMps[1] / HORIZONTAL_LEAK_S) * dtS;
 
         // Predict from the accelerometer, correct toward the baro altitude.
-        m_velocityMps += verticalAccel * dt;
-        m_altitudeM += m_velocityMps * dt;
+        m_velocityMps += verticalAccel * dtS;
+        m_altitudeM += m_velocityMps * dtS;
 
         const float errorM = (baroAltitudeM - m_referenceAltitudeM) - m_altitudeM;
-        m_altitudeM += m_altitudeGain * errorM * dt;
-        m_velocityMps += m_velocityGain * errorM * dt;
+        m_altitudeM += m_altitudeGain * errorM * dtS;
+        m_velocityMps += m_velocityGain * errorM * dtS;
     }
 } // namespace mark4

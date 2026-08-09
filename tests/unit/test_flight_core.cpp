@@ -111,6 +111,62 @@ TEST_CASE("the kill switch ends the mission and disarms the state machine")
     REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
 }
 
+TEST_CASE("an out-of-order frame is ignored and the outputs hold")
+{
+    mark4::FlightCore core;
+    mark4::SensorFrame frame;
+    mark4::ActuatorFrame actuators;
+    frame.rc.killSwitch = false;
+    frame.rc.throttle = 0.5f;
+    frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
+
+    frame.timestampUs = 0U;
+    core.step(frame, actuators);
+    frame.timestampUs = 2000U;
+    core.step(frame, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    const std::array<float, 4> held = actuators.motor;
+
+    // Same timestamp, then an older one: both ignored, outputs held, even
+    // though the frame content is violent enough to trip every cutoff.
+    frame.gyroRadS = {70.0f, 0.0f, 0.0f};
+    frame.timestampUs = 2000U;
+    core.step(frame, actuators);
+    frame.timestampUs = 1000U;
+    core.step(frame, actuators);
+    REQUIRE(core.staleFrameCount() == 2U);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(actuators.motor == held);
+
+    // The stream resumes where it left off: fresh frames step normally.
+    frame.gyroRadS = {0.0f, 0.0f, 0.0f};
+    frame.timestampUs = 4000U;
+    core.step(frame, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+}
+
+TEST_CASE("a backwards timestamp during the recovery does not latch the cutoff")
+{
+    mark4::FlightCore core;
+    mark4::ActuatorFrame actuators;
+
+    std::uint64_t timestamp = playThrow(core, actuators);
+    while (core.flightPhase() == mark4::FlightPhase::BALLISTIC)
+    {
+        timestamp = feed(core, actuators, timestamp, 1U, 0.0f, true);
+    }
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::RECOVERY);
+
+    // An out-of-order frame used to wrap the unsigned elapsed-time math and
+    // instantly latch CUTOFF mid-recovery. It must be ignored instead.
+    mark4::SensorFrame frame;
+    frame.timestampUs = timestamp - 500000U;
+    frame.rc.killSwitch = false;
+    frame.rc.armSwitch = true;
+    core.step(frame, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::RECOVERY);
+}
+
 TEST_CASE("a throttle below the arming threshold keeps the motors stopped")
 {
     mark4::FlightCore core;

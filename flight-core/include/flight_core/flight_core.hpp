@@ -36,6 +36,17 @@ namespace mark4
     {
       public:
         /// @brief Runs one control step. The kill switch is honored first.
+        ///
+        /// Input contract. The kill switch is a level and is honored on every
+        /// frame, whatever else the frame carries. For everything else the
+        /// frame must move time forward: a timestamp not strictly above the
+        /// last accepted one is a transport artifact - the frame is ignored,
+        /// the outputs hold their previous values and the time reference does
+        /// not move (a rebased stream is a new session; the composition
+        /// signals it with a fresh core, it is never inferred here). Frames
+        /// further apart than MAX_STEP_S are gaps: the step runs but nothing
+        /// integrates over the hole. step() derives dt once under this policy
+        /// and passes it down; no other module does timestamp arithmetic.
         /// @param sensors latest sensor frame
         /// @param[out] actuators motor commands computed for this step
         void step(const SensorFrame &sensors, ActuatorFrame &actuators);
@@ -44,6 +55,12 @@ namespace mark4
         [[nodiscard]] std::uint32_t stepCount() const
         {
             return m_stepCount;
+        }
+
+        /// @return frames rejected for a non-increasing timestamp
+        [[nodiscard]] std::uint32_t staleFrameCount() const
+        {
+            return m_staleFrameCount;
         }
 
         /// @return estimated body-to-world attitude
@@ -84,9 +101,10 @@ namespace mark4
         /// stick holds the altitude.
         static constexpr float STICK_VZ_RANGE_MPS = 2.0f;
 
-        /// Control steps longer than this are gaps: the loop outputs are
-        /// recomputed but the integrators do not integrate the hole.
-        static constexpr float MAX_CONTROL_STEP_S = 0.05f;
+        /// Frames further apart than this are gaps in the stream: the step
+        /// still runs but dt is forced to 0, so no estimator or control
+        /// integrator ever integrates the hole. Owned here, for every module.
+        static constexpr float MAX_STEP_S = 0.05f;
 
         /// Accel norm above which an impact cuts the motors. A hand throw
         /// peaks around 6 g; a crash spikes far beyond.
@@ -154,9 +172,14 @@ namespace mark4
         }
 
       private:
-        void updateEstimators(const SensorFrame &sensors);
+        /// @return true when the timestamp moves time forward (or is the first)
+        [[nodiscard]] bool acceptsTimestamp(std::uint64_t timestampUs) const;
+        /// @brief Advances the time reference and derives the integration step.
+        /// @return dt [s], 0 on the first frame or across a gap
+        float deriveDt(std::uint64_t timestampUs);
+        void updateEstimators(const SensorFrame &sensors, float dt);
         void advancePhase(const SensorFrame &sensors);
-        void runControl(const SensorFrame &sensors, ActuatorFrame &actuators);
+        void runControl(const SensorFrame &sensors, float dt, ActuatorFrame &actuators);
         [[nodiscard]] bool cutoffTripped(const SensorFrame &sensors, bool withTilt = true);
         [[nodiscard]] float estimatedUpZ() const;
         [[nodiscard]] std::array<float, 3> brakeUpWorld() const;
@@ -168,12 +191,15 @@ namespace mark4
         bool m_brakeDone = false;                 ///< braking spent for this flight
         std::uint64_t m_tiltExceededSinceUs = 0U; ///< start of the tilt streak, 0 = none
         std::uint32_t m_stepCount = 0U;
+        std::uint32_t m_staleFrameCount = 0U; ///< frames with a non-increasing timestamp
+        std::array<float, 4> m_lastMotor{};   ///< outputs held when a frame is rejected
         AttitudeEstimator m_attitudeEstimator;
         VerticalEstimator m_verticalEstimator;
         ThrowDetector m_throwDetector;
         AttitudeController m_attitudeController;
         RateController m_rateController;
         VerticalController m_verticalController;
-        std::uint64_t m_prevControlTimestampUs = 0U; ///< control step reference [us]
+        std::uint64_t m_prevTimestampUs = 0U; ///< timestamp of the last accepted frame [us]
+        bool m_hasPrevTimestamp = false;      ///< false until the first accepted frame
     };
 } // namespace mark4

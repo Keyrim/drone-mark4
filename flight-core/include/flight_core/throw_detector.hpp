@@ -57,7 +57,9 @@ namespace mark4
         /// real hand throw leaves at several m/s.
         static constexpr float MIN_RELEASE_VELOCITY_MPS = 2.0f;
 
-        /// @brief Advances the detector with one sensor frame.
+        /// @brief Advances the detector with one sensor frame. Timestamps must
+        ///        be strictly increasing across calls; FlightCore guarantees it
+        ///        by rejecting out-of-order frames before any module runs.
         /// @param frame sensor frame carrying accel and the timestamp
         /// @param verticalVelocityMps current vertical velocity estimate [m/s]
         /// @param altitudeM current altitude estimate [m]

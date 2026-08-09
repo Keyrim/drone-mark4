@@ -31,16 +31,52 @@ namespace mark4
         if (sensors.rc.killSwitch)
         {
             actuators.motor.fill(0.0f);
-            updateEstimators(sensors);
+            m_lastMotor = actuators.motor;
+            if (acceptsTimestamp(sensors.timestampUs))
+            {
+                updateEstimators(sensors, deriveDt(sensors.timestampUs));
+            }
             m_rateController.reset();
             m_verticalController.reset();
             m_phase = FlightPhase::IDLE;
             return;
         }
 
-        updateEstimators(sensors);
+        if (!acceptsTimestamp(sensors.timestampUs))
+        {
+            // Out-of-order frame: a transport artifact, not a measurement.
+            // Ignored entirely so no timer ever sees time move backward.
+            ++m_staleFrameCount;
+            actuators.motor = m_lastMotor;
+            return;
+        }
+
+        const float dt = deriveDt(sensors.timestampUs);
+        updateEstimators(sensors, dt);
         advancePhase(sensors);
-        runControl(sensors, actuators);
+        runControl(sensors, dt, actuators);
+        m_lastMotor = actuators.motor;
+    }
+
+    bool FlightCore::acceptsTimestamp(std::uint64_t timestampUs) const
+    {
+        return !m_hasPrevTimestamp || timestampUs > m_prevTimestampUs;
+    }
+
+    float FlightCore::deriveDt(std::uint64_t timestampUs)
+    {
+        float dt = 0.0f;
+        if (m_hasPrevTimestamp)
+        {
+            dt = static_cast<float>(timestampUs - m_prevTimestampUs) / US_PER_S;
+            if (dt > MAX_STEP_S)
+            {
+                dt = 0.0f; // gap in the stream: re-arm without integrating
+            }
+        }
+        m_prevTimestampUs = timestampUs;
+        m_hasPrevTimestamp = true;
+        return dt;
     }
 
     void FlightCore::advancePhase(const SensorFrame &sensors)
@@ -156,19 +192,8 @@ namespace mark4
         }
     }
 
-    void FlightCore::runControl(const SensorFrame &sensors, ActuatorFrame &actuators)
+    void FlightCore::runControl(const SensorFrame &sensors, float dt, ActuatorFrame &actuators)
     {
-        float dt = 0.0f;
-        if (sensors.timestampUs > m_prevControlTimestampUs)
-        {
-            dt = static_cast<float>(sensors.timestampUs - m_prevControlTimestampUs) / US_PER_S;
-            if (dt > MAX_CONTROL_STEP_S)
-            {
-                dt = 0.0f; // gap in the stream: hold the integrators
-            }
-        }
-        m_prevControlTimestampUs = sensors.timestampUs;
-
         switch (m_phase)
         {
             case FlightPhase::IDLE:
@@ -300,7 +325,7 @@ namespace mark4
         return q.w * q.w - q.x * q.x - q.y * q.y + q.z * q.z;
     }
 
-    void FlightCore::updateEstimators(const SensorFrame &sensors)
+    void FlightCore::updateEstimators(const SensorFrame &sensors, float dt)
     {
         // While the core deliberately accelerates (recovery, braking) the
         // specific force is thrust, not gravity: it sits near 1 g along body
@@ -309,8 +334,8 @@ namespace mark4
         // gravity correction resumes once the hover is quasi-static.
         const bool maneuvering =
             m_phase == FlightPhase::RECOVERY || (m_phase == FlightPhase::HOVER && !m_brakeDone);
-        m_attitudeEstimator.update(sensors, !maneuvering);
-        m_verticalEstimator.update(sensors, m_attitudeEstimator.attitude());
+        m_attitudeEstimator.update(sensors, dt, !maneuvering);
+        m_verticalEstimator.update(sensors, dt, m_attitudeEstimator.attitude());
         m_throwDetector.update(
             sensors, m_verticalEstimator.verticalVelocityMps(), m_verticalEstimator.altitudeM());
     }

@@ -10,6 +10,7 @@
 namespace
 {
     constexpr std::uint64_t STEP_US = 2000U; // 500 Hz stream
+    constexpr float STEP_S = 0.002f;
 
     /// @return a frame carrying the given rates and specific force
     mark4::SensorFrame makeFrame(std::uint64_t timestampUs,
@@ -34,7 +35,7 @@ namespace
         std::uint64_t timestamp = fromUs;
         for (std::uint32_t i = 0U; i < steps; ++i)
         {
-            estimator.update(makeFrame(timestamp, gyroRadS, accelMps2));
+            estimator.update(makeFrame(timestamp, gyroRadS, accelMps2), STEP_S);
             timestamp += STEP_US;
         }
         return timestamp;
@@ -124,16 +125,15 @@ TEST_CASE("a constant gyro bias is estimated away on the pad")
     REQUIRE(estimator.attitude().w > 0.999f);
 }
 
-TEST_CASE("a gap in the stream is skipped instead of integrated")
+TEST_CASE("a zero dt is a no-op: the caller's gap policy holds the estimate")
 {
     mark4::AttitudeEstimator estimator;
     const std::uint64_t timestamp = feed(estimator, 0U, 1000U, ZERO_RATES, LEVEL_ACCEL);
     const mark4::Quaternion before = estimator.attitude();
 
-    // One frame a full second later with a violent rate: integrating it over
-    // the gap would slew the attitude by half a turn.
-    const std::uint64_t afterGapUs = timestamp + 1000000U;
-    estimator.update(makeFrame(afterGapUs, {3.14f, 0.0f, 0.0f}, LEVEL_ACCEL));
+    // FlightCore hands dt = 0 across a gap in the stream: a violent rate on
+    // that frame must not slew the attitude at all.
+    estimator.update(makeFrame(timestamp, {3.14f, 0.0f, 0.0f}, LEVEL_ACCEL), 0.0f);
 
     const mark4::Quaternion &after = estimator.attitude();
     REQUIRE(std::fabs(after.w - before.w) < 1e-6f);
@@ -152,8 +152,8 @@ TEST_CASE("the accel correction can be suspended during deliberate accelerations
     for (std::uint32_t i = 0U; i < 500U; ++i)
     {
         frame.timestampUs = static_cast<std::uint64_t>(i) * 2000U;
-        corrected.update(frame, true);
-        suspended.update(frame, false);
+        corrected.update(frame, STEP_S, true);
+        suspended.update(frame, STEP_S, false);
     }
 
     const mark4::Quaternion &still = suspended.attitude();

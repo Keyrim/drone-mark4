@@ -5,24 +5,11 @@
 
 namespace mark4
 {
-    namespace
+    void AttitudeEstimator::update(const SensorFrame &frame, float dtS, bool allowAccelCorrection)
     {
-        constexpr float US_PER_S = 1e6f;
-    } // namespace
-
-    void AttitudeEstimator::update(const SensorFrame &frame, bool allowAccelCorrection)
-    {
-        if (!m_hasPrevTimestamp || frame.timestampUs <= m_prevTimestampUs)
+        if (dtS <= 0.0f)
         {
-            m_prevTimestampUs = frame.timestampUs;
-            m_hasPrevTimestamp = true;
-            return;
-        }
-        const float dt = static_cast<float>(frame.timestampUs - m_prevTimestampUs) / US_PER_S;
-        m_prevTimestampUs = frame.timestampUs;
-        if (dt > MAX_STEP_S)
-        {
-            return; // gap in the stream: reference re-armed, nothing integrated
+            return; // first frame or gap: nothing may integrate
         }
 
         // Gravity direction error, only when the specific force is close
@@ -65,7 +52,7 @@ namespace mark4
                 for (std::size_t axis = 0U; axis < 3U; ++axis)
                 {
                     const float e = axis == 0U ? ex : (axis == 1U ? ey : ez);
-                    float integral = m_integralFb[axis] + m_ki * e * dt;
+                    float integral = m_integralFb[axis] + m_ki * e * dtS;
                     integral = integral > BIAS_LIMIT_RADS ? BIAS_LIMIT_RADS : integral;
                     integral = integral < -BIAS_LIMIT_RADS ? -BIAS_LIMIT_RADS : integral;
                     m_integralFb[axis] = integral;
@@ -79,7 +66,7 @@ namespace mark4
 
         // q <- normalize(q + 0.5 * q * (0, w) * dt)
         const Quaternion q = m_attitude;
-        const float half = 0.5f * dt;
+        const float half = 0.5f * dtS;
         m_attitude.w += half * (-q.x * wx - q.y * wy - q.z * wz);
         m_attitude.x += half * (q.w * wx + q.y * wz - q.z * wy);
         m_attitude.y += half * (q.w * wy - q.x * wz + q.z * wx);

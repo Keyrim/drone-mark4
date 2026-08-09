@@ -39,10 +39,6 @@ namespace mark4
         /// Number of frames averaged into the baro reference at startup.
         static constexpr std::uint32_t REFERENCE_SAMPLES = 50U;
 
-        /// Integration steps longer than this are treated as gaps in the
-        /// stream: the step is skipped instead of being integrated.
-        static constexpr float MAX_STEP_S = 0.05f;
-
         /// Leak time constant of the dead reckoned horizontal velocity [s]:
         /// long against a throw plus its braking, short against the drift of
         /// an unaided integration.
@@ -58,12 +54,15 @@ namespace mark4
         }
 
         /// @brief Advances the estimate with one sensor frame. The first
-        ///        REFERENCE_SAMPLES frames only build the baro reference; the
-        ///        integration step is the timestamp delta between consecutive
-        ///        frames and gaps larger than MAX_STEP_S only re-arm it.
-        /// @param frame sensor frame carrying accel, baro and the timestamp
+        ///        REFERENCE_SAMPLES frames only build the baro reference. The
+        ///        caller owns the time policy (monotonicity, gap handling) and
+        ///        hands the integration step down; a non-positive dt only
+        ///        contributes to the reference, nothing integrates.
+        /// @param frame sensor frame carrying accel and baro
+        /// @param dtS integration step [s], 0 when nothing may integrate
+        ///        (first frame or gap in the stream)
         /// @param attitude current body-to-world attitude estimate
-        void update(const SensorFrame &frame, const Quaternion &attitude);
+        void update(const SensorFrame &frame, float dtS, const Quaternion &attitude);
 
         /// @return true once the baro reference is captured and the estimate runs
         [[nodiscard]] bool ready() const
@@ -104,7 +103,5 @@ namespace mark4
         float m_referenceSumM = 0.0f;           ///< accumulator for the reference [m]
         std::uint32_t m_referenceCount = 0U;    ///< frames accumulated so far
         bool m_ready = false;                   ///< reference captured
-        std::uint64_t m_prevTimestampUs = 0U;   ///< integration reference [us]
-        bool m_hasPrevTimestamp = false;        ///< false until the first frame
     };
 } // namespace mark4
