@@ -3,6 +3,7 @@
 /// @file
 /// @brief RAII wrapper around a bound POSIX UDP socket.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -22,6 +23,10 @@ namespace mark4
     class UdpLink
     {
       public:
+        /// Largest reply the repeat cache can hold [bytes]. Every reply of
+        /// the protocol fits inside it with room to spare.
+        static constexpr std::size_t MAX_REPLY_SIZE = 128U;
+
         UdpLink() = default;
         ~UdpLink();
 
@@ -63,11 +68,19 @@ namespace mark4
         ///        target. Call it once the datagram passed validation.
         void acceptLastSender();
 
-        /// @brief Sends one datagram back to the last accepted sender.
+        /// @brief Sends one datagram back to the last accepted sender, and
+        ///        keeps a copy of it for repeatLastReply().
         /// @param data bytes to send
         /// @param size number of bytes to send
         /// @return true when the whole datagram was handed to the stack
         bool replyToLastSender(const std::uint8_t *data, std::size_t size);
+
+        /// @brief Sends the last reply again, byte for byte. The lockstep
+        ///        handshake makes a repeat legitimate: a peer that resends a
+        ///        request is a peer that never got its answer, and the answer
+        ///        it missed is precisely the one it must end up with.
+        /// @return true when a reply was cached and the whole datagram went out
+        bool repeatLastReply();
 
       private:
         /// @brief Shared body of receive() and receiveNonBlocking().
@@ -86,5 +99,7 @@ namespace mark4
         bool m_hasPendingSender = false; ///< true once a datagram was received
         sockaddr_in m_replyTarget{};     ///< last accepted sender
         bool m_hasReplyTarget = false;   ///< true once a sender was accepted
+        std::array<std::uint8_t, MAX_REPLY_SIZE> m_lastReply{}; ///< last reply bytes
+        std::size_t m_lastReplySize = 0U;                       ///< bytes cached, 0 = none
     };
 } // namespace mark4

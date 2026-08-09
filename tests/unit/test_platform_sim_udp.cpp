@@ -233,6 +233,42 @@ TEST_CASE("a stray datagram cannot redirect the motor replies")
     REQUIRE(intruder.receive(wire.data(), wire.size()) == 0U);
 }
 
+TEST_CASE("a resent sensor packet is answered again instead of stepped twice")
+{
+    mark4::UdpLink link;
+    REQUIRE(link.open(0U, TEST_TIMEOUT_MS));
+
+    mark4::SensorSourceSim source(link);
+    mark4::MotorSinkSim sink(link);
+    SimulatorStub simulator;
+
+    const SensorDatagram datagram = makeSensorDatagram();
+    REQUIRE(simulator.sendTo(link.boundPort(), datagram.data(), datagram.size()));
+
+    mark4::SensorFrame frame;
+    REQUIRE(source.waitFrame(frame) == mark4::FrameWait::FRAME);
+
+    mark4::ActuatorFrame actuators;
+    actuators.timestampUs = frame.timestampUs;
+    actuators.motor = {0.1f, 0.2f, 0.3f, 0.4f};
+    sink.push(actuators);
+
+    std::array<std::uint8_t, 128> first{};
+    const std::size_t firstSize = simulator.receive(first.data(), first.size());
+    REQUIRE(firstSize == mark4::SIM_ACTUATOR_PACKET_SIZE);
+
+    // The same tick arrives again: the simulator never got its reply.
+    REQUIRE(simulator.sendTo(link.boundPort(), datagram.data(), datagram.size()));
+    REQUIRE(source.waitFrame(frame) == mark4::FrameWait::TIMEOUT);
+    REQUIRE(source.duplicateFrameCount() == 1U);
+    REQUIRE(sink.pushCount() == 1U); // the core was not stepped a second time
+
+    // ...and the answer it missed went out again, byte for byte.
+    std::array<std::uint8_t, 128> repeat{};
+    REQUIRE(simulator.receive(repeat.data(), repeat.size()) == firstSize);
+    REQUIRE(std::memcmp(first.data(), repeat.data(), firstSize) == 0);
+}
+
 TEST_CASE("an idle link ends the run")
 {
     mark4::UdpLink link;

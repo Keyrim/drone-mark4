@@ -26,6 +26,13 @@ namespace mark4
         ///        unexpected size or protocol version are dropped silently and
         ///        the wait resumes. The RC fields of the frame are not written
         ///        here: RC arrives out-of-band through the command receiver.
+        ///
+        ///        A packet repeating the timestamp of the previous one is a
+        ///        resend, not a new sample: the simulator asks again because
+        ///        the reply to that exact tick never reached it. The cached
+        ///        reply goes out again and the wait resumes, so the flight
+        ///        core, the blackbox and the telemetry never see the same
+        ///        instant twice.
         /// @param[out] frameOut frame decoded from the packet
         /// @return FRAME when a packet was decoded, TIMEOUT when the link
         ///         stayed idle for the receive timeout of the underlying
@@ -41,8 +48,17 @@ namespace mark4
             return m_resetCount;
         }
 
+        /// @return sensor packets dropped as resends of the previous tick
+        [[nodiscard]] std::uint32_t duplicateFrameCount() const
+        {
+            return m_duplicateFrames;
+        }
+
       private:
-        UdpLink &m_link;                ///< sim link, owned by the composition root
-        std::uint8_t m_resetCount = 0U; ///< reset counter of the last packet
+        UdpLink &m_link;                      ///< sim link, owned by the composition root
+        std::uint8_t m_resetCount = 0U;       ///< reset counter of the last packet
+        std::uint64_t m_lastTimestampUs = 0U; ///< timestamp of the last accepted packet
+        bool m_timestampSeen = false;         ///< true once a packet was accepted
+        std::uint32_t m_duplicateFrames = 0U; ///< resends answered again, never stepped
     };
 } // namespace mark4

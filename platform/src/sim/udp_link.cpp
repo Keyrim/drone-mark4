@@ -138,6 +138,18 @@ namespace mark4
             return false;
         }
 
+        // Cached before the send: what the peer must eventually receive is
+        // this datagram, whether the stack takes it now or on a repeat.
+        if (size <= m_lastReply.size())
+        {
+            std::memcpy(m_lastReply.data(), data, size);
+            m_lastReplySize = size;
+        }
+        else
+        {
+            m_lastReplySize = 0U;
+        }
+
         const ssize_t sent = ::sendto(m_socketFd,
                                       data,
                                       size,
@@ -150,6 +162,28 @@ namespace mark4
             return false;
         }
         return static_cast<std::size_t>(sent) == size;
+    }
+
+    bool UdpLink::repeatLastReply()
+    {
+        if (m_socketFd < 0 || !m_hasReplyTarget || m_lastReplySize == 0U)
+        {
+            return false;
+        }
+        // Deliberately not re-caching: replyToLastSender() already holds the
+        // exact bytes, and a repeat must never change them.
+        const ssize_t sent = ::sendto(m_socketFd,
+                                      m_lastReply.data(),
+                                      m_lastReplySize,
+                                      0,
+                                      reinterpret_cast<const sockaddr *>(&m_replyTarget),
+                                      sizeof(m_replyTarget));
+        if (sent < 0)
+        {
+            logErrno("sendto");
+            return false;
+        }
+        return static_cast<std::size_t>(sent) == m_lastReplySize;
     }
 
     void UdpLink::closeSocket()

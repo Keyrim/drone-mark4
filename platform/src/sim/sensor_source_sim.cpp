@@ -37,6 +37,18 @@ namespace mark4
             mark4::SimSensorPacket packet{};
             std::memcpy(&packet, wire.data(), sizeof(packet));
 
+            if (m_timestampSeen && packet.timestampUs == m_lastTimestampUs)
+            {
+                /* The simulator is asking again for the answer to a tick it
+                   already sent: the reply was lost, not the sample. Answering
+                   twice is correct, stepping twice would fabricate a frame
+                   the plant never produced. */
+                m_link.acceptLastSender();
+                static_cast<void>(m_link.repeatLastReply());
+                ++m_duplicateFrames;
+                continue;
+            }
+
             frameOut.timestampUs = packet.timestampUs;
             /* The std::array members sit at odd offsets in the packed struct:
                reading them through it would bind a reference to a misaligned
@@ -52,6 +64,8 @@ namespace mark4
             // not a sensor reading, and the composition root grafts it from
             // its RcTracker after this call returns.
             m_resetCount = packet.resetCount;
+            m_lastTimestampUs = packet.timestampUs;
+            m_timestampSeen = true;
             // Only a validated sensor packet may steer the motor replies:
             // a stray datagram on the port must not stall the lockstep.
             m_link.acceptLastSender();
