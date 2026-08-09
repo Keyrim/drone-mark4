@@ -3,7 +3,9 @@ include(FetchContent)
 FetchContent_Declare(
     Catch2
     GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-    GIT_TAG v3.8.1)
+    # v3.8.1, pinned by commit: a tag can be force-pushed and would change
+    # what CI builds with no diff in this repo.
+    GIT_TAG 2b60af89e23d28eefc081bc930831ee9d45ea58b)
 FetchContent_MakeAvailable(Catch2)
 
 add_executable(unit_tests

@@ -1,4 +1,10 @@
 # Workflow 2: PR + main, parallel jobs, all INSIDE the devcontainer image.
+#
+# The image is pinned by digest so a re-run months later builds in the same
+# environment and a push racing an image rebuild cannot flip environments
+# mid-CI. After a .devcontainer/ change, bump the digest to the one pushed
+# by devcontainer-image.yml:
+#   docker manifest inspect ghcr.io/keyrim/drone-mark4-devcontainer:latest
 name: ci
 
 on:
@@ -10,12 +16,18 @@ permissions:
   contents: read
   packages: read
 
+# A superseded push must not keep burning runners.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   desktop:
     name: desktop (build + tests)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer:latest
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:cae2507542edc4f32d35755ef8bfda0ee6370074fc56f29f2680c63cf8bee966
       # The image runs as user "dev"; the runner's mounted workdirs belong to
       # another UID, so container jobs must run as root.
       options: --user root
@@ -31,8 +43,9 @@ jobs:
   stm32:
     name: stm32 (cross-compilation)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer:latest
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:cae2507542edc4f32d35755ef8bfda0ee6370074fc56f29f2680c63cf8bee966
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -45,8 +58,9 @@ jobs:
   desktop-san:
     name: desktop-san (ASan/UBSan)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer:latest
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:cae2507542edc4f32d35755ef8bfda0ee6370074fc56f29f2680c63cf8bee966
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -58,10 +72,11 @@ jobs:
       - run: ctest --preset desktop-san
 
   format:
-    name: clang-format
+    name: clang-format + ascii
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer:latest
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:cae2507542edc4f32d35755ef8bfda0ee6370074fc56f29f2680c63cf8bee966
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -70,12 +85,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: git ls-files '*.cpp' '*.hpp' '*.c' '*.h' | xargs clang-format --dry-run --Werror
+      - run: ./scripts/check_ascii.sh
 
   tidy:
-    name: clang-tidy
+    name: clang-tidy (desktop + stm32)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer:latest
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:cae2507542edc4f32d35755ef8bfda0ee6370074fc56f29f2680c63cf8bee966
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -84,3 +101,5 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: cmake --preset desktop
       - run: run-clang-tidy -p build/desktop -quiet "$(pwd)/(apps|flight-core|platform|protocol|tests)/"
+      - run: cmake --preset stm32
+      - run: ./scripts/tidy_stm32.sh

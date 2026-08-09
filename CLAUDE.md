@@ -53,9 +53,11 @@ ctest --preset desktop -R "kill switch"
 # Monte Carlo throw campaign through headless Godot (see tools/batch/README.md)
 python3 tools/batch/run_batch.py --runs 100 --parallel 4 [--godot /path/to/godot4]
 
-# Lint (both must be clean before committing; CI runs exactly these)
+# Lint (all must be clean before committing; CI runs exactly these)
 git ls-files '*.cpp' '*.hpp' '*.c' '*.h' | xargs clang-format --dry-run --Werror
 run-clang-tidy -p build/desktop -quiet "$(pwd)/(apps|flight-core|platform|protocol|tests)/"
+./scripts/tidy_stm32.sh    # clang-tidy over the stm32 compile database
+./scripts/check_ascii.sh   # ASCII-only hard rule
 ```
 
 clang-format and clang-tidy are pinned to LLVM 21 (devcontainer). Fix
@@ -112,8 +114,10 @@ every project target, not by FetchContent deps such as Catch2).
 
 `.github/workflows/devcontainer-image.yml` rebuilds the dev image and pushes
 it to GHCR (`ghcr.io/keyrim/drone-mark4-devcontainer`) when `.devcontainer/`
-changes; `ci.yml` runs 5 jobs (desktop+tests, stm32, desktop-san, format,
-tidy) inside that image. Container jobs need `options: --user root` (the
+changes; `ci.yml` runs 5 jobs (desktop+tests, stm32, desktop-san,
+format+ascii, tidy desktop+stm32) inside that image, pinned by digest.
+After a `.devcontainer/` change, bump the digest in `ci.yml` to the one the
+image workflow pushed (`docker manifest inspect ...:latest`). Container jobs need `options: --user root` (the
 image defaults to user `dev`, the runner mounts workdirs for another UID).
 If CI needs a new tool, add it to the Dockerfile; the image is the single
 source of truth for the environment (same versions as the devcontainer).
