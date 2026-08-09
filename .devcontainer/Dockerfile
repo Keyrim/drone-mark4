@@ -16,6 +16,8 @@ ARG ARM_TOOLCHAIN_VERSION=14.2.rel1
 ARG LLVM_VERSION=21
 ARG JLINK_VERSION=V812
 ARG GODOT_VERSION=4.7.1-stable
+ARG NODE_VERSION=22.21.1
+ARG PNPM_VERSION=11.21.0
 
 # -----------------------------------------------------------------------------
 # Layer 1 - base tools, native compiler, build system, debug, Python
@@ -41,12 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 \
         python3-pip \
         python3-venv \
-        pipenv \
     && rm -rf /var/lib/apt/lists/*
-
-# pipenv creates each tool's venv in-project (<tool>/.venv, gitignored), where
-# the VS Code launch configurations expect to find the interpreter.
-ENV PIPENV_VENV_IN_PROJECT=1
 
 # -----------------------------------------------------------------------------
 # Layer 2 - clang-format / clang-tidy / clangd from apt.llvm.org (pinned)
@@ -124,26 +121,19 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
-# Layer 6 - Qt runtime for the ground station
-#   The PyQt6 wheels bundle Qt itself but dynamically link these system
-#   libraries (OpenGL, fontconfig, xcb platform plugin for X11/WSLg).
+# Layer 6 - Node.js + pnpm for the hub web pages (apps/hub/pages)
+#   Official tarball into /usr/local, pnpm pinned through corepack. The
+#   corepack store lives in a world-readable location so the same install
+#   serves both the dev user and the root user CI jobs run as.
 # -----------------------------------------------------------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libgl1 \
-        libegl1 \
-        libfontconfig1 \
-        libfreetype6 \
-        libdbus-1-3 \
-        libxkbcommon-x11-0 \
-        libxcb-cursor0 \
-        libxcb-icccm4 \
-        libxcb-image0 \
-        libxcb-keysyms1 \
-        libxcb-randr0 \
-        libxcb-render-util0 \
-        libxcb-shape0 \
-        libxcb-xkb1 \
-    && rm -rf /var/lib/apt/lists/*
+ENV COREPACK_HOME=/usr/local/share/corepack
+RUN wget -qO /tmp/node.tar.xz \
+        "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+    && tar -xJf /tmp/node.tar.xz --strip-components=1 -C /usr/local \
+    && rm /tmp/node.tar.xz \
+    && corepack enable \
+    && corepack install -g pnpm@${PNPM_VERSION} \
+    && node --version && pnpm --version
 
 # -----------------------------------------------------------------------------
 # Layer 7 - non-root user with NOPASSWD sudo
