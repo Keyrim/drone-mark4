@@ -59,6 +59,19 @@ Two consequences worth knowing:
   offline, with the future available, and its numbers are the authority. A
   disagreement between the two is expected, not a bug.
 
+## Replay
+
+Replay mode reads the recordings the hub already holds, over its REST API:
+`/api/recordings` to list them, `/api/recording` to open one into the same
+lanes, `/api/summary` and `/api/compare` for the cards, `/api/file` for the
+raw downloads. `?rec=NAME` opens a recording straight away and the page keeps
+that link up to date, so a run is shareable by URL.
+
+A streams recording replays through the latch rule above, so a value read in
+replay is the value that was on screen live. A blackbox recording has no
+estimate and no exact state: its series are its columns, and its lanes are
+built from the header the hub sent rather than from the catalog.
+
 ## View configs
 
 The lane layout is a *view*: a name, and which series each lane draws. Views
