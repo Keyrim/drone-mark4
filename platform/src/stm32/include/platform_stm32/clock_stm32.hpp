@@ -10,9 +10,13 @@
 namespace mark4
 {
     /// TIM2 free-running at 1 MHz. The 32-bit counter wraps every ~71
-    /// minutes; nowUs() extends it to 64 bits, which holds as long as it
-    /// is called more than once per wrap (the sensor loop calls it every
-    /// frame).
+    /// minutes; nowUs() extends it to 64 bits with a read-modify-write on
+    /// the wrap counter. Two hard constraints follow, both honored by the
+    /// one flight loop and worth restating before any second caller shows
+    /// up: nowUs() must be called at least once per counter wrap (the
+    /// 500 Hz loop calls it every frame), and it must only ever be called
+    /// from a single context - a call from an interrupt could interleave
+    /// with one from the loop and double-count a wrap.
     class ClockStm32 final : public AbsClock
     {
       public:
@@ -20,7 +24,8 @@ namespace mark4
         ///        set by initSystemClock().
         void init();
 
-        /// @return microseconds since init()
+        /// @return microseconds since init(). Single-context only, and at
+        ///         least once per ~71 min wrap; see the class contract.
         std::uint64_t nowUs() override;
 
       private:

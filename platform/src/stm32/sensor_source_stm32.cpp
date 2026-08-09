@@ -38,6 +38,9 @@ namespace mark4
 
     FrameWait SensorSourceStm32::waitFrame(mark4::SensorFrame &frameOut)
     {
+        // Accepted race: a tick between the test and the WFI sleeps one
+        // extra tick (the next interrupt still wakes the core), counted as
+        // an overrun below. The counter itself never loses a tick.
         while (g_ticks == m_consumedTicks)
         {
             __asm volatile("wfi");

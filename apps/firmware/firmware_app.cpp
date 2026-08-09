@@ -50,6 +50,7 @@ namespace mark4
         rttPrintf("clock: %lu Hz\n", static_cast<unsigned long>(coreClockHz()));
         initLeds();
 
+        m_clock.init();
         if (!m_bus.init())
         {
             rttWrite("i2c1: init failed, bus stuck busy\n");
@@ -63,7 +64,6 @@ namespace mark4
         {
             return false; // the driver logged the reason
         }
-        m_clock.init();
         m_sensorSource.init();
         if (!m_telemetrySender.init())
         {

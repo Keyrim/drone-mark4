@@ -16,6 +16,11 @@ namespace mark4
     /// not wired on this board, so a timer paces the loop). waitFrame()
     /// sleeps on WFI between ticks. RC is not received yet: frames carry
     /// the safe defaults, kill switch engaged.
+    ///
+    /// Single instance only: the TIM3 tick counter consumed by waitFrame()
+    /// is file-scope state shared with the interrupt handler, so a second
+    /// instance would consume the same ticks. Acceptable for a service
+    /// that owns one hardware timer; it just cannot be duplicated.
     class SensorSourceStm32 final : public AbsSensorSource
     {
       public:
@@ -41,8 +46,12 @@ namespace mark4
         /// @brief Sleeps until the next tick, then reads the IMU. On an
         ///        I2C failure the previous sample is reused and the frame
         ///        is delivered anyway: one glitch must not stop the loop.
+        ///        A tick firing between the counter test and the WFI makes
+        ///        the sleep last one extra tick, counted as an overrun;
+        ///        the race is accepted - it costs one 2 ms hiccup, never a
+        ///        drifting tick count.
         /// @param[out] frameOut filled frame
-        /// @return always true, the source never runs dry
+        /// @return always FRAME, the source never runs dry
         FrameWait waitFrame(mark4::SensorFrame &frameOut) override;
 
         /// @return ticks that fired while the previous frame was still
