@@ -133,6 +133,9 @@ structs in `protocol/`.
            "received":100,"lost":0,"duplicates":0,"resyncs":0,
            "lossRate":0.0,"lastSequence":99}]}
 
+{"type":"compare","timestampUs":1234,"gapUs":-200,"attitudeErrorDeg":0.43,
+ "altitudeErrorM":0.12,"verticalVelocityErrorMps":-0.05}
+
 {"type":"ack","id":7,"ok":true,"error":""}
 
 {"type":"tuningAck","source":"drone_sim","paramId":101,"value":0.028,
@@ -146,6 +149,14 @@ structs in `protocol/`.
 
 {"type":"profile","name":"bench","values":{"101":0.028}}
 ```
+
+A `compare` message is published whenever a telemetry sample and the exact
+simulator state nearest to it can be joined: same instant within 30 ms,
+nearest sample wins, no match means no message. It is the one alignment rule
+of the system, and the same code answers `/api/compare` on a recording, so a
+number read while a session runs and the same number read afterwards are one
+number. The price is that a `compare` trails its `telemetry` by up to 30 ms:
+until then a nearer exact state could still arrive.
 
 `links` holds one entry per (stream, source) pair the hub has seen, read
 from the sequence number every stream packet carries. The number is 16 bits

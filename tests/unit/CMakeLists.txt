@@ -14,6 +14,7 @@ add_executable(unit_tests
     test_blackbox.cpp
     test_control.cpp
     test_flight_core.cpp
+    test_hub_align.cpp
     test_hub_discovery.cpp
     test_hub_health.cpp
     test_hub_json.cpp
@@ -39,6 +40,11 @@ target_link_libraries(unit_tests
 # libs are not instrumented by that check in the first place. RTTI and
 # exceptions stay enabled in the tests, Catch2 needs them.
 target_compile_options(unit_tests PRIVATE -fno-sanitize=vptr)
+
+# Recorded sessions the tests read: too large to spell out in a source file,
+# and their exact values are the point.
+target_compile_definitions(unit_tests
+    PRIVATE MARK4_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)

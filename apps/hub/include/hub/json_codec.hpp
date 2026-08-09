@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "hub/discovery.hpp"
+#include "hub/stream_align.hpp"
 #include "hub/stream_health.hpp"
 #include "hub/tuning_profiles.hpp"
 #include "protocol/commands.hpp"
@@ -132,6 +133,11 @@ namespace mark4
     /// @return one line of JSON
     std::string discoveryToJson(const std::vector<DiscoveredProcess> &processes,
                                 std::uint64_t nowUs);
+
+    /// @brief Renders one aligned pair as a JSON object.
+    /// @param pair pair to render
+    /// @return one line of JSON
+    std::string compareToJson(const AlignedPair &pair);
 
     /// @brief Renders the hub counters as a JSON object.
     /// @param status counters and flags to render

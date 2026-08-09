@@ -598,6 +598,20 @@ namespace mark4
         return message.dump();
     }
 
+    std::string compareToJson(const AlignedPair &pair)
+    {
+        // Both instants are whole microseconds, so the integers below are
+        // the exact values and not a rendering of them.
+        Json message;
+        message["type"] = "compare";
+        message["timestampUs"] = static_cast<std::uint64_t>(pair.timestampUs);
+        message["gapUs"] = static_cast<std::int64_t>(pair.gapUs);
+        message["attitudeErrorDeg"] = pair.attitudeErrorDeg;
+        message["altitudeErrorM"] = pair.altitudeErrorM;
+        message["verticalVelocityErrorMps"] = pair.verticalVelocityErrorMps;
+        return message.dump();
+    }
+
     std::string statusToJson(const HubStatus &status)
     {
         Json counts;

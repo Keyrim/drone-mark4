@@ -17,6 +17,7 @@
 #include <variant>
 
 #include "hub/launcher.hpp"
+#include "hub/packed_field.hpp"
 #include "protocol/blackbox.hpp"
 #include "protocol/tuning.hpp"
 
@@ -249,6 +250,18 @@ namespace mark4
         std::memcpy(&packet, data, sizeof(packet));
         m_health.onPacket(StreamKind::TELEMETRY, packet.sourceId, packet.sequence);
         m_recorder.onTelemetry(packet);
+
+        const auto quaternion = readPackedField(&packet.attitudeQuat);
+        AlignSample sample;
+        sample.timestampUs = static_cast<double>(packet.timestampUs);
+        for (std::size_t index = 0U; index < quaternion.size(); ++index)
+        {
+            sample.attitudeQuat[index] = static_cast<double>(quaternion[index]);
+        }
+        sample.altitudeM = static_cast<double>(packet.altitudeM);
+        sample.verticalVelocityMps = static_cast<double>(packet.verticalVelocityMps);
+        m_aligner.onTelemetry(sample);
+
         m_ws.broadcastText(telemetryToJson(packet));
     }
 
@@ -258,6 +271,23 @@ namespace mark4
         std::memcpy(&packet, data, sizeof(packet));
         m_health.onPacket(StreamKind::SIM_RAW, packet.sourceId, packet.sequence);
         m_recorder.onSimRaw(packet);
+
+        const auto quaternion = readPackedField(&packet.attitudeQuat);
+        const auto position = readPackedField(&packet.positionM);
+        const auto velocity = readPackedField(&packet.velocityMps);
+        AlignSample sample;
+        sample.timestampUs = static_cast<double>(packet.timestampUs);
+        for (std::size_t index = 0U; index < quaternion.size(); ++index)
+        {
+            sample.attitudeQuat[index] = static_cast<double>(quaternion[index]);
+        }
+        // The exact altitude is the world z of the position, the exact
+        // vertical speed the world z of the velocity, exactly as the sim raw
+        // CSV columns the offline comparison reads.
+        sample.altitudeM = static_cast<double>(position[2]);
+        sample.verticalVelocityMps = static_cast<double>(velocity[2]);
+        m_aligner.onSimRaw(sample);
+
         m_ws.broadcastText(simRawToJson(packet));
     }
 
@@ -500,6 +530,14 @@ namespace mark4
         m_ws.broadcastText(ackToJson(id, ok, error));
     }
 
+    void HubApp::emitCompare()
+    {
+        for (const AlignedPair &pair : m_aligner.takeDue())
+        {
+            m_ws.broadcastText(compareToJson(pair));
+        }
+    }
+
     void HubApp::broadcastDiscovery()
     {
         m_ws.broadcastText(discoveryToJson(m_registry.processes(), monotonicUs()));
@@ -517,6 +555,7 @@ namespace mark4
             onDiscoveryChange(change);
         }
         m_serial.maintain(nowUs / US_PER_MS);
+        emitCompare();
 
         // A client that just connected knows nothing yet: it gets the table
         // and the counters as they stand, without waiting for a change.

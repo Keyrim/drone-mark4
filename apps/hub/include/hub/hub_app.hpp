@@ -192,6 +192,9 @@ namespace mark4
         /// @return true when every value went out
         bool pushProfile(const std::string &name, StreamSource target, std::string &errorOut);
 
+        /// @brief Sends every comparison that has come due to the clients.
+        void emitCompare();
+
         /// @brief Sends the current discovery table to the clients.
         void broadcastDiscovery();
 
@@ -221,6 +224,7 @@ namespace mark4
         SerialTransport m_serial;                ///< board UART, when one is configured
         WsBridge m_ws;                           ///< websocket endpoint
         std::vector<PortUse> m_followedPorts;    ///< refcount behind every subscription
+        LiveAligner m_aligner;                   ///< live half of the stream comparison
         std::atomic_bool m_stopRequested{false}; ///< set by a signal handler
         std::uint64_t m_nextStatusUs = 0U;       ///< next status message instant [us]
         std::uint8_t m_scenarioSequence = 0U;    ///< rolling number stamped on a
