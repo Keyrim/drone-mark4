@@ -13,7 +13,8 @@ add_library(flight_core STATIC
     src/estimator/attitude_estimator.cpp
     src/estimator/vertical_estimator.cpp
     src/flight_core.cpp
-    src/throw_launch/throw_detector.cpp)
+    src/throw_launch/throw_detector.cpp
+    src/tuning_table.cpp)
 # Pure algorithms: no platform, no protocol, no wire. The library rebuilds
 # only when the algorithms change.
 target_link_libraries(flight_core
