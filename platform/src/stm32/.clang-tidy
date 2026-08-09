@@ -1,0 +1,19 @@
+---
+# Register-level code lives by different rules than the algorithm libs:
+# - MMIO access is by definition a fixed-address dereference.
+# - Bit positions and datasheet values (RM0090 fields, MS5611 compensation
+#   formulas) are the domain language; naming each shift would obscure the
+#   reference document they mirror.
+# - Service lifecycle methods (init, poll, send) touch peripheral registers
+#   instead of members; making them static or const would betray the
+#   injectable service pattern for a property of the current register map.
+# - The vector table and FPU enable are built from linker symbols at file
+#   scope, which is the whole point of a startup file.
+InheritParentConfig: true
+Checks: >
+    -clang-analyzer-core.FixedAddressDereference,
+    -cppcoreguidelines-interfaces-global-init,
+    -readability-convert-member-functions-to-static,
+    -readability-magic-numbers,
+    -readability-make-member-function-const
+...

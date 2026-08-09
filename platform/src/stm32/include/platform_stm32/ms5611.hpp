@@ -91,8 +91,11 @@ namespace mark4
         ///        integer math; updates the exposed pressure/temperature.
         void solve();
 
+        /// PROM words: factory data, C1..C6, CRC word.
+        static constexpr std::uint32_t PROM_WORDS = 8U;
+
         I2cBus &m_bus;                         ///< transport, not owned
-        std::uint16_t m_prom[8] = {};          ///< factory word, C1..C6, CRC word
+        std::uint16_t m_prom[PROM_WORDS] = {}; ///< factory word, C1..C6, CRC word
         State m_state = State::START_PRESSURE; ///< cycle position
         std::uint32_t m_waitedUpdates = 0U;    ///< calls spent in a wait state
         std::uint32_t m_rawPressure = 0U;      ///< last D1 conversion

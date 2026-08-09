@@ -24,15 +24,15 @@ namespace mark4
     /// plain sequence of records that any decoder can split by size alone.
     struct BlackboxRecord
     {
-        std::uint8_t recordVersion;     ///< = BLACKBOX_VERSION
-        std::uint64_t timestampUs;      ///< acquisition time [us]
-        std::array<float, 3> gyroRadS;  ///< body angular rates [rad/s]
-        std::array<float, 3> accelMps2; ///< specific force [m/s^2] (0 g in free fall)
-        float baroPa;                   ///< static pressure [Pa]
-        std::uint8_t killSwitch;        ///< 1 = engaged (motors cut), 0 = released
-        float throttle;                 ///< normalized RC throttle [0, 1]
-        std::uint8_t armSwitch;         ///< 1 = armed for an autonomous throw flight
-        std::array<float, 4> motor;     ///< normalized motor commands [0, 1]
+        std::uint8_t recordVersion = 0U;  ///< = BLACKBOX_VERSION
+        std::uint64_t timestampUs = 0U;   ///< acquisition time [us]
+        std::array<float, 3> gyroRadS{};  ///< body angular rates [rad/s]
+        std::array<float, 3> accelMps2{}; ///< specific force [m/s^2] (0 g in free fall)
+        float baroPa = 0.0f;              ///< static pressure [Pa]
+        std::uint8_t killSwitch = 0U;     ///< 1 = engaged (motors cut), 0 = released
+        float throttle = 0.0f;            ///< normalized RC throttle [0, 1]
+        std::uint8_t armSwitch = 0U;      ///< 1 = armed for an autonomous throw flight
+        std::array<float, 4> motor{};     ///< normalized motor commands [0, 1]
     };
 #pragma pack(pop)
 

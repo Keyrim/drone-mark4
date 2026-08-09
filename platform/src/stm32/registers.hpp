@@ -10,6 +10,8 @@
 
 namespace mark4
 {
+    // NOLINTBEGIN(readability-identifier-naming): register and field names
+    // match RM0090 verbatim, the reference this file mirrors.
     /// Reset and clock control (RM0090 section 6).
     struct RccRegisters
     {
@@ -126,4 +128,5 @@ namespace mark4
     /// the high half, SYSRESETREQ requests a system reset.
     inline volatile std::uint32_t *const SCB_AIRCR =
         reinterpret_cast<volatile std::uint32_t *>(0xE000ED0CU);
+    // NOLINTEND(readability-identifier-naming)
 } // namespace mark4

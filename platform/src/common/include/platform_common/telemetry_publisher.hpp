@@ -32,7 +32,8 @@ namespace mark4
         /// @param frame sensor frame of this step
         /// @param actuators actuator outputs of this step
         /// @param core flight core the estimates are read from
-        void publish(const SensorFrame &frame, const ActuatorFrame &actuators,
+        void publish(const SensorFrame &frame,
+                     const ActuatorFrame &actuators,
                      const FlightCore &core)
         {
             ++m_frameCount;

@@ -49,7 +49,7 @@ namespace mark4
         m_overruns += (ticks - m_consumedTicks) - 1U;
         m_consumedTicks = ticks;
 
-        Mpu6050Sample sample;
+        Mpu6050Sample sample{};
         if (m_imu.readSample(sample))
         {
             m_lastSample = sample;

@@ -14,22 +14,31 @@
 
 namespace
 {
+    constexpr std::uint32_t US_PER_S = 1000000U;
+    constexpr std::uint32_t US_PER_MS = 1000U;
+
+    /// OSR-4096 conversion time of the MS5611, datasheet maximum.
+    constexpr std::uint32_t MS5611_CONVERSION_US = 9040U;
+
     /// The barometer wait states must outlast its 9.04 ms OSR-4096
     /// conversion at the loop rate the state machine is pumped at.
-    constexpr std::uint32_t FRAME_PERIOD_US = 1000000U / mark4::SensorSourceStm32::FRAME_RATE_HZ;
-    static_assert(mark4::Ms5611::CONVERSION_WAIT_UPDATES * FRAME_PERIOD_US >= 9040U,
+    constexpr std::uint32_t FRAME_PERIOD_US = US_PER_S / mark4::SensorSourceStm32::FRAME_RATE_HZ;
+    static_assert(mark4::Ms5611::CONVERSION_WAIT_UPDATES * FRAME_PERIOD_US >= MS5611_CONVERSION_US,
                   "MS5611 conversion outlasts the wait budget");
 
     static_assert(mark4::LED_FRAMES_PER_SLOT * mark4::LED_PATTERN_SLOTS ==
                       mark4::SensorSourceStm32::FRAME_RATE_HZ,
                   "the LED pattern cycle must span exactly one second");
 
+    /// Scale from a unit quantity to its milli multiple.
+    constexpr float MILLI_PER_UNIT = 1000.0f;
+
     /// @brief Millis of a float for integer-only printf: "%d.%03d".
     /// @param value converted value
     /// @return value scaled by 1000, rounded toward zero
     long milli(float value)
     {
-        return static_cast<long>(value * 1000.0f);
+        return static_cast<long>(value * MILLI_PER_UNIT);
     }
 } // namespace
 
@@ -79,7 +88,7 @@ namespace mark4
                   static_cast<unsigned long>(SensorSourceStm32::FRAME_RATE_HZ),
                   static_cast<unsigned long>(UART1_BAUD_RATE),
                   static_cast<unsigned long>(TelemetryPublisher::DECIMATION),
-                  static_cast<unsigned long>(RC_TIMEOUT_US / 1000U));
+                  static_cast<unsigned long>(RC_TIMEOUT_US / US_PER_MS));
         return true;
     }
 
@@ -151,7 +160,7 @@ namespace mark4
                 degraded = failureCount != lastFailureCount;
                 lastFailureCount = failureCount;
                 const std::uint64_t nowUs = frame.timestampUs;
-                const std::uint32_t periodUs =
+                const auto periodUs =
                     static_cast<std::uint32_t>((nowUs - lastStatusUs) / FRAMES_PER_STATUS);
                 lastStatusUs = nowUs;
                 rttPrintf("t %lu us/frame  gyro %ld %ld %ld mrad/s  acc %ld %ld %ld mm/s2  "
