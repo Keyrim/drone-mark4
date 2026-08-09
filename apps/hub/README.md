@@ -10,6 +10,10 @@ on one websocket endpoint that a browser or a script can read without ever
 touching a socket or a packed struct. Commands travel the other way through
 the same endpoint.
 
+That same TCP port also serves the static pages: the library dispatches on
+the `Upgrade` header, so a page loaded from the hub reaches it back with
+`new WebSocket("ws://" + location.host)` and never learns a port of its own.
+
 It links `protocol/` headers and nothing else: never `flight-core`, never
 `platform`. Desktop only.
 
@@ -29,7 +33,9 @@ port and the default sim raw port from the start, and follows any extra
 telemetry port a process announces for as long as that process lives.
 
 ```
---ws-port N          websocket endpoint port (default 47810)
+--ws-port N          endpoint port, websocket and pages (default 47810)
+--bind ADDR          address the endpoint binds to (default 127.0.0.1)
+--pages DIR          directory the static pages are read from
 --announce-port N    announce listen port (default 47806)
 --telemetry-port N   telemetry port watched by default (default 47801)
 --raw-port N         sim raw port watched by default (default 47802)
@@ -84,6 +90,20 @@ Replays a recording next to the hub.
 --drone-replay PATH  drone_replay binary (default: next to the hub binary)
 --no-serve           supervise the child only, serve nothing
 ```
+
+## Pages
+
+`GET /` serves `index.html` from the pages directory, `GET /<path>` the file
+at that path below it. `--pages` names the directory; without it the hub
+resolves `apps/hub/pages/dist` from its own location, falling back to that
+relative path. A missing directory is one log line at startup and a 404 per
+request, never a startup failure.
+
+The Content-Type comes from the extension (`.html`, `.js`, `.mjs`, `.css`,
+`.svg`, `.json`, `.csv`, `.ico`, `.png`; anything else is an opaque byte
+stream), and every response carries `Cache-Control: no-store`. A URI holding
+a `..` component is refused: nothing outside the pages directory is
+reachable.
 
 ## Websocket messages
 
@@ -204,8 +224,9 @@ arrives.
   one that asked: a client correlates the answer with the `id` it sent and
   ignores the rest. This keeps the endpoint free of any per-client state
   shared between the library threads and the poll loop.
-- The websocket endpoint has no authentication and binds every interface.
-  It is a bench tool on a trusted network.
+- The endpoint has no authentication. It binds the loopback interface by
+  default; `--bind` opens it wider, and it is a bench tool on a trusted
+  network either way.
 - With the serial rebroadcast on, the hub ignores firmware telemetry
   arriving over UDP: that copy is its own echo of what it just re-emitted.
   A second, genuinely different board reaching the hub over UDP while a

@@ -67,7 +67,15 @@ namespace mark4
             std::string profilesDir = "profiles";           ///< directory the profiles live in
             std::string pushProfileName;                    ///< profile pushed to every process
                                                             ///< that appears, empty = none
+            std::string pagesDir;                           ///< directory the static pages are
+                                                            ///< read from, empty = the built-in
+                                                            ///< default resolved at init
+            std::string bindAddress = "127.0.0.1";          ///< address the endpoint binds to
         };
+
+        /// Directory the pages are read from when nothing else is asked for,
+        /// relative to the source tree root.
+        static constexpr const char *DEFAULT_PAGES_DIR = "apps/hub/pages/dist";
 
         /// @param config settings of this run
         explicit HubApp(Config config);

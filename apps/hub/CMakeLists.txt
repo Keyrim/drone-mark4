@@ -28,6 +28,7 @@ FetchContent_MakeAvailable(ixwebsocket)
 # thread or a child process. This is the target the tests link.
 add_library(hub_core STATIC
     src/discovery.cpp
+    src/http_api.cpp
     src/json_codec.cpp
     src/stream_recorder.cpp
     src/tuning_profiles.cpp)

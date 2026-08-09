@@ -9,11 +9,14 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <poll.h>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <variant>
 
+#include "hub/launcher.hpp"
 #include "protocol/blackbox.hpp"
 #include "protocol/tuning.hpp"
 
@@ -45,7 +48,22 @@ namespace mark4
         {
             return false;
         }
-        if (!m_ws.start(m_config.wsPort))
+        if (m_config.pagesDir.empty())
+        {
+            m_config.pagesDir = defaultProjectPath(DEFAULT_PAGES_DIR);
+        }
+        std::error_code failure;
+        if (!std::filesystem::is_directory(m_config.pagesDir, failure))
+        {
+            // A hub without pages still decodes, records and serves the
+            // websocket: the pages are a client, not a dependency.
+            static_cast<void>(
+                std::printf("hub: no pages in %s, serving none\n", m_config.pagesDir.c_str()));
+        }
+        HttpConfig http;
+        http.pagesDir = m_config.pagesDir;
+        http.logDir = m_config.logDirectory;
+        if (!m_ws.start(m_config.wsPort, m_config.bindAddress, std::move(http)))
         {
             return false;
         }

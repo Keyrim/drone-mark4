@@ -133,7 +133,9 @@ namespace
             "  --speed F|max        replay speed\n"
             "\n"
             "serve options:\n"
-            "  --ws-port N          websocket endpoint port (default %u)\n"
+            "  --ws-port N          endpoint port, websocket and pages (default %u)\n"
+            "  --bind ADDR          address the endpoint binds to (default 127.0.0.1)\n"
+            "  --pages DIR          directory the static pages are read from\n"
             "  --announce-port N    announce listen port (default %u)\n"
             "  --telemetry-port N   telemetry port watched by default (default %u)\n"
             "  --raw-port N         sim raw port watched by default (default %u)\n"
@@ -214,6 +216,16 @@ namespace
         if (std::strcmp(name, "--push-profile") == 0 && hasValue)
         {
             config.pushProfileName = argv[++index];
+            return true;
+        }
+        if (std::strcmp(name, "--pages") == 0 && hasValue)
+        {
+            config.pagesDir = argv[++index];
+            return true;
+        }
+        if (std::strcmp(name, "--bind") == 0 && hasValue)
+        {
+            config.bindAddress = argv[++index];
             return true;
         }
         if (std::strcmp(name, "--record") == 0)

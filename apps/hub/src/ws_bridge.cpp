@@ -1,15 +1,38 @@
 /// @file
-/// @brief Websocket bridge implementation.
+/// @brief Endpoint implementation.
 
 #include "hub/ws_bridge.hpp"
 
 #include <cstdio>
+#include <ixwebsocket/IXHttpServer.h>
 #include <ixwebsocket/IXWebSocket.h>
 #include <ixwebsocket/IXWebSocketServer.h>
+#include <memory>
 #include <utility>
 
 namespace mark4
 {
+    namespace
+    {
+        /// @brief Reason phrase of a status code, for the response line.
+        /// @param status status code to name
+        /// @return the phrase
+        const char *statusPhrase(int status)
+        {
+            switch (status)
+            {
+                case HTTP_BAD_REQUEST:
+                    return "Bad Request";
+                case HTTP_NOT_FOUND:
+                    return "Not Found";
+                case HTTP_METHOD_NOT_ALLOWED:
+                    return "Method Not Allowed";
+                default:
+                    return "OK";
+            }
+        }
+    } // namespace
+
     WsBridge::WsBridge() = default;
 
     WsBridge::~WsBridge()
@@ -17,10 +40,36 @@ namespace mark4
         stop();
     }
 
-    bool WsBridge::start(std::uint16_t port)
+    bool WsBridge::start(std::uint16_t port, const std::string &bindAddress, HttpConfig http)
     {
         stop();
-        m_server = std::make_unique<ix::WebSocketServer>(static_cast<int>(port));
+        m_http = std::move(http);
+        // ix::HttpServer IS an ix::WebSocketServer: it parses the request
+        // line, hands a connection carrying "Upgrade: websocket" to the
+        // websocket path untouched, and calls the connection callback for
+        // everything else. One port, both protocols, no dispatch of ours.
+        m_server = std::make_unique<ix::HttpServer>(static_cast<int>(port), bindAddress);
+        m_server->setOnConnectionCallback(
+            [this](const ix::HttpRequestPtr &request,
+                   const std::shared_ptr<ix::ConnectionState> &state) -> ix::HttpResponsePtr {
+                static_cast<void>(state);
+                const HttpResult result = routeHttp(m_http, request->method, request->uri);
+                ix::WebSocketHttpHeaders headers;
+                headers["Content-Type"] = result.contentType;
+                // A bench page must never read a stale recording out of a
+                // browser cache, and nothing served here is worth keeping.
+                headers["Cache-Control"] = "no-store";
+                if (!result.attachmentName.empty())
+                {
+                    headers["Content-Disposition"] =
+                        "attachment; filename=\"" + result.attachmentName + "\"";
+                }
+                return std::make_shared<ix::HttpResponse>(result.status,
+                                                          statusPhrase(result.status),
+                                                          ix::HttpErrorCode::Ok,
+                                                          headers,
+                                                          result.body);
+            });
         m_server->setOnClientMessageCallback(
             [this](const std::shared_ptr<ix::ConnectionState> &state,
                    ix::WebSocket &socket,
@@ -57,7 +106,7 @@ namespace mark4
         if (!listening.first)
         {
             static_cast<void>(std::fprintf(stderr,
-                                           "hub: cannot serve the websocket on tcp/%u: %s\n",
+                                           "hub: cannot serve on tcp/%u: %s\n",
                                            static_cast<unsigned>(port),
                                            listening.second.c_str()));
             m_server.reset();

@@ -1,14 +1,19 @@
 #pragma once
 
 /// @file
-/// @brief The websocket endpoint of the hub: the one place a browser or a
-///        script can watch the decoded streams and send commands back,
-///        without ever touching a UDP socket or a packed struct.
+/// @brief The endpoint of the hub: the one place a browser or a script can
+///        watch the decoded streams and send commands back, without ever
+///        touching a UDP socket or a packed struct. One TCP port carries
+///        both the websocket and the static pages, dispatched on the
+///        Upgrade header, so a page reaches the hub at the host it was
+///        loaded from and never learns a port.
 ///
-///        Threading contract: the library runs one thread per client and
-///        calls back from those threads. Inbound messages are only queued
-///        there; everything else (parsing, routing, broadcasting) happens in
-///        the poll loop, so the rest of the hub stays single-threaded.
+///        Threading contract: the library runs one thread per connection and
+///        calls back from those threads. Inbound websocket messages are only
+///        queued there; everything else (parsing, routing, broadcasting)
+///        happens in the poll loop, so the rest of the hub stays
+///        single-threaded. HTTP requests are answered on the connection
+///        thread from the filesystem alone, touching no hub state.
 
 #include <atomic>
 #include <cstddef>
@@ -18,14 +23,17 @@
 #include <string>
 #include <vector>
 
+#include "hub/http_api.hpp"
+
 namespace ix
 {
-    class WebSocketServer;
+    class HttpServer;
 } // namespace ix
 
 namespace mark4
 {
-    /// Websocket server the hub publishes to and takes commands from.
+    /// Endpoint the hub publishes to, takes commands from, and serves the
+    /// pages of.
     class WsBridge
     {
       public:
@@ -43,8 +51,11 @@ namespace mark4
 
         /// @brief Binds and starts serving.
         /// @param port TCP port to listen on
+        /// @param bindAddress address to bind to
+        /// @param http what the HTTP side reads from; copied here and read
+        ///        by the connection threads afterwards, never written again
         /// @return true when the endpoint accepts connections
-        bool start(std::uint16_t port);
+        bool start(std::uint16_t port, const std::string &bindAddress, HttpConfig http);
 
         /// @brief Stops serving and closes every connection.
         void stop();
@@ -74,10 +85,11 @@ namespace mark4
         }
 
       private:
-        std::unique_ptr<ix::WebSocketServer> m_server; ///< the library server, null until start()
-        std::mutex m_inboundMutex;                     ///< guards the inbound queue
-        std::vector<std::string> m_inbound;            ///< messages waiting for the poll loop
-        std::atomic_size_t m_clients{0U};              ///< connected clients
-        std::atomic_bool m_connected{false};           ///< a client connected since last asked
+        std::unique_ptr<ix::HttpServer> m_server; ///< the library server, null until start()
+        HttpConfig m_http;                        ///< what the HTTP side reads from
+        std::mutex m_inboundMutex;                ///< guards the inbound queue
+        std::vector<std::string> m_inbound;       ///< messages waiting for the poll loop
+        std::atomic_size_t m_clients{0U};         ///< connected clients
+        std::atomic_bool m_connected{false};      ///< a client connected since last asked
     };
 } // namespace mark4
