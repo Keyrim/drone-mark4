@@ -2,12 +2,14 @@
 /// @brief drone_replay entry point: parses arguments, builds the app, runs it.
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 #include "drone_replay_app.hpp"
 #include "flight_core/throw_detector.hpp"
+#include "platform_common/session_id.hpp"
 #include "platform_replay/sensor_source_replay.hpp"
 #include "protocol/ports.hpp"
 
@@ -16,56 +18,103 @@ namespace
     constexpr float DEFAULT_SPEED = 1.0f;
     constexpr float RAD_TO_DEG = 57.29578f;
     constexpr double US_PER_S = 1e6;
+    constexpr int STRTOL_BASE = 10;
+    constexpr long MAX_PORT = 65535L;
 
     void printUsage(const char *program)
     {
         static_cast<void>(
-            std::fprintf(stderr, "usage: %s <log.m4bb> [--speed <factor>|max]\n", program));
+            std::fprintf(stderr,
+                         "usage: %s <log.m4bb> [--speed <factor>|max] [--announce-port N]\n"
+                         "  --speed          replay tempo, 'max' to run unpaced (default 1)\n"
+                         "  --announce-port  UDP port the process announce goes to (default %u)\n",
+                         program,
+                         static_cast<unsigned>(mark4::ANNOUNCE_PORT)));
+    }
+
+    /// @brief Parses the replay tempo.
+    /// @param text argument text
+    /// @param valueOut receives the factor
+    /// @return true when the text is 'max' or a strictly positive number
+    bool parseSpeed(const char *text, float &valueOut)
+    {
+        if (std::strcmp(text, "max") == 0)
+        {
+            valueOut = mark4::SensorSourceReplay::SPEED_MAX;
+            return true;
+        }
+        char *end = nullptr;
+        valueOut = std::strtof(text, &end);
+        return end != text && *end == '\0' && valueOut > 0.0f;
+    }
+
+    /// @brief Parses a port number.
+    /// @param text argument text
+    /// @param valueOut receives the port
+    /// @return true when the text is a port in [1, 65535]
+    bool parsePort(const char *text, std::uint16_t &valueOut)
+    {
+        char *end = nullptr;
+        const long parsed = std::strtol(text, &end, STRTOL_BASE);
+        if (end == text || *end != '\0' || parsed <= 0L || parsed > MAX_PORT)
+        {
+            return false;
+        }
+        valueOut = static_cast<std::uint16_t>(parsed);
+        return true;
     }
 } // namespace
 
 int main(int argc, char **argv)
 {
-    if (argc != 2 && argc != 4)
+    if (argc < 2 || argv[1][0] == '-')
     {
         printUsage(argv[0]);
         return 1;
     }
 
     float speed = DEFAULT_SPEED;
-    if (argc == 4)
+    std::uint16_t announcePort = mark4::ANNOUNCE_PORT;
+    for (int index = 2; index < argc; ++index)
     {
-        if (std::strcmp(argv[2], "--speed") != 0)
+        const bool hasValue = index + 1 < argc;
+        if (std::strcmp(argv[index], "--speed") == 0 && hasValue)
         {
-            printUsage(argv[0]);
-            return 1;
-        }
-        if (std::strcmp(argv[3], "max") == 0)
-        {
-            speed = mark4::SensorSourceReplay::SPEED_MAX;
-        }
-        else
-        {
-            char *end = nullptr;
-            speed = std::strtof(argv[3], &end);
-            if (end == argv[3] || *end != '\0' || speed <= 0.0f)
+            if (!parseSpeed(argv[++index], speed))
             {
                 printUsage(argv[0]);
                 return 1;
             }
         }
+        else if (std::strcmp(argv[index], "--announce-port") == 0 && hasValue)
+        {
+            if (!parsePort(argv[++index], announcePort))
+            {
+                printUsage(argv[0]);
+                return 1;
+            }
+        }
+        else
+        {
+            printUsage(argv[0]);
+            return 1;
+        }
     }
 
-    mark4::DroneReplayApp app(argv[1], speed);
+    const std::uint32_t sessionId = mark4::makeSessionId();
+    mark4::DroneReplayApp app(argv[1], speed, sessionId, announcePort);
     if (!app.init())
     {
         static_cast<void>(std::fprintf(stderr, "drone_replay: initialization failed\n"));
         return 1;
     }
 
-    std::printf("drone_replay: replaying %s, telemetry broadcast on udp/%u\n",
+    std::printf("drone_replay: replaying %s, telemetry broadcast on udp/%u, "
+                "announcing on udp/%u as session %u\n",
                 argv[1],
-                static_cast<unsigned>(mark4::TELEMETRY_PORT));
+                static_cast<unsigned>(mark4::TELEMETRY_PORT),
+                static_cast<unsigned>(announcePort),
+                static_cast<unsigned>(sessionId));
 
     const std::uint32_t steps = app.run();
     const auto &telemetry = app.accessTelemetrySender();
