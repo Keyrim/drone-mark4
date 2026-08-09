@@ -162,6 +162,33 @@ for _wire_struct, _wire_size, _name in (
     )
 
 
+# Serial framing (serial_framing.hpp): SYNC0 SYNC1 length payload crc16,
+# the CRC covering the length byte and the payload, little-endian on the
+# wire.
+SERIAL_SYNC0 = 0xA5
+SERIAL_SYNC1 = 0x5A
+SERIAL_FRAME_OVERHEAD = 5
+CRC16_INIT = 0xFFFF
+
+
+def crc16(crc: int, data: bytes) -> int:
+    """Feed bytes into a running CRC-16/CCITT-FALSE, mark4::crc16."""
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021 if crc & 0x8000 else crc << 1) & 0xFFFF
+    return crc
+
+
+def encode_serial_frame(payload: bytes) -> bytes:
+    """Wrap one packet into a serial frame, mark4::encodeSerialFrame."""
+    assert 0 < len(payload) <= 255
+    body = bytes([len(payload)]) + payload
+    crc = crc16(CRC16_INIT, body)
+    return bytes([SERIAL_SYNC0, SERIAL_SYNC1]) + body + bytes(
+        [crc & 0xFF, crc >> 8])
+
+
 def telemetry_mirror_port(telemetry_port: int) -> int:
     """Mirror of a telemetry port, mark4::telemetryMirrorPort."""
     return telemetry_port + 2

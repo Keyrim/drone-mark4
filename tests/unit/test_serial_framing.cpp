@@ -33,6 +33,13 @@ namespace
     }
 } // namespace
 
+TEST_CASE("crc16 matches the CRC-16/CCITT-FALSE check value")
+{
+    // The standard check input "123456789" must produce 0x29B1.
+    const std::array<std::uint8_t, 9> check = {'1', '2', '3', '4', '5', '6', '7', '8', '9'};
+    REQUIRE(mark4::crc16(mark4::CRC16_INIT, check.data(), check.size()) == 0x29B1U);
+}
+
 TEST_CASE("serial framing round-trips a payload")
 {
     const std::array<std::uint8_t, 5> payload = {1U, 2U, 3U, 4U, 250U};
@@ -71,6 +78,20 @@ TEST_CASE("serial framing rejects a corrupted checksum")
     std::array<std::uint8_t, payload.size() + mark4::SERIAL_FRAME_OVERHEAD> frame{};
     REQUIRE(mark4::encodeSerialFrame(payload.data(), payload.size(), frame.data()) == frame.size());
     frame[4] = static_cast<std::uint8_t>(frame[4] ^ 0xFFU); // flip a payload byte
+
+    mark4::SerialFrameParser parser;
+    std::array<std::size_t, 8> sizes{};
+    REQUIRE(feedAll(parser, frame.data(), frame.size(), sizes) == 0U);
+}
+
+TEST_CASE("serial framing rejects a corrupted length byte")
+{
+    // The CRC covers the length: a shorter announced length must not let
+    // payload bytes pass as a valid smaller frame.
+    const std::array<std::uint8_t, 4> payload = {9U, 8U, 7U, 6U};
+    std::array<std::uint8_t, payload.size() + mark4::SERIAL_FRAME_OVERHEAD> frame{};
+    REQUIRE(mark4::encodeSerialFrame(payload.data(), payload.size(), frame.data()) == frame.size());
+    frame[2] = 2U; // announce two bytes instead of four
 
     mark4::SerialFrameParser parser;
     std::array<std::size_t, 8> sizes{};

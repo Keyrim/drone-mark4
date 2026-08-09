@@ -9,9 +9,13 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ground-station"))
 from telemetry_wire import (
+    CRC16_INIT,
+    SERIAL_SYNC0,
+    SERIAL_SYNC1,
     TELEMETRY_PACKET_SIZE,
     TELEMETRY_STRUCT,
     TYPE_TELEMETRY,
+    crc16,
     has_header,
 )
 
@@ -31,8 +35,8 @@ attrs[6][termios.VMIN] = 0
 attrs[6][termios.VTIME] = 5  # 0.5 s read timeout
 termios.tcsetattr(fd, termios.TCSAFLUSH, attrs)
 
-SYNC0, SYNC1 = 0xA5, 0x5A
-state, length, payload = 0, 0, bytearray()
+SYNC0, SYNC1 = SERIAL_SYNC0, SERIAL_SYNC1
+state, length, payload, crc_low = 0, 0, bytearray(), 0
 packets, records, bad, last_ts = [], 0, 0, None
 deadline = time.time() + 4.0
 
@@ -51,11 +55,11 @@ while time.time() < deadline and len(packets) < 60:
             payload.append(byte)
             if len(payload) == length:
                 state = 4
+        elif state == 4:
+            crc_low, state = byte, 5
         else:
-            checksum = 0
-            for b in payload:
-                checksum ^= b
-            if checksum != byte:
+            crc = crc16(CRC16_INIT, bytes([length]) + payload)
+            if crc != (byte << 8 | crc_low):
                 bad += 1
             elif (length == TELEMETRY_PACKET_SIZE
                   and has_header(payload, TYPE_TELEMETRY)):

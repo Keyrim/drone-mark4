@@ -27,6 +27,9 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ground-station"))
 from telemetry_wire import (
     BOARD_REBOOT_MAGIC,
+    CRC16_INIT,
+    SERIAL_SYNC0,
+    SERIAL_SYNC1,
     PROTOCOL_VERSION,
     RC_COMMAND_PORT,
     RC_COMMAND_STRUCT,
@@ -41,6 +44,8 @@ from telemetry_wire import (
     TYPE_REBOOT_COMMAND,
     TYPE_SIM_COMMAND,
     TYPE_TELEMETRY,
+    crc16,
+    encode_serial_frame,
     has_header,
 )
 
@@ -75,8 +80,8 @@ commands.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 commands.bind(("", RC_COMMAND_PORT))
 commands.setblocking(False)
 
-SYNC0, SYNC1 = 0xA5, 0x5A
-state, length, payload = 0, 0, bytearray()
+SYNC0, SYNC1 = SERIAL_SYNC0, SERIAL_SYNC1
+state, length, payload, crc_low = 0, 0, bytearray(), 0
 records, packets, bad, rc_sent = 0, 0, 0, 0
 next_status = time.time() + 1.0
 
@@ -105,11 +110,7 @@ try:
                     PROTOCOL_VERSION, TYPE_REBOOT_COMMAND, BOARD_REBOOT_MAGIC)
             else:
                 continue
-            checksum = 0
-            for b in up_payload:
-                checksum ^= b
-            os.write(fd, bytes([SYNC0, SYNC1, len(up_payload)]) + up_payload
-                     + bytes([checksum]))
+            os.write(fd, encode_serial_frame(up_payload))
             rc_sent += 1
 
         chunk = os.read(fd, 4096)
@@ -131,11 +132,11 @@ try:
                 payload.append(byte)
                 if len(payload) == length:
                     state = 4
+            elif state == 4:
+                crc_low, state = byte, 5
             else:
-                checksum = 0
-                for b in payload:
-                    checksum ^= b
-                if checksum != byte:
+                crc = crc16(CRC16_INIT, bytes([length]) + payload)
+                if crc != (byte << 8 | crc_low):
                     bad += 1
                 elif (length == BLACKBOX_RECORD_SIZE
                       and payload[0] == BLACKBOX_VERSION):
