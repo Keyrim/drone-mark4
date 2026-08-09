@@ -39,6 +39,12 @@ jobs:
       - run: cmake --preset desktop
       - run: cmake --build --preset desktop
       - run: ctest --preset desktop
+      # Golden packets: every hand-written parser must decode the exact
+      # bytes the C++ structs produce (the ctest above already regenerates
+      # and compares the fixtures on the C++ side).
+      - run: python3 tests/golden/test_golden.py
+      - run: godot --path sim-godot --headless --import
+      - run: godot --path sim-godot --headless --script res://tests/golden_check.gd -- "$GITHUB_WORKSPACE/tests/golden/fixtures"
 
   stm32:
     name: stm32 (cross-compilation)

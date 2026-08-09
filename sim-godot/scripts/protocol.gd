@@ -55,6 +55,17 @@ const SIM_COMMAND_HAND_THROW := 4
 const RC_MODE_MANUAL := 0
 const RC_MODE_ALTITUDE_AUTO := 1
 
+## Field offsets consumed by the decoding scripts, frozen by the C++
+## static_asserts and the golden fixtures.
+const FLOAT_SIZE := 4
+const SIM_ACTUATOR_ECHO_OFFSET := 2
+const SIM_ACTUATOR_MOTOR_OFFSET := 10
+const TELEMETRY_QUAT_OFFSET := 25
+const SIM_COMMAND_THROTTLE_OFFSET := 6
+const SIM_COMMAND_VELOCITY_OFFSET := 10
+const SIM_COMMAND_ANGULAR_OFFSET := 22
+const SIM_COMMAND_HELD_OFFSET := 34
+
 ## Default UDP ports (ports.hpp).
 const SIM_LINK_PORT := 47800
 const TELEMETRY_PORT := 47801

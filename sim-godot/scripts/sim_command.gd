@@ -14,12 +14,6 @@ extends Node
 ## are one-shot requests the drone consumes at its next physics tick, exactly
 ## like the keyboard pilot: commands never touch the physics state directly.
 
-## Offsets inside SimCommandPacket, after the RC byte block.
-const THROTTLE_OFFSET := 6
-const VELOCITY_OFFSET := 10
-const ANGULAR_OFFSET := 22
-const HELD_OFFSET := 34
-
 ## Axis remap from the drone frame to the Godot frame: the inverse of the
 ## GODOT_TO_DRONE basis used on the sensor path.
 const DRONE_TO_GODOT := Basis(Vector3(0, 0, -1), Vector3(-1, 0, 0), Vector3(0, 1, 0))
@@ -131,16 +125,16 @@ func _decode(payload: PackedByteArray) -> bool:
 			if _pilot != null:
 				_pilot.kill_switch = payload.decode_u8(3) != 0
 				_pilot.arm_switch = payload.decode_u8(4) != 0
-				_pilot.throttle = clampf(payload.decode_float(THROTTLE_OFFSET), 0.0, 1.0)
+				_pilot.throttle = clampf(payload.decode_float(Protocol.SIM_COMMAND_THROTTLE_OFFSET), 0.0, 1.0)
 		Protocol.SIM_COMMAND_THROW:
 			_decode_throw_vectors(payload)
 			_throw_requested = true
 		Protocol.SIM_COMMAND_HAND_THROW:
 			_decode_throw_vectors(payload)
-			_held_seconds = payload.decode_float(HELD_OFFSET)
-			var tilt := payload.decode_float(HELD_OFFSET + 4)
-			var azimuth := payload.decode_float(HELD_OFFSET + 8)
-			_swing_seconds = payload.decode_float(HELD_OFFSET + 12)
+			_held_seconds = payload.decode_float(Protocol.SIM_COMMAND_HELD_OFFSET)
+			var tilt := payload.decode_float(Protocol.SIM_COMMAND_HELD_OFFSET + 4)
+			var azimuth := payload.decode_float(Protocol.SIM_COMMAND_HELD_OFFSET + 8)
+			_swing_seconds = payload.decode_float(Protocol.SIM_COMMAND_HELD_OFFSET + 12)
 			# Tilt about a horizontal axis at the given azimuth, expressed in
 			# the drone world convention and remapped to the Godot axes.
 			var axis_drone := Vector3(cos(azimuth), sin(azimuth), 0.0)
@@ -154,14 +148,14 @@ func _decode(payload: PackedByteArray) -> bool:
 
 func _decode_throw_vectors(payload: PackedByteArray) -> void:
 	var velocity_drone := Vector3(
-		payload.decode_float(VELOCITY_OFFSET),
-		payload.decode_float(VELOCITY_OFFSET + 4),
-		payload.decode_float(VELOCITY_OFFSET + 8)
+		payload.decode_float(Protocol.SIM_COMMAND_VELOCITY_OFFSET),
+		payload.decode_float(Protocol.SIM_COMMAND_VELOCITY_OFFSET + 4),
+		payload.decode_float(Protocol.SIM_COMMAND_VELOCITY_OFFSET + 8)
 	)
 	var angular_drone := Vector3(
-		payload.decode_float(ANGULAR_OFFSET),
-		payload.decode_float(ANGULAR_OFFSET + 4),
-		payload.decode_float(ANGULAR_OFFSET + 8)
+		payload.decode_float(Protocol.SIM_COMMAND_ANGULAR_OFFSET),
+		payload.decode_float(Protocol.SIM_COMMAND_ANGULAR_OFFSET + 4),
+		payload.decode_float(Protocol.SIM_COMMAND_ANGULAR_OFFSET + 8)
 	)
 	_throw_velocity = DRONE_TO_GODOT * velocity_drone
 	_throw_angular_velocity = DRONE_TO_GODOT * angular_drone

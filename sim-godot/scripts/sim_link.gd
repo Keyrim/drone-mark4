@@ -33,11 +33,6 @@ const GODOT_TO_DRONE := Basis(Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(-1, 0
 
 const MOTOR_COUNT := 4
 
-## Offsets inside the actuator packet: version + type, then the echo.
-const ACTUATOR_ECHO_OFFSET := 2
-const ACTUATOR_MOTOR_OFFSET := 10
-const FLOAT_SIZE := 4
-
 ## Sleep between two polls while waiting for a lockstep reply.
 const LOCKSTEP_POLL_INTERVAL_US := 20
 
@@ -232,9 +227,10 @@ func _decode_actuator_packet(payload: PackedByteArray) -> int:
 		return -1
 	var decoded := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
 	for index: int in MOTOR_COUNT:
-		var value := payload.decode_float(ACTUATOR_MOTOR_OFFSET + index * FLOAT_SIZE)
+		var offset: int = Protocol.SIM_ACTUATOR_MOTOR_OFFSET + index * Protocol.FLOAT_SIZE
+		var value := payload.decode_float(offset)
 		if not is_finite(value):
 			return -1
 		decoded[index] = clampf(value, 0.0, 1.0)
 	motor_commands = decoded
-	return payload.decode_u64(ACTUATOR_ECHO_OFFSET)
+	return payload.decode_u64(Protocol.SIM_ACTUATOR_ECHO_OFFSET)

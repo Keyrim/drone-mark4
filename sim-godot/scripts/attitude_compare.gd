@@ -13,12 +13,6 @@ extends Node
 ## travels in the drone frame convention of the protocol and is remapped to
 ## the Godot axes for display.
 
-## Offset of the attitude quaternion (w x y z) inside the telemetry packet:
-## version (1) + type (1) + source (1) + sequence (2) + timestamp (8)
-## + gyro (12).
-const QUAT_OFFSET := 25
-const FLOAT_SIZE := 4
-
 ## Axis remap from the Godot frame to the drone frame: columns are the drone
 ## coordinates of the Godot x, y and z axes.
 const GODOT_TO_DRONE := Basis(Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(-1, 0, 0))
@@ -87,10 +81,10 @@ func _apply_estimate(payload: PackedByteArray) -> bool:
 		return false
 	if not Protocol.has_header(payload, Protocol.TYPE_TELEMETRY):
 		return false
-	var w := payload.decode_float(QUAT_OFFSET)
-	var x := payload.decode_float(QUAT_OFFSET + FLOAT_SIZE)
-	var y := payload.decode_float(QUAT_OFFSET + 2 * FLOAT_SIZE)
-	var z := payload.decode_float(QUAT_OFFSET + 3 * FLOAT_SIZE)
+	var w := payload.decode_float(Protocol.TELEMETRY_QUAT_OFFSET)
+	var x := payload.decode_float(Protocol.TELEMETRY_QUAT_OFFSET + Protocol.FLOAT_SIZE)
+	var y := payload.decode_float(Protocol.TELEMETRY_QUAT_OFFSET + 2 * Protocol.FLOAT_SIZE)
+	var z := payload.decode_float(Protocol.TELEMETRY_QUAT_OFFSET + 3 * Protocol.FLOAT_SIZE)
 	var estimated := Quaternion(x, y, z, w)
 	if not estimated.is_finite() or estimated.length_squared() < 0.5:
 		return false
