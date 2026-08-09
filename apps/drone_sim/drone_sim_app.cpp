@@ -128,7 +128,9 @@ namespace mark4
             }
             // A simulator world reset teleports the drone: no estimator can
             // (or should) track that, so the flight core restarts from
-            // scratch, exactly like a power cycle on the bench.
+            // scratch, exactly like a power cycle on the bench. Tuned
+            // parameters return to their defaults with it, like flash-less
+            // hardware.
             if (resetCountSeen && m_sensorSource.resetCount() != lastResetCount)
             {
                 m_core = mark4::FlightCore{};

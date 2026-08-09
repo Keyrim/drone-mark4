@@ -4,12 +4,14 @@
 /// @brief Flight core entry point.
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 #include "flight_core/attitude_controller.hpp"
 #include "flight_core/attitude_estimator.hpp"
 #include "flight_core/rate_controller.hpp"
 #include "flight_core/throw_detector.hpp"
+#include "flight_core/tuning_table.hpp"
 #include "flight_core/types.hpp"
 #include "flight_core/vertical_controller.hpp"
 #include "flight_core/vertical_estimator.hpp"
@@ -112,6 +114,40 @@ namespace mark4
         {
             return m_throwDetector;
         }
+
+        /// @brief Validates a new value for a tunable parameter and, when it
+        ///        is accepted, applies it to the module that owns it in the
+        ///        same call - the registry and the modules never disagree, so
+        ///        there is no window where a reader sees a value that is not
+        ///        flying yet.
+        ///
+        ///        The core is single-threaded: call this from the thread that
+        ///        runs step(), between two steps. The new value is then in
+        ///        effect for the whole of the next step. Integrator state
+        ///        deliberately survives a gain change, because retuning a loop
+        ///        mid-flight must not kick it.
+        /// @param id parameter identifier
+        /// @param value candidate value
+        /// @return OK when the value was applied, the reason otherwise
+        TuningStatus setParam(std::uint16_t id, float value);
+
+        /// @brief Reads the live value of a tunable parameter.
+        /// @param id parameter identifier
+        /// @param[out] valueOut live value, written only when the call returns OK
+        /// @return OK, or UNKNOWN_ID when no parameter carries this id
+        [[nodiscard]] TuningStatus getParam(std::uint16_t id, float &valueOut) const;
+
+        /// @return number of tunable parameters
+        [[nodiscard]] static constexpr std::size_t ParamCount()
+        {
+            return TuningTable::PARAM_COUNT;
+        }
+
+        /// @brief Enumerates the tunable parameters, name and bounds included,
+        ///        so a ground station discovers them instead of hardcoding them.
+        /// @param index position in the registry, in [0, ParamCount())
+        /// @return the entry, or nullptr past the end
+        [[nodiscard]] const TuningParam *paramInfo(std::size_t index) const;
 
         /// Throttle below which the drone stays disarmed: motors stopped and
         /// control integrators held at zero.
@@ -223,6 +259,7 @@ namespace mark4
         [[nodiscard]] bool tiltCutoffConfirmed(const SensorFrame &sensors);
         [[nodiscard]] float estimatedUpZ() const;
         [[nodiscard]] std::array<float, 3> brakeUpWorld() const;
+        void applyParam(std::uint16_t id, float value);
 
         FlightPhase m_phase = FlightPhase::IDLE;
         bool m_stickDown = true;                  ///< throttle state, with hysteresis
@@ -244,5 +281,6 @@ namespace mark4
         VerticalController m_verticalController;
         std::uint64_t m_prevTimestampUs = 0U; ///< timestamp of the last accepted frame [us]
         bool m_hasPrevTimestamp = false;      ///< false until the first accepted frame
+        TuningTable m_tuning;                 ///< registry of the tunable gains
     };
 } // namespace mark4

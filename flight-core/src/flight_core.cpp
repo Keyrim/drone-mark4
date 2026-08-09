@@ -377,6 +377,81 @@ namespace mark4
         return q.w * q.w - q.x * q.x - q.y * q.y + q.z * q.z;
     }
 
+    TuningStatus FlightCore::setParam(std::uint16_t id, float value)
+    {
+        // Armed is every phase where the core may spin the motors on its own.
+        // ARMED itself counts: the drone is waiting for a throw and one
+        // detection away from flying. CUTOFF does not: it is latched motors
+        // off on the ground, which is precisely where retuning belongs.
+        const bool armed = m_phase != FlightPhase::IDLE && m_phase != FlightPhase::CUTOFF;
+
+        const TuningStatus status = m_tuning.set(id, value, armed);
+        if (status == TuningStatus::OK)
+        {
+            applyParam(id, value);
+        }
+        return status;
+    }
+
+    TuningStatus FlightCore::getParam(std::uint16_t id, float &valueOut) const
+    {
+        return m_tuning.get(id, valueOut);
+    }
+
+    const TuningParam *FlightCore::paramInfo(std::size_t index) const
+    {
+        return m_tuning.info(index);
+    }
+
+    void FlightCore::applyParam(std::uint16_t id, float value)
+    {
+        switch (id)
+        {
+            case TUNING_ID_RATE_KP_ROLL_PITCH:
+                m_rateController.setKpRollPitch(value);
+                break;
+            case TUNING_ID_RATE_KI_ROLL_PITCH:
+                m_rateController.setKiRollPitch(value);
+                break;
+            case TUNING_ID_RATE_KP_YAW:
+                m_rateController.setKpYaw(value);
+                break;
+            case TUNING_ID_RATE_KI_YAW:
+                m_rateController.setKiYaw(value);
+                break;
+            case TUNING_ID_ATTITUDE_KP:
+                m_attitudeController.setKp(value);
+                break;
+            case TUNING_ID_VERTICAL_KP:
+                m_verticalController.setKp(value);
+                break;
+            case TUNING_ID_VERTICAL_KI:
+                m_verticalController.setKi(value);
+                break;
+            case TUNING_ID_HOVER_COLLECTIVE:
+                m_verticalController.setHoverCollective(value);
+                break;
+            case TUNING_ID_AHRS_KP:
+                m_attitudeEstimator.setKp(value);
+                break;
+            case TUNING_ID_AHRS_KI:
+                m_attitudeEstimator.setKi(value);
+                break;
+            case TUNING_ID_VEST_ALTITUDE_GAIN:
+                m_verticalEstimator.setAltitudeGain(value);
+                break;
+            case TUNING_ID_VEST_VELOCITY_GAIN:
+                m_verticalEstimator.setVelocityGain(value);
+                break;
+            default:
+                // Unreachable: this runs only after the table accepted the id,
+                // and every registered id has a case above. Adding a row
+                // without its case here would silently store a value nothing
+                // reads, which the tuning tests are there to catch.
+                break;
+        }
+    }
+
     void FlightCore::updateEstimators(const SensorFrame &sensors, float dt)
     {
         // While the core deliberately accelerates (recovery, braking) the
