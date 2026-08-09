@@ -14,13 +14,19 @@ TEST_CASE("packTelemetry carries the estimated attitude next to the raw frame")
 {
     mark4::FlightCore core;
     mark4::SensorFrame frame;
-    frame.timestampUs = 123456U;
     frame.gyroRadS = {0.1f, 0.2f, 0.3f};
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
+    frame.baroPa = 101325.0f;
     frame.rc.killSwitch = false;
     frame.rc.throttle = 0.5f;
     mark4::ActuatorFrame actuators;
-    core.step(frame, actuators);
+    // Enough resting frames to capture the baro reference, then one step in
+    // stick flight (the gyro stays under the resting gate).
+    for (std::uint32_t i = 0U; i <= mark4::VerticalEstimator::REFERENCE_SAMPLES; ++i)
+    {
+        frame.timestampUs = 123456U + static_cast<std::uint64_t>(i) * 2000U;
+        core.step(frame, actuators);
+    }
 
     const auto wire = mark4::packTelemetry(frame, actuators, core);
     REQUIRE(wire.size() == mark4::TELEMETRY_PACKET_SIZE);

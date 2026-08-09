@@ -109,6 +109,42 @@ TEST_CASE("free fall drives the velocity to minus g times t through the accelero
     REQUIRE(std::fabs(estimator.verticalVelocityMps() + mark4::GRAVITY_MPS2 * FALL_S) < 0.3f);
 }
 
+TEST_CASE("the reference only captures at rest: an in-air reboot waits for landing")
+{
+    mark4::VerticalEstimator estimator;
+    std::uint64_t timestamp = 0U;
+
+    // Rebooted mid-fall: plausible pressure, but the specific force is far
+    // from 1 g. However long it lasts, no reference may come out of it.
+    for (std::uint32_t i = 0U; i < 4U * mark4::VerticalEstimator::REFERENCE_SAMPLES; ++i)
+    {
+        estimator.update(makeFrame(timestamp, 150.0f, 0.0f), STEP_S, {});
+        timestamp += STEP_US;
+    }
+    REQUIRE(!estimator.ready());
+
+    // Tumbling with a 1 g norm (spinning on the ground, swung by hand): the
+    // gyro says this is not rest either.
+    for (std::uint32_t i = 0U; i < 4U * mark4::VerticalEstimator::REFERENCE_SAMPLES; ++i)
+    {
+        mark4::SensorFrame frame = makeFrame(timestamp, 150.0f, mark4::GRAVITY_MPS2);
+        frame.gyroRadS = {3.0f, 0.0f, 0.0f};
+        estimator.update(frame, STEP_S, {});
+        timestamp += STEP_US;
+    }
+    REQUIRE(!estimator.ready());
+
+    // Back at rest on the ground: the capture completes with a reference
+    // taken where the drone actually is.
+    for (std::uint32_t i = 0U; i < mark4::VerticalEstimator::REFERENCE_SAMPLES; ++i)
+    {
+        estimator.update(makeFrame(timestamp, 120.0f, mark4::GRAVITY_MPS2), STEP_S, {});
+        timestamp += STEP_US;
+    }
+    REQUIRE(estimator.ready());
+    REQUIRE(std::fabs(estimator.altitudeM()) < 0.05f);
+}
+
 TEST_CASE("an implausible baro sample never seeds the reference")
 {
     mark4::VerticalEstimator estimator;

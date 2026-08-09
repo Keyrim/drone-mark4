@@ -55,6 +55,12 @@ namespace mark4
         ///   nothing integrates over the hole. step() derives dt once under
         ///   this policy and passes it down; no other module does timestamp
         ///   arithmetic.
+        /// - The state machine never leaves IDLE before the vertical
+        ///   estimator captured its baro reference, which takes
+        ///   REFERENCE_SAMPLES resting frames: a dead baro or a boot in
+        ///   motion keeps the motors off. Implausible or glitched baro
+        ///   samples afterwards are the estimator's business (plausibility
+        ///   window, innovation clamp).
         /// @param sensors latest sensor frame
         /// @param[out] actuators motor commands computed for this step
         void step(const SensorFrame &sensors, ActuatorFrame &actuators);

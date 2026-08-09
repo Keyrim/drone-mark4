@@ -31,9 +31,20 @@ namespace mark4
 
         if (!m_ready)
         {
-            if (!baroPlausible)
+            // Only a resting drone may seed the reference: plausible baro,
+            // specific force near 1 g, quiet gyro. A core booted mid-motion
+            // (in-air reboot) simply completes the capture after landing.
+            const float accelNorm = std::sqrt(frame.accelMps2[0] * frame.accelMps2[0] +
+                                              frame.accelMps2[1] * frame.accelMps2[1] +
+                                              frame.accelMps2[2] * frame.accelMps2[2]);
+            const float gyroNorm = std::sqrt(frame.gyroRadS[0] * frame.gyroRadS[0] +
+                                             frame.gyroRadS[1] * frame.gyroRadS[1] +
+                                             frame.gyroRadS[2] * frame.gyroRadS[2]);
+            const bool resting = std::fabs(accelNorm - GRAVITY_MPS2) < REFERENCE_ACCEL_GATE_MPS2 &&
+                                 gyroNorm < REFERENCE_GYRO_QUIET_RADS;
+            if (!baroPlausible || !resting)
             {
-                return; // a faulty sensor must never seed the reference
+                return; // a faulty sensor or a moving drone must not seed it
             }
             m_referenceSumM += baroAltitudeM;
             ++m_referenceCount;

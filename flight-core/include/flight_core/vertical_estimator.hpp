@@ -18,7 +18,13 @@ namespace mark4
     /// integration alone produces the -g slope of the velocity.
     ///
     /// The altitude is relative to a baro reference averaged over the first
-    /// REFERENCE_SAMPLES frames: the estimator reads zero where it woke up.
+    /// REFERENCE_SAMPLES resting frames: the estimator reads zero where it
+    /// woke up. Only quasi-static frames (plausible baro, accel norm near
+    /// 1 g, quiet gyro) may seed the reference: a core booting mid-motion -
+    /// the in-air reboot case above all - would otherwise average a
+    /// worthless reference out of a changing pressure. Rebooted in flight,
+    /// the capture simply completes once the drone is back at rest, and
+    /// ready() stays false until then.
     ///
     /// The baro channel is gated, because an MS5611 over I2C will produce
     /// garbage eventually: a pressure outside the plausible window is a
@@ -45,6 +51,15 @@ namespace mark4
 
         /// Number of frames averaged into the baro reference at startup.
         static constexpr std::uint32_t REFERENCE_SAMPLES = 50U;
+
+        /// Half-width of the accel norm window around 1 g inside which a
+        /// frame may count as resting for the reference capture: a falling
+        /// or thrusting drone reads far from 1 g and must not seed it.
+        static constexpr float REFERENCE_ACCEL_GATE_MPS2 = 1.0f;
+
+        /// Gyro norm under which a frame may count as resting for the
+        /// reference capture: a tumbling drone is not on the ground.
+        static constexpr float REFERENCE_GYRO_QUIET_RADS = 1.5f;
 
         /// Lower bound of the plausible static pressure window [Pa], about
         /// 9000 m: a hand-thrown drone has no business past it, a zeroed or
@@ -78,7 +93,7 @@ namespace mark4
         }
 
         /// @brief Advances the estimate with one sensor frame. The first
-        ///        REFERENCE_SAMPLES frames only build the baro reference. The
+        ///        REFERENCE_SAMPLES resting frames only build the baro reference. The
         ///        caller owns the time policy (monotonicity, gap handling) and
         ///        hands the integration step down; a non-positive dt only
         ///        contributes to the reference, nothing integrates.

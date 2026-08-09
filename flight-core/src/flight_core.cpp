@@ -109,6 +109,14 @@ namespace mark4
         switch (m_phase)
         {
             case FlightPhase::IDLE:
+                if (!m_verticalEstimator.ready())
+                {
+                    // No mission before the vertical estimate runs. The baro
+                    // reference only captures at rest, so a core rebooted
+                    // mid-air stays here, motors off, until the drone is back
+                    // on the ground with a fresh reference.
+                    break;
+                }
                 if (sensors.rc.armSwitch)
                 {
                     // Anything detected before this instant is not a throw to fly:
