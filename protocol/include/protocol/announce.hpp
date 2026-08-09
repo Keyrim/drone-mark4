@@ -1,0 +1,44 @@
+#pragma once
+
+/// @file
+/// @brief Process announce packet, the basis of ground-side discovery.
+///        Defined ahead of its consumer: a flight process will broadcast
+///        it periodically and the ground side will discover whoever is
+///        alive instead of relying on hand-wired ports. Nothing emits it
+///        yet; the layout ships with the rest of the wire version so
+///        wiring it up later breaks nothing.
+
+#include <cstddef>
+#include <cstdint>
+#include <type_traits>
+
+#include "protocol/header.hpp"
+
+namespace mark4
+{
+#pragma pack(push, 1)
+    /// One process saying "here I am": its kind, the ports it serves and
+    /// (via the version byte) the protocol it speaks.
+    struct AnnouncePacket
+    {
+        std::uint8_t version;        ///< = PROTOCOL_VERSION
+        std::uint8_t type;           ///< = PacketType::ANNOUNCE
+        std::uint8_t kind;           ///< StreamSource of the announcing process
+        std::uint32_t sessionId;     ///< random per-process-start identity,
+                                     ///< 0 until session identity is assigned;
+                                     ///< lets a consumer detect a restart
+                                     ///< behind an unchanged kind and port
+        std::uint16_t telemetryPort; ///< port the process broadcasts telemetry
+                                     ///< to, 0 when it has none
+        std::uint16_t commandPort;   ///< port the process listens on for
+                                     ///< commands, 0 when it has none
+    };
+#pragma pack(pop)
+
+    /// version (1) + type (1) + kind (1) + session (4) + telemetry port (2)
+    /// + command port (2).
+    inline constexpr std::size_t ANNOUNCE_PACKET_SIZE = 11U;
+
+    static_assert(sizeof(AnnouncePacket) == ANNOUNCE_PACKET_SIZE, "wire layout must be packed");
+    static_assert(std::is_trivially_copyable_v<AnnouncePacket>);
+} // namespace mark4

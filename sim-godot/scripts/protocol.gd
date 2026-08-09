@@ -24,6 +24,11 @@ const TYPE_RC_COMMAND := 6
 const TYPE_REBOOT_COMMAND := 7
 const TYPE_BLACKBOX_RECORD := 8
 const TYPE_ANNOUNCE := 9
+const TYPE_TUNING_SET := 10
+const TYPE_TUNING_GET := 11
+const TYPE_TUNING_LIST := 12
+const TYPE_TUNING_ACK := 13
+const TYPE_TUNING_INFO := 14
 
 ## Stream source identities (header.hpp).
 const SOURCE_FIRMWARE := 1

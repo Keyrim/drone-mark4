@@ -29,6 +29,11 @@ TYPE_RC_COMMAND = 6
 TYPE_REBOOT_COMMAND = 7
 TYPE_BLACKBOX_RECORD = 8
 TYPE_ANNOUNCE = 9
+TYPE_TUNING_SET = 10
+TYPE_TUNING_GET = 11
+TYPE_TUNING_LIST = 12
+TYPE_TUNING_ACK = 13
+TYPE_TUNING_INFO = 14
 
 # Stream source identities (mark4::StreamSource).
 SOURCE_FIRMWARE = 1
@@ -118,6 +123,25 @@ RC_COMMAND_PACKET_SIZE = 9
 REBOOT_COMMAND_STRUCT = struct.Struct("<BBB")
 REBOOT_COMMAND_PACKET_SIZE = 3
 
+# Wire format mirroring mark4::AnnouncePacket (announce.hpp): version,
+# type, kind, session id, telemetry port, command port. Reserved: nothing
+# emits it yet.
+ANNOUNCE_STRUCT = struct.Struct("<BBBIHH")
+ANNOUNCE_PACKET_SIZE = 11
+
+# Wire formats mirroring the tuning packets (tuning.hpp). Reserved:
+# nothing emits them yet.
+TUNING_SET_STRUCT = struct.Struct("<BBHf")
+TUNING_SET_PACKET_SIZE = 8
+TUNING_GET_STRUCT = struct.Struct("<BBH")
+TUNING_GET_PACKET_SIZE = 4
+TUNING_LIST_STRUCT = struct.Struct("<BBH")
+TUNING_LIST_PACKET_SIZE = 4
+TUNING_ACK_STRUCT = struct.Struct("<BBHfB")
+TUNING_ACK_PACKET_SIZE = 9
+TUNING_INFO_STRUCT = struct.Struct("<BBHHH16sfffB")
+TUNING_INFO_PACKET_SIZE = 37
+
 for _wire_struct, _wire_size, _name in (
     (TELEMETRY_STRUCT, TELEMETRY_PACKET_SIZE, "telemetry"),
     (SIM_RAW_STRUCT, SIM_RAW_PACKET_SIZE, "sim raw"),
@@ -126,6 +150,12 @@ for _wire_struct, _wire_size, _name in (
     (SIM_COMMAND_STRUCT, SIM_COMMAND_PACKET_SIZE, "sim command"),
     (RC_COMMAND_STRUCT, RC_COMMAND_PACKET_SIZE, "rc command"),
     (REBOOT_COMMAND_STRUCT, REBOOT_COMMAND_PACKET_SIZE, "reboot command"),
+    (ANNOUNCE_STRUCT, ANNOUNCE_PACKET_SIZE, "announce"),
+    (TUNING_SET_STRUCT, TUNING_SET_PACKET_SIZE, "tuning set"),
+    (TUNING_GET_STRUCT, TUNING_GET_PACKET_SIZE, "tuning get"),
+    (TUNING_LIST_STRUCT, TUNING_LIST_PACKET_SIZE, "tuning list"),
+    (TUNING_ACK_STRUCT, TUNING_ACK_PACKET_SIZE, "tuning ack"),
+    (TUNING_INFO_STRUCT, TUNING_INFO_PACKET_SIZE, "tuning info"),
 ):
     assert _wire_struct.size == _wire_size, (
         f"{_name} wire layout out of sync with protocol/include/protocol/"
