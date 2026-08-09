@@ -50,6 +50,10 @@ ctest --preset desktop -R "kill switch"
 # Run the simulator app (500 iterations by default, exit code 0 expected)
 ./build/desktop/apps/drone_sim/drone_sim [iterations] [--sim-port N] [--telemetry-port N]
 
+# Start a full session (Godot + drone_sim + decoding websocket on 47810);
+# `hub up real|replay` and `hub serve` are the other entry points
+./build/desktop/apps/hub/hub up sim
+
 # Monte Carlo throw campaign through headless Godot (see tools/batch/README.md)
 python3 tools/batch/run_batch.py --runs 100 --parallel 4 [--godot /path/to/godot4]
 

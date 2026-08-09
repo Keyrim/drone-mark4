@@ -3,8 +3,9 @@
 simulator state (sim raw), aligned by simulated timestamp.
 
 Prints overall RMS / max errors and the worst one-second windows, so the bad
-segments of a run can be localized. Takes the CSV pair written by
-stream_record.py; without arguments, picks the newest pair in logs/.
+segments of a run can be localized. Takes the CSV pair the hub records
+(`hub serve --record`, or a `record` message on its websocket endpoint);
+without arguments, picks the newest pair in logs/.
 """
 
 import argparse
@@ -28,7 +29,7 @@ def load(path):
 def newest_pair():
     recordings = sorted(pathlib.Path("logs").glob("streams_*_telemetry.csv"))
     if not recordings:
-        sys.exit("no streams_*_telemetry.csv in logs/, run stream_record.py first")
+        sys.exit("no streams_*_telemetry.csv in logs/, record a session first")
     telemetry = recordings[-1]
     return telemetry, pathlib.Path(str(telemetry).replace("_telemetry", "_simraw"))
 

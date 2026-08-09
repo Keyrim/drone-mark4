@@ -1,9 +1,8 @@
 /// @file
-/// @brief Stream recorder: the CSV pair must stay byte-compatible with what
-///        tools/blackbox/stream_record.py writes, because the comparison tool
-///        reads recordings made by either. The expected strings below are
-///        copied from that script on purpose: they are the contract, and a
-///        silent drift on one side has to fail here.
+/// @brief Stream recorder: the CSV pair is what tools/blackbox/stream_compare.py
+///        reads, so its exact shape is a contract with that script. The
+///        expected strings below are spelled out on purpose, and a silent
+///        drift on either side has to fail here.
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>
@@ -18,12 +17,12 @@
 
 namespace
 {
-    /// Header line tools/blackbox/stream_record.py writes into the telemetry CSV.
+    /// Header line of the telemetry CSV, as tools/blackbox/stream_compare.py reads it.
     constexpr const char *PYTHON_TELEMETRY_HEADER =
         "timestamp_us,gyro_x,gyro_y,gyro_z,quat_w,quat_x,quat_y,quat_z,"
         "bias_x,bias_y,bias_z,motor_0,motor_1,motor_2,motor_3,altitude_m,vz_mps";
 
-    /// Header line tools/blackbox/stream_record.py writes into the sim raw CSV.
+    /// Header line of the sim raw CSV, as tools/blackbox/stream_compare.py reads it.
     constexpr const char *PYTHON_SIM_RAW_HEADER =
         "timestamp_us,quat_w,quat_x,quat_y,quat_z,pos_x,pos_y,pos_z,vel_x,vel_y,vel_z";
 
@@ -121,7 +120,7 @@ TEST_CASE("a csv cell reads exactly like the one python writes")
     CHECK(mark4::formatCsvFloat(3.4028235e38f) == "3.4028234663852886e+38");
 }
 
-TEST_CASE("the csv headers are the ones the python recorder writes")
+TEST_CASE("the csv headers are the ones the python reader expects")
 {
     CHECK(std::string(mark4::StreamRecorder::TELEMETRY_CSV_HEADER) == PYTHON_TELEMETRY_HEADER);
     CHECK(std::string(mark4::StreamRecorder::SIM_RAW_CSV_HEADER) == PYTHON_SIM_RAW_HEADER);
@@ -135,7 +134,7 @@ TEST_CASE("the csv headers are the ones the python recorder writes")
     CHECK(readFile(recorder.simRawCsvPath()) == std::string(PYTHON_SIM_RAW_HEADER) + "\r\n");
 }
 
-TEST_CASE("a telemetry row holds the same columns as the python recorder")
+TEST_CASE("a telemetry row holds the columns the python reader expects")
 {
     mark4::StreamRecorder recorder(scratchDirectory("hub_recorder_telemetry"));
     REQUIRE(recorder.startCsvSession());
@@ -162,7 +161,7 @@ TEST_CASE("a telemetry row holds the same columns as the python recorder")
     CHECK(recorder.stats().telemetryRows == 2U);
 }
 
-TEST_CASE("a sim raw row holds the same columns as the python recorder")
+TEST_CASE("a sim raw row holds the columns the python reader expects")
 {
     mark4::StreamRecorder recorder(scratchDirectory("hub_recorder_simraw"));
     REQUIRE(recorder.startCsvSession());

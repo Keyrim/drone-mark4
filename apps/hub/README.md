@@ -143,10 +143,10 @@ failed to decode. Streams are never acknowledged.
 
 `--record`, or a `record` message, opens a timestamped CSV pair in the log
 directory: `streams_YYYYmmdd_HHMMSS_telemetry.csv` and
-`..._simraw.csv`. Those files are byte-compatible with what
-`tools/blackbox/stream_record.py` writes, down to the header line, the CRLF
-terminator and the decimal rendering of every value, so
-`tools/blackbox/stream_compare.py` reads a recording made by either.
+`..._simraw.csv`. Those files are what a python consumer would have written
+itself, down to the header line, the CRLF terminator and the decimal
+rendering of every value, so `tools/blackbox/stream_compare.py` reads them
+without knowing which side produced them.
 
 Blackbox records arriving over the serial link are appended verbatim to
 `board_YYYYmmdd_HHMMSS.m4bb`, which is created only once a record actually

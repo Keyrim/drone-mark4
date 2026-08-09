@@ -19,29 +19,34 @@ python3 tools/telemetry/read_serial.py
 Exit code 0 when more than 20 valid packets arrived within the capture
 window. Standard library only, no pyserial needed.
 
-`serial_bridge.py` is the single consumer of the serial port during a
-session: telemetry packets are re-broadcast over UDP exactly like
-drone_sim emits them (47801 plus the 47803 mirror), so the ground
-station and the Godot attitude ghost work unchanged on real flights,
-and blackbox records are appended to a `.m4bb` file (raw record
-sequence, the same format `drone_sim` writes) until Ctrl-C:
+During an actual bench session the `hub` is the single consumer of the
+serial port, and nothing else may open it at the same time:
 
 ```sh
-python3 tools/telemetry/serial_bridge.py [logs/flight.m4bb]
-./build/desktop/apps/drone_replay/drone_replay logs/<file>.m4bb
+./build/desktop/apps/hub/hub up real --serial /dev/ttyUSB0
+./build/desktop/apps/hub/hub serve --serial /dev/ttyUSB0 --record
 ```
 
-The uplink has no dedicated tool: the Godot simulator is the cockpit.
-Its keyboard pilot (K = kill, A = arm, Up/Down = throttle) streams
-`RcCommandPacket` datagrams at 10 Hz to udp/47805 (`RC_COMMAND_PORT`),
-and the bridge forwards them onto the UART verbatim. The bridge is
-standing in for the board's own command receiver here, which is why it
-is the one binding that port; point the simulator at another one with
-`--rc-port` on both sides when a local `drone_sim` is also listening
-(ghost view: two receivers, two ports). The firmware fail-safes to
-kill+disarmed after 500 ms of silence, so closing either the bridge
-or the simulator is a safe action.
+The hub re-broadcasts the telemetry it decodes over UDP exactly like
+drone_sim emits it (47801 plus the 47803 mirror), so the ground station
+and the Godot attitude ghost work unchanged on real flights, and it
+appends the blackbox records to a timestamped `.m4bb` file (raw record
+sequence, the same format `drone_sim` writes) that `drone_replay` reads
+back:
 
-Both tools import the wire constants from the shared
+```sh
+./build/desktop/apps/drone_replay/drone_replay logs/board_<stamp>.m4bb
+```
+
+The uplink goes through the hub too: an `rc` message on its websocket
+endpoint (`{"type":"rc","target":"firmware",...}`) is framed onto the
+UART verbatim. The Godot keyboard pilot (K = kill, A = arm, Up/Down =
+throttle) remains the cockpit for a simulated flight, streaming
+`RcCommandPacket` datagrams at 10 Hz to udp/47805 (`RC_COMMAND_PORT`),
+where the local `drone_sim` binds its own command receiver. Both paths
+fail-safe to kill+disarmed after 500 ms of silence, so closing the
+sender is itself a safe action.
+
+`read_serial.py` imports the wire constants from the shared
 `tools/ground-station/telemetry_wire.py` module, the single python copy
 of the protocol; the golden packet fixtures catch any drift in CI.

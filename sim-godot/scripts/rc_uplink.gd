@@ -7,9 +7,9 @@ extends Node
 ## packed as an RcCommandPacket (protocol/include/protocol/commands.hpp)
 ## and sent at 10 Hz over UDP to RC_COMMAND_PORT. The default destination
 ## is the local drone_sim, so an interactive flight exercises the exact
-## RC path a real flight uses; pointing it at the serial bridge instead
-## (--rc-port, or the host export) flies the real board through the same
-## cockpit and the same packets.
+## RC path a real flight uses. A real board is flown from the hub
+## instead, which owns its UART; --rc-port and the host export only move
+## this stream to another local flight process.
 ##
 ## We only send. The receiving flight process is the one that binds the
 ## port, so nothing here ever fails because a receiver is missing: the
