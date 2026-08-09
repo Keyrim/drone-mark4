@@ -39,7 +39,8 @@ namespace
                        float accelZ,
                        float throttle = 0.0f,
                        bool armSwitch = false,
-                       float gyroX = 0.0f)
+                       float gyroX = 0.0f,
+                       mark4::PilotMode mode = mark4::PilotMode::MANUAL)
     {
         std::uint64_t timestamp = fromUs;
         for (std::uint32_t i = 0U; i < steps; ++i)
@@ -48,6 +49,7 @@ namespace
             frame.timestampUs = timestamp;
             frame.rc.killSwitch = false;
             frame.rc.armSwitch = armSwitch;
+            frame.rc.mode = mode;
             frame.rc.throttle = throttle;
             frame.accelMps2 = {0.0f, 0.0f, accelZ};
             frame.gyroRadS = {gyroX, 0.0f, 0.0f};
@@ -184,14 +186,24 @@ TEST_CASE("the flight core derives the armed state from its own phase")
     REQUIRE(core.paramInfo(0U) != nullptr);
     REQUIRE(core.paramInfo(mark4::FlightCore::ParamCount()) == nullptr);
 
-    // At rest, stick down: on the ground, everything may be retuned.
+    // At rest, disarmed: on the ground, everything may be retuned.
     std::uint64_t timestamp = feed(core, actuators, 0U, 200U, mark4::GRAVITY_MPS2);
     REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
     REQUIRE(core.setParam(mark4::TUNING_ID_AHRS_KP, 3.0f) == mark4::TuningStatus::OK);
 
-    // Stick up: flying. The estimator gain is locked, the rate gain is not.
-    timestamp = feed(core, actuators, timestamp, 5U, mark4::GRAVITY_MPS2, 0.5f);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
+    // Armed for a throw (mode selected, stick centered, switch on): the
+    // motors may run from here, so the estimator gain is locked. The rate
+    // gain is exactly what a pilot retunes between throws, and is not.
+    timestamp = feed(core,
+                     actuators,
+                     timestamp,
+                     5U,
+                     mark4::GRAVITY_MPS2,
+                     0.5f,
+                     true,
+                     0.0f,
+                     mark4::PilotMode::ALTITUDE_AUTO);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ARMED);
     REQUIRE(core.setParam(mark4::TUNING_ID_AHRS_KP, 4.0f) ==
             mark4::TuningStatus::LOCKED_WHILE_ARMED);
     REQUIRE(core.setParam(mark4::TUNING_ID_RATE_KP_ROLL_PITCH, 0.04f) == mark4::TuningStatus::OK);
@@ -201,8 +213,8 @@ TEST_CASE("the flight core derives the armed state from its own phase")
     REQUIRE(core.getParam(mark4::TUNING_ID_AHRS_KP, value) == mark4::TuningStatus::OK);
     REQUIRE(value == 3.0f);
 
-    // Stick down again: back on the ground, the lock is released.
-    feed(core, actuators, timestamp, 5U, mark4::GRAVITY_MPS2);
+    // Disarmed again: back on the ground, the lock is released.
+    feed(core, actuators, timestamp, 5U, mark4::GRAVITY_MPS2, 0.5f);
     REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
     REQUIRE(core.setParam(mark4::TUNING_ID_AHRS_KP, 4.0f) == mark4::TuningStatus::OK);
 }
@@ -216,22 +228,27 @@ TEST_CASE("a tuned gain reaches the motors on the very next step")
     mark4::ActuatorFrame referenceOut;
     mark4::ActuatorFrame controlOut;
 
-    // Stick flight with a standing roll rate: the rate loop has a real error
-    // to chew on, so its proportional gain shows up in the motor commands.
+    // Direct-thrust flight with a standing roll rate: the rate loop has a
+    // real error to chew on, so its proportional gain shows up in the motor
+    // commands. Entered stick down, then flown at mid stick.
     const float gyro = 0.3f;
-    const std::uint64_t timestamp =
-        feed(tuned, tunedOut, 0U, 100U, mark4::GRAVITY_MPS2, 0.5f, false, gyro);
-    feed(reference, referenceOut, 0U, 100U, mark4::GRAVITY_MPS2, 0.5f, false, gyro);
-    feed(control, controlOut, 0U, 100U, mark4::GRAVITY_MPS2, 0.5f, false, gyro);
-    REQUIRE(tuned.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
+    auto enter = [gyro](mark4::FlightCore &core, mark4::ActuatorFrame &out) {
+        const std::uint64_t settled =
+            feed(core, out, 0U, 100U, mark4::GRAVITY_MPS2, 0.0f, true, gyro);
+        return feed(core, out, settled, 20U, mark4::GRAVITY_MPS2, 0.5f, true, gyro);
+    };
+    const std::uint64_t timestamp = enter(tuned, tunedOut);
+    static_cast<void>(enter(reference, referenceOut));
+    static_cast<void>(enter(control, controlOut));
+    REQUIRE(tuned.flightPhase() == mark4::FlightPhase::MANUAL);
 
     REQUIRE(tuned.setParam(mark4::TUNING_ID_RATE_KP_ROLL_PITCH,
                            2.0f * mark4::RateController::DEFAULT_KP_ROLL_PITCH) ==
             mark4::TuningStatus::OK);
 
-    feed(tuned, tunedOut, timestamp, 1U, mark4::GRAVITY_MPS2, 0.5f, false, gyro);
-    feed(reference, referenceOut, timestamp, 1U, mark4::GRAVITY_MPS2, 0.5f, false, gyro);
-    feed(control, controlOut, timestamp, 1U, mark4::GRAVITY_MPS2, 0.5f, false, gyro);
+    feed(tuned, tunedOut, timestamp, 1U, mark4::GRAVITY_MPS2, 0.5f, true, gyro);
+    feed(reference, referenceOut, timestamp, 1U, mark4::GRAVITY_MPS2, 0.5f, true, gyro);
+    feed(control, controlOut, timestamp, 1U, mark4::GRAVITY_MPS2, 0.5f, true, gyro);
 
     // The new gain is in effect for the whole of that step, not the one after.
     REQUIRE(tunedOut.motor[0] != referenceOut.motor[0]);
@@ -251,12 +268,36 @@ TEST_CASE("the tuned hover collective reaches the recovery feedforward")
         mark4::ActuatorFrame actuators;
         // Rest settles the estimators and the baro reference, then 100 ms of
         // 5 g thrust leaves at about 4 m/s, then free fall to the apex.
-        std::uint64_t timestamp = feed(core, actuators, 0U, 200U, mark4::GRAVITY_MPS2, 0.0f, true);
-        timestamp = feed(core, actuators, timestamp, 50U, 5.0f * mark4::GRAVITY_MPS2, 0.0f, true);
+        std::uint64_t timestamp = feed(core,
+                                       actuators,
+                                       0U,
+                                       200U,
+                                       mark4::GRAVITY_MPS2,
+                                       0.5f,
+                                       true,
+                                       0.0f,
+                                       mark4::PilotMode::ALTITUDE_AUTO);
+        timestamp = feed(core,
+                         actuators,
+                         timestamp,
+                         50U,
+                         5.0f * mark4::GRAVITY_MPS2,
+                         0.5f,
+                         true,
+                         0.0f,
+                         mark4::PilotMode::ALTITUDE_AUTO);
         float observed = 0.0f;
         for (std::uint32_t i = 0U; i < 1000U && observed == 0.0f; ++i)
         {
-            timestamp = feed(core, actuators, timestamp, 1U, 0.0f, 0.0f, true);
+            timestamp = feed(core,
+                             actuators,
+                             timestamp,
+                             1U,
+                             0.0f,
+                             0.5f,
+                             true,
+                             0.0f,
+                             mark4::PilotMode::ALTITUDE_AUTO);
             if (core.flightPhase() == mark4::FlightPhase::RECOVERY)
             {
                 observed = actuators.motor[0];

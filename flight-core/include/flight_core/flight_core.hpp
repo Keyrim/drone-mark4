@@ -18,9 +18,25 @@
 
 namespace mark4
 {
-    /// Phase of the flight state machine. The arm switch gates every phase
-    /// where the core flies on its own: switching it off always cuts the
-    /// motors and returns to IDLE, whatever was in progress.
+    /// Phase of the flight state machine, and the piloting mode with it: the
+    /// mode is not a second thing to publish, it IS which phase the machine
+    /// sits in, so the one byte already on the wire describes the whole
+    /// situation and no packet had to change to carry the modes.
+    ///
+    /// The arm switch is the single gate. No phase but IDLE and CUTOFF is
+    /// reachable while it is off, and switching it off from any of them cuts
+    /// the motors and returns to IDLE, whatever was in progress.
+    ///
+    /// Each mode leaves IDLE through its own interlock, and which mode was
+    /// used is latched on the way out, so moving the mode switch afterwards
+    /// changes nothing until the drone is disarmed again:
+    /// - MANUAL wants the stick down. The motors follow the stick from zero,
+    ///   so entering on a raised stick would be a jump to a live collective.
+    /// - ALTITUDE_AUTO wants the stick centered, and leads to ARMED, not to
+    ///   piloted flight. In that mode a centered stick means "hold this
+    ///   altitude", which on the ground is a takeoff nobody asked for; so
+    ///   ALTITUDE_AUTO piloted flight is only ever reached by taking over a
+    ///   HOVER the drone flew itself into after a throw.
     enum class FlightPhase : std::uint8_t
     {
         IDLE = 0U,          ///< motors stopped, waiting for the pilot
@@ -30,6 +46,7 @@ namespace mark4
         RECOVERY = 4U,      ///< motors on, leveling from an arbitrary attitude
         HOVER = 5U,         ///< recovered: altitude hold until the pilot takes over
         CUTOFF = 6U,        ///< safety cutoff latched: motors stopped until rearm
+        MANUAL = 7U,        ///< piloted flight: the stick commands the collective
     };
 
     /// Synchronous, single-threaded flight core, paced by data arrival
@@ -149,15 +166,15 @@ namespace mark4
         /// @return the entry, or nullptr past the end
         [[nodiscard]] const TuningParam *paramInfo(std::size_t index) const;
 
-        /// Throttle below which the drone stays disarmed: motors stopped and
-        /// control integrators held at zero.
-        static constexpr float ARM_THROTTLE = 0.05f;
+        /// Throttle under which the stick counts as down: the interlock the
+        /// direct-thrust mode is entered through, and the position it starts
+        /// its collective from.
+        static constexpr float STICK_DOWN_THROTTLE = 0.05f;
 
         /// Throttle above which the stick counts as raised again. The band
-        /// between ARM_THROTTLE and this is hysteresis: inside it the stick
-        /// keeps its previous state, so RC noise sitting on the boundary
-        /// cannot chatter the state machine (arming, hover takeover, cutoff
-        /// release) at frame rate.
+        /// between STICK_DOWN_THROTTLE and this is hysteresis: inside it the
+        /// stick keeps its previous state, so RC noise sitting on the
+        /// boundary cannot chatter the state machine at frame rate.
         static constexpr float STICK_UP_THROTTLE = 0.10f;
 
         /// Throttle a centered stick sits at.
@@ -169,6 +186,12 @@ namespace mark4
         /// velocity setpoint is exactly zero, so a released stick holds the
         /// altitude instead of drifting at a fraction of a m/s.
         static constexpr float STICK_CENTER_DEADBAND = 0.05f;
+
+        /// Distance from STICK_CENTER at which a stick read as centered stops
+        /// being read that way. Wider than the deadband on purpose: it is the
+        /// hysteresis of the centered latch, so a stick resting on the edge
+        /// of the deadband cannot flip the hover takeover at frame rate.
+        static constexpr float STICK_CENTER_RELEASE = 0.08f;
 
         /// Vertical velocity setpoint at full stick deflection [m/s]; mid
         /// stick holds the altitude. The mapping is continuous: the
@@ -247,6 +270,13 @@ namespace mark4
             return m_phase;
         }
 
+        /// @return mode the current mission left IDLE with; while IDLE, the
+        ///         mode the last mission used, MANUAL after a reset
+        [[nodiscard]] PilotMode pilotMode() const
+        {
+            return m_lockedMode;
+        }
+
         /// @brief Maps a stick position to the vertical velocity it commands,
         ///        deadband included.
         /// @param throttle normalized stick position [0, 1]
@@ -279,15 +309,33 @@ namespace mark4
         [[nodiscard]] float estimatedUpZ() const;
         [[nodiscard]] std::array<float, 3> brakeUpWorld() const;
         void applyParam(std::uint16_t id, float value);
+        /// @return true in every phase where the motors may run, ARMED
+        ///         included: the drone is one detection away from flying
+        ///         there. CUTOFF is not armed - it is latched motors off on
+        ///         the ground, which is precisely where retuning belongs.
+        [[nodiscard]] bool armed() const
+        {
+            return m_phase != FlightPhase::IDLE && m_phase != FlightPhase::CUTOFF;
+        }
+        /// @return true when the entry cutoffs trip on this frame
+        [[nodiscard]] bool cutoffTripped(const SensorFrame &sensors);
 
         FlightPhase m_phase = FlightPhase::IDLE;
-        bool m_stickDown = true;                  ///< throttle state, with hysteresis
-        std::uint32_t m_handledThrowCount = 0U;   ///< throws already acted upon
-        std::uint64_t m_recoveryStartUs = 0U;     ///< entry instant of RECOVERY [us]
-        std::uint64_t m_hoverStartUs = 0U;        ///< entry instant of HOVER [us]
-        bool m_brakeDone = false;                 ///< braking spent for this flight
-        bool m_tiltExceeded = false;              ///< a tilt streak is in progress
-        std::uint64_t m_tiltExceededSinceUs = 0U; ///< start of the tilt streak [us]
+        /* The two stick latches track the stick, not the mission: they are
+           updated on every frame and deliberately survive resetMission(),
+           because a stick that was down before a kill is still down after it.
+           Resetting them would make the machine forget a position the pilot
+           never moved, and the next gesture would be read as fresh. */
+        bool m_stickCentered = false;               ///< centered state, with hysteresis
+        PilotMode m_lockedMode = PilotMode::MANUAL; ///< mode captured on leaving IDLE
+        bool m_takeoverArmed = false;               ///< the stick was centered since HOVER began
+        bool m_stickDown = true;                    ///< throttle state, with hysteresis
+        std::uint32_t m_handledThrowCount = 0U;     ///< throws already acted upon
+        std::uint64_t m_recoveryStartUs = 0U;       ///< entry instant of RECOVERY [us]
+        std::uint64_t m_hoverStartUs = 0U;          ///< entry instant of HOVER [us]
+        bool m_brakeDone = false;                   ///< braking spent for this flight
+        bool m_tiltExceeded = false;                ///< a tilt streak is in progress
+        std::uint64_t m_tiltExceededSinceUs = 0U;   ///< start of the tilt streak [us]
         std::uint32_t m_stepCount = 0U;
         std::uint32_t m_staleFrameCount = 0U;   ///< frames with a non-increasing timestamp
         std::uint32_t m_invalidFrameCount = 0U; ///< frames with a NaN or Inf field

@@ -17,6 +17,10 @@ namespace
     constexpr float HELPER_BARO_PA = 101325.0f;
 
     /// @brief Feeds frames with the given accel on z, and optionally on x.
+    ///        The default mode and throttle are the altitude-auto interlock
+    ///        (mode selected, stick centered): with the arm switch off that
+    ///        is a drone sitting on the ground, and flipping the switch on is
+    ///        all it takes to arm for a throw.
     /// @return timestamp to continue the stream from
     std::uint64_t feed(mark4::FlightCore &core,
                        mark4::ActuatorFrame &actuators,
@@ -24,7 +28,9 @@ namespace
                        std::uint32_t steps,
                        float accelZ,
                        bool armSwitch = false,
-                       float accelX = 0.0f)
+                       float accelX = 0.0f,
+                       mark4::PilotMode mode = mark4::PilotMode::ALTITUDE_AUTO,
+                       float throttle = 0.5f)
     {
         std::uint64_t timestamp = fromUs;
         for (std::uint32_t i = 0U; i < steps; ++i)
@@ -33,6 +39,8 @@ namespace
             frame.timestampUs = timestamp;
             frame.rc.killSwitch = false;
             frame.rc.armSwitch = armSwitch;
+            frame.rc.mode = mode;
+            frame.rc.throttle = throttle;
             frame.accelMps2 = {accelX, 0.0f, accelZ};
             frame.baroPa = HELPER_BARO_PA;
             core.step(frame, actuators);
@@ -47,6 +55,45 @@ namespace
     std::uint64_t settle(mark4::FlightCore &core, mark4::ActuatorFrame &actuators)
     {
         return feed(core, actuators, 0U, 60U, mark4::GRAVITY_MPS2);
+    }
+
+    /// @brief Settles a fresh core with the stick down in direct-thrust mode,
+    ///        then flips the arm switch: the shortest path to a phase where
+    ///        the motors may run, for tests about something else entirely.
+    /// @return timestamp to continue the stream from, core in MANUAL
+    std::uint64_t enterManual(mark4::FlightCore &core, mark4::ActuatorFrame &actuators)
+    {
+        std::uint64_t timestamp = feed(core,
+                                       actuators,
+                                       0U,
+                                       60U,
+                                       mark4::GRAVITY_MPS2,
+                                       false,
+                                       0.0f,
+                                       mark4::PilotMode::MANUAL,
+                                       0.0f);
+        return feed(core,
+                    actuators,
+                    timestamp,
+                    1U,
+                    mark4::GRAVITY_MPS2,
+                    true,
+                    0.0f,
+                    mark4::PilotMode::MANUAL,
+                    0.0f);
+    }
+
+    /// @brief Fills a frame with the RC state that keeps a direct-thrust
+    ///        flight going: armed, manual, at the given stick position.
+    /// @param[in,out] frame frame to fill
+    /// @param throttle stick position
+    void manualRc(mark4::SensorFrame &frame, float throttle)
+    {
+        frame.rc.killSwitch = false;
+        frame.rc.armSwitch = true;
+        frame.rc.mode = mark4::PilotMode::MANUAL;
+        frame.rc.throttle = throttle;
+        frame.baroPa = HELPER_BARO_PA;
     }
 
     /// @brief Plays rest, then a hand thrust, up to the confirmed detection.
@@ -109,6 +156,8 @@ TEST_CASE("the kill switch ends the mission and disarms the state machine")
     frame.baroPa = HELPER_BARO_PA;
     frame.rc.killSwitch = false;
     frame.rc.armSwitch = true;
+    frame.rc.mode = mark4::PilotMode::ALTITUDE_AUTO;
+    frame.rc.throttle = 0.5f;
     frame.timestampUs = timestamp;
     core.step(frame, actuators);
     REQUIRE(core.flightPhase() == mark4::FlightPhase::ARMED);
@@ -133,15 +182,13 @@ TEST_CASE("an out-of-order frame is ignored and the outputs hold")
     mark4::FlightCore core;
     mark4::SensorFrame frame;
     mark4::ActuatorFrame actuators;
-    const std::uint64_t timestamp = settle(core, actuators);
-    frame.rc.killSwitch = false;
-    frame.rc.throttle = 0.5f;
+    const std::uint64_t timestamp = enterManual(core, actuators);
+    manualRc(frame, 0.5f);
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
-    frame.baroPa = HELPER_BARO_PA;
 
     frame.timestampUs = timestamp;
     core.step(frame, actuators);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
     const std::array<float, 4> held = actuators.motor;
 
     // Same timestamp, then an older one: both ignored, outputs held, even
@@ -151,14 +198,14 @@ TEST_CASE("an out-of-order frame is ignored and the outputs hold")
     frame.timestampUs = timestamp - STEP_US;
     core.step(frame, actuators);
     REQUIRE(core.staleFrameCount() == 2U);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
     REQUIRE(actuators.motor == held);
 
     // The stream resumes where it left off: fresh frames step normally.
     frame.gyroRadS = {0.0f, 0.0f, 0.0f};
     frame.timestampUs = timestamp + STEP_US;
     core.step(frame, actuators);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
 }
 
 TEST_CASE("a frame carrying NaN or Inf is rejected as a whole")
@@ -166,15 +213,13 @@ TEST_CASE("a frame carrying NaN or Inf is rejected as a whole")
     mark4::FlightCore core;
     mark4::SensorFrame frame;
     mark4::ActuatorFrame actuators;
-    const std::uint64_t settled = settle(core, actuators);
-    frame.rc.killSwitch = false;
-    frame.rc.throttle = 0.5f;
+    const std::uint64_t settled = enterManual(core, actuators);
+    manualRc(frame, 0.5f);
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
-    frame.baroPa = HELPER_BARO_PA;
 
     frame.timestampUs = settled;
     core.step(frame, actuators);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
     const std::array<float, 4> held = actuators.motor;
 
     // One poisoned field per frame: each frame is ignored, the outputs
@@ -206,7 +251,7 @@ TEST_CASE("a frame carrying NaN or Inf is rejected as a whole")
         timestamp += STEP_US;
     }
     REQUIRE(core.invalidFrameCount() == 4U);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
     REQUIRE(actuators.motor == held);
     for (const float m : actuators.motor)
     {
@@ -217,7 +262,7 @@ TEST_CASE("a frame carrying NaN or Inf is rejected as a whole")
     // never accepted, so this one is fresh).
     frame.timestampUs = settled + STEP_US;
     core.step(frame, actuators);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
     for (const float m : actuators.motor)
     {
         REQUIRE(std::isfinite(m));
@@ -285,17 +330,43 @@ TEST_CASE("a throttle below the arming threshold keeps the motors stopped")
     {
         REQUIRE(m == 0.0f);
     }
+
+    // Armed in direct-thrust mode, the same stick position is a legal
+    // flight phase - and still exactly zero thrust, which is the point of
+    // entering that mode with the stick at the bottom.
+    actuators.motor.fill(0.7f);
+    frame.rc.armSwitch = true;
+    frame.rc.mode = mark4::PilotMode::MANUAL;
+    frame.timestampUs = timestamp + STEP_US;
+    core.step(frame, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    for (const float m : actuators.motor)
+    {
+        REQUIRE(m == 0.0f);
+    }
 }
 
-TEST_CASE("a raised throttle drives the motors through the hover stack")
+TEST_CASE("taking a hover over drives the motors through the altitude stack")
 {
+    // Altitude-auto piloted flight is only ever reached by taking over a
+    // hover: it is not a takeoff mode. Fly a throw, then grab it.
     mark4::FlightCore core;
     mark4::SensorFrame frame;
     mark4::ActuatorFrame actuators;
-    const std::uint64_t timestamp = settle(core, actuators);
+    std::uint64_t timestamp = playThrow(core, actuators);
+    for (std::uint32_t i = 0U; i < 500U && core.flightPhase() != mark4::FlightPhase::HOVER; ++i)
+    {
+        timestamp = feed(core, actuators, timestamp, 1U, 0.0f, true);
+    }
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::HOVER);
+    // One centered frame arms the takeover, the way a pilot recentres before
+    // grabbing the drone.
+    timestamp = feed(core, actuators, timestamp, 1U, mark4::GRAVITY_MPS2, true);
 
     frame.rc.killSwitch = false;
-    frame.rc.throttle = 0.5f; // mid stick: hold the altitude
+    frame.rc.armSwitch = true;
+    frame.rc.mode = mark4::PilotMode::ALTITUDE_AUTO;
+    frame.rc.throttle = 0.6f; // off centre: the takeover gesture
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
     frame.baroPa = HELPER_BARO_PA;
     frame.timestampUs = timestamp;
@@ -304,7 +375,7 @@ TEST_CASE("a raised throttle drives the motors through the hover stack")
     frame.timestampUs = timestamp + STEP_US;
     core.step(frame, actuators);
 
-    // Level, at rest, mid stick: every motor sits near the hover collective.
+    // Level, near rest: every motor sits around the hover collective.
     for (const float m : actuators.motor)
     {
         REQUIRE(m > 0.3f);
@@ -312,20 +383,18 @@ TEST_CASE("a raised throttle drives the motors through the hover stack")
     }
 }
 
-TEST_CASE("an impact cuts the motors and latches until the stick is lowered")
+TEST_CASE("an impact cuts the motors and latches until the arm switch is released")
 {
     mark4::FlightCore core;
     mark4::SensorFrame frame;
     mark4::ActuatorFrame actuators;
-    const std::uint64_t timestamp = settle(core, actuators);
-    frame.rc.killSwitch = false;
-    frame.rc.throttle = 0.5f;
+    const std::uint64_t timestamp = enterManual(core, actuators);
+    manualRc(frame, 0.5f);
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
-    frame.baroPa = HELPER_BARO_PA;
 
     frame.timestampUs = timestamp;
     core.step(frame, actuators);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
 
     // 10 g spike: immediate cutoff.
     frame.timestampUs = timestamp + STEP_US;
@@ -337,22 +406,28 @@ TEST_CASE("an impact cuts the motors and latches until the stick is lowered")
         REQUIRE(m == 0.0f);
     }
 
-    // Back to normal frames: still latched.
+    // Back to normal frames, stick lowered: the cutoff is latched on the arm
+    // switch alone now, so lowering the stick changes nothing.
     frame.timestampUs = timestamp + 2U * STEP_US;
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
+    frame.rc.throttle = 0.0f;
     core.step(frame, actuators);
     REQUIRE(core.flightPhase() == mark4::FlightPhase::CUTOFF);
     REQUIRE(actuators.motor[0] == 0.0f);
 
-    // Stick down rearms, stick up flies again.
+    // Releasing the arm switch rearms, flipping it back flies again: the
+    // per-mode interlock (stick down, manual) is rechecked on the way out.
     frame.timestampUs = timestamp + 3U * STEP_US;
-    frame.rc.throttle = 0.0f;
+    frame.rc.armSwitch = false;
     core.step(frame, actuators);
     REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
     frame.timestampUs = timestamp + 4U * STEP_US;
+    frame.rc.armSwitch = true;
+    core.step(frame, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    frame.timestampUs = timestamp + 5U * STEP_US;
     frame.rc.throttle = 0.5f;
     core.step(frame, actuators);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
     REQUIRE(actuators.motor[0] > 0.0f);
 }
 
@@ -361,11 +436,9 @@ TEST_CASE("saturated rates cut the motors")
     mark4::FlightCore core;
     mark4::SensorFrame frame;
     mark4::ActuatorFrame actuators;
-    const std::uint64_t timestamp = settle(core, actuators);
-    frame.rc.killSwitch = false;
-    frame.rc.throttle = 0.5f;
+    const std::uint64_t timestamp = enterManual(core, actuators);
+    manualRc(frame, 0.0f);
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
-    frame.baroPa = HELPER_BARO_PA;
     frame.gyroRadS = {70.0f, 0.0f, 0.0f};
 
     frame.timestampUs = timestamp;
@@ -379,7 +452,8 @@ TEST_CASE("a sustained unrecoverable tilt cuts the motors")
     mark4::SensorFrame frame;
     mark4::ActuatorFrame actuators;
     frame.rc.killSwitch = false;
-    frame.rc.throttle = 0.5f;
+    frame.rc.armSwitch = true;
+    frame.rc.throttle = 0.0f;
     // Gravity almost sideways in the body frame: the estimator converges
     // toward a tilt far beyond what the hover stack can recover.
     frame.accelMps2 = {0.0f, 0.985f * mark4::GRAVITY_MPS2, 0.174f * mark4::GRAVITY_MPS2};
@@ -394,47 +468,6 @@ TEST_CASE("a sustained unrecoverable tilt cuts the motors")
     REQUIRE(actuators.motor[0] == 0.0f);
 }
 
-TEST_CASE("the stick-down boundary has hysteresis and cannot chatter")
-{
-    mark4::FlightCore core;
-    mark4::SensorFrame frame;
-    mark4::ActuatorFrame actuators;
-    std::uint64_t timestamp = settle(core, actuators);
-    frame.rc.killSwitch = false;
-    frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
-    frame.baroPa = HELPER_BARO_PA;
-
-    auto stepWithThrottle = [&](float throttle) {
-        frame.rc.throttle = throttle;
-        frame.timestampUs = timestamp;
-        core.step(frame, actuators);
-        timestamp += STEP_US;
-    };
-
-    stepWithThrottle(0.5f);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
-
-    // Crossing below ARM_THROTTLE disarms; RC noise hovering inside the
-    // hysteresis band afterwards must not re-enter stick flight.
-    stepWithThrottle(0.04f);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
-    for (std::uint32_t i = 0U; i < 10U; ++i)
-    {
-        stepWithThrottle(i % 2U == 0U ? 0.06f : 0.09f);
-        REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
-    }
-
-    // Only a deliberate raise past the release threshold flies again, and
-    // noise back inside the band must not disarm mid-flight.
-    stepWithThrottle(0.12f);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
-    for (std::uint32_t i = 0U; i < 10U; ++i)
-    {
-        stepWithThrottle(i % 2U == 0U ? 0.09f : 0.06f);
-        REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
-    }
-}
-
 TEST_CASE("a core with a dead baro never flies")
 {
     mark4::FlightCore core;
@@ -444,9 +477,10 @@ TEST_CASE("a core with a dead baro never flies")
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
     // baroPa stays at the SensorFrame default of 0 Pa: a faulted sensor.
 
-    // Stick raised and arm switch on, far past the capture window: with no
+    // Stick centered and arm switch on, far past the capture window: with no
     // baro reference the state machine must refuse every mission.
     frame.rc.throttle = 0.5f;
+    frame.rc.mode = mark4::PilotMode::ALTITUDE_AUTO;
     frame.rc.armSwitch = true;
     for (std::uint32_t i = 0U; i < 500U; ++i)
     {
@@ -464,6 +498,8 @@ TEST_CASE("arming waits for the baro reference capture")
     mark4::ActuatorFrame actuators;
     frame.rc.killSwitch = false;
     frame.rc.armSwitch = true;
+    frame.rc.mode = mark4::PilotMode::ALTITUDE_AUTO;
+    frame.rc.throttle = 0.5f;
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
     frame.baroPa = HELPER_BARO_PA;
 
@@ -537,12 +573,15 @@ TEST_CASE("a detected throw spins up ahead of the apex and recovers into a hover
     REQUIRE(core.flightPhase() == mark4::FlightPhase::HOVER);
     REQUIRE(actuators.motor[0] > 0.0f);
 
-    // The pilot takes over by raising the stick.
+    // Recentre once inside the hover, then move off centre: that gesture,
+    // not a stick position, is what hands the drone to the pilot.
+    timestamp = feed(core, actuators, timestamp, 1U, mark4::GRAVITY_MPS2, true);
     mark4::SensorFrame frame;
     frame.timestampUs = timestamp;
     frame.rc.killSwitch = false;
     frame.rc.armSwitch = true;
-    frame.rc.throttle = 0.5f;
+    frame.rc.mode = mark4::PilotMode::ALTITUDE_AUTO;
+    frame.rc.throttle = 0.7f;
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
     core.step(frame, actuators);
     REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
@@ -563,32 +602,32 @@ TEST_CASE("a ballistic phase ending on the ground returns to armed without spinn
     REQUIRE(actuators.motor[0] == 0.0f);
 }
 
-TEST_CASE("leaving the cutoff needs both the stick down and the arm switch off")
+TEST_CASE("leaving the cutoff needs the arm switch released")
 {
     mark4::FlightCore core;
     mark4::SensorFrame frame;
     mark4::ActuatorFrame actuators;
-    const std::uint64_t timestamp = settle(core, actuators);
-    frame.rc.killSwitch = false;
-    frame.rc.throttle = 0.5f;
+    const std::uint64_t timestamp = enterManual(core, actuators);
+    manualRc(frame, 0.0f);
     frame.gyroRadS = {70.0f, 0.0f, 0.0f};
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
-    frame.baroPa = HELPER_BARO_PA;
 
     frame.timestampUs = timestamp;
     core.step(frame, actuators);
     REQUIRE(core.flightPhase() == mark4::FlightPhase::CUTOFF);
 
-    // Stick down with the arm switch still on: stays latched.
+    // Any stick position, arm switch still on: stays latched.
     frame.gyroRadS = {0.0f, 0.0f, 0.0f};
-    frame.rc.throttle = 0.0f;
-    frame.rc.armSwitch = true;
     frame.timestampUs = timestamp + STEP_US;
+    core.step(frame, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::CUTOFF);
+    frame.rc.throttle = 0.5f;
+    frame.timestampUs = timestamp + 2U * STEP_US;
     core.step(frame, actuators);
     REQUIRE(core.flightPhase() == mark4::FlightPhase::CUTOFF);
 
     frame.rc.armSwitch = false;
-    frame.timestampUs = timestamp + 2U * STEP_US;
+    frame.timestampUs = timestamp + 3U * STEP_US;
     core.step(frame, actuators);
     REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
 }
@@ -658,12 +697,10 @@ TEST_CASE("a kill clears the tilt streak: a rearm needs a fresh confirmation")
     mark4::FlightCore core;
     mark4::SensorFrame frame;
     mark4::ActuatorFrame actuators;
-    std::uint64_t timestamp = settle(core, actuators);
-    frame.rc.killSwitch = false;
-    frame.rc.throttle = 0.5f;
+    std::uint64_t timestamp = enterManual(core, actuators);
+    manualRc(frame, 0.0f);
     // Gravity almost sideways: the estimate converges beyond the tilt cutoff.
     frame.accelMps2 = {0.0f, 0.985f * mark4::GRAVITY_MPS2, 0.174f * mark4::GRAVITY_MPS2};
-    frame.baroPa = HELPER_BARO_PA;
 
     auto stepOnce = [&]() {
         frame.timestampUs = timestamp;
@@ -682,7 +719,7 @@ TEST_CASE("a kill clears the tilt streak: a rearm needs a fresh confirmation")
         stepOnce();
     }
     REQUIRE(estimatedUpZ() < mark4::FlightCore::CUTOFF_TILT_MIN_UP);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
 
     // 100 ms into the 300 ms confirmation window: kill, and stay killed for
     // well over the confirmation time.
@@ -690,7 +727,7 @@ TEST_CASE("a kill clears the tilt streak: a rearm needs a fresh confirmation")
     {
         stepOnce();
     }
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
     frame.rc.killSwitch = true;
     for (std::uint32_t i = 0U; i < 250U; ++i)
     {
@@ -698,19 +735,18 @@ TEST_CASE("a kill clears the tilt streak: a rearm needs a fresh confirmation")
     }
     REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
 
-    // Releasing the kill re-enters stick flight (the estimate is still
+    // Releasing the kill re-enters piloted flight (the estimate is still
     // tilted): a stale streak would cut immediately, a designed reset
     // demands the full confirmation again.
     frame.rc.killSwitch = false;
     stepOnce();
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
     stepOnce();
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
 
     // The tilt is real and sustained: the fresh confirmation still ends in
     // a cutoff after its full window.
-    for (std::uint32_t i = 0U; i < 200U && core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO;
-         ++i)
+    for (std::uint32_t i = 0U; i < 200U && core.flightPhase() == mark4::FlightPhase::MANUAL; ++i)
     {
         stepOnce();
     }
@@ -789,22 +825,41 @@ TEST_CASE("saturated rates during the ballistic coast cut instead of spinning up
 
 TEST_CASE("the altitude-auto throttle maps to a vertical velocity setpoint around mid stick")
 {
-    // Three cores at rest, three stick positions: the commanded collective
-    // must order climb > hold > sink, with hold near the hover collective.
+    // Three cores flown into a hover and taken over at three stick
+    // positions: the commanded collective must order climb > hold > sink,
+    // with hold near the hover collective.
     auto collectiveFor = [](float throttle) {
         mark4::FlightCore core;
         mark4::ActuatorFrame actuators;
-        std::uint64_t timestamp = settle(core, actuators);
-        mark4::SensorFrame frame;
-        frame.rc.killSwitch = false;
-        frame.rc.throttle = throttle;
-        frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
-        frame.baroPa = HELPER_BARO_PA;
+        std::uint64_t timestamp = playThrow(core, actuators);
+        for (std::uint32_t i = 0U; i < 500U && core.flightPhase() != mark4::FlightPhase::HOVER; ++i)
+        {
+            timestamp = feed(core, actuators, timestamp, 1U, 0.0f, true);
+        }
+        REQUIRE(core.flightPhase() == mark4::FlightPhase::HOVER);
+        // Recentre to arm the takeover, then off centre to take over, then
+        // hold the tested position.
+        timestamp = feed(core, actuators, timestamp, 1U, mark4::GRAVITY_MPS2, true);
+        timestamp = feed(core,
+                         actuators,
+                         timestamp,
+                         1U,
+                         mark4::GRAVITY_MPS2,
+                         true,
+                         0.0f,
+                         mark4::PilotMode::ALTITUDE_AUTO,
+                         0.7f);
         for (std::uint32_t i = 0U; i < 5U; ++i)
         {
-            frame.timestampUs = timestamp;
-            core.step(frame, actuators);
-            timestamp += STEP_US;
+            timestamp = feed(core,
+                             actuators,
+                             timestamp,
+                             1U,
+                             mark4::GRAVITY_MPS2,
+                             true,
+                             0.0f,
+                             mark4::PilotMode::ALTITUDE_AUTO,
+                             throttle);
         }
         REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
         return actuators.motor[0];

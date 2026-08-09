@@ -18,10 +18,12 @@ TEST_CASE("packTelemetry carries the estimated attitude next to the raw frame")
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
     frame.baroPa = 101325.0f;
     frame.rc.killSwitch = false;
-    frame.rc.throttle = 0.5f;
+    frame.rc.armSwitch = true;
+    frame.rc.mode = mark4::PilotMode::MANUAL;
+    frame.rc.throttle = 0.0f;
     mark4::ActuatorFrame actuators;
     // Enough resting frames to capture the baro reference, then one step in
-    // stick flight (the gyro stays under the resting gate).
+    // direct-thrust flight (the gyro stays under the resting gate).
     for (std::uint32_t i = 0U; i <= mark4::VerticalEstimator::REFERENCE_SAMPLES; ++i)
     {
         frame.timestampUs = 123456U + static_cast<std::uint64_t>(i) * 2000U;
@@ -53,7 +55,10 @@ TEST_CASE("packTelemetry carries the estimated attitude next to the raw frame")
     std::memcpy(motor.data(), wire.data() + offsetof(mark4::TelemetryPacket, motor), sizeof(motor));
     REQUIRE(motor == actuators.motor);
 
-    // Mid stick, kill released: the core is in stick flight.
+    // Armed, manual, stick down: the core is in direct-thrust flight, and
+    // this one byte is what tells a ground station which mode is flying.
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(static_cast<std::uint8_t>(mark4::FlightPhase::MANUAL) == 7U);
     REQUIRE(wire[offsetof(mark4::TelemetryPacket, flightPhase)] ==
-            static_cast<std::uint8_t>(mark4::FlightPhase::ALTITUDE_AUTO));
+            static_cast<std::uint8_t>(mark4::FlightPhase::MANUAL));
 }

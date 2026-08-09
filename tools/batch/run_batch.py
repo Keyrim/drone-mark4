@@ -36,6 +36,7 @@ from typing import List, Optional
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ground-station"))
 from telemetry_wire import (
+    RC_MODE_ALTITUDE_AUTO,
     SIM_COMMAND_HAND_THROW,
     SIM_COMMAND_RESET,
     SIM_COMMAND_THROW,
@@ -51,7 +52,10 @@ PHASE_IDLE = 0
 PHASE_ARMED = 2
 PHASE_HOVER = 5
 PHASE_CUTOFF = 6
-PHASE_NAMES = ["idle", "altitude", "armed", "ballistic", "recovery", "hover", "cutoff"]
+PHASE_MANUAL = 7
+PHASE_NAMES = [
+    "idle", "altitude", "armed", "ballistic", "recovery", "hover", "cutoff", "manual",
+]
 
 # One UDP port range per instance: sim link, telemetry (+ mirror on +2),
 # raw state, scenario command listener and the drone_sim command receiver
@@ -167,7 +171,7 @@ class Instance:
         # kill+disarmed after 500 ms of silence, so a campaign has to keep
         # repeating the state it holds. Five sends per fail-safe window at
         # any time scale, since the window is counted in simulated time.
-        self._rc_state = (0, 0, 0.0)
+        self._rc_state = (0, 0, RC_MODE_ALTITUDE_AUTO, 0.0)
         self._rc_stop = threading.Event()
         self._rc_period_s = min(0.05, 0.1 / args.time_scale)
         self._rc_thread = threading.Thread(target=self._stream_rc, daemon=True)
@@ -176,16 +180,22 @@ class Instance:
     def _stream_rc(self) -> None:
         """Repeat the held RC state until close() stops the thread."""
         while not self._rc_stop.wait(self._rc_period_s):
-            kill, arm, throttle = self._rc_state
+            kill, arm, mode, throttle = self._rc_state
             # sendto is thread safe for datagrams: no lock needed around it.
             self.command.sendto(
-                encode_rc_command(kill=kill, arm=arm, throttle=throttle),
+                encode_rc_command(kill=kill, arm=arm, mode=mode, throttle=throttle),
                 ("127.0.0.1", self.rc_port),
             )
 
-    def set_rc(self, kill: int = 0, arm: int = 0, throttle: float = 0.0) -> None:
+    def set_rc(
+        self,
+        kill: int = 0,
+        arm: int = 0,
+        mode: int = RC_MODE_ALTITUDE_AUTO,
+        throttle: float = 0.0,
+    ) -> None:
         """Change the state the RC thread repeats (tuple assignment is atomic)."""
-        self._rc_state = (kill, arm, throttle)
+        self._rc_state = (kill, arm, mode, throttle)
 
     def close(self) -> None:
         self._rc_stop.set()
@@ -301,14 +311,18 @@ class Instance:
         # A fresh world and a fresh flight core, then let the estimators
         # settle exactly like a drone powered up on the ground.
         self.drain_telemetry()
-        self.set_rc(kill=0, arm=0, throttle=0.0)
+        # The altitude-auto interlock wants the stick centered, and a centered
+        # stick is harmless while the arm switch is off: nothing leaves IDLE
+        # without it. Holding it centered through the settle means the arming
+        # below is one switch flip, not a gesture the campaign has to time.
+        self.set_rc(kill=0, arm=0, mode=RC_MODE_ALTITUDE_AUTO, throttle=0.5)
         self.send_command(SIM_COMMAND_RESET)
         if not self.wait_sim_seconds(SETTLE_SIM_S):
             result.outcome = "stalled"
             result.detail = "no telemetry while settling"
             return result
 
-        self.set_rc(kill=0, arm=1, throttle=0.0)
+        self.set_rc(kill=0, arm=1, mode=RC_MODE_ALTITUDE_AUTO, throttle=0.5)
         if not self._wait_phase(PHASE_ARMED, ARM_BUDGET_SIM_S):
             result.outcome = "setup-failed"
             result.detail = "arming was not acknowledged"
@@ -395,6 +409,11 @@ class Instance:
             sample = self.next_sample()
             if sample is None:
                 continue
+            # Ranking phases by their numeric value is only a rough "how far
+            # did it get", and MANUAL sits at 7, above every other phase,
+            # purely because it was appended last. A campaign holds a centered
+            # stick and never enters it, so the ranking stays honest here; a
+            # scenario that flew manually would need a real ordering.
             highest_phase = max(highest_phase, sample.flight_phase)
             result.release_vz = sample.release_velocity_mps
             result.apex_alt = sample.apex_altitude_m

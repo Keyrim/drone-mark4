@@ -17,6 +17,7 @@ add_executable(unit_tests
     test_hub_discovery.cpp
     test_hub_json.cpp
     test_hub_recorder.cpp
+    test_pilot_modes.cpp
     test_platform_sim_udp.cpp
     test_rc_tracker.cpp
     test_replay.cpp

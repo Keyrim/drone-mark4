@@ -44,6 +44,8 @@ namespace
                 return "hover";
             case mark4::FlightPhase::CUTOFF:
                 return "cutoff";
+            case mark4::FlightPhase::MANUAL:
+                return "manual";
         }
         return "?";
     }

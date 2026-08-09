@@ -92,6 +92,11 @@ namespace mark4
         m_verticalController.reset();
         m_tiltExceeded = false;
         m_brakeDone = false;
+        // Back to the mode that never flies on its own, and to a takeover
+        // that has to be earned again. The stick latches are NOT reset here:
+        // they track the stick, not the mission.
+        m_lockedMode = PilotMode::MANUAL;
+        m_takeoverArmed = false;
     }
 
     float FlightCore::deriveDt(std::uint64_t timestampUs)
@@ -112,10 +117,11 @@ namespace mark4
 
     void FlightCore::advancePhase(const SensorFrame &sensors)
     {
-        // Hysteresis on the stick-down boundary: between the two thresholds
-        // the stick keeps its previous state, so RC noise cannot flip the
-        // arming and takeover gestures at frame rate.
-        if (sensors.rc.throttle < ARM_THROTTLE)
+        // Both stick latches are updated first and unconditionally, whatever
+        // the phase: they describe where the stick is, and the transitions
+        // below only read them. Hysteresis on each boundary, so RC noise
+        // sitting on a threshold cannot flip a gesture at frame rate.
+        if (sensors.rc.throttle < STICK_DOWN_THROTTLE)
         {
             m_stickDown = true;
         }
@@ -123,7 +129,19 @@ namespace mark4
         {
             m_stickDown = false;
         }
+        const float centerError = sensors.rc.throttle - STICK_CENTER;
+        const float centerDistance = centerError < 0.0f ? -centerError : centerError;
+        if (centerDistance <= STICK_CENTER_DEADBAND)
+        {
+            m_stickCentered = true;
+        }
+        else if (centerDistance > STICK_CENTER_RELEASE)
+        {
+            m_stickCentered = false;
+        }
+
         const bool stickDown = m_stickDown;
+        const bool arm = sensors.rc.armSwitch;
         switch (m_phase)
         {
             case FlightPhase::IDLE:
@@ -135,36 +153,47 @@ namespace mark4
                     // on the ground with a fresh reference.
                     break;
                 }
-                if (sensors.rc.armSwitch)
+                if (!arm)
                 {
+                    // The single gate: nothing leaves IDLE without it.
+                    break;
+                }
+                if (sensors.rc.mode == PilotMode::MANUAL && stickDown)
+                {
+                    // The mode is read here and nowhere else, then latched:
+                    // from now on the machine follows m_lockedMode, so the
+                    // switch moving mid-flight is structurally ignored.
+                    m_lockedMode = PilotMode::MANUAL;
+                    // Checked on entry too, so a takeoff attempt under already
+                    // absurd sensor readings never powers the motors at all.
+                    m_phase = cutoffTripped(sensors) ? FlightPhase::CUTOFF : FlightPhase::MANUAL;
+                }
+                else if (sensors.rc.mode == PilotMode::ALTITUDE_AUTO && m_stickCentered)
+                {
+                    m_lockedMode = PilotMode::ALTITUDE_AUTO;
                     // Anything detected before this instant is not a throw to fly:
                     // only a signature seen while armed may ever spin the motors.
                     m_handledThrowCount = m_throwDetector.throwCount();
                     m_phase = FlightPhase::ARMED;
                 }
-                else if (!stickDown)
-                {
-                    // Checked on entry too, so a takeoff attempt under already
-                    // absurd sensor readings never powers the motors at all.
-                    const bool cutoff = ImpactTripped(sensors) || GyroSaturated(sensors) ||
-                                        tiltCutoffConfirmed(sensors);
-                    m_phase = cutoff ? FlightPhase::CUTOFF : FlightPhase::ALTITUDE_AUTO;
-                }
                 break;
+            case FlightPhase::MANUAL:
             case FlightPhase::ALTITUDE_AUTO:
-                if (stickDown)
+                if (!arm)
                 {
-                    // Lowering the stick is also the rearm gesture after a cutoff.
                     m_phase = FlightPhase::IDLE;
                 }
-                else if (ImpactTripped(sensors) || GyroSaturated(sensors) ||
-                         tiltCutoffConfirmed(sensors))
+                else if (cutoffTripped(sensors))
                 {
                     m_phase = FlightPhase::CUTOFF;
                 }
                 break;
             case FlightPhase::ARMED:
-                if (!sensors.rc.armSwitch)
+                // The stick is deliberately not watched here. Disarming is the
+                // arm switch's job alone, and adding a stick condition would
+                // give the throw gesture a second way to chatter the machine
+                // while the drone is being swung about.
+                if (!arm)
                 {
                     m_phase = FlightPhase::IDLE;
                 }
@@ -175,7 +204,7 @@ namespace mark4
                 }
                 break;
             case FlightPhase::BALLISTIC:
-                if (!sensors.rc.armSwitch)
+                if (!arm)
                 {
                     m_phase = FlightPhase::IDLE;
                 }
@@ -198,7 +227,7 @@ namespace mark4
                 }
                 break;
             case FlightPhase::RECOVERY:
-                if (!sensors.rc.armSwitch)
+                if (!arm)
                 {
                     m_phase = FlightPhase::IDLE;
                 }
@@ -214,22 +243,30 @@ namespace mark4
                     m_phase = FlightPhase::HOVER;
                     m_hoverStartUs = sensors.timestampUs;
                     m_brakeDone = false;
+                    m_takeoverArmed = false;
                 }
                 break;
             case FlightPhase::HOVER:
-                if (!sensors.rc.armSwitch)
+                if (!arm)
                 {
                     m_phase = FlightPhase::IDLE;
                 }
-                else if (ImpactTripped(sensors) || GyroSaturated(sensors) ||
-                         tiltCutoffConfirmed(sensors))
+                else if (cutoffTripped(sensors))
                 {
                     m_phase = FlightPhase::CUTOFF;
                 }
-                else if (!stickDown)
+                else if (m_stickCentered)
                 {
-                    // Raising the stick is the takeover gesture: from here the
-                    // throttle commands the vertical velocity as in stick flight.
+                    // The takeover is a recentring gesture, not a stick
+                    // position: wherever the stick happened to be when the
+                    // drone was thrown, the pilot has to bring it back to the
+                    // centre once, and only then does moving it grab control.
+                    // A stick left at full deflection through the whole flight
+                    // therefore never snatches the drone out of its hover.
+                    m_takeoverArmed = true;
+                }
+                else if (m_takeoverArmed)
+                {
                     m_phase = FlightPhase::ALTITUDE_AUTO;
                 }
                 break;
@@ -237,13 +274,20 @@ namespace mark4
                 // Latched: an impact, saturated rates or an unrecoverable tilt
                 // mean the stack must never keep pushing - a wrong vertical
                 // estimate after a crash would run the motors flat out on the
-                // ground. Motors stay stopped until both controls are released.
-                if (stickDown && !sensors.rc.armSwitch)
+                // ground. Releasing the arm switch is the whole gesture: the
+                // per-mode interlock is checked again on the way out of IDLE,
+                // so the stick cannot be what rearms.
+                if (!arm)
                 {
                     m_phase = FlightPhase::IDLE;
                 }
                 break;
         }
+    }
+
+    bool FlightCore::cutoffTripped(const SensorFrame &sensors)
+    {
+        return ImpactTripped(sensors) || GyroSaturated(sensors) || tiltCutoffConfirmed(sensors);
     }
 
     void FlightCore::runControl(const SensorFrame &sensors, float dt, ActuatorFrame &actuators)
@@ -312,6 +356,36 @@ namespace mark4
                     vzSetpoint, m_verticalEstimator.verticalVelocityMps(), dt);
 
                 actuators.motor = mixMotors(collective, torqueCmd);
+                return;
+            }
+            case FlightPhase::MANUAL: {
+                // Direct thrust: the stick IS the collective, no vertical loop
+                // between the two. The attitude cascade still runs, so the
+                // drone levels itself and the pilot only flies the altitude -
+                // what a beginner rate-free mode is on any other stack.
+                //
+                // The vertical controller is held reset for the whole mode:
+                // its integrator sees no setpoint here, and letting it charge
+                // in the background would hand a wound-up loop to the next
+                // altitude-auto takeover.
+                m_verticalController.reset();
+
+                // Stick at the bottom means motors stopped, exactly zero, not
+                // "zero plus whatever torque the leveling asks for": on the
+                // ground that is the difference between still props and props
+                // that creep. The rate loop is held reset with them so it
+                // cannot integrate while nothing answers it.
+                if (sensors.rc.throttle <= 0.0f)
+                {
+                    actuators.motor.fill(0.0f);
+                    m_rateController.reset();
+                    return;
+                }
+                const std::array<float, 3> rateSetpoint =
+                    m_attitudeController.rateSetpointRadS(m_attitudeEstimator.attitude());
+                const std::array<float, 3> torqueCmd =
+                    m_rateController.update(rateSetpoint, sensors.gyroRadS, dt);
+                actuators.motor = mixMotors(sensors.rc.throttle, torqueCmd);
                 return;
             }
         }
@@ -394,13 +468,7 @@ namespace mark4
 
     TuningStatus FlightCore::setParam(std::uint16_t id, float value)
     {
-        // Armed is every phase where the core may spin the motors on its own.
-        // ARMED itself counts: the drone is waiting for a throw and one
-        // detection away from flying. CUTOFF does not: it is latched motors
-        // off on the ground, which is precisely where retuning belongs.
-        const bool armed = m_phase != FlightPhase::IDLE && m_phase != FlightPhase::CUTOFF;
-
-        const TuningStatus status = m_tuning.set(id, value, armed);
+        const TuningStatus status = m_tuning.set(id, value, armed());
         if (status == TuningStatus::OK)
         {
             applyParam(id, value);
