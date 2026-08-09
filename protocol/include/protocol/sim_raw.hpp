@@ -37,4 +37,16 @@ namespace mark4
 
     static_assert(sizeof(SimRawPacket) == SIM_RAW_PACKET_SIZE, "wire layout must be packed");
     static_assert(std::is_trivially_copyable_v<SimRawPacket>);
+    // The offsets ARE the named facts here: each assert freezes one
+    // field position of the cross-language wire contract.
+    // NOLINTBEGIN(readability-magic-numbers)
+    static_assert(offsetof(SimRawPacket, version) == 0U);
+    static_assert(offsetof(SimRawPacket, type) == 1U);
+    static_assert(offsetof(SimRawPacket, sourceId) == 2U);
+    static_assert(offsetof(SimRawPacket, sequence) == 3U);
+    static_assert(offsetof(SimRawPacket, timestampUs) == 5U);
+    static_assert(offsetof(SimRawPacket, attitudeQuat) == 13U);
+    static_assert(offsetof(SimRawPacket, positionM) == 29U);
+    static_assert(offsetof(SimRawPacket, velocityMps) == 41U);
+    // NOLINTEND(readability-magic-numbers)
 } // namespace mark4

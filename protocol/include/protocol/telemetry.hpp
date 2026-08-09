@@ -47,4 +47,25 @@ namespace mark4
 
     static_assert(sizeof(TelemetryPacket) == TELEMETRY_PACKET_SIZE, "wire layout must be packed");
     static_assert(std::is_trivially_copyable_v<TelemetryPacket>);
+    // The offsets ARE the named facts here: each assert freezes one
+    // field position of the cross-language wire contract.
+    // NOLINTBEGIN(readability-magic-numbers)
+    static_assert(offsetof(TelemetryPacket, version) == 0U);
+    static_assert(offsetof(TelemetryPacket, type) == 1U);
+    static_assert(offsetof(TelemetryPacket, sourceId) == 2U);
+    static_assert(offsetof(TelemetryPacket, sequence) == 3U);
+    static_assert(offsetof(TelemetryPacket, timestampUs) == 5U);
+    static_assert(offsetof(TelemetryPacket, gyroRadS) == 13U);
+    static_assert(offsetof(TelemetryPacket, attitudeQuat) == 25U);
+    static_assert(offsetof(TelemetryPacket, gyroBiasRadS) == 41U);
+    static_assert(offsetof(TelemetryPacket, motor) == 53U);
+    static_assert(offsetof(TelemetryPacket, altitudeM) == 69U);
+    static_assert(offsetof(TelemetryPacket, verticalVelocityMps) == 73U);
+    static_assert(offsetof(TelemetryPacket, throwState) == 77U);
+    static_assert(offsetof(TelemetryPacket, throwCount) == 78U);
+    static_assert(offsetof(TelemetryPacket, releaseVelocityMps) == 82U);
+    static_assert(offsetof(TelemetryPacket, apexTimestampUs) == 86U);
+    static_assert(offsetof(TelemetryPacket, apexAltitudeM) == 94U);
+    static_assert(offsetof(TelemetryPacket, flightPhase) == 98U);
+    // NOLINTEND(readability-magic-numbers)
 } // namespace mark4

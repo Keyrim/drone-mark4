@@ -3,7 +3,18 @@
 /// @file
 /// @brief Common packet header: a version byte then a type byte open every
 ///        packet, so nothing is ever demultiplexed by size alone.
+///
+///        Portability contract of every wire struct, for whatever compiler
+///        builds the next consumer (the ESP32 bridge above all): packed
+///        structs (pragma pack(1), no padding anywhere), little-endian
+///        byte order, IEEE-754 binary32 floats, 8-bit bytes. The
+///        static_asserts on sizes and field offsets check the first
+///        assumption on every toolchain that compiles the headers; the
+///        endianness assert below checks the second. Multi-byte fields
+///        sit at unaligned offsets by design: access them through memcpy,
+///        never by binding a reference to a packed member.
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 
@@ -11,6 +22,9 @@
 
 namespace mark4
 {
+    static_assert(std::endian::native == std::endian::little,
+                  "the wire is little-endian and so must be every consumer that memcpys structs");
+
     /// Packet type, the second byte of every packet.
     enum class PacketType : std::uint8_t
     {

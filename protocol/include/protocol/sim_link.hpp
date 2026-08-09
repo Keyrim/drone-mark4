@@ -60,4 +60,22 @@ namespace mark4
                   "wire layout must be packed");
     static_assert(std::is_trivially_copyable_v<SimSensorPacket>);
     static_assert(std::is_trivially_copyable_v<SimActuatorPacket>);
+    // The offsets ARE the named facts here: each assert freezes one
+    // field position of the cross-language wire contract.
+    // NOLINTBEGIN(readability-magic-numbers)
+    static_assert(offsetof(SimSensorPacket, version) == 0U);
+    static_assert(offsetof(SimSensorPacket, type) == 1U);
+    static_assert(offsetof(SimSensorPacket, timestampUs) == 2U);
+    static_assert(offsetof(SimSensorPacket, gyroRadS) == 10U);
+    static_assert(offsetof(SimSensorPacket, accelMps2) == 22U);
+    static_assert(offsetof(SimSensorPacket, baroPa) == 34U);
+    static_assert(offsetof(SimSensorPacket, killSwitch) == 38U);
+    static_assert(offsetof(SimSensorPacket, throttle) == 39U);
+    static_assert(offsetof(SimSensorPacket, armSwitch) == 43U);
+    static_assert(offsetof(SimSensorPacket, resetCount) == 44U);
+    static_assert(offsetof(SimActuatorPacket, version) == 0U);
+    static_assert(offsetof(SimActuatorPacket, type) == 1U);
+    static_assert(offsetof(SimActuatorPacket, echoTimestampUs) == 2U);
+    static_assert(offsetof(SimActuatorPacket, motor) == 10U);
+    // NOLINTEND(readability-magic-numbers)
 } // namespace mark4

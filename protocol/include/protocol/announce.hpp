@@ -41,4 +41,12 @@ namespace mark4
 
     static_assert(sizeof(AnnouncePacket) == ANNOUNCE_PACKET_SIZE, "wire layout must be packed");
     static_assert(std::is_trivially_copyable_v<AnnouncePacket>);
+    // The offsets ARE the named facts here: each assert freezes one
+    // field position of the cross-language wire contract.
+    // NOLINTBEGIN(readability-magic-numbers)
+    static_assert(offsetof(AnnouncePacket, kind) == 2U);
+    static_assert(offsetof(AnnouncePacket, sessionId) == 3U);
+    static_assert(offsetof(AnnouncePacket, telemetryPort) == 7U);
+    static_assert(offsetof(AnnouncePacket, commandPort) == 9U);
+    // NOLINTEND(readability-magic-numbers)
 } // namespace mark4

@@ -67,6 +67,23 @@ namespace mark4
     static_assert(sizeof(SimCommandPacket) == SIM_COMMAND_PACKET_SIZE,
                   "wire layout must be packed");
     static_assert(std::is_trivially_copyable_v<SimCommandPacket>);
+    // The offsets ARE the named facts here: each assert freezes one
+    // field position of the cross-language wire contract.
+    // NOLINTBEGIN(readability-magic-numbers)
+    static_assert(offsetof(SimCommandPacket, version) == 0U);
+    static_assert(offsetof(SimCommandPacket, type) == 1U);
+    static_assert(offsetof(SimCommandPacket, command) == 2U);
+    static_assert(offsetof(SimCommandPacket, killSwitch) == 3U);
+    static_assert(offsetof(SimCommandPacket, armSwitch) == 4U);
+    static_assert(offsetof(SimCommandPacket, mode) == 5U);
+    static_assert(offsetof(SimCommandPacket, throttle) == 6U);
+    static_assert(offsetof(SimCommandPacket, velocityMps) == 10U);
+    static_assert(offsetof(SimCommandPacket, angularVelocityRadS) == 22U);
+    static_assert(offsetof(SimCommandPacket, heldSeconds) == 34U);
+    static_assert(offsetof(SimCommandPacket, heldTiltRad) == 38U);
+    static_assert(offsetof(SimCommandPacket, heldAzimuthRad) == 42U);
+    static_assert(offsetof(SimCommandPacket, swingSeconds) == 46U);
+    // NOLINTEND(readability-magic-numbers)
 
 #pragma pack(push, 1)
     /// Pilot state for the firmware uplink. Streamed periodically (10 Hz),
@@ -89,6 +106,14 @@ namespace mark4
 
     static_assert(sizeof(RcCommandPacket) == RC_COMMAND_PACKET_SIZE, "wire layout must be packed");
     static_assert(std::is_trivially_copyable_v<RcCommandPacket>);
+    // The offsets ARE the named facts here: each assert freezes one
+    // field position of the cross-language wire contract.
+    // NOLINTBEGIN(readability-magic-numbers)
+    static_assert(offsetof(RcCommandPacket, killSwitch) == 2U);
+    static_assert(offsetof(RcCommandPacket, armSwitch) == 3U);
+    static_assert(offsetof(RcCommandPacket, mode) == 4U);
+    static_assert(offsetof(RcCommandPacket, throttle) == 5U);
+    // NOLINTEND(readability-magic-numbers)
 
     /// Third byte of RebootCommandPacket: the magic makes a stray line
     /// glitch decoding into a reboot implausible.
@@ -113,4 +138,9 @@ namespace mark4
     static_assert(sizeof(RebootCommandPacket) == REBOOT_COMMAND_PACKET_SIZE,
                   "wire layout must be packed");
     static_assert(std::is_trivially_copyable_v<RebootCommandPacket>);
+    // The offsets ARE the named facts here: each assert freezes one
+    // field position of the cross-language wire contract.
+    // NOLINTBEGIN(readability-magic-numbers)
+    static_assert(offsetof(RebootCommandPacket, magic) == 2U);
+    // NOLINTEND(readability-magic-numbers)
 } // namespace mark4

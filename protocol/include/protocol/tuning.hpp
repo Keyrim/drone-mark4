@@ -119,4 +119,23 @@ namespace mark4
     static_assert(std::is_trivially_copyable_v<TuningListPacket>);
     static_assert(std::is_trivially_copyable_v<TuningAckPacket>);
     static_assert(std::is_trivially_copyable_v<TuningInfoPacket>);
+    // The offsets ARE the named facts here: each assert freezes one
+    // field position of the cross-language wire contract.
+    // NOLINTBEGIN(readability-magic-numbers)
+    static_assert(offsetof(TuningSetPacket, id) == 2U);
+    static_assert(offsetof(TuningSetPacket, value) == 4U);
+    static_assert(offsetof(TuningGetPacket, id) == 2U);
+    static_assert(offsetof(TuningListPacket, startIndex) == 2U);
+    static_assert(offsetof(TuningAckPacket, id) == 2U);
+    static_assert(offsetof(TuningAckPacket, value) == 4U);
+    static_assert(offsetof(TuningAckPacket, status) == 8U);
+    static_assert(offsetof(TuningInfoPacket, index) == 2U);
+    static_assert(offsetof(TuningInfoPacket, count) == 4U);
+    static_assert(offsetof(TuningInfoPacket, id) == 6U);
+    static_assert(offsetof(TuningInfoPacket, name) == 8U);
+    static_assert(offsetof(TuningInfoPacket, value) == 24U);
+    static_assert(offsetof(TuningInfoPacket, minValue) == 28U);
+    static_assert(offsetof(TuningInfoPacket, maxValue) == 32U);
+    static_assert(offsetof(TuningInfoPacket, flags) == 36U);
+    // NOLINTEND(readability-magic-numbers)
 } // namespace mark4
