@@ -25,6 +25,7 @@ add_executable(unit_tests
     test_telemetry.cpp
     test_throw_detector.cpp
     test_tuning.cpp
+    test_tuning_service.cpp
     test_vertical_estimator.cpp)
 target_link_libraries(unit_tests
     PRIVATE flight_core platform_common platform_sim platform_replay protocol hub_core
