@@ -38,7 +38,7 @@ Nothing else crosses the boundary.
    godot -e --path sim-godot     # open the project in the editor (F5 to run)
    ```
 
-The overlay in the top left corner shows the simulated time, the pilot inputs,
+The overlay in the top left corner shows the simulated time, the session id,
 the motor commands coming back from the flight process, the accelerometer
 magnitude in g, the altitude and the packet counters. If the counters for
 received packets stay at zero, the flight process is not answering.
@@ -60,30 +60,40 @@ from the Godot axes happens in `sim_link.gd` and `sim_raw_link.gd`.
 
 | Key        | Effect                                                        |
 | ---------- | ------------------------------------------------------------- |
-| `K`        | toggle the kill switch (starts released)                       |
-| `Up`       | throttle + 0.05                                                |
-| `Down`     | throttle - 0.05                                                |
-| `SPACE`    | throw the drone                                                |
-| `R`        | reset the drone to its start pose, at rest, motors stopped     |
+| `H`        | pick the drone up in the simulated hand                        |
+| `SPACE`    | throw the drone (a hand throw when it is held)                 |
+| `R`        | reset the world to its start pose, at rest, motors stopped     |
 | `ESC`      | quit                                                           |
 
-The kill switch and the throttle never touch the physics: the simulator does
-not cut the motors itself. They are streamed to the flight process as
-`RcCommandPacket` by the `RcUplink` node, out-of-band from the sensor packet
-and on the exact path a real flight uses. When the kill switch is engaged the
-flight process is expected to answer with four zeros, and the motors spin down
-with their normal lag. That is exactly the path worth exercising - including
-the fail-safe, since stopping the stream (closing the simulator) is what a
-lost radio link looks like to the flight process.
+These are world keys, not piloting. This project is the plant, and it holds
+no pilot state at all: the kill switch, the arm switch and the throttle are
+RC, they belong between the cockpit and the flight process, and they never
+pass through here.
+
+Piloting therefore flows through the hub until the command console page
+lands: connect to the hub websocket endpoint and send `rc` messages aimed at
+`drone_sim`. That is the same packet, port and fail-safe a real flight uses
+(500 ms of silence trips the kill), which is exactly the path worth
+exercising. When the kill switch is engaged the flight process answers with
+four zeros and the motors spin down with their normal lag.
 
 The usual sequence is `R` then `SPACE`. Pressing `SPACE` while the drone is
 already flying simply adds another push.
 
-What the throttle does depends entirely on the flight process. With the
-hover stack, the stick commands a vertical velocity: below 0.05 the drone is
-disarmed (motors stopped), mid stick holds the altitude, and full deflection
-climbs or sinks at 2 m/s; the attitude is leveled automatically. Raise the
-throttle with `Up` and the drone takes off and hovers.
+## Scenarios
+
+A scripted run arrives as a scenario block inside the lockstep reply: the
+flight process receives a `SimScenarioPacket` on its command receiver and
+forwards the 58 byte block on its next actuator packet. One block is one
+run. It opens with a reset - teleport, reseed every generator, clear the
+hand and the raw-stream decimation - and everything it asks for afterwards
+(the throw, or the grab and the swing) is scheduled from that reset tick, on
+this project's own tick grid. Nothing outside has to agree on which absolute
+tick a run began at, and nothing carries over from the run before.
+
+A block is played once per change of its `sequence` byte, so a sender may
+resend it freely: the lockstep handshake already guarantees the block gets
+here, since a tick is not complete until its reply arrives.
 
 ## Physics
 
@@ -134,16 +144,16 @@ the source of truth; `scripts/protocol.gd` is the single GDScript copy of
 its constants and `scripts/sim_link.gd` packs with them. Both packets are
 packed, little endian, version byte then type byte:
 
-- sensor packet, 39 bytes, simulator to flight process: `u8` version, `u8`
+- sensor packet, 45 bytes, simulator to flight process: `u8` version, `u8`
   type, `u64` timestamp in microseconds, 3 `f32` gyro [rad/s], 3 `f32`
-  accelerometer [m/s^2], `f32` pressure [Pa], `u8` reset count. Sensors
-  only: the pilot state is not a sensor reading and travels out-of-band.
-- actuator packet, 26 bytes, flight process to simulator: `u8` version,
-  `u8` type, `u64` echoed timestamp, 4 `f32` motor commands in [0, 1].
-- rc command packet, 9 bytes, `RcUplink` to the flight process command
-  receiver (udp/47805 by default): `u8` version, `u8` type, `u8` kill
-  switch (1 engaged), `u8` arm switch, `u8` mode, `f32` throttle. Streamed
-  at 10 Hz; 500 ms of silence trips the flight process fail-safe.
+  accelerometer [m/s^2], `f32` pressure [Pa], `u8` reset count, `u32`
+  session id, `u16` lockstep timeouts. Sensors only: the pilot state is not
+  a sensor reading and travels out-of-band. The session id is drawn once per
+  process start, so a restarted simulator is recognized as a new plant whose
+  simulated clock starts over.
+- actuator packet, 84 bytes, flight process to simulator: `u8` version,
+  `u8` type, `u64` echoed timestamp, 4 `f32` motor commands in [0, 1], then
+  the 58 byte scenario block at offset 26, repeated on every reply.
 
 Datagrams with another size or another version byte are counted as dropped and
 ignored. Motor commands are clamped to [0, 1] on arrival.
@@ -196,8 +206,8 @@ On the host, run the Godot project, then:
    then drops to nearly 0 g for the whole ballistic phase, and the gyro shows
    the tumble. The ground station plots the same rates, since both tools read
    the same flight process.
-4. Press `K` and check that the motor commands returned by the flight process
-   fall to zero.
+4. Engage the kill switch from the hub and check that the motor commands
+   returned by the flight process fall to zero.
 5. Press `R` to put the drone back on the ground and start again.
 
 ## Layout
@@ -214,8 +224,8 @@ scenes/main.tscn        ground, pylons, light, camera, drone, overlay
 shaders/ground_grid.gdshader  metric grid ground material
 scripts/drone.gd        rigid body, motor model, drag, throw, tick loop
 scripts/sensors.gd      accelerometer, gyro, barometer models
-scripts/sim_link.gd     UDP packets in and out
-scripts/pilot_input.gd  keyboard: kill switch, throttle, throw, reset
+scripts/sim_link.gd     UDP packets in and out, scenario decode
+scripts/pilot_input.gd  keyboard world keys: hold, throw, reset, quit
 scripts/camera_follow.gd  chase camera
 scripts/hud.gd          on screen overlay
 ```

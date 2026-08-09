@@ -6,6 +6,7 @@
 
 #include "hub/json_codec.hpp"
 
+#include <limits>
 #include <nlohmann/json.hpp>
 
 #include "hub/packed_field.hpp"
@@ -85,35 +86,34 @@ namespace mark4
             return true;
         }
 
-        /// @brief Reads an optional unsigned integer field into a u16.
+        /// @brief Reads an optional unsigned integer field of any width.
+        /// @tparam T unsigned integer type the field lands in
         /// @param object object to read from
         /// @param key field name
         /// @param valueOut receives the value, untouched when the field is absent
         /// @param errorOut receives the reason on failure
-        /// @return true when the field is absent or an integer in [0, 65535]
-        bool readUint16(const Json &object,
-                        const char *key,
-                        std::uint16_t &valueOut,
-                        std::string &errorOut)
+        /// @return true when the field is absent or an integer that fits
+        template <typename T>
+        bool readUnsigned(const Json &object, const char *key, T &valueOut, std::string &errorOut)
         {
-            static constexpr int MAX_UINT16 = 65535;
+            static_assert(std::is_unsigned_v<T>);
             const auto found = object.find(key);
             if (found == object.end())
             {
                 return true;
             }
-            if (!found->is_number_integer())
+            if (!found->is_number_unsigned())
             {
-                errorOut = std::string("field '") + key + "' must be an integer";
+                errorOut = std::string("field '") + key + "' must be a non-negative integer";
                 return false;
             }
-            const auto raw = found->get<std::int64_t>();
-            if (raw < 0 || raw > MAX_UINT16)
+            const auto raw = found->get<std::uint64_t>();
+            if (raw > static_cast<std::uint64_t>(std::numeric_limits<T>::max()))
             {
-                errorOut = std::string("field '") + key + "' must be in [0, 65535]";
+                errorOut = std::string("field '") + key + "' is out of range";
                 return false;
             }
-            valueOut = static_cast<std::uint16_t>(raw);
+            valueOut = static_cast<T>(raw);
             return true;
         }
 
@@ -132,7 +132,7 @@ namespace mark4
                 errorOut = "field 'paramId' must be a parameter id";
                 return false;
             }
-            return readUint16(object, "paramId", valueOut, errorOut);
+            return readUnsigned(object, "paramId", valueOut, errorOut);
         }
 
         /// @brief Reads an optional three-number array field.
@@ -249,50 +249,69 @@ namespace mark4
             return true;
         }
 
-        /// @brief Fills the scenario command part of a client request.
+        /// @brief Fills the scenario part of a client request.
         /// @param object message object
         /// @param message message being decoded
         /// @param errorOut receives the reason on failure
         /// @return true when every field decoded
-        bool parseSimCommand(const Json &object, ClientMessage &message, std::string &errorOut)
+        bool parseSimScenario(const Json &object, ClientMessage &message, std::string &errorOut)
         {
-            const auto found = object.find("command");
+            const auto found = object.find("scenario");
             if (found == object.end() || !found->is_string())
             {
-                errorOut = "field 'command' must be a scenario command name";
+                errorOut = "field 'scenario' must be a scenario name";
                 return false;
             }
             const auto name = found->get<std::string>();
             if (name == "reset")
             {
-                message.simCommand.command = SIM_COMMAND_RESET;
+                message.simScenario.scenario.scenario = SIM_SCENARIO_RESET;
             }
             else if (name == "throw")
             {
-                message.simCommand.command = SIM_COMMAND_THROW;
+                message.simScenario.scenario.scenario = SIM_SCENARIO_THROW;
             }
             else if (name == "handThrow")
             {
-                message.simCommand.command = SIM_COMMAND_HAND_THROW;
+                message.simScenario.scenario.scenario = SIM_SCENARIO_HAND_THROW;
             }
             else
             {
-                errorOut = "unknown command '" + name + "'";
+                errorOut = "unknown scenario '" + name + "'";
                 return false;
             }
 
-            message.simCommand.version = PROTOCOL_VERSION;
-            message.simCommand.type = static_cast<std::uint8_t>(PacketType::SIM_COMMAND);
+            // A scenario goes to a flight process, which forwards it to the
+            // plant it drives. The simulator is the only kind that has one,
+            // so it is the default, but the field is honored when given.
+            message.target = StreamSource::DRONE_SIM;
+            if (object.contains("target") && !readTarget(object, message.target, errorOut))
+            {
+                return false;
+            }
+
+            message.simScenario.version = PROTOCOL_VERSION;
+            message.simScenario.type = static_cast<std::uint8_t>(PacketType::SIM_SCENARIO);
             // Everything wider than a byte is decoded into aligned locals
             // first: the wire struct is packed, and nothing may hold a
             // reference to one of its fields.
-            std::array<float, 3> velocity = readPackedField(&message.simCommand.velocityMps);
-            std::array<float, 3> angular = readPackedField(&message.simCommand.angularVelocityRadS);
-            float heldSeconds = message.simCommand.heldSeconds;
-            float heldTiltRad = message.simCommand.heldTiltRad;
-            float heldAzimuthRad = message.simCommand.heldAzimuthRad;
-            float swingSeconds = message.simCommand.swingSeconds;
-            if (!readVector(object, "velocityMps", velocity, errorOut) ||
+            std::array<float, 3> velocity =
+                readPackedField(&message.simScenario.scenario.velocityMps);
+            std::array<float, 3> angular =
+                readPackedField(&message.simScenario.scenario.angularVelocityRadS);
+            std::uint64_t seed = 0U;
+            std::uint32_t throwDelayUs = 0U;
+            std::uint32_t hashWindowUs = 0U;
+            float heldSeconds = 0.0f;
+            float heldTiltRad = 0.0f;
+            float heldAzimuthRad = 0.0f;
+            float swingSeconds = 0.0f;
+            if (!readUnsigned(
+                    object, "sequence", message.simScenario.scenario.sequence, errorOut) ||
+                !readUnsigned(object, "seed", seed, errorOut) ||
+                !readUnsigned(object, "throwDelayUs", throwDelayUs, errorOut) ||
+                !readUnsigned(object, "hashWindowUs", hashWindowUs, errorOut) ||
+                !readVector(object, "velocityMps", velocity, errorOut) ||
                 !readVector(object, "angularVelocityRadS", angular, errorOut) ||
                 !readFloat(object, "heldSeconds", heldSeconds, errorOut) ||
                 !readFloat(object, "heldTiltRad", heldTiltRad, errorOut) ||
@@ -301,12 +320,15 @@ namespace mark4
             {
                 return false;
             }
-            writePackedField(&message.simCommand.velocityMps, velocity);
-            writePackedField(&message.simCommand.angularVelocityRadS, angular);
-            message.simCommand.heldSeconds = heldSeconds;
-            message.simCommand.heldTiltRad = heldTiltRad;
-            message.simCommand.heldAzimuthRad = heldAzimuthRad;
-            message.simCommand.swingSeconds = swingSeconds;
+            writePackedField(&message.simScenario.scenario.velocityMps, velocity);
+            writePackedField(&message.simScenario.scenario.angularVelocityRadS, angular);
+            message.simScenario.scenario.seed = seed;
+            message.simScenario.scenario.throwDelayUs = throwDelayUs;
+            message.simScenario.scenario.hashWindowUs = hashWindowUs;
+            message.simScenario.scenario.heldSeconds = heldSeconds;
+            message.simScenario.scenario.heldTiltRad = heldTiltRad;
+            message.simScenario.scenario.heldAzimuthRad = heldAzimuthRad;
+            message.simScenario.scenario.swingSeconds = swingSeconds;
             return true;
         }
 
@@ -403,7 +425,7 @@ namespace mark4
             message.tuningList.type = static_cast<std::uint8_t>(PacketType::TUNING_LIST);
             std::uint16_t startIndex = 0U;
             if (!readTarget(object, message.target, errorOut) ||
-                !readUint16(object, "startIndex", startIndex, errorOut))
+                !readUnsigned(object, "startIndex", startIndex, errorOut))
             {
                 return false;
             }
@@ -700,10 +722,10 @@ namespace mark4
                 return error;
             }
         }
-        else if (typeName == "simCommand")
+        else if (typeName == "simScenario")
         {
-            message.type = ClientMessageType::SIM_COMMAND;
-            if (!parseSimCommand(root, message, error))
+            message.type = ClientMessageType::SIM_SCENARIO;
+            if (!parseSimScenario(root, message, error))
             {
                 return error;
             }

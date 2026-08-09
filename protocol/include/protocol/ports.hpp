@@ -37,16 +37,16 @@ namespace mark4
     /// Mirror of the default telemetry broadcast port.
     inline constexpr std::uint16_t TELEMETRY_MIRROR_PORT = telemetryMirrorPort(TELEMETRY_PORT);
 
-    /// UDP port the simulator listens on for scenario commands.
-    inline constexpr std::uint16_t SIM_COMMAND_PORT = 47804U;
+    // 47804 is unassigned: the simulator used to bind it for scenario
+    // commands, and binds no listening port at all any more. Scenarios reach
+    // it inside the lockstep reply.
 
-    /// UDP port a flight process binds its command receiver to, for the
-    /// pilot RC stream (RcCommandPacket) and the commands that follow it.
-    /// Ownership rule: the receiving flight process binds, senders just
-    /// send. drone_sim binds it by default; the serial bridge binds it when
-    /// it is the one fronting the real board. Distinct from
-    /// SIM_COMMAND_PORT, which the simulator binds for scenario commands:
-    /// both are bound exclusively and the ghost view runs both at once.
+    /// UDP port a flight process binds its command receiver to. It carries
+    /// the pilot RC stream (RcCommandPacket) and the scenario commands
+    /// (SimScenarioPacket) the flight process forwards to its plant, plus
+    /// the commands that follow them. Ownership rule: the receiving flight
+    /// process binds, senders just send. drone_sim binds it by default; the
+    /// hub binds it when it is the one fronting the real board.
     inline constexpr std::uint16_t RC_COMMAND_PORT = 47805U;
 
     /// UDP port every flight process broadcasts its AnnouncePacket to. One

@@ -60,6 +60,9 @@ const MAX_ALTITUDE_M := 40000.0
 
 @export_group("Determinism")
 ## Seed of the generator. The same seed replays the same noise and bias.
+## The inspector value only survives until the first run: a scenario carries
+## the seed of the run it describes, and the reset that opens the run
+## reseeds with it.
 @export var rng_seed: int = 20250804
 
 ## Last sampled body angular rates [rad/s].

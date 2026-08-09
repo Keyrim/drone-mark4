@@ -28,6 +28,12 @@ namespace mark4
         std::memcpy(wire.data() + offsetof(mark4::SimActuatorPacket, motor),
                     frame.motor.data(),
                     sizeof(frame.motor));
+        /* Same reason for the scenario block: it is a packed struct sitting
+           at an odd offset, so it goes in as bytes and never through a
+           reference to one of its fields. */
+        std::memcpy(wire.data() + offsetof(mark4::SimActuatorPacket, scenario),
+                    &m_scenario,
+                    sizeof(m_scenario));
         static_cast<void>(m_link.replyToLastSender(wire.data(), wire.size()));
     }
 } // namespace mark4

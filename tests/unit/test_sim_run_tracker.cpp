@@ -5,17 +5,41 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "flight_core/types.hpp"
+#include "platform/telemetry_sender.hpp"
 #include "platform_sim/sim_run_tracker.hpp"
+#include "protocol/header.hpp"
+#include "protocol/sim_stats.hpp"
 
 namespace
 {
     /// Frames per simulated second of the sequences below.
     constexpr std::uint64_t TICK_US = 2000U;
+
+    /// Telemetry sender keeping every datagram, so a test can check the exact
+    /// bytes that went out. Allocates freely: this is a test.
+    class CapturingSender final : public mark4::AbsTelemetrySender
+    {
+      public:
+        void send(const std::uint8_t *data, std::size_t size) override
+        {
+            m_sent.emplace_back(data, data + size);
+        }
+
+        /// @return datagrams captured since construction
+        [[nodiscard]] const std::vector<std::vector<std::uint8_t>> &sent() const
+        {
+            return m_sent;
+        }
+
+      private:
+        std::vector<std::vector<std::uint8_t>> m_sent; ///< captured datagrams
+    };
 
     /// One step of a synthetic run: the frame and the outputs it drew.
     struct Step
@@ -52,22 +76,38 @@ namespace
     /// @param run sequence to play
     /// @param windowUs hash window handed to beginRun, 0 for the default
     /// @return the tracker, run played out
-    mark4::SimRunTracker play(const std::vector<Step> &run, std::uint32_t windowUs = 0U)
+    std::uint64_t playHash(const std::vector<Step> &run, std::uint32_t windowUs = 0U)
     {
-        mark4::SimRunTracker tracker;
+        CapturingSender sender;
+        mark4::SimRunTracker tracker(sender, mark4::StreamSource::DRONE_SIM);
         tracker.beginRun(1U, run.front().frame.timestampUs, windowUs);
         for (const Step &step : run)
         {
             tracker.update(step.frame, step.actuator);
         }
-        return tracker;
+        return tracker.hash();
+    }
+
+    /// @brief Plays a whole sequence and reports how many frames were hashed.
+    /// @param run sequence to play
+    /// @return frames folded into the hash
+    std::uint32_t playFrames(const std::vector<Step> &run)
+    {
+        CapturingSender sender;
+        mark4::SimRunTracker tracker(sender, mark4::StreamSource::DRONE_SIM);
+        tracker.beginRun(1U, run.front().frame.timestampUs, 0U);
+        for (const Step &step : run)
+        {
+            tracker.update(step.frame, step.actuator);
+        }
+        return tracker.hashedFrames();
     }
 } // namespace
 
 TEST_CASE("two identical run sequences hash equal")
 {
     const auto run = makeRun(0U, 100U);
-    REQUIRE(play(run).hash() == play(run).hash());
+    REQUIRE(playHash(run) == playHash(run));
 }
 
 TEST_CASE("the same run shifted in absolute time hashes equal")
@@ -76,44 +116,44 @@ TEST_CASE("the same run shifted in absolute time hashes equal")
     // the run: relative time is what the hash is defined over.
     const auto early = makeRun(0U, 100U);
     const auto late = makeRun(987'654'321'000U, 100U);
-    REQUIRE(play(early).hash() == play(late).hash());
-    REQUIRE(play(early).hashedFrames() == play(late).hashedFrames());
+    REQUIRE(playHash(early) == playHash(late));
+    REQUIRE(playFrames(early) == playFrames(late));
 }
 
 TEST_CASE("a one bit change anywhere in the run changes the hash")
 {
     const auto reference = makeRun(0U, 100U);
-    const std::uint64_t expected = play(reference).hash();
+    const std::uint64_t expected = playHash(reference);
 
     SECTION("in a gyro sample")
     {
         auto altered = reference;
         altered[50].frame.gyroRadS[1] = std::nextafter(altered[50].frame.gyroRadS[1], 1000.0f);
-        REQUIRE(play(altered).hash() != expected);
+        REQUIRE(playHash(altered) != expected);
     }
     SECTION("in an accelerometer sample")
     {
         auto altered = reference;
         altered[3].frame.accelMps2[2] = std::nextafter(altered[3].frame.accelMps2[2], 1000.0f);
-        REQUIRE(play(altered).hash() != expected);
+        REQUIRE(playHash(altered) != expected);
     }
     SECTION("in the barometer")
     {
         auto altered = reference;
         altered[99].frame.baroPa = std::nextafter(altered[99].frame.baroPa, 0.0f);
-        REQUIRE(play(altered).hash() != expected);
+        REQUIRE(playHash(altered) != expected);
     }
     SECTION("in a motor command")
     {
         auto altered = reference;
         altered[0].actuator.motor[3] = std::nextafter(altered[0].actuator.motor[3], 1.0f);
-        REQUIRE(play(altered).hash() != expected);
+        REQUIRE(playHash(altered) != expected);
     }
     SECTION("in the pacing of the frames")
     {
         auto altered = reference;
         altered[42].frame.timestampUs += 1U;
-        REQUIRE(play(altered).hash() != expected);
+        REQUIRE(playHash(altered) != expected);
     }
 }
 
@@ -128,7 +168,7 @@ TEST_CASE("the rc state is not part of the hash")
         step.frame.rc.armSwitch = true;
         step.frame.rc.throttle = 0.5f;
     }
-    REQUIRE(play(armed).hash() == play(makeRun(0U, 20U)).hash());
+    REQUIRE(playHash(armed) == playHash(makeRun(0U, 20U)));
 }
 
 TEST_CASE("the hash seals at the end of the window and stops moving")
@@ -137,7 +177,8 @@ TEST_CASE("the hash seals at the end of the window and stops moving")
     // Ten frames of window: the eleventh frame seals, the rest change nothing.
     const auto window = static_cast<std::uint32_t>(10U * TICK_US);
 
-    mark4::SimRunTracker tracker;
+    CapturingSender sender;
+    mark4::SimRunTracker tracker(sender, mark4::StreamSource::DRONE_SIM);
     tracker.beginRun(1U, 0U, window);
     for (std::size_t index = 0U; index < 10U; ++index)
     {
@@ -155,12 +196,13 @@ TEST_CASE("the hash seals at the end of the window and stops moving")
     REQUIRE(tracker.hashedFrames() == 10U);
 
     // The window is what the hash covers: a longer one is a different number.
-    REQUIRE(play(run, window * 2U).hash() != sealedHash);
+    REQUIRE(playHash(run, window * 2U) != sealedHash);
 }
 
 TEST_CASE("a run that lost a tick latches degraded")
 {
-    mark4::SimRunTracker tracker;
+    CapturingSender sender;
+    mark4::SimRunTracker tracker(sender, mark4::StreamSource::DRONE_SIM);
     tracker.beginRun(1U, 0U, 0U);
 
     // The first report is the baseline of the run, whatever it carries: the
@@ -185,4 +227,51 @@ TEST_CASE("a run that lost a tick latches degraded")
     tracker.noteLink(18U, 5U);
     REQUIRE(!tracker.degraded());
     REQUIRE(tracker.runId() == 2U);
+}
+
+TEST_CASE("the published stats packet round-trips the wire layout")
+{
+    CapturingSender sender;
+    mark4::SimRunTracker tracker(sender, mark4::StreamSource::DRONE_SIM);
+    const auto run = makeRun(1'000'000U, 4U);
+    // Two frames of window, so the run seals inside this sequence.
+    tracker.beginRun(42U, run.front().frame.timestampUs, static_cast<std::uint32_t>(2U * TICK_US));
+    tracker.noteLink(7U, 3U);
+
+    tracker.update(run[0].frame, run[0].actuator);
+    tracker.publish();
+    REQUIRE(sender.sent().size() == 1U);
+
+    const std::vector<std::uint8_t> &first = sender.sent().front();
+    REQUIRE(first.size() == mark4::SIM_RUN_STATS_PACKET_SIZE);
+    mark4::SimRunStatsPacket decoded{};
+    std::memcpy(&decoded, first.data(), first.size());
+    REQUIRE(decoded.version == mark4::PROTOCOL_VERSION);
+    REQUIRE(decoded.type == static_cast<std::uint8_t>(mark4::PacketType::SIM_RUN_STATS));
+    REQUIRE(decoded.sourceId == static_cast<std::uint8_t>(mark4::StreamSource::DRONE_SIM));
+    REQUIRE(decoded.sequence == 0U);
+    REQUIRE(decoded.runId == 42U);
+    REQUIRE(decoded.flags == 0U);
+    REQUIRE(decoded.runStartUs == 1'000'000U);
+    REQUIRE(decoded.runHash == tracker.hash());
+    REQUIRE(decoded.duplicateFrames == 3U);
+    REQUIRE(decoded.lockstepTimeouts == 7U);
+
+    // Nothing changed and the period has not elapsed: nothing goes out.
+    tracker.update(run[1].frame, run[1].actuator);
+    tracker.publish();
+    REQUIRE(sender.sent().size() == 1U);
+
+    // The seal is a change, and a change is published at once.
+    tracker.noteLink(8U, 3U);
+    tracker.update(run[2].frame, run[2].actuator);
+    tracker.publish();
+    REQUIRE(tracker.sealed());
+    REQUIRE(sender.sent().size() == 2U);
+
+    std::memcpy(&decoded, sender.sent().back().data(), sender.sent().back().size());
+    REQUIRE(decoded.sequence == 1U);
+    REQUIRE(decoded.flags ==
+            (mark4::SIM_RUN_FLAG_HASH_SEALED | mark4::SIM_RUN_FLAG_LOCKSTEP_DEGRADED));
+    REQUIRE(decoded.lockstepTimeouts == 8U);
 }

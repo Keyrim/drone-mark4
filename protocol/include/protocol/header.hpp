@@ -32,7 +32,7 @@ namespace mark4
         SIM_ACTUATOR = 2U,    ///< SimActuatorPacket
         TELEMETRY = 3U,       ///< TelemetryPacket
         SIM_RAW = 4U,         ///< SimRawPacket
-        SIM_COMMAND = 5U,     ///< SimCommandPacket
+        SIM_SCENARIO = 5U,    ///< SimScenarioPacket
         RC_COMMAND = 6U,      ///< RcCommandPacket
         REBOOT_COMMAND = 7U,  ///< RebootCommandPacket
         BLACKBOX_RECORD = 8U, ///< BlackboxRecord
@@ -42,6 +42,7 @@ namespace mark4
         TUNING_LIST = 12U,    ///< TuningListPacket
         TUNING_ACK = 13U,     ///< TuningAckPacket
         TUNING_INFO = 14U,    ///< TuningInfoPacket
+        SIM_RUN_STATS = 15U,  ///< SimRunStatsPacket
     };
 
     /// Identity of a stream sender, carried by every stream packet

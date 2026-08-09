@@ -1,7 +1,10 @@
 #pragma once
 
 /// @file
-/// @brief Scenario commands sent to the simulator, for scripted campaigns.
+/// @brief Scenario commands, RC and the board commands. A scenario is what
+///        the simulator must play for one run; it reaches the plant inside
+///        the lockstep reply (protocol/sim_link.hpp) and reaches a flight
+///        process as SimScenarioPacket on its command receiver.
 
 #include <array>
 #include <cstddef>
@@ -12,23 +15,26 @@
 
 namespace mark4
 {
-    /// Teleports the drone back to its start pose, velocities zeroed. The
-    /// flight process restarts through the reset counter of the sim link.
-    inline constexpr std::uint8_t SIM_COMMAND_RESET = 1U;
+    /// Resets the world and nothing else: teleport back to the start pose,
+    /// velocities zeroed, generators reseeded. The flight process restarts
+    /// through the reset counter of the sim link.
+    inline constexpr std::uint8_t SIM_SCENARIO_RESET = 1U;
 
     /// Retired: interactive and scripted RC both travel as RcCommandPacket
     /// to the flight process command receiver since v11; the value stays
     /// reserved so the neighbors keep their numbers.
-    inline constexpr std::uint8_t SIM_COMMAND_RC = 2U;
+    inline constexpr std::uint8_t SIM_SCENARIO_RC = 2U;
 
-    /// Plays an instant throw with the velocity and rotation of the packet.
-    inline constexpr std::uint8_t SIM_COMMAND_THROW = 3U;
+    /// Resets, then plays an instant throw at the requested velocity and
+    /// rotation, throwDelayUs after the reset tick.
+    inline constexpr std::uint8_t SIM_SCENARIO_THROW = 3U;
 
-    /// Plays a full hand sequence: pick the drone up into the given held
-    /// attitude, hold it (with the sway of a real arm), then swing and
-    /// release at the packet velocity. A zero swing duration holds forever:
-    /// the scenario measuring false spin-ups in a shaken hand.
-    inline constexpr std::uint8_t SIM_COMMAND_HAND_THROW = 4U;
+    /// Resets, then plays a full hand sequence throwDelayUs after the reset
+    /// tick: pick the drone up into the given held attitude, hold it (with
+    /// the sway of a real arm), then swing and release at the requested
+    /// velocity. A zero swing duration holds forever: the scenario measuring
+    /// false spin-ups in a shaken hand.
+    inline constexpr std::uint8_t SIM_SCENARIO_HAND_THROW = 4U;
 
     /// Piloting mode carried next to the RC state. Reserved: modes are a
     /// flight behavior feature, defined here so the wire never breaks again
@@ -39,19 +45,30 @@ namespace mark4
     inline constexpr std::uint8_t RC_MODE_ALTITUDE_AUTO = 1U;
 
 #pragma pack(push, 1)
-    /// One scenario command. A single layout for every command keeps the
-    /// framing trivial; fields unused by the command are ignored. Vectors use
-    /// the drone frame convention of the protocol (body x forward, y left,
-    /// z up; world z up).
-    struct SimCommandPacket
+    /// One whole run, scripted: what the plant must play and what makes it
+    /// reproducible. A single layout for every scenario keeps the framing
+    /// trivial; fields unused by the scenario are ignored. Vectors use the
+    /// drone frame convention of the protocol (body x forward, y left, z up;
+    /// world z up).
+    ///
+    /// A scenario is a header-less block, so it can ride inside another
+    /// packet: it travels in every lockstep reply (SimActuatorPacket) as
+    /// well as inside SimScenarioPacket. Every scenario opens with a reset,
+    /// and everything after that reset tick is scheduled by the plant on its
+    /// own tick grid - which is why the absolute tick a scenario arrives on
+    /// never has to be agreed upon.
+    struct SimScenario
     {
-        std::uint8_t version;                     ///< = PROTOCOL_VERSION
-        std::uint8_t type;                        ///< = PacketType::SIM_COMMAND
-        std::uint8_t command;                     ///< one of the SIM_COMMAND_* values
-        std::uint8_t killSwitch;                  ///< RC: 1 = engaged (motors cut)
-        std::uint8_t armSwitch;                   ///< RC: 1 = armed for a throw flight
-        std::uint8_t mode;                        ///< RC: one of the RC_MODE_* values
-        float throttle;                           ///< RC: normalized [0, 1]
+        std::uint8_t sequence;                    ///< 0 = no scenario; senders count 1..255
+                                                  ///< and wrap, a receiver plays a block
+                                                  ///< once per change of this byte
+        std::uint8_t scenario;                    ///< one of the SIM_SCENARIO_* values
+        std::uint64_t seed;                       ///< seeds every generator of the run
+        std::uint32_t throwDelayUs;               ///< reset tick to throw or grab [us]
+        std::uint32_t hashWindowUs;               ///< simulated time the flight process
+                                                  ///< hashes from the reset, 0 = its
+                                                  ///< default. Addressed to the flight
+                                                  ///< process; the plant ignores it.
         std::array<float, 3> velocityMps;         ///< (HAND_)THROW: release velocity, world [m/s]
         std::array<float, 3> angularVelocityRadS; ///< (HAND_)THROW: release spin, body [rad/s]
         float heldSeconds;                        ///< HAND_THROW: hold before the swing [s]
@@ -59,32 +76,47 @@ namespace mark4
         float heldAzimuthRad;                     ///< HAND_THROW: world azimuth of the tilt [rad]
         float swingSeconds;                       ///< HAND_THROW: swing duration, 0 = hold only [s]
     };
+
+    /// One scenario addressed to a flight process, which forwards the block
+    /// to the plant on its next lockstep reply.
+    struct SimScenarioPacket
+    {
+        std::uint8_t version; ///< = PROTOCOL_VERSION
+        std::uint8_t type;    ///< = PacketType::SIM_SCENARIO
+        SimScenario scenario; ///< the run to play
+    };
 #pragma pack(pop)
 
-    /// version (1) + type (1) + command (1) + kill switch (1) + arm switch
-    /// (1) + mode (1) + throttle (4) + velocity (12) + angular velocity (12)
-    /// + held (4) + held tilt (4) + held azimuth (4) + swing (4).
-    inline constexpr std::size_t SIM_COMMAND_PACKET_SIZE = 50U;
+    /// sequence (1) + scenario (1) + seed (8) + throw delay (4) + hash window
+    /// (4) + velocity (12) + angular velocity (12) + held (4) + held tilt (4)
+    /// + held azimuth (4) + swing (4).
+    inline constexpr std::size_t SIM_SCENARIO_SIZE = 58U;
 
-    static_assert(sizeof(SimCommandPacket) == SIM_COMMAND_PACKET_SIZE,
+    /// version (1) + type (1) + scenario block (58).
+    inline constexpr std::size_t SIM_SCENARIO_PACKET_SIZE = 60U;
+
+    static_assert(sizeof(SimScenario) == SIM_SCENARIO_SIZE, "wire layout must be packed");
+    static_assert(sizeof(SimScenarioPacket) == SIM_SCENARIO_PACKET_SIZE,
                   "wire layout must be packed");
-    static_assert(std::is_trivially_copyable_v<SimCommandPacket>);
+    static_assert(std::is_trivially_copyable_v<SimScenario>);
+    static_assert(std::is_trivially_copyable_v<SimScenarioPacket>);
     // The offsets ARE the named facts here: each assert freezes one
     // field position of the cross-language wire contract.
     // NOLINTBEGIN(readability-magic-numbers)
-    static_assert(offsetof(SimCommandPacket, version) == 0U);
-    static_assert(offsetof(SimCommandPacket, type) == 1U);
-    static_assert(offsetof(SimCommandPacket, command) == 2U);
-    static_assert(offsetof(SimCommandPacket, killSwitch) == 3U);
-    static_assert(offsetof(SimCommandPacket, armSwitch) == 4U);
-    static_assert(offsetof(SimCommandPacket, mode) == 5U);
-    static_assert(offsetof(SimCommandPacket, throttle) == 6U);
-    static_assert(offsetof(SimCommandPacket, velocityMps) == 10U);
-    static_assert(offsetof(SimCommandPacket, angularVelocityRadS) == 22U);
-    static_assert(offsetof(SimCommandPacket, heldSeconds) == 34U);
-    static_assert(offsetof(SimCommandPacket, heldTiltRad) == 38U);
-    static_assert(offsetof(SimCommandPacket, heldAzimuthRad) == 42U);
-    static_assert(offsetof(SimCommandPacket, swingSeconds) == 46U);
+    static_assert(offsetof(SimScenario, sequence) == 0U);
+    static_assert(offsetof(SimScenario, scenario) == 1U);
+    static_assert(offsetof(SimScenario, seed) == 2U);
+    static_assert(offsetof(SimScenario, throwDelayUs) == 10U);
+    static_assert(offsetof(SimScenario, hashWindowUs) == 14U);
+    static_assert(offsetof(SimScenario, velocityMps) == 18U);
+    static_assert(offsetof(SimScenario, angularVelocityRadS) == 30U);
+    static_assert(offsetof(SimScenario, heldSeconds) == 42U);
+    static_assert(offsetof(SimScenario, heldTiltRad) == 46U);
+    static_assert(offsetof(SimScenario, heldAzimuthRad) == 50U);
+    static_assert(offsetof(SimScenario, swingSeconds) == 54U);
+    static_assert(offsetof(SimScenarioPacket, version) == 0U);
+    static_assert(offsetof(SimScenarioPacket, type) == 1U);
+    static_assert(offsetof(SimScenarioPacket, scenario) == 2U);
     // NOLINTEND(readability-magic-numbers)
 
 #pragma pack(push, 1)

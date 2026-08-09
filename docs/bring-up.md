@@ -140,12 +140,14 @@ Incremental, one observable win per step:
    (RcCommandPacket: kill, arm, throttle): an `rc` message aimed at
    `firmware` on the hub websocket endpoint is framed onto the UART
    verbatim, and 500 ms of silence trips the fail-safe (kill engaged,
-   disarmed), so closing the sender is itself a safe action. For a
-   simulated flight the Godot simulator is the cockpit (K = kill,
-   A = arm): its RcUplink node streams the same packets at 10 Hz to
-   udp/47805, where `drone_sim` binds its own command receiver, so the
-   RC path and its fail-safe are exercised in every simulated flight,
-   not only on the bench. A `reboot` message reboots the board (NVIC
+   disarmed), so closing the sender is itself a safe action. A simulated
+   flight is flown the same way: an `rc` message aimed at `drone_sim`
+   goes to udp/47805, where `drone_sim` binds its own command receiver,
+   so the RC path and its fail-safe are exercised in every simulated
+   flight, not only on the bench. The simulator holds no pilot state of
+   its own - it is the plant, not the cockpit - and its keyboard only
+   drives the world (H hold, SPACE throw, R reset). A `reboot` message
+   reboots the board (NVIC
    system reset), forwarded by the hub like any other uplink packet;
    no simulator key is wired to it.
 4. **Detection on real hands**: board armed and shaken in hand (no

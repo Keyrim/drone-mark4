@@ -47,22 +47,26 @@ namespace mark4
         /// Default line speed of the board UART [baud].
         static constexpr std::uint32_t DEFAULT_SERIAL_BAUD = 921600U;
 
+        /// Highest scenario sequence number the hub stamps before wrapping.
+        /// Zero is reserved on the wire for "no scenario", so the counter
+        /// runs 1..255.
+        static constexpr std::uint8_t MAX_SCENARIO_SEQUENCE = 255U;
+
         /// Everything main() decides before the hub starts.
         struct Config
         {
-            std::uint16_t wsPort = WS_PORT;                  ///< websocket endpoint port
-            std::uint16_t announcePort = ANNOUNCE_PORT;      ///< announce listen port
-            std::uint16_t telemetryPort = TELEMETRY_PORT;    ///< telemetry port watched by default
-            std::uint16_t simRawPort = SIM_RAW_PORT;         ///< sim raw port watched by default
-            std::uint16_t simCommandPort = SIM_COMMAND_PORT; ///< scenario commands go there
-            std::string serialDevice;                        ///< board UART, empty = none
-            std::uint32_t serialBaud = DEFAULT_SERIAL_BAUD;  ///< board UART speed [baud]
-            std::string logDirectory = "logs";               ///< where recordings are written
-            bool recordOnStart = false;                      ///< open a CSV session at startup
-            bool udpRebroadcast = true;                      ///< re-emit serial telemetry on UDP
-            std::string profilesDir = "profiles";            ///< directory the profiles live in
-            std::string pushProfileName;                     ///< profile pushed to every process
-                                                             ///< that appears, empty = none
+            std::uint16_t wsPort = WS_PORT;                 ///< websocket endpoint port
+            std::uint16_t announcePort = ANNOUNCE_PORT;     ///< announce listen port
+            std::uint16_t telemetryPort = TELEMETRY_PORT;   ///< telemetry port watched by default
+            std::uint16_t simRawPort = SIM_RAW_PORT;        ///< sim raw port watched by default
+            std::string serialDevice;                       ///< board UART, empty = none
+            std::uint32_t serialBaud = DEFAULT_SERIAL_BAUD; ///< board UART speed [baud]
+            std::string logDirectory = "logs";              ///< where recordings are written
+            bool recordOnStart = false;                     ///< open a CSV session at startup
+            bool udpRebroadcast = true;                     ///< re-emit serial telemetry on UDP
+            std::string profilesDir = "profiles";           ///< directory the profiles live in
+            std::string pushProfileName;                    ///< profile pushed to every process
+                                                            ///< that appears, empty = none
         };
 
         /// @param config settings of this run
@@ -209,5 +213,7 @@ namespace mark4
         std::vector<PortUse> m_followedPorts;    ///< refcount behind every subscription
         std::atomic_bool m_stopRequested{false}; ///< set by a signal handler
         std::uint64_t m_nextStatusUs = 0U;       ///< next status message instant [us]
+        std::uint8_t m_scenarioSequence = 0U;    ///< rolling number stamped on a
+                                                 ///< scenario the client left at 0
     };
 } // namespace mark4

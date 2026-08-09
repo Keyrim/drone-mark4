@@ -78,6 +78,8 @@ class GoldenSimLink(unittest.TestCase):
         self.assertEqual(fields[6:9], (0.25, -0.75, 9.5))  # accel
         self.assertEqual(fields[9], 101325.0)  # baro
         self.assertEqual(fields[10], 9)  # reset count
+        self.assertEqual(fields[11], 0xDEADBEEF)  # session id
+        self.assertEqual(fields[12], 0x1234)  # lockstep timeouts
 
     def test_actuator(self):
         data = read("sim_actuator.bin")
@@ -85,33 +87,50 @@ class GoldenSimLink(unittest.TestCase):
         self.assertTrue(tw.has_header(data, tw.TYPE_SIM_ACTUATOR))
         fields = tw.SIM_ACTUATOR_STRUCT.unpack(data)
         self.assertEqual(fields[2], 555666777)  # echoed timestamp
-        self.assertEqual(fields[3:], (0.0625, 0.125, 0.1875, 0.25))  # motors
+        self.assertEqual(fields[3:7], (0.0625, 0.125, 0.1875, 0.25))  # motors
+        # The scenario block rides in every reply, at a frozen offset.
+        self.assertEqual(fields[7], 200)  # sequence
+        self.assertEqual(fields[8], tw.SIM_SCENARIO_HAND_THROW)
+        self.assertEqual(fields[9], 0x0123456789ABCDEF)  # seed
+        self.assertEqual(fields[10], 2000000)  # throw delay
+        self.assertEqual(fields[11], 16000000)  # hash window
+        self.assertEqual(fields[12:15], (1.25, -2.5, 5.5))  # velocity
+        self.assertEqual(fields[15:18], (-0.5, 1.5, -2.25))  # angular
+        self.assertEqual(fields[18:], (1.5, 0.75, -2.5, 0.3125))  # hand throw
+        # The block inside the reply is the same bytes as the standalone
+        # packet carries: one layout, two carriers.
+        scenario = read("sim_scenario.bin")
+        self.assertEqual(
+            data[tw.SIM_ACTUATOR_SCENARIO_OFFSET:],
+            scenario[2:],
+        )
 
 
 class GoldenCommands(unittest.TestCase):
-    def test_sim_command(self):
-        data = read("sim_command.bin")
-        self.assertEqual(len(data), tw.SIM_COMMAND_PACKET_SIZE)
-        self.assertTrue(tw.has_header(data, tw.TYPE_SIM_COMMAND))
-        fields = tw.SIM_COMMAND_STRUCT.unpack(data)
-        self.assertEqual(fields[2], tw.SIM_COMMAND_HAND_THROW)
-        self.assertEqual(fields[3], 1)  # kill
-        self.assertEqual(fields[4], 0)  # arm
-        self.assertEqual(fields[5], tw.RC_MODE_ALTITUDE_AUTO)
-        self.assertEqual(fields[6], 0.375)  # throttle
+    def test_sim_scenario(self):
+        data = read("sim_scenario.bin")
+        self.assertEqual(len(data), tw.SIM_SCENARIO_PACKET_SIZE)
+        self.assertTrue(tw.has_header(data, tw.TYPE_SIM_SCENARIO))
+        fields = tw.SIM_SCENARIO_STRUCT.unpack(data)
+        self.assertEqual(fields[2], 200)  # sequence
+        self.assertEqual(fields[3], tw.SIM_SCENARIO_HAND_THROW)
+        self.assertEqual(fields[4], 0x0123456789ABCDEF)  # seed
+        self.assertEqual(fields[5], 2000000)  # throw delay
+        self.assertEqual(fields[6], 16000000)  # hash window
         self.assertEqual(fields[7:10], (1.25, -2.5, 5.5))  # velocity
         self.assertEqual(fields[10:13], (-0.5, 1.5, -2.25))  # angular
         self.assertEqual(fields[13:], (1.5, 0.75, -2.5, 0.3125))  # hand throw
 
     def test_encode_matches_fixture(self):
         # The encoder run by run_batch must produce the golden bytes.
-        packet = tw.encode_sim_command(
-            tw.SIM_COMMAND_HAND_THROW, kill=1, arm=0,
-            mode=tw.RC_MODE_ALTITUDE_AUTO, throttle=0.375,
+        packet = tw.encode_sim_scenario(
+            200, tw.SIM_SCENARIO_HAND_THROW,
+            seed=0x0123456789ABCDEF,
+            throw_delay_us=2000000, hash_window_us=16000000,
             velocity=(1.25, -2.5, 5.5), angular=(-0.5, 1.5, -2.25),
             held_s=1.5, held_tilt=0.75, held_azimuth=-2.5, swing_s=0.3125,
         )
-        self.assertEqual(packet, read("sim_command.bin"))
+        self.assertEqual(packet, read("sim_scenario.bin"))
 
     def test_rc_command(self):
         data = read("rc_command.bin")
@@ -144,7 +163,24 @@ class GoldenAnnounce(unittest.TestCase):
         self.assertEqual(fields[2], tw.SOURCE_DRONE_SIM)
         self.assertEqual(fields[3], 0xCAFEBABE)
         self.assertEqual(fields[4], tw.TELEMETRY_PORT)
-        self.assertEqual(fields[5], tw.SIM_COMMAND_PORT)
+        self.assertEqual(fields[5], tw.RC_COMMAND_PORT)
+
+
+class GoldenSimRunStats(unittest.TestCase):
+    def test_decode(self):
+        data = read("sim_run_stats.bin")
+        self.assertEqual(len(data), tw.SIM_RUN_STATS_PACKET_SIZE)
+        sample = tw.decode_sim_run_stats(data)
+        self.assertIsNotNone(sample)
+        self.assertEqual(sample.source_id, tw.SOURCE_DRONE_SIM)
+        self.assertEqual(sample.sequence, 0x1337)
+        self.assertEqual(sample.run_id, 23)
+        self.assertEqual(sample.run_start_us, 24680135)
+        self.assertEqual(sample.run_hash, 0xFEDCBA9876543210)
+        self.assertEqual(sample.duplicate_frames, 11)
+        self.assertEqual(sample.lockstep_timeouts, 2)
+        self.assertTrue(sample.sealed)
+        self.assertTrue(sample.degraded)
 
 
 class GoldenTuning(unittest.TestCase):

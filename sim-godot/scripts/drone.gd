@@ -24,12 +24,17 @@ extends RigidBody3D
 ## forces for the step that follows. The single exception is the reset, which
 ## teleports the body and must go through _integrate_forces.
 ##
-## The kill switch is never enforced here. It does not travel in the sensor
-## packet either: RcUplink streams the pilot state out-of-band to the flight
-## process command receiver, exactly the path the real board is flown
-## through. The flight process is expected to answer with zero motor
-## commands, which is what the simulator wants to exercise - including when
-## the stream stops and its fail-safe takes over.
+## The kill switch is never enforced here, and does not travel in the sensor
+## packet: the pilot state reaches the flight process out-of-band, exactly
+## the path the real board is flown through. The flight process is expected
+## to answer with zero motor commands, which is what the simulator wants to
+## exercise - including when the stream stops and its fail-safe takes over.
+##
+## A scripted run is one scenario, and a scenario is one reset: the reset
+## teleports the body, reseeds every generator and schedules whatever the
+## scenario asks for on THIS plant's tick grid, counted from the reset tick.
+## Nothing outside has to agree on which absolute tick a run began at, and
+## nothing carries over from the run before.
 
 const MOTOR_COUNT := 4
 
@@ -84,11 +89,31 @@ var _reset_count: int = 0
 var _tick_count: int = 0
 var _tick_rate_hz: float = 500.0
 
+## Scheduled action of the current run, applied at _scheduled_tick.
+enum Scheduled { NONE, THROW, HAND_THROW }
+
+## Seed applied by the next reset, and the scenario it opens the run with.
+var _pending_seed: int = 0
+var _pending_scenario: Dictionary = {}
+
+## Tick the current run started at, and what it still owes.
+var _run_start_tick: int = 0
+var _scheduled: Scheduled = Scheduled.NONE
+var _scheduled_tick: int = 0
+var _scheduled_velocity: Vector3 = Vector3.ZERO
+var _scheduled_angular: Vector3 = Vector3.ZERO
+var _scheduled_held_basis: Basis = Basis.IDENTITY
+var _scheduled_held_s: float = 0.0
+var _scheduled_swing_s: float = 0.0
+
+## Generator of everything drawn by this node. Explicitly seeded by every
+## reset, so no draw of a run depends on how many runs came before it.
+var _rng := RandomNumberGenerator.new()
+
 @onready var sensors: DroneSensors = $Sensors
 @onready var sim_link: SimLink = $SimLink
 @onready var sim_raw: SimRawLink = $SimRawLink
 @onready var pilot: PilotInput = $PilotInput
-@onready var sim_command: SimCommand = $SimCommand
 @onready var hand: SimHand = $Hand
 
 
@@ -97,12 +122,24 @@ func _ready() -> void:
 	# time_scale are both scaled, their ratio is the physical rate.
 	_tick_rate_hz = float(Engine.physics_ticks_per_second) / Engine.time_scale
 	_previous_velocity = linear_velocity
+	_pending_seed = sensors.rng_seed
+	_rng.seed = sensors.rng_seed
 	if inertia.x <= 0.0 or inertia.y <= 0.0 or inertia.z <= 0.0:
 		push_warning("drone: inertia is not set, the engine will infer it from the shapes")
 
 
 func _physics_process(delta: float) -> void:
-	if pilot.take_reset_request() or sim_command.take_reset_request():
+	var scenario := sim_link.take_scenario()
+	if not scenario.is_empty():
+		# Every scenario opens with a reset; what follows is scheduled from
+		# the reset tick, once the teleport has actually happened.
+		_pending_scenario = scenario
+		_pending_seed = int(scenario["seed"])
+		_reset_pending = true
+	if pilot.take_reset_request():
+		# The keyboard goes through the same door, keeping the seed it has.
+		_pending_scenario = {}
+		_pending_seed = sensors.rng_seed
 		_reset_pending = true
 	if pilot.take_grab_request() and not hand.is_holding():
 		hand.grab(_random_held_basis())
@@ -112,15 +149,7 @@ func _physics_process(delta: float) -> void:
 			hand.start_swing(throw_delta_velocity_mps, throw_angular_velocity_rad_s, 0.35)
 		else:
 			_start_throw(throw_delta_velocity_mps, throw_angular_velocity_rad_s)
-	if sim_command.take_throw_request():
-		_start_throw(sim_command.throw_velocity(), sim_command.throw_angular_velocity())
-	if sim_command.take_hand_throw_request():
-		hand.grab(sim_command.held_basis(), sim_command.held_seconds())
-		hand.plan_swing(
-			sim_command.throw_velocity(),
-			sim_command.throw_angular_velocity(),
-			sim_command.swing_seconds()
-		)
+	_fire_scheduled()
 	hand.physics_update(delta)
 
 	var body_basis := global_transform.basis
@@ -148,8 +177,13 @@ func _physics_process(delta: float) -> void:
 	_tick_count += 1
 
 
+## The single run-reset point: teleporting a rigid body is only legal from
+## here, so everything a run must start clean from is cleared here too.
+##
+## This runs after _physics_process of the same tick, so _tick_count already
+## names the first tick of the new run - which is the tick the teleported
+## state will be sampled on, and the one every schedule counts from.
 func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
-	# Teleporting a rigid body is only legal from here.
 	if not _reset_pending:
 		return
 	_reset_pending = false
@@ -162,6 +196,44 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 	_throw_force_n = Vector3.ZERO
 	for index: int in MOTOR_COUNT:
 		_motor_speeds[index] = 0.0
+
+	sensors.reseed(_pending_seed)
+	_rng.seed = _pending_seed
+	hand.reset()
+	sim_raw.reset()
+	_run_start_tick = _tick_count
+	_schedule(_pending_scenario)
+	_pending_scenario = {}
+
+
+## Schedule what a scenario owes after its reset, on this plant's tick grid.
+func _schedule(scenario: Dictionary) -> void:
+	_scheduled = Scheduled.NONE
+	if scenario.is_empty() or scenario["scenario"] == Protocol.SIM_SCENARIO_RESET:
+		return
+	var delay_ticks := int(round(float(scenario["throw_delay_us"]) * _tick_rate_hz / 1000000.0))
+	_scheduled_tick = _run_start_tick + delay_ticks
+	_scheduled_velocity = scenario["velocity"]
+	_scheduled_angular = scenario["angular"]
+	_scheduled_held_basis = scenario["held_basis"]
+	_scheduled_held_s = scenario["held_s"]
+	_scheduled_swing_s = scenario["swing_s"]
+	if scenario["scenario"] == Protocol.SIM_SCENARIO_HAND_THROW:
+		_scheduled = Scheduled.HAND_THROW
+	else:
+		_scheduled = Scheduled.THROW
+
+
+## Play whatever the run owes, once its tick has come.
+func _fire_scheduled() -> void:
+	if _scheduled == Scheduled.NONE or _tick_count < _scheduled_tick:
+		return
+	if _scheduled == Scheduled.THROW:
+		_start_throw(_scheduled_velocity, _scheduled_angular)
+	else:
+		hand.grab(_scheduled_held_basis, _scheduled_held_s)
+		hand.plan_swing(_scheduled_velocity, _scheduled_angular, _scheduled_swing_s)
+	_scheduled = Scheduled.NONE
 
 
 ## Simulated time of the current tick [us]. It comes from the tick counter and
@@ -189,9 +261,9 @@ func altitude_m() -> float:
 ## A plausible resting-in-hand orientation: tilted up to 60 degrees toward a
 ## random azimuth, with a random heading.
 func _random_held_basis() -> Basis:
-	var tilt := randf_range(0.0, PI / 3.0)
-	var azimuth := randf_range(0.0, TAU)
-	var heading := randf_range(0.0, TAU)
+	var tilt := _rng.randf_range(0.0, PI / 3.0)
+	var azimuth := _rng.randf_range(0.0, TAU)
+	var heading := _rng.randf_range(0.0, TAU)
 	var tilt_axis := Vector3(cos(azimuth), 0.0, sin(azimuth))
 	return Basis(Quaternion(tilt_axis, tilt)) * Basis(Quaternion(Vector3.UP, heading))
 

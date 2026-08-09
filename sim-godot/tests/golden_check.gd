@@ -27,7 +27,7 @@ func _init() -> void:
 	_check_actuator(fixtures)
 	_check_telemetry(fixtures)
 	_check_sensor_and_raw_sizes(fixtures)
-	_check_sim_command(fixtures)
+	_check_scenario_in_actuator(fixtures)
 
 	if failures == 0:
 		print("golden check: GDScript decodes every fixture")
@@ -83,21 +83,28 @@ func _check_sensor_and_raw_sizes(fixtures: String) -> void:
 	_expect(Protocol.has_header(raw, Protocol.TYPE_SIM_RAW), "sim raw header")
 
 
-## The command packet is what SimCommand decodes for batch campaigns.
-func _check_sim_command(fixtures: String) -> void:
-	var payload := _read(fixtures, "sim_command.bin")
-	_expect(payload.size() == Protocol.SIM_COMMAND_PACKET_SIZE, "command size")
-	_expect(Protocol.has_header(payload, Protocol.TYPE_SIM_COMMAND), "command header")
-	_expect(payload.decode_u8(2) == Protocol.SIM_COMMAND_HAND_THROW, "command byte")
-	_expect(payload.decode_float(Protocol.SIM_COMMAND_THROTTLE_OFFSET) == 0.375, "command throttle")
+## The scenario block is decoded OUT of the lockstep reply: that is the
+## only path this project ever parses a scenario on, so it is the one the
+## fixtures have to guard.
+func _check_scenario_in_actuator(fixtures: String) -> void:
+	var payload := _read(fixtures, "sim_actuator.bin")
+	var base: int = Protocol.SIM_ACTUATOR_SCENARIO_OFFSET
+	_expect(payload.size() == base + Protocol.SIM_SCENARIO_SIZE, "scenario block fits the reply")
+	_expect(payload.decode_u8(base) == 200, "scenario sequence")
+	_expect(payload.decode_u8(base + 1) == Protocol.SIM_SCENARIO_HAND_THROW, "scenario byte")
+	# decode_u64 is signed in GDScript; the fixture seed fits a positive one.
+	_expect(payload.decode_u64(base + Protocol.SCENARIO_SEED_OFFSET) == 81985529216486895,
+		"scenario seed")
+	_expect(payload.decode_u32(base + Protocol.SCENARIO_THROW_DELAY_OFFSET) == 2000000,
+		"scenario throw delay")
 	var velocity := [1.25, -2.5, 5.5]
 	var angular := [-0.5, 1.5, -2.25]
 	for index: int in 3:
-		var v_offset: int = Protocol.SIM_COMMAND_VELOCITY_OFFSET + index * 4
-		var a_offset: int = Protocol.SIM_COMMAND_ANGULAR_OFFSET + index * 4
-		_expect(payload.decode_float(v_offset) == velocity[index], "command velocity %d" % index)
-		_expect(payload.decode_float(a_offset) == angular[index], "command angular %d" % index)
+		var v_offset: int = base + Protocol.SCENARIO_VELOCITY_OFFSET + index * Protocol.FLOAT_SIZE
+		var a_offset: int = base + Protocol.SCENARIO_ANGULAR_OFFSET + index * Protocol.FLOAT_SIZE
+		_expect(payload.decode_float(v_offset) == velocity[index], "scenario velocity %d" % index)
+		_expect(payload.decode_float(a_offset) == angular[index], "scenario angular %d" % index)
 	var hand := [1.5, 0.75, -2.5, 0.3125]
 	for index: int in 4:
-		var offset: int = Protocol.SIM_COMMAND_HELD_OFFSET + index * 4
-		_expect(payload.decode_float(offset) == hand[index], "command hand field %d" % index)
+		var offset: int = base + Protocol.SCENARIO_HELD_OFFSET + index * Protocol.FLOAT_SIZE
+		_expect(payload.decode_float(offset) == hand[index], "scenario hand field %d" % index)

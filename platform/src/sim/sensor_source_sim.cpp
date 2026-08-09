@@ -37,6 +37,14 @@ namespace mark4
             mark4::SimSensorPacket packet{};
             std::memcpy(&packet, wire.data(), sizeof(packet));
 
+            if (packet.sessionId != m_sessionId)
+            {
+                /* A different plant: its simulated clock starts over, so
+                   nothing this source remembers about timestamps applies to
+                   it any more. */
+                m_timestampSeen = false;
+            }
+
             if (m_timestampSeen && packet.timestampUs == m_lastTimestampUs)
             {
                 /* The simulator is asking again for the answer to a tick it
@@ -64,6 +72,8 @@ namespace mark4
             // not a sensor reading, and the composition root grafts it from
             // its RcTracker after this call returns.
             m_resetCount = packet.resetCount;
+            m_sessionId = packet.sessionId;
+            m_lockstepTimeouts = packet.lockstepTimeouts;
             m_lastTimestampUs = packet.timestampUs;
             m_timestampSeen = true;
             // Only a validated sensor packet may steer the motor replies:

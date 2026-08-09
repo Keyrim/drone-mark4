@@ -398,10 +398,22 @@ namespace mark4
                 const auto bytes = wireBytes(message.tuningList);
                 return sendToTarget(message.target, bytes.data(), bytes.size(), errorOut);
             }
-            case ClientMessageType::SIM_COMMAND: {
-                const auto bytes = wireBytes(message.simCommand);
-                return m_udp.sendTo(
-                    bytes.data(), bytes.size(), "127.0.0.1", m_config.simCommandPort);
+            case ClientMessageType::SIM_SCENARIO: {
+                SimScenarioPacket packet = message.simScenario;
+                if (packet.scenario.sequence == 0U)
+                {
+                    // 0 means "no scenario" on the wire, so a client that
+                    // sent none gets the hub's own rolling number: two
+                    // scenarios in a row are then two scenarios, not one.
+                    m_scenarioSequence =
+                        static_cast<std::uint8_t>(m_scenarioSequence % MAX_SCENARIO_SEQUENCE + 1U);
+                    packet.scenario.sequence = m_scenarioSequence;
+                }
+                // Routed like every other command: to the port the target
+                // announced. The plant binds nothing and the hub hardwires
+                // no port; the flight process forwards the block from there.
+                const auto bytes = wireBytes(packet);
+                return sendToTarget(message.target, bytes.data(), bytes.size(), errorOut);
             }
             case ClientMessageType::REBOOT: {
                 if (message.target != StreamSource::FIRMWARE)

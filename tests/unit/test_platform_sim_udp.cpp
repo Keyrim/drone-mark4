@@ -30,19 +30,31 @@ namespace
     constexpr float TEST_BARO_PA = 101325.0f;
     constexpr float TEST_THROTTLE = 0.75f;
     constexpr std::uint8_t TEST_RESET_COUNT = 3U;
+    constexpr std::uint32_t TEST_SESSION_ID = 0xC0FFEE01U;
+    constexpr std::uint16_t TEST_LOCKSTEP_TIMEOUTS = 517U;
+
+    /// Larger than any packet of the protocol, so a truncated read is never
+    /// mistaken for a valid size.
+    constexpr std::size_t WIRE_BUFFER_SIZE = 128U;
 
     /// Datagram bytes of a sensor packet, all fields distinctive.
     using SensorDatagram = std::array<std::uint8_t, mark4::SIM_SENSOR_PACKET_SIZE>;
 
+    /// @brief Builds a sensor packet datagram.
+    /// @param timestampUs simulated time carried by the packet [us]
+    /// @param sessionId simulator session the packet claims to come from
     /// @return wire bytes of a valid sensor packet
-    SensorDatagram makeSensorDatagram()
+    SensorDatagram makeSensorDatagram(std::uint64_t timestampUs = TEST_TIMESTAMP_US,
+                                      std::uint32_t sessionId = TEST_SESSION_ID)
     {
         mark4::SimSensorPacket packet{};
         packet.version = mark4::PROTOCOL_VERSION;
         packet.type = static_cast<std::uint8_t>(mark4::PacketType::SIM_SENSOR);
-        packet.timestampUs = TEST_TIMESTAMP_US;
+        packet.timestampUs = timestampUs;
         packet.baroPa = TEST_BARO_PA;
         packet.resetCount = TEST_RESET_COUNT;
+        packet.sessionId = sessionId;
+        packet.lockstepTimeouts = TEST_LOCKSTEP_TIMEOUTS;
 
         SensorDatagram wire{};
         std::memcpy(wire.data(), &packet, sizeof(packet));
@@ -171,6 +183,8 @@ TEST_CASE("a sensor packet is decoded into a sensor frame")
     // defaults until the composition root grafts the tracked state onto it.
     REQUIRE(frame.rc.killSwitch == true);
     REQUIRE(source.resetCount() == TEST_RESET_COUNT);
+    REQUIRE(source.sessionId() == TEST_SESSION_ID);
+    REQUIRE(source.lockstepTimeouts() == TEST_LOCKSTEP_TIMEOUTS);
 }
 
 TEST_CASE("malformed datagrams are skipped and the next valid one is delivered")
@@ -228,7 +242,7 @@ TEST_CASE("a stray datagram cannot redirect the motor replies")
     actuators.motor = {0.1f, 0.2f, 0.3f, 0.4f};
     sink.push(actuators);
 
-    std::array<std::uint8_t, 64> wire{};
+    std::array<std::uint8_t, WIRE_BUFFER_SIZE> wire{};
     REQUIRE(simulator.receive(wire.data(), wire.size()) == mark4::SIM_ACTUATOR_PACKET_SIZE);
     REQUIRE(intruder.receive(wire.data(), wire.size()) == 0U);
 }
@@ -253,7 +267,7 @@ TEST_CASE("a resent sensor packet is answered again instead of stepped twice")
     actuators.motor = {0.1f, 0.2f, 0.3f, 0.4f};
     sink.push(actuators);
 
-    std::array<std::uint8_t, 128> first{};
+    std::array<std::uint8_t, WIRE_BUFFER_SIZE> first{};
     const std::size_t firstSize = simulator.receive(first.data(), first.size());
     REQUIRE(firstSize == mark4::SIM_ACTUATOR_PACKET_SIZE);
 
@@ -264,9 +278,74 @@ TEST_CASE("a resent sensor packet is answered again instead of stepped twice")
     REQUIRE(sink.pushCount() == 1U); // the core was not stepped a second time
 
     // ...and the answer it missed went out again, byte for byte.
-    std::array<std::uint8_t, 128> repeat{};
+    std::array<std::uint8_t, WIRE_BUFFER_SIZE> repeat{};
     REQUIRE(simulator.receive(repeat.data(), repeat.size()) == firstSize);
     REQUIRE(std::memcmp(first.data(), repeat.data(), firstSize) == 0);
+}
+
+TEST_CASE("a restarted simulator may replay a timestamp already seen")
+{
+    mark4::UdpLink link;
+    REQUIRE(link.open(0U, TEST_TIMEOUT_MS));
+
+    mark4::SensorSourceSim source(link);
+    SimulatorStub simulator;
+
+    const SensorDatagram late = makeSensorDatagram(TEST_TIMESTAMP_US);
+    REQUIRE(simulator.sendTo(link.boundPort(), late.data(), late.size()));
+    mark4::SensorFrame frame;
+    REQUIRE(source.waitFrame(frame) == mark4::FrameWait::FRAME);
+
+    // A new plant: its simulated clock starts over, so an earlier timestamp -
+    // or the very same one - is a genuine new sample, not a resend.
+    const SensorDatagram fresh = makeSensorDatagram(1000U, TEST_SESSION_ID + 1U);
+    REQUIRE(simulator.sendTo(link.boundPort(), fresh.data(), fresh.size()));
+    REQUIRE(source.waitFrame(frame) == mark4::FrameWait::FRAME);
+    REQUIRE(frame.timestampUs == 1000U);
+    REQUIRE(source.sessionId() == TEST_SESSION_ID + 1U);
+    REQUIRE(source.duplicateFrameCount() == 0U);
+}
+
+TEST_CASE("the attached scenario rides in every reply, byte for byte")
+{
+    mark4::UdpLink link;
+    REQUIRE(link.open(0U, TEST_TIMEOUT_MS));
+
+    mark4::SensorSourceSim source(link);
+    mark4::MotorSinkSim sink(link);
+    SimulatorStub simulator;
+
+    mark4::SimScenario scenario{};
+    scenario.sequence = 9U;
+    scenario.scenario = mark4::SIM_SCENARIO_THROW;
+    scenario.seed = 0x0123456789ABCDEFULL;
+    scenario.throwDelayUs = 2000000U;
+    scenario.hashWindowUs = 16000000U;
+    scenario.swingSeconds = 0.375f;
+    std::array<std::uint8_t, mark4::SIM_SCENARIO_SIZE> expected{};
+    std::memcpy(expected.data(), &scenario, sizeof(scenario));
+    sink.attachScenario(scenario);
+
+    const SensorDatagram datagram = makeSensorDatagram();
+    REQUIRE(simulator.sendTo(link.boundPort(), datagram.data(), datagram.size()));
+    mark4::SensorFrame frame;
+    REQUIRE(source.waitFrame(frame) == mark4::FrameWait::FRAME);
+
+    mark4::ActuatorFrame actuators;
+    actuators.timestampUs = frame.timestampUs;
+    actuators.motor = {0.1f, 0.2f, 0.3f, 0.4f};
+
+    // Repeated on every reply: the plant dedups on the sequence byte, so a
+    // block cannot be missed by a peer that missed one datagram.
+    for (int attempt = 0; attempt < 2; ++attempt)
+    {
+        sink.push(actuators);
+        std::array<std::uint8_t, WIRE_BUFFER_SIZE> wire{};
+        REQUIRE(simulator.receive(wire.data(), wire.size()) == mark4::SIM_ACTUATOR_PACKET_SIZE);
+        REQUIRE(std::memcmp(wire.data() + offsetof(mark4::SimActuatorPacket, scenario),
+                            expected.data(),
+                            expected.size()) == 0);
+    }
 }
 
 TEST_CASE("an idle link ends the run")
@@ -303,7 +382,7 @@ TEST_CASE("pushed motors are sent back to the sensor sender")
     REQUIRE(sink.pushCount() == 1U);
     REQUIRE(sink.last().motor == actuators.motor);
 
-    std::array<std::uint8_t, 64> wire{};
+    std::array<std::uint8_t, WIRE_BUFFER_SIZE> wire{};
     REQUIRE(simulator.receive(wire.data(), wire.size()) == mark4::SIM_ACTUATOR_PACKET_SIZE);
     REQUIRE(wire[offsetof(mark4::SimActuatorPacket, version)] == mark4::PROTOCOL_VERSION);
     REQUIRE(wire[offsetof(mark4::SimActuatorPacket, type)] ==
@@ -342,7 +421,7 @@ TEST_CASE("an rc command datagram comes out of poll")
     std::memcpy(sent.data(), &packet, sizeof(packet));
     REQUIRE(pilot.sendTo(link.boundPort(), sent.data(), sent.size()));
 
-    std::array<std::uint8_t, 64> wire{};
+    std::array<std::uint8_t, WIRE_BUFFER_SIZE> wire{};
     REQUIRE(pollUntilPacket(receiver, wire.data(), wire.size()) == mark4::RC_COMMAND_PACKET_SIZE);
     REQUIRE(std::memcmp(wire.data(), sent.data(), sent.size()) == 0);
     REQUIRE(receiver.packetsReceived() == 1U);
@@ -357,7 +436,7 @@ TEST_CASE("poll returns 0 immediately when nothing is pending")
 
     // The link opens with a receive timeout: only a non-blocking read comes
     // back at once, which is what the flight loop needs.
-    std::array<std::uint8_t, 64> wire{};
+    std::array<std::uint8_t, WIRE_BUFFER_SIZE> wire{};
     REQUIRE(receiver.poll(wire.data(), wire.size()) == 0U);
     REQUIRE(receiver.packetsReceived() == 0U);
 }

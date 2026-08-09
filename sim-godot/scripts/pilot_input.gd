@@ -1,41 +1,25 @@
 class_name PilotInput
 extends Node
 
-## Keyboard pilot.
+## Keyboard scenario keys.
 ##
-## Holds the pilot state (kill switch, arm switch, throttle) that RcUplink
-## streams to the flight process, and turns the throw and reset keys into
-## one-shot requests that the drone consumes on its next physics tick. This
-## node never touches the physics state itself, so key presses are always
-## applied at a tick boundary.
+## Turns the world keys into one-shot requests the drone consumes on its next
+## physics tick. This node never touches the physics state itself, so key
+## presses are always applied at a tick boundary.
 ##
-## Key bindings are declared as input actions in project.godot:
-## K toggles the kill switch, A toggles the arm switch, Up and Down nudge the
-## throttle, H picks the drone up in the simulated hand, SPACE throws (a hand
-## throw when held, an instant throw otherwise), R resets and ESC quits.
+## Piloting is deliberately absent: the kill switch, the arm switch and the
+## throttle are RC, they reach the flight process out-of-band on the exact
+## path a real flight uses, and this project is the plant, not the cockpit.
+## Fly from the hub.
+##
+## Key bindings are declared as input actions in project.godot: H picks the
+## drone up in the simulated hand, SPACE throws (a hand throw when held, an
+## instant throw otherwise), R resets the world and ESC quits.
 
-## Throttle increment applied on each Up or Down key press.
-const THROTTLE_STEP := 0.05
-
-const ACTION_KILL_TOGGLE := &"sim_kill_toggle"
-const ACTION_ARM_TOGGLE := &"sim_arm_toggle"
-const ACTION_THROTTLE_UP := &"sim_throttle_up"
-const ACTION_THROTTLE_DOWN := &"sim_throttle_down"
 const ACTION_THROW := &"sim_throw"
 const ACTION_GRAB := &"sim_grab"
 const ACTION_RESET := &"sim_reset"
 const ACTION_QUIT := &"sim_quit"
-
-## Kill switch state streamed to the flight process, true means engaged
-## (motors cut). Starts released so the flight process runs its normal loop.
-var kill_switch: bool = false
-
-## Normalized RC throttle streamed to the flight process, in [0, 1].
-var throttle: float = 0.0
-
-## Arm switch state streamed to the flight process, true means it may fly on
-## its own after a throw.
-var arm_switch: bool = false
 
 var _throw_requested: bool = false
 var _grab_requested: bool = false
@@ -45,14 +29,6 @@ var _reset_requested: bool = false
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed(ACTION_QUIT):
 		get_tree().quit()
-	elif event.is_action_pressed(ACTION_KILL_TOGGLE):
-		kill_switch = not kill_switch
-	elif event.is_action_pressed(ACTION_ARM_TOGGLE):
-		arm_switch = not arm_switch
-	elif event.is_action_pressed(ACTION_THROTTLE_UP):
-		throttle = clampf(throttle + THROTTLE_STEP, 0.0, 1.0)
-	elif event.is_action_pressed(ACTION_THROTTLE_DOWN):
-		throttle = clampf(throttle - THROTTLE_STEP, 0.0, 1.0)
 	elif event.is_action_pressed(ACTION_THROW):
 		_throw_requested = true
 	elif event.is_action_pressed(ACTION_GRAB):
@@ -83,13 +59,3 @@ func take_reset_request() -> bool:
 	var requested := _reset_requested
 	_reset_requested = false
 	return requested
-
-
-## Human readable kill switch state for the overlay.
-func kill_switch_text() -> String:
-	return "ENGAGED" if kill_switch else "released"
-
-
-## Human readable arm switch state for the overlay.
-func arm_switch_text() -> String:
-	return "ARMED" if arm_switch else "off"

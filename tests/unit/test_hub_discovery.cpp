@@ -38,7 +38,7 @@ namespace
 TEST_CASE("a first announce makes a process appear")
 {
     mark4::DiscoveryRegistry registry;
-    const auto bytes = announce(mark4::StreamSource::DRONE_SIM, 7U, 47801U, 47804U);
+    const auto bytes = announce(mark4::StreamSource::DRONE_SIM, 7U, 47801U, 47805U);
 
     const auto change = registry.onAnnounce(bytes.data(), bytes.size(), 1000U);
     REQUIRE(change.has_value());
@@ -46,17 +46,17 @@ TEST_CASE("a first announce makes a process appear")
     CHECK(change->process.kind == mark4::StreamSource::DRONE_SIM);
     CHECK(change->process.sessionId == 7U);
     CHECK(change->process.telemetryPort == 47801U);
-    CHECK(change->process.commandPort == 47804U);
+    CHECK(change->process.commandPort == 47805U);
     CHECK(change->process.lastSeenUs == 1000U);
     CHECK(!(change->process.viaSerial));
     REQUIRE(registry.processes().size() == 1U);
-    CHECK(registry.commandPortOf(mark4::StreamSource::DRONE_SIM) == 47804U);
+    CHECK(registry.commandPortOf(mark4::StreamSource::DRONE_SIM) == 47805U);
 }
 
 TEST_CASE("a repeated announce is a silent refresh")
 {
     mark4::DiscoveryRegistry registry;
-    const auto bytes = announce(mark4::StreamSource::DRONE_SIM, 7U, 47801U, 47804U);
+    const auto bytes = announce(mark4::StreamSource::DRONE_SIM, 7U, 47801U, 47805U);
     static_cast<void>(registry.onAnnounce(bytes.data(), bytes.size(), 1000U));
 
     const auto change = registry.onAnnounce(bytes.data(), bytes.size(), 2'000'000U);
@@ -68,8 +68,8 @@ TEST_CASE("a repeated announce is a silent refresh")
 TEST_CASE("a new session identity behind the same ports is a restart")
 {
     mark4::DiscoveryRegistry registry;
-    const auto first = announce(mark4::StreamSource::DRONE_SIM, 7U, 47801U, 47804U);
-    const auto second = announce(mark4::StreamSource::DRONE_SIM, 8U, 47801U, 47804U);
+    const auto first = announce(mark4::StreamSource::DRONE_SIM, 7U, 47801U, 47805U);
+    const auto second = announce(mark4::StreamSource::DRONE_SIM, 8U, 47801U, 47805U);
     static_cast<void>(registry.onAnnounce(first.data(), first.size(), 1000U));
 
     const auto change = registry.onAnnounce(second.data(), second.size(), 2000U);
@@ -82,7 +82,7 @@ TEST_CASE("a new session identity behind the same ports is a restart")
 TEST_CASE("an unassigned session identity never reports a restart")
 {
     mark4::DiscoveryRegistry registry;
-    const auto bytes = announce(mark4::StreamSource::DRONE_SIM, 0U, 47801U, 47804U);
+    const auto bytes = announce(mark4::StreamSource::DRONE_SIM, 0U, 47801U, 47805U);
     REQUIRE(registry.onAnnounce(bytes.data(), bytes.size(), 1000U).has_value());
 
     CHECK(!(registry.onAnnounce(bytes.data(), bytes.size(), 2000U).has_value()));
@@ -96,7 +96,7 @@ TEST_CASE("an unassigned session identity never reports a restart")
 TEST_CASE("silence makes a process disappear exactly once")
 {
     mark4::DiscoveryRegistry registry;
-    const auto bytes = announce(mark4::StreamSource::DRONE_SIM, 7U, 47801U, 47804U);
+    const auto bytes = announce(mark4::StreamSource::DRONE_SIM, 7U, 47801U, 47805U);
     static_cast<void>(registry.onAnnounce(bytes.data(), bytes.size(), 1000U));
 
     CHECK(registry.expire(2'000'000U, 3'000'000U).empty());
@@ -113,13 +113,13 @@ TEST_CASE("silence makes a process disappear exactly once")
 TEST_CASE("two kinds coexist in the registry")
 {
     mark4::DiscoveryRegistry registry;
-    const auto sim = announce(mark4::StreamSource::DRONE_SIM, 7U, 47801U, 47804U);
+    const auto sim = announce(mark4::StreamSource::DRONE_SIM, 7U, 47801U, 47805U);
     const auto plant = announce(mark4::StreamSource::SIM_PLANT, 9U, 47802U, 47800U);
 
     REQUIRE(registry.onAnnounce(sim.data(), sim.size(), 1000U).has_value());
     REQUIRE(registry.onAnnounce(plant.data(), plant.size(), 1000U).has_value());
     REQUIRE(registry.processes().size() == 2U);
-    CHECK(registry.commandPortOf(mark4::StreamSource::DRONE_SIM) == 47804U);
+    CHECK(registry.commandPortOf(mark4::StreamSource::DRONE_SIM) == 47805U);
     CHECK(registry.commandPortOf(mark4::StreamSource::SIM_PLANT) == 47800U);
     CHECK(registry.commandPortOf(mark4::StreamSource::FIRMWARE) == 0U);
 }
@@ -144,7 +144,7 @@ TEST_CASE("serial telemetry synthesizes the firmware entry")
 TEST_CASE("an announce on the wrong wire version is counted and dropped")
 {
     mark4::DiscoveryRegistry registry;
-    auto bytes = announce(mark4::StreamSource::DRONE_SIM, 7U, 47801U, 47804U);
+    auto bytes = announce(mark4::StreamSource::DRONE_SIM, 7U, 47801U, 47805U);
     bytes[0] = mark4::PROTOCOL_VERSION - 1U;
 
     CHECK(!(registry.onAnnounce(bytes.data(), bytes.size(), 1000U).has_value()));

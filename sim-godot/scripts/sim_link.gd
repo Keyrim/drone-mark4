@@ -11,20 +11,29 @@ extends Node
 ## The wire layout is defined by protocol/include/protocol/sim_link.hpp,
 ## mirrored by the constants in protocol.gd (the single GDScript copy):
 ##
-##   sensor   (39 bytes): u8 version, u8 type, u64 timestamp_us,
+##   sensor   (45 bytes): u8 version, u8 type, u64 timestamp_us,
 ##                        3x f32 gyro [rad/s], 3x f32 accel [m/s^2],
-##                        f32 baro [Pa], u8 reset count
-##   actuator (26 bytes): u8 version, u8 type, u64 echoed timestamp_us,
-##                        4x f32 motor commands in [0, 1]
+##                        f32 baro [Pa], u8 reset count, u32 session id,
+##                        u16 lockstep timeouts
+##   actuator (84 bytes): u8 version, u8 type, u64 echoed timestamp_us,
+##                        4x f32 motor commands in [0, 1],
+##                        58 byte scenario block
 ##
 ## Sensors only: the pilot state is not a sensor reading and does not
-## travel here. RcUplink streams it out-of-band to the flight process
-## command receiver, the same path the real board is flown through.
+## travel here, and this project does not hold one. It reaches the flight
+## process out-of-band as an RcCommandPacket, the same path the real board
+## is flown through.
 ##
 ## Anything with another size, version or type byte is dropped. The echoed
 ## timestamp identifies the sensor packet a reply answers: in lockstep mode
 ## the tick waits for the reply to the exact packet it sent, and resends it
 ## when the wait times out (UDP may drop packets, the handshake may not).
+##
+## The scenario block rides in every reply and is what drives a scripted
+## run. That handshake is exactly why it needs no delivery machinery: a
+## tick is not complete until its reply arrives, so a scenario cannot be
+## lost without the tick being lost with it. A block is taken once per
+## change of its sequence byte, and the repeats are ignored.
 ##
 ## Vectors on the wire use the drone body frame of the protocol (x forward,
 ## y left, z up - the accelerometer reads +1 g on z at rest), remapped here
@@ -35,6 +44,16 @@ extends Node
 const GODOT_TO_DRONE := Basis(Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(-1, 0, 0))
 
 const MOTOR_COUNT := 4
+
+## Axis remap from the drone frame to the Godot frame: the inverse of the
+## GODOT_TO_DRONE basis used on the sensor path.
+const DRONE_TO_GODOT := Basis(Vector3(0, 0, -1), Vector3(-1, 0, 0), Vector3(0, 1, 0))
+
+## Knuth multiplier, spreading the process id over the whole 32 bit word.
+const SESSION_MIX := 2654435761
+
+const U32_MASK := 0xFFFFFFFF
+const U16_MAX := 65535
 
 ## Sleep between two polls while waiting for a lockstep reply.
 const LOCKSTEP_POLL_INTERVAL_US := 20
@@ -69,16 +88,22 @@ var packets_dropped: int = 0
 var lockstep_timeouts: int = 0
 ## Number of sensor packets resent while waiting for their echo.
 var lockstep_resends: int = 0
+## Identity of this simulator start, sent in every sensor packet: the flight
+## process reads a change of it as a new plant whose clock starts over.
+var session_id: int = 0
 
 var _socket := PacketPeerUDP.new()
 var _buffer := StreamPeerBuffer.new()
 var _ready_to_send: bool = false
 var _pending_echo_us: int = -1
 var _last_payload := PackedByteArray()
+var _last_scenario_seq: int = 0
+var _pending_scenario: Dictionary = {}
 
 
 func _ready() -> void:
 	flight_port = SimArgs.get_port("flight-port", flight_port)
+	session_id = (OS.get_process_id() * SESSION_MIX ^ Time.get_ticks_usec()) & U32_MASK
 	if SimArgs.has_flag("lockstep"):
 		lockstep = true
 	_buffer.big_endian = false
@@ -136,6 +161,15 @@ func exchange(
 		_drain_replies()
 
 
+## Take the scenario latched by the last reply, if any.
+##
+## @return the decoded block, or an empty dictionary when nothing is pending.
+func take_scenario() -> Dictionary:
+	var pending := _pending_scenario
+	_pending_scenario = {}
+	return pending
+
+
 ## Format the last motor commands for the overlay.
 func motor_commands_text() -> String:
 	var parts := PackedStringArray()
@@ -165,6 +199,10 @@ func _send_sensor_packet(
 	_buffer.put_float(accel_drone.z)
 	_buffer.put_float(baro_pa)
 	_buffer.put_u8(reset_count)
+	_buffer.put_u32(session_id)
+	# Saturating: the field is a u16 and the counter is cumulative, so a very
+	# long session pins it rather than wrapping back into a plausible value.
+	_buffer.put_u16(mini(lockstep_timeouts, U16_MAX))
 
 	var payload := _buffer.data_array
 	if payload.size() != Protocol.SIM_SENSOR_PACKET_SIZE:
@@ -222,4 +260,39 @@ func _decode_actuator_packet(payload: PackedByteArray) -> int:
 			return -1
 		decoded[index] = clampf(value, 0.0, 1.0)
 	motor_commands = decoded
+	_take_scenario_block(payload)
 	return payload.decode_u64(Protocol.SIM_ACTUATOR_ECHO_OFFSET)
+
+
+## Latch the scenario block of a reply, once per change of its sequence.
+func _take_scenario_block(payload: PackedByteArray) -> void:
+	var base: int = Protocol.SIM_ACTUATOR_SCENARIO_OFFSET
+	var sequence := payload.decode_u8(base)
+	if sequence == 0 or sequence == _last_scenario_seq:
+		return
+	_last_scenario_seq = sequence
+	var tilt := payload.decode_float(base + Protocol.SCENARIO_HELD_OFFSET + 4)
+	var azimuth := payload.decode_float(base + Protocol.SCENARIO_HELD_OFFSET + 8)
+	# Tilt about a horizontal axis at the given azimuth, expressed in the
+	# drone world convention and remapped to the Godot axes.
+	var axis_drone := Vector3(cos(azimuth), sin(azimuth), 0.0)
+	var axis := (DRONE_TO_GODOT * axis_drone).normalized()
+	_pending_scenario = {
+		"scenario": payload.decode_u8(base + 1),
+		"seed": payload.decode_u64(base + Protocol.SCENARIO_SEED_OFFSET),
+		"throw_delay_us": payload.decode_u32(base + Protocol.SCENARIO_THROW_DELAY_OFFSET),
+		"velocity": DRONE_TO_GODOT * _decode_vector(payload, base + Protocol.SCENARIO_VELOCITY_OFFSET),
+		"angular": DRONE_TO_GODOT * _decode_vector(payload, base + Protocol.SCENARIO_ANGULAR_OFFSET),
+		"held_s": payload.decode_float(base + Protocol.SCENARIO_HELD_OFFSET),
+		"held_basis": Basis(Quaternion(axis, tilt)),
+		"swing_s": payload.decode_float(base + Protocol.SCENARIO_HELD_OFFSET + 12),
+	}
+
+
+## Read three consecutive floats as a vector, in the drone frame.
+func _decode_vector(payload: PackedByteArray, offset: int) -> Vector3:
+	return Vector3(
+		payload.decode_float(offset),
+		payload.decode_float(offset + Protocol.FLOAT_SIZE),
+		payload.decode_float(offset + 2 * Protocol.FLOAT_SIZE)
+	)

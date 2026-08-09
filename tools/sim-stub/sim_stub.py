@@ -45,6 +45,9 @@ DEFAULT_FREQUENCY_HZ = 2.0
 GRAVITY_MPS2 = 9.80665
 SEA_LEVEL_PRESSURE_PA = 101325.0
 RESET_COUNT = 0
+#: The stub is one plant that never restarts, and never times out waiting.
+SESSION_ID = 0x5100B
+LOCKSTEP_TIMEOUTS = 0
 
 STATUS_PERIOD_S = 1.0
 RECEIVE_BUFFER_SIZE = 512
@@ -113,19 +116,22 @@ def build_sensor_packet(
         GRAVITY_MPS2,
         SEA_LEVEL_PRESSURE_PA,
         RESET_COUNT,
+        SESSION_ID,
+        LOCKSTEP_TIMEOUTS,
     )
 
 
 def decode_actuator_packet(payload: bytes) -> Optional[Tuple[float, ...]]:
     """Return the four motor commands, or None if the datagram is not ours.
 
-    The echoed timestamp is ignored here: the stub free-runs.
+    The echoed timestamp is ignored here: the stub free-runs. So is the
+    scenario block trailing the motors: the stub has no world to reset.
     """
     if len(payload) != SIM_ACTUATOR_PACKET_SIZE:
         return None
     if not has_header(payload, TYPE_SIM_ACTUATOR):
         return None
-    return SIM_ACTUATOR_STRUCT.unpack(payload)[3:]
+    return SIM_ACTUATOR_STRUCT.unpack(payload)[3:7]
 
 
 def drain_replies(

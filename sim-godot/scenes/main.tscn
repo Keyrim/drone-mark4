@@ -9,10 +9,8 @@
 [ext_resource type="Shader" uid="uid://c5twv73xgqfvg" path="res://shaders/ground_grid.gdshader" id="7_grid"]
 [ext_resource type="Script" uid="uid://bq76fgxbwppll" path="res://scripts/sim_raw_link.gd" id="8_sim_raw"]
 [ext_resource type="Script" uid="uid://drwvoj2om14y3" path="res://scripts/attitude_compare.gd" id="9_attitude"]
-[ext_resource type="Script" uid="uid://cqsvlxo13aq5s" path="res://scripts/sim_command.gd" id="10_sim_command"]
 [ext_resource type="Script" uid="uid://d2i3x0xebgka7" path="res://scripts/arena.gd" id="11_arena"]
 [ext_resource type="Script" path="res://scripts/hand.gd" id="12_hand"]
-[ext_resource type="Script" path="res://scripts/rc_uplink.gd" id="13_rc_uplink"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_world"]
 sky_horizon_color = Color(0.65, 0.68, 0.71, 1)
@@ -214,13 +212,6 @@ script = ExtResource("8_sim_raw")
 
 [node name="PilotInput" type="Node" parent="Drone" unique_id=743785965]
 script = ExtResource("4_pilot")
-
-[node name="SimCommand" type="Node" parent="Drone" unique_id=1313228877]
-script = ExtResource("10_sim_command")
-
-[node name="RcUplink" type="Node" parent="Drone"]
-script = ExtResource("13_rc_uplink")
-pilot_path = NodePath("../PilotInput")
 
 [node name="Hand" type="Node" parent="Drone"]
 script = ExtResource("12_hand")

@@ -1,9 +1,12 @@
 class_name SimHud
 extends Label
 
-## On screen overlay: simulated time, pilot inputs, motor commands and the
+## On screen overlay: simulated time, link health, motor commands and the
 ## headline sensor values. Refreshed a few times per second, which is enough to
 ## read it and cheap enough to stay out of the way of the physics.
+##
+## No pilot state here: this project holds none. Kill, arm and throttle live
+## on the RC path, between the cockpit and the flight process.
 
 ## Delay between two overlay updates [s].
 const REFRESH_PERIOD_S := 0.1
@@ -38,9 +41,7 @@ func _refresh() -> void:
 	var link := _drone.sim_link
 	var lines := PackedStringArray()
 	lines.append("sim time   %8.3f s" % _drone.simulated_time_s())
-	lines.append("kill       %s" % _drone.pilot.kill_switch_text())
-	lines.append("arm        %s" % _drone.pilot.arm_switch_text())
-	lines.append("throttle   %.2f" % _drone.pilot.throttle)
+	lines.append("session    %d" % link.session_id)
 	lines.append("motors     %s" % link.motor_commands_text())
 	lines.append("accel      %6.2f g" % _drone.sensors.accel_magnitude_g())
 	lines.append("altitude   %6.2f m" % _drone.altitude_m())
@@ -50,7 +51,8 @@ func _refresh() -> void:
 			% [link.packets_sent, link.packets_received, link.packets_dropped]
 		)
 	)
+	lines.append("timeouts   %d lockstep" % link.lockstep_timeouts)
 	if link.lockstep:
-		lines.append("lockstep   on, %d timeouts" % link.lockstep_timeouts)
-	lines.append("keys       K kill  A arm  Up/Down throttle  H hold  SPACE throw  R reset  ESC quit")
+		lines.append("lockstep   on")
+	lines.append("keys       H hold  SPACE throw  R reset  ESC quit")
 	text = "\n".join(lines)

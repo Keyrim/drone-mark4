@@ -58,6 +58,16 @@ func _exit_tree() -> void:
 	_socket.close()
 
 
+## Restart the decimation at the beginning of a run.
+##
+## The decimation counter decides which ticks are published; leaving it where
+## the previous run stopped would shift the published ticks of an otherwise
+## identical run by an arbitrary offset.
+func reset() -> void:
+	_tick = 0
+	_sequence = 0
+
+
 ## Broadcast the state of the physics tick that just completed, decimated.
 ##
 ## @param timestamp_us simulated time of the tick [us].

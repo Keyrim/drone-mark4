@@ -27,12 +27,15 @@ namespace mark4
         ///        the wait resumes. The RC fields of the frame are not written
         ///        here: RC arrives out-of-band through the command receiver.
         ///
-        ///        A packet repeating the timestamp of the previous one is a
-        ///        resend, not a new sample: the simulator asks again because
-        ///        the reply to that exact tick never reached it. The cached
-        ///        reply goes out again and the wait resumes, so the flight
-        ///        core, the blackbox and the telemetry never see the same
-        ///        instant twice.
+        ///        A packet repeating the timestamp of the previous one, from
+        ///        the same simulator session, is a resend rather than a new
+        ///        sample: the simulator asks again because the reply to that
+        ///        exact tick never reached it. The cached reply goes out
+        ///        again and the wait resumes, so the flight core, the
+        ///        blackbox and the telemetry never see the same instant
+        ///        twice. A new session restarts the simulated clock, so what
+        ///        this source remembers about timestamps is forgotten with
+        ///        the session that produced them.
         /// @param[out] frameOut frame decoded from the packet
         /// @return FRAME when a packet was decoded, TIMEOUT when the link
         ///         stayed idle for the receive timeout of the underlying
@@ -54,11 +57,31 @@ namespace mark4
             return m_duplicateFrames;
         }
 
+        /// @return identity of the simulator start the last packet came from.
+        ///         A change means a different plant, whose simulated clock
+        ///         and world both restarted: the composition root rebuilds
+        ///         the flight core on it, exactly like on a reset.
+        [[nodiscard]] std::uint32_t sessionId() const
+        {
+            return m_sessionId;
+        }
+
+        /// @return lockstep timeouts the simulator has counted since it
+        ///         started, as carried by the last packet. Cumulative and
+        ///         saturating: a rise inside a run is what matters, not the
+        ///         absolute value.
+        [[nodiscard]] std::uint16_t lockstepTimeouts() const
+        {
+            return m_lockstepTimeouts;
+        }
+
       private:
-        UdpLink &m_link;                      ///< sim link, owned by the composition root
-        std::uint8_t m_resetCount = 0U;       ///< reset counter of the last packet
-        std::uint64_t m_lastTimestampUs = 0U; ///< timestamp of the last accepted packet
-        bool m_timestampSeen = false;         ///< true once a packet was accepted
-        std::uint32_t m_duplicateFrames = 0U; ///< resends answered again, never stepped
+        UdpLink &m_link;                       ///< sim link, owned by the composition root
+        std::uint8_t m_resetCount = 0U;        ///< reset counter of the last packet
+        std::uint32_t m_sessionId = 0U;        ///< simulator session of the last packet
+        std::uint16_t m_lockstepTimeouts = 0U; ///< plant timeout count of the last packet
+        std::uint64_t m_lastTimestampUs = 0U;  ///< timestamp of the last accepted packet
+        bool m_timestampSeen = false;          ///< true once a packet was accepted
+        std::uint32_t m_duplicateFrames = 0U;  ///< resends answered again, never stepped
     };
 } // namespace mark4

@@ -11,6 +11,9 @@
 #include <cstring>
 
 #include "flight_core/types.hpp"
+#include "platform/telemetry_sender.hpp"
+#include "protocol/header.hpp"
+#include "protocol/sim_stats.hpp"
 
 namespace mark4
 {
@@ -46,8 +49,21 @@ namespace mark4
         /// + gyro (12) + accel (12) + baro (4) + motors (16).
         static constexpr std::size_t HASHED_BYTES_PER_FRAME = 52U;
 
+        /// Frames between two stats packets when nothing changed: a consumer
+        /// that joined late still learns where the run stands, without the
+        /// stream becoming a second telemetry.
+        static constexpr std::uint32_t PUBLISH_PERIOD_FRAMES = 50U;
+
         static_assert(std::endian::native == std::endian::little,
                       "the hash is defined over little-endian bytes");
+
+        /// @param sender output the run stats are broadcast on
+        /// @param source stream identity stamped on every packet
+        SimRunTracker(AbsTelemetrySender &sender, StreamSource source)
+            : m_sender(sender),
+              m_source(source)
+        {
+        }
 
         /// @brief Opens a run: everything measured from here on belongs to it.
         /// @param runId reset counter of the run being measured
@@ -122,6 +138,44 @@ namespace mark4
             m_linkSeen = true;
         }
 
+        /// @brief Broadcasts where the run stands, when it is worth saying:
+        ///        on every change of the run or of its flags, and otherwise
+        ///        once per PUBLISH_PERIOD_FRAMES. Called once per stepped
+        ///        frame; the pacing is this class's business, not the
+        ///        caller's.
+        void publish()
+        {
+            ++m_framesSincePublish;
+            const std::uint8_t flags = currentFlags();
+            const bool changed =
+                !m_everPublished || flags != m_publishedFlags || m_runId != m_publishedRunId;
+            if (!changed && m_framesSincePublish < PUBLISH_PERIOD_FRAMES)
+            {
+                return;
+            }
+            m_framesSincePublish = 0U;
+            m_publishedFlags = flags;
+            m_publishedRunId = m_runId;
+            m_everPublished = true;
+
+            SimRunStatsPacket packet{};
+            packet.version = PROTOCOL_VERSION;
+            packet.type = static_cast<std::uint8_t>(PacketType::SIM_RUN_STATS);
+            packet.sourceId = static_cast<std::uint8_t>(m_source);
+            packet.sequence = m_sequence;
+            packet.runId = m_runId;
+            packet.flags = flags;
+            packet.runStartUs = m_runStartUs;
+            packet.runHash = m_hash;
+            packet.duplicateFrames = m_duplicateFrames;
+            packet.lockstepTimeouts = m_lockstepTimeouts;
+            ++m_sequence;
+
+            std::array<std::uint8_t, SIM_RUN_STATS_PACKET_SIZE> bytes{};
+            std::memcpy(bytes.data(), &packet, sizeof(packet));
+            m_sender.send(bytes.data(), bytes.size());
+        }
+
         /// @return reset counter of the run being measured
         [[nodiscard]] std::uint8_t runId() const
         {
@@ -171,13 +225,35 @@ namespace mark4
         }
 
       private:
+        /// @return the SIM_RUN_FLAG_* bits describing the run right now
+        [[nodiscard]] std::uint8_t currentFlags() const
+        {
+            std::uint8_t flags = 0U;
+            if (m_degraded)
+            {
+                flags |= SIM_RUN_FLAG_LOCKSTEP_DEGRADED;
+            }
+            if (m_sealed)
+            {
+                flags |= SIM_RUN_FLAG_HASH_SEALED;
+            }
+            return flags;
+        }
+
+        AbsTelemetrySender &m_sender;                          ///< output link, not owned
+        StreamSource m_source;                                 ///< identity stamped on the stream
         std::uint64_t m_hash = FNV_OFFSET_BASIS;               ///< running trajectory hash
         std::uint64_t m_runStartUs = 0U;                       ///< simulated start of the run [us]
         std::uint32_t m_hashWindowUs = DEFAULT_HASH_WINDOW_US; ///< hashed window [us]
         std::uint32_t m_hashedFrames = 0U;                     ///< frames folded in
         std::uint32_t m_lockstepTimeouts = 0U;                 ///< last plant timeout count
         std::uint32_t m_duplicateFrames = 0U;                  ///< last resend count
+        std::uint32_t m_framesSincePublish = 0U;               ///< frames since the last packet
+        std::uint16_t m_sequence = 0U;                         ///< wire sequence of the next packet
         std::uint8_t m_runId = 0U;                             ///< reset counter of the run
+        std::uint8_t m_publishedRunId = 0U;                    ///< run id of the last packet
+        std::uint8_t m_publishedFlags = 0U;                    ///< flags of the last packet
+        bool m_everPublished = false;                          ///< a packet has gone out
         bool m_running = false;                                ///< a run is open
         bool m_sealed = false;                                 ///< the window elapsed
         bool m_degraded = false;                               ///< the link lost a tick

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "hub/json_codec.hpp"
+#include "hub/packed_field.hpp"
 
 namespace
 {
@@ -261,39 +262,57 @@ TEST_CASE("an rc message can target the simulator")
     CHECK(message.rc.killSwitch == 1U);
 }
 
-TEST_CASE("a scenario message becomes the exact sim command wire packet")
+TEST_CASE("a scenario message becomes the exact sim scenario wire packet")
 {
     const auto decoded = mark4::parseClientMessage(
-        R"({"type":"simCommand","id":3,"command":"handThrow",)"
+        R"({"type":"simScenario","id":3,"scenario":"handThrow","sequence":7,)"
+        R"("seed":81985529216486895,"throwDelayUs":2000000,"hashWindowUs":16000000,)"
         R"("velocityMps":[1.0,2.0,3.0],"angularVelocityRadS":[4.0,5.0,6.0],)"
         R"("heldSeconds":1.5,"heldTiltRad":0.25,"heldAzimuthRad":0.5,"swingSeconds":0.375})");
     REQUIRE(std::holds_alternative<mark4::ClientMessage>(decoded));
     const auto &message = std::get<mark4::ClientMessage>(decoded);
-    CHECK(message.type == mark4::ClientMessageType::SIM_COMMAND);
+    CHECK(message.type == mark4::ClientMessageType::SIM_SCENARIO);
     CHECK(message.id == 3);
+    // A scenario goes to the flight process driving a plant: the simulator
+    // unless the message says otherwise.
+    CHECK(message.target == mark4::StreamSource::DRONE_SIM);
 
-    const auto bytes = mark4::wireBytes(message.simCommand);
-    REQUIRE(bytes.size() == mark4::SIM_COMMAND_PACKET_SIZE);
+    const auto bytes = mark4::wireBytes(message.simScenario);
+    REQUIRE(bytes.size() == mark4::SIM_SCENARIO_PACKET_SIZE);
     CHECK(bytes[0] == mark4::PROTOCOL_VERSION);
-    CHECK(bytes[1] == static_cast<std::uint8_t>(mark4::PacketType::SIM_COMMAND));
-    CHECK(bytes[2] == mark4::SIM_COMMAND_HAND_THROW);
-    CHECK(message.simCommand.velocityMps == std::array<float, 3>{1.0f, 2.0f, 3.0f});
-    CHECK(message.simCommand.angularVelocityRadS == std::array<float, 3>{4.0f, 5.0f, 6.0f});
-    CHECK(message.simCommand.heldSeconds == 1.5f);
-    CHECK(message.simCommand.heldTiltRad == 0.25f);
-    CHECK(message.simCommand.heldAzimuthRad == 0.5f);
-    CHECK(message.simCommand.swingSeconds == 0.375f);
+    CHECK(bytes[1] == static_cast<std::uint8_t>(mark4::PacketType::SIM_SCENARIO));
+
+    // Read back out of the bytes: the block layout is the contract, and the
+    // plant reads it at this offset inside the lockstep reply too.
+    mark4::SimScenario block{};
+    std::memcpy(&block, bytes.data() + offsetof(mark4::SimScenarioPacket, scenario), sizeof(block));
+    CHECK(block.sequence == 7U);
+    CHECK(block.scenario == mark4::SIM_SCENARIO_HAND_THROW);
+    CHECK(block.seed == 0x0123456789ABCDEFULL);
+    CHECK(block.throwDelayUs == 2000000U);
+    CHECK(block.hashWindowUs == 16000000U);
+    CHECK(mark4::readPackedField(&block.velocityMps) == std::array<float, 3>{1.0f, 2.0f, 3.0f});
+    CHECK(mark4::readPackedField(&block.angularVelocityRadS) ==
+          std::array<float, 3>{4.0f, 5.0f, 6.0f});
+    CHECK(block.heldSeconds == 1.5f);
+    CHECK(block.heldTiltRad == 0.25f);
+    CHECK(block.heldAzimuthRad == 0.5f);
+    CHECK(block.swingSeconds == 0.375f);
 }
 
 TEST_CASE("a reset scenario message needs nothing but its name")
 {
-    const auto decoded = mark4::parseClientMessage(R"({"type":"simCommand","command":"reset"})");
+    const auto decoded = mark4::parseClientMessage(R"({"type":"simScenario","scenario":"reset"})");
     REQUIRE(std::holds_alternative<mark4::ClientMessage>(decoded));
-    CHECK(std::get<mark4::ClientMessage>(decoded).simCommand.command == mark4::SIM_COMMAND_RESET);
+    const auto &message = std::get<mark4::ClientMessage>(decoded);
+    CHECK(message.simScenario.scenario.scenario == mark4::SIM_SCENARIO_RESET);
+    // Left at 0, so the hub stamps its own number before sending.
+    CHECK(message.simScenario.scenario.sequence == 0U);
 
-    const auto thrown = mark4::parseClientMessage(R"({"type":"simCommand","command":"throw"})");
+    const auto thrown = mark4::parseClientMessage(R"({"type":"simScenario","scenario":"throw"})");
     REQUIRE(std::holds_alternative<mark4::ClientMessage>(thrown));
-    CHECK(std::get<mark4::ClientMessage>(thrown).simCommand.command == mark4::SIM_COMMAND_THROW);
+    CHECK(std::get<mark4::ClientMessage>(thrown).simScenario.scenario.scenario ==
+          mark4::SIM_SCENARIO_THROW);
 }
 
 TEST_CASE("a reboot message carries the board reboot magic")
@@ -507,10 +526,13 @@ TEST_CASE("a malformed client message is refused, never thrown")
         R"({"type":"rc","target":"firmware","kill":300})",
         R"({"type":"rc","target":"firmware","mode":"auto"})",
         R"({"type":"rc","id":"seven","target":"firmware"})",
-        R"({"type":"simCommand"})",
-        R"({"type":"simCommand","command":"levitate"})",
-        R"({"type":"simCommand","command":"throw","velocityMps":[1.0,2.0]})",
-        R"({"type":"simCommand","command":"throw","velocityMps":"fast"})",
+        R"({"type":"simScenario"})",
+        R"({"type":"simScenario","scenario":"levitate"})",
+        R"({"type":"simScenario","scenario":"throw","velocityMps":[1.0,2.0]})",
+        R"({"type":"simScenario","scenario":"throw","velocityMps":"fast"})",
+        R"({"type":"simScenario","scenario":"throw","seed":-1})",
+        R"({"type":"simScenario","scenario":"throw","sequence":300})",
+        R"({"type":"simScenario","scenario":"throw","target":"ghost"})",
         R"({"type":"reboot"})",
         R"({"type":"record"})",
         R"({"type":"record","action":"pause"})",

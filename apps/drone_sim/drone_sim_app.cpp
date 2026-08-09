@@ -12,6 +12,8 @@
 #include <sys/types.h>
 
 #include "flight_core/throw_detector.hpp"
+#include "protocol/commands.hpp"
+#include "protocol/header.hpp"
 #include "protocol/ports.hpp"
 
 namespace
@@ -19,8 +21,9 @@ namespace
     constexpr double US_PER_S = 1e6;
 
     /// Larger than any command packet, so an oversized datagram comes out
-    /// with its real size instead of being truncated into a valid one.
-    constexpr std::size_t RC_BUFFER_SIZE = 64U;
+    /// with its real size instead of being truncated into a valid one - and
+    /// large enough that a whole scenario packet comes out intact.
+    constexpr std::size_t RC_BUFFER_SIZE = 96U;
 
     /// Permissions of the log directory when it has to be created: rwxr-xr-x.
     constexpr mode_t LOG_DIRECTORY_MODE = 0755;
@@ -132,6 +135,27 @@ namespace mark4
         return m_logSink.init();
     }
 
+    void DroneSimApp::forwardScenario(const std::uint8_t *data, std::size_t size)
+    {
+        if (size != mark4::SIM_SCENARIO_PACKET_SIZE ||
+            !mark4::hasHeader(data, size, mark4::PacketType::SIM_SCENARIO))
+        {
+            return;
+        }
+        /* The block is packed and sits at an odd offset: it is copied out as
+           bytes, never read through a reference to one of its fields. */
+        mark4::SimScenario scenario{};
+        std::memcpy(
+            &scenario, data + offsetof(mark4::SimScenarioPacket, scenario), sizeof(scenario));
+        m_motorSink.attachScenario(scenario);
+        // The window is addressed to this process, not to the plant: it is
+        // applied to the run the reset of this scenario is about to open.
+        std::memcpy(&m_pendingHashWindowUs,
+                    data + offsetof(mark4::SimScenarioPacket, scenario) +
+                        offsetof(mark4::SimScenario, hashWindowUs),
+                    sizeof(m_pendingHashWindowUs));
+    }
+
     std::uint32_t DroneSimApp::run()
     {
         mark4::SensorFrame frame;
@@ -157,7 +181,18 @@ namespace mark4
             // scratch, exactly like a power cycle on the bench. Tuned
             // parameters return to their defaults with it, like flash-less
             // hardware.
-            const bool worldReset = resetCountSeen && m_sensorSource.resetCount() != lastResetCount;
+            const bool newSession = m_sensorSource.sessionId() != m_lastSessionId;
+            if (newSession && resetCountSeen)
+            {
+                std::printf("drone_sim: simulator session %u -> %u: a new plant is driving\n",
+                            static_cast<unsigned>(m_lastSessionId),
+                            static_cast<unsigned>(m_sensorSource.sessionId()));
+                static_cast<void>(std::fflush(stdout));
+            }
+            m_lastSessionId = m_sensorSource.sessionId();
+
+            const bool worldReset =
+                resetCountSeen && (m_sensorSource.resetCount() != lastResetCount || newSession);
             if (worldReset)
             {
                 m_core = mark4::FlightCore{};
@@ -170,18 +205,21 @@ namespace mark4
             if (worldReset || !resetCountSeen)
             {
                 // A run is what happens between two resets: the hash of the
-                // previous one is finished, this one starts from scratch.
-                m_runTracker.beginRun(m_sensorSource.resetCount(), frame.timestampUs, 0U);
+                // previous one is finished, this one starts from scratch, on
+                // the window the scenario that opened it asked for.
+                m_runTracker.beginRun(
+                    m_sensorSource.resetCount(), frame.timestampUs, m_pendingHashWindowUs);
                 runSealed = false;
             }
             lastResetCount = m_sensorSource.resetCount();
             resetCountSeen = true;
 
             // Drain the command uplink. The tracker consumes the RC packets
-            // and hands back everything else; the tuning service claims what
-            // it recognizes out of that, before the step below, so a value
-            // written from the ground is in effect for the whole of the next
-            // step and never changes one halfway through.
+            // and hands back everything else; a scenario goes on to the plant
+            // and the tuning service claims what it recognizes out of the
+            // rest, all before the step below, so a value written from the
+            // ground is in effect for the whole of the next step and never
+            // changes one halfway through.
             std::array<std::uint8_t, RC_BUFFER_SIZE> command{};
             for (;;)
             {
@@ -191,6 +229,7 @@ namespace mark4
                 {
                     break;
                 }
+                forwardScenario(command.data(), size);
                 static_cast<void>(m_tuningService.handle(command.data(), size));
             }
             // Grafted on every frame, not only when a packet arrived: the
@@ -208,7 +247,9 @@ namespace mark4
             // link with.
             m_tuningService.pump();
             m_runTracker.update(frame, actuators);
-            m_runTracker.noteLink(0U, m_sensorSource.duplicateFrameCount());
+            m_runTracker.noteLink(m_sensorSource.lockstepTimeouts(),
+                                  m_sensorSource.duplicateFrameCount());
+            m_runTracker.publish();
             if (m_runTracker.sealed() && !runSealed)
             {
                 runSealed = true;

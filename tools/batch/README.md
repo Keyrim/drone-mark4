@@ -2,9 +2,18 @@
 
 `run_batch.py` measures the recovery rate of the flight core over randomized
 throws, using the real Godot physics as the single reference: it starts N
-scenarios through `hub up sim --no-serve`, resets the world before every run,
-plays a randomized throw through the sim command channel and judges the
-outcome from the telemetry.
+scenarios through `hub up sim --no-serve`, sends one scenario packet per run
+and judges the outcome from the telemetry.
+
+One run is one packet. It opens with a reset and carries everything the run
+needs - the seed, the delay before the throw, the throw itself - so the whole
+run is scripted inside the plant, on the plant's own tick grid, counted from
+the reset tick. The campaign never has to agree with the plant on which
+absolute tick anything happened at. The packet goes to the `drone_sim`
+command receiver, which forwards the block to Godot inside the lockstep
+reply; resending it is free, since the plant plays a block once per change of
+its sequence byte, and the campaign resends every 200 ms until the plant
+reports the new run.
 
 One launcher process per instance, one port range per instance. The hub owns
 the pair (Godot import, start order, teardown of the whole group when it is
@@ -14,12 +23,30 @@ else, so the campaign is the only reader of its telemetry port.
 
 Arming and the kill switch do not go through the simulator: they are streamed
 as `RcCommandPacket` straight at each `drone_sim` command receiver, the same
-path a real flight uses. The campaign arms in altitude-auto mode with the
-stick centered, which is the interlock that mode is entered through; a
-centered stick is harmless while the arm switch is off. A background thread per instance repeats the held
+path a real flight uses. A background thread per instance repeats the held
 state, fast enough that the 500 ms fail-safe never trips at any `--time-scale`
 (the window is counted in simulated time). Each instance strides its own rc
 port, so a campaign never lands on the port a bench session may be using.
+
+The held state is set once, at instance construction, and never changed for
+the whole campaign: kill released, armed, altitude-auto, stick centered. The
+centered stick is the interlock altitude-auto is entered through, and
+altitude-auto is the mode the throw path is reachable from; the stick then
+never leaves its deadband, so the core never hands control back to it and the
+judge keeps its meaning.
+
+Holding it constant rests on an invariant worth stating, because it is what
+keeps the trajectory hashes comparable: **the arm tick cannot move the
+plant.** Motors are zero in IDLE, ARMED and BALLISTIC, and the estimators do
+not depend on the flight phase, so which tick the core leaves IDLE on has no
+effect on the trajectory. The per-mode interlocks did not change that: with
+the RC state constant from before the reset, the interlock is already
+satisfied when the rebuilt core starts looking, so IDLE -> ARMED happens the
+frame `VerticalEstimator::ready()` turns true and nothing else gates it. This
+is just as well, since RC is paced by this host's wall clock and not by the
+plant. If arming ever gains a physical effect before the throw - or an
+interlock ever needs a gesture rather than a level - this stops being true
+and the arming would have to move into the scenario.
 
 ## Requirements
 
@@ -64,9 +91,9 @@ done
 
 `--set ID=VALUE` writes one tuning parameter, repeatable, ids from
 `flight-core/include/flight_core/tuning_table.hpp`. The values are applied
-per run, after the world reset and before arming: the reset rebuilds the
-flight core from scratch, so a push done once at startup would only ever
-reach the first run. Every write is verified against its acknowledgement,
+per run, after the world reset and before the throw: the reset rebuilds the
+flight core from scratch and restores the defaults with it, so a push done
+once at startup would only ever reach the first run. Every write is verified against its acknowledgement,
 and a parameter that is refused (unknown id, out of bounds, locked) ends the
 run as `setup-failed` with the status it came back with, rather than
 silently measuring the default.
@@ -89,10 +116,41 @@ be done against a windowed (non headless) Godot to watch the failure live.
   shows the furthest phase reached (a throw too weak for the detector stays
   in `armed`, by design).
 - `setup-failed` / `stalled`: the harness itself misbehaved (arming not
-  acknowledged, a `--set` refused or unanswered, telemetry silent); these are
-  tooling problems, not flight results.
+  acknowledged before the throw, a `--set` refused or unanswered, the plant
+  never acknowledged the scenario); these are tooling problems, not flight
+  results.
+- `degraded link`: the lockstep link lost a tick during the run. The
+  trajectory produced is not the one the scenario asked for, so the run is
+  not a flight result either.
 
-Reproducibility note: run i uses seed `--seed + i`, so a campaign is
-reproducible on the same machine and Godot build. Jolt does not guarantee
-bit-identical physics across machines; rates are comparable, individual
+A campaign exits nonzero when the recovery rate falls under `--min-recovery`,
+and also when any run stalled, failed setup or ran over a degraded link: a
+campaign that produced those measured nothing.
+
+## Reproducibility
+
+The flight process hashes the trajectory of every run - relative timestamp,
+gyro, accelerometer, barometer and motors of every stepped frame - and
+broadcasts the sealed hash on the telemetry port. It lands in the `traj_hash`
+CSV column and on every result line.
+
+The promise: **the same scenario played twice in the same plant produces the
+same hash.** `--verify-repro` checks exactly that, playing one seed twice
+back to back in a single instance and comparing:
+
+```sh
+python3 tools/batch/run_batch.py --verify-repro --seed 7
+```
+
+It exits nonzero when the two hashes differ, when either run failed to seal
+one, or when the link degraded during the check.
+
+Cross-machine caveat: hashes are only comparable **within one campaign**, on
+one machine and one Godot build. Jolt does not guarantee bit-identical
+physics across machines or versions, so a hash is never committed as an
+expected value - it is a witness that two runs of one campaign were the same
+run, not a fingerprint of the flight core.
+
+Run i uses seed `--seed + i`, so a campaign is reproducible on the same
+machine and Godot build; rates are comparable across machines, individual
 trajectories may not be.

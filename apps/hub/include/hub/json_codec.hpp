@@ -31,7 +31,7 @@ namespace mark4
     enum class ClientMessageType : std::uint8_t
     {
         RC,           ///< pilot state to forward to a flight process
-        SIM_COMMAND,  ///< scenario command for the simulator
+        SIM_SCENARIO, ///< run to play, forwarded to a flight process
         REBOOT,       ///< reset the real board
         RECORD,       ///< start or stop the CSV recording
         TUNING_SET,   ///< write one tunable parameter
@@ -50,9 +50,9 @@ namespace mark4
         ClientMessageType type = ClientMessageType::RC; ///< which request this is
         int id = -1;                                    ///< client correlation id,
                                                         ///< -1 when the client sent none
-        StreamSource target = StreamSource::FIRMWARE;   ///< RC and REBOOT destination
+        StreamSource target = StreamSource::FIRMWARE;   ///< command destination
         RcCommandPacket rc{};                           ///< RC: packet to forward as is
-        SimCommandPacket simCommand{};                  ///< SIM_COMMAND: packet to send
+        SimScenarioPacket simScenario{};                ///< SIM_SCENARIO: packet to send
         RebootCommandPacket reboot{};                   ///< REBOOT: packet to send, magic included
         bool recordStart = false;                       ///< RECORD: true = start, false = stop
         TuningSetPacket tuningSet{};                    ///< TUNING_SET: packet to forward

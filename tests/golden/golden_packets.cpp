@@ -25,6 +25,7 @@
 #include "protocol/serial_framing.hpp"
 #include "protocol/sim_link.hpp"
 #include "protocol/sim_raw.hpp"
+#include "protocol/sim_stats.hpp"
 #include "protocol/telemetry.hpp"
 #include "protocol/tuning.hpp"
 
@@ -116,6 +117,8 @@ namespace
         packet.timestampUs = 555666777ULL;
         packet.baroPa = 101325.0f;
         packet.resetCount = 9U;
+        packet.sessionId = 3735928559U;  // 0xDEADBEEF
+        packet.lockstepTimeouts = 4660U; // 0x1234
         auto bytes = toBytes(packet);
         patch(bytes,
               offsetof(mark4::SimSensorPacket, gyroRadS),
@@ -126,41 +129,77 @@ namespace
         return bytes;
     }
 
+    /// @brief The reference scenario block, the same bytes wherever it
+    ///        rides: inside SimScenarioPacket and inside the lockstep reply.
+    /// @return the block, every field distinctive
+    mark4::SimScenario makeScenarioBlock()
+    {
+        mark4::SimScenario scenario{};
+        scenario.sequence = 200U;
+        scenario.scenario = mark4::SIM_SCENARIO_HAND_THROW;
+        scenario.seed = 0x0123456789ABCDEFULL;
+        scenario.throwDelayUs = 2000000U;
+        scenario.hashWindowUs = 16000000U;
+        scenario.heldSeconds = 1.5f;
+        scenario.heldTiltRad = 0.75f;
+        scenario.heldAzimuthRad = -2.5f;
+        scenario.swingSeconds = 0.3125f;
+        return scenario;
+    }
+
+    /// @brief Writes the float arrays of a scenario block into packet bytes.
+    /// @param bytes packet bytes being built
+    /// @param blockOffset offset the block starts at
+    void patchScenarioVectors(std::vector<std::uint8_t> &bytes, std::size_t blockOffset)
+    {
+        patch(bytes,
+              blockOffset + offsetof(mark4::SimScenario, velocityMps),
+              std::array<float, 3>{1.25f, -2.5f, 5.5f});
+        patch(bytes,
+              blockOffset + offsetof(mark4::SimScenario, angularVelocityRadS),
+              std::array<float, 3>{-0.5f, 1.5f, -2.25f});
+    }
+
     std::vector<std::uint8_t> makeSimActuator()
     {
         mark4::SimActuatorPacket packet{};
         packet.version = mark4::PROTOCOL_VERSION;
         packet.type = static_cast<std::uint8_t>(mark4::PacketType::SIM_ACTUATOR);
         packet.echoTimestampUs = 555666777ULL;
+        packet.scenario = makeScenarioBlock();
         auto bytes = toBytes(packet);
         patch(bytes,
               offsetof(mark4::SimActuatorPacket, motor),
               std::array<float, 4>{0.0625f, 0.125f, 0.1875f, 0.25f});
+        patchScenarioVectors(bytes, offsetof(mark4::SimActuatorPacket, scenario));
         return bytes;
     }
 
-    std::vector<std::uint8_t> makeSimCommand()
+    std::vector<std::uint8_t> makeSimScenario()
     {
-        mark4::SimCommandPacket packet{};
+        mark4::SimScenarioPacket packet{};
         packet.version = mark4::PROTOCOL_VERSION;
-        packet.type = static_cast<std::uint8_t>(mark4::PacketType::SIM_COMMAND);
-        packet.command = mark4::SIM_COMMAND_HAND_THROW;
-        packet.killSwitch = 1U;
-        packet.armSwitch = 0U;
-        packet.mode = mark4::RC_MODE_ALTITUDE_AUTO;
-        packet.throttle = 0.375f;
-        packet.heldSeconds = 1.5f;
-        packet.heldTiltRad = 0.75f;
-        packet.heldAzimuthRad = -2.5f;
-        packet.swingSeconds = 0.3125f;
+        packet.type = static_cast<std::uint8_t>(mark4::PacketType::SIM_SCENARIO);
+        packet.scenario = makeScenarioBlock();
         auto bytes = toBytes(packet);
-        patch(bytes,
-              offsetof(mark4::SimCommandPacket, velocityMps),
-              std::array<float, 3>{1.25f, -2.5f, 5.5f});
-        patch(bytes,
-              offsetof(mark4::SimCommandPacket, angularVelocityRadS),
-              std::array<float, 3>{-0.5f, 1.5f, -2.25f});
+        patchScenarioVectors(bytes, offsetof(mark4::SimScenarioPacket, scenario));
         return bytes;
+    }
+
+    std::vector<std::uint8_t> makeSimRunStats()
+    {
+        mark4::SimRunStatsPacket packet{};
+        packet.version = mark4::PROTOCOL_VERSION;
+        packet.type = static_cast<std::uint8_t>(mark4::PacketType::SIM_RUN_STATS);
+        packet.sourceId = static_cast<std::uint8_t>(mark4::StreamSource::DRONE_SIM);
+        packet.sequence = 4919U; // 0x1337
+        packet.runId = 23U;
+        packet.flags = mark4::SIM_RUN_FLAG_LOCKSTEP_DEGRADED | mark4::SIM_RUN_FLAG_HASH_SEALED;
+        packet.runStartUs = 24680135ULL;
+        packet.runHash = 0xFEDCBA9876543210ULL;
+        packet.duplicateFrames = 11U;
+        packet.lockstepTimeouts = 2U;
+        return toBytes(packet);
     }
 
     std::vector<std::uint8_t> makeRcCommand()
@@ -192,7 +231,7 @@ namespace
         packet.kind = static_cast<std::uint8_t>(mark4::StreamSource::DRONE_SIM);
         packet.sessionId = 3405691582U; // 0xCAFEBABE
         packet.telemetryPort = mark4::TELEMETRY_PORT;
-        packet.commandPort = mark4::SIM_COMMAND_PORT;
+        packet.commandPort = mark4::RC_COMMAND_PORT;
         return toBytes(packet);
     }
 
@@ -299,7 +338,8 @@ namespace
             {"sim_raw.bin", makeSimRaw()},
             {"sim_sensor.bin", makeSimSensor()},
             {"sim_actuator.bin", makeSimActuator()},
-            {"sim_command.bin", makeSimCommand()},
+            {"sim_scenario.bin", makeSimScenario()},
+            {"sim_run_stats.bin", makeSimRunStats()},
             {"rc_command.bin", makeRcCommand()},
             {"reboot_command.bin", makeReboot()},
             {"announce.bin", makeAnnounce()},

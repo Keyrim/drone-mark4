@@ -33,7 +33,6 @@ telemetry port a process announces for as long as that process lives.
 --announce-port N    announce listen port (default 47806)
 --telemetry-port N   telemetry port watched by default (default 47801)
 --raw-port N         sim raw port watched by default (default 47802)
---sim-command-port N port scenario commands are sent to (default 47804)
 --serial DEV         board UART to own, none by default
 --baud N             board UART speed (default 921600)
 --record             open a CSV recording at startup
@@ -60,7 +59,6 @@ and exits with that child's code. One Ctrl-C ends the scenario.
 --arena-radius F   circular wall around the launch point [m]
 --frames N         frame budget of the flight process
 --sim-port N       sim link port (default 47800)
---command-port N   scenario command port (default 47804)
 --rc-port N        rc uplink port (default 47805)
 --no-serve         supervise the children only, serve nothing
 ```
@@ -106,7 +104,7 @@ structs in `protocol/`.
 
 {"type":"discovery","processes":[
   {"kind":2,"kindName":"drone_sim","sessionId":12345,"telemetryPort":47801,
-   "commandPort":47804,"viaSerial":false,"ageMs":120}]}
+   "commandPort":47805,"viaSerial":false,"ageMs":120}]}
 
 {"type":"status","recording":false,"serialOpen":true,
  "counts":{"telemetryRows":0,"simRawRows":0,"blackboxRecords":0,
@@ -140,9 +138,10 @@ disappears.
 
 ```json
 {"type":"rc","id":7,"target":"firmware","kill":0,"arm":1,"mode":0,"throttle":0.5}
-{"type":"simCommand","id":8,"command":"reset"}
-{"type":"simCommand","command":"throw","velocityMps":[0,0,6],"angularVelocityRadS":[0,0,0]}
-{"type":"simCommand","command":"handThrow","velocityMps":[0,0,6],
+{"type":"simScenario","id":8,"scenario":"reset","seed":1234}
+{"type":"simScenario","scenario":"throw","seed":1234,"throwDelayUs":2000000,
+ "velocityMps":[0,0,6],"angularVelocityRadS":[0,0,0]}
+{"type":"simScenario","scenario":"handThrow","seed":1234,"velocityMps":[0,0,6],
  "angularVelocityRadS":[0,0,0],"heldSeconds":1.5,"heldTiltRad":0.3,
  "heldAzimuthRad":0.0,"swingSeconds":0.35}
 {"type":"reboot","id":9,"target":"firmware"}
@@ -164,13 +163,20 @@ flight frame as the process unrolls them.
 
 `target` is a process kind name: `firmware`, `drone_sim`, `drone_replay`,
 `sim_plant`. `kill`, `arm` and `mode` are integers, `throttle` a number in
-[0, 1]. Every field but `type` (and `command` / `action`) is optional and
-defaults to zero.
+[0, 1]. Every field but `type` (and `scenario` / `action`) is optional and
+defaults to zero; a `simScenario` defaults its `target` to `drone_sim`.
+
+One `simScenario` message is one whole run: it opens with a reset and the
+plant schedules everything else from that reset tick. `seed` seeds every
+generator of the run, `throwDelayUs` places the throw after the reset, and
+`hashWindowUs` sets how much of the run the flight process hashes. The
+`sequence` byte is what makes a scenario idempotent - leave it out and the
+hub stamps a rolling one, so two scenarios in a row are two runs.
 
 Routing: an RC message for `firmware` goes out serial-framed on the UART; an
 RC message for any other kind goes to the command port that process
-announced. Scenario commands go to the configured simulator command port. A
-reboot needs the board.
+announced. A scenario is routed the same way, to the flight process driving
+the plant - no port is hardwired. A reboot needs the board.
 
 A message carrying an `id` is answered with an `ack`, including when it
 failed to decode. Streams are never acknowledged.

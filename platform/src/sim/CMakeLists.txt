@@ -10,6 +10,8 @@ add_library(platform_sim STATIC
     telemetry_sender_sim.cpp
     log_sink_file.cpp)
 target_include_directories(platform_sim PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# protocol is PUBLIC: the run tracker is a header of this library and carries
+# the wire struct it broadcasts.
 target_link_libraries(platform_sim
-    PUBLIC platform
-    PRIVATE protocol drone_warnings drone_strict)
+    PUBLIC platform protocol
+    PRIVATE drone_warnings drone_strict)

@@ -17,14 +17,14 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 #: First byte of every packet, must match mark4::PROTOCOL_VERSION.
-PROTOCOL_VERSION = 11
+PROTOCOL_VERSION = 12
 
 # Packet types, the second byte of every packet (mark4::PacketType).
 TYPE_SIM_SENSOR = 1
 TYPE_SIM_ACTUATOR = 2
 TYPE_TELEMETRY = 3
 TYPE_SIM_RAW = 4
-TYPE_SIM_COMMAND = 5
+TYPE_SIM_SCENARIO = 5
 TYPE_RC_COMMAND = 6
 TYPE_REBOOT_COMMAND = 7
 TYPE_BLACKBOX_RECORD = 8
@@ -34,6 +34,7 @@ TYPE_TUNING_GET = 11
 TYPE_TUNING_LIST = 12
 TYPE_TUNING_ACK = 13
 TYPE_TUNING_INFO = 14
+TYPE_SIM_RUN_STATS = 15
 
 # Stream source identities (mark4::StreamSource).
 SOURCE_FIRMWARE = 1
@@ -41,13 +42,18 @@ SOURCE_DRONE_SIM = 2
 SOURCE_DRONE_REPLAY = 3
 SOURCE_SIM_PLANT = 4
 
-# Scenario commands carried by SimCommandPacket (commands.hpp).
-SIM_COMMAND_RESET = 1
+# Scenarios carried by SimScenario (commands.hpp). Each one opens with a
+# reset; everything after that reset tick is scheduled by the plant.
+SIM_SCENARIO_RESET = 1
 # Retired since v11: RC travels as RcCommandPacket to the flight process
 # command receiver. The value stays reserved so the neighbors keep theirs.
-SIM_COMMAND_RC = 2
-SIM_COMMAND_THROW = 3
-SIM_COMMAND_HAND_THROW = 4
+SIM_SCENARIO_RC = 2
+SIM_SCENARIO_THROW = 3
+SIM_SCENARIO_HAND_THROW = 4
+
+# Flags of SimRunStatsPacket (sim_stats.hpp).
+SIM_RUN_FLAG_LOCKSTEP_DEGRADED = 0x01
+SIM_RUN_FLAG_HASH_SEALED = 0x02
 
 # Piloting modes carried next to the RC state (commands.hpp). Reserved:
 # consumed by the mode feature, defined so the wire never breaks again.
@@ -62,7 +68,8 @@ SIM_LINK_PORT = 47800
 TELEMETRY_PORT = 47801
 SIM_RAW_PORT = 47802
 TELEMETRY_MIRROR_PORT = 47803
-SIM_COMMAND_PORT = 47804
+# 47804 is unassigned: the simulator binds no listening port any more, and
+# scenarios reach it inside the lockstep reply.
 RC_COMMAND_PORT = 47805
 ANNOUNCE_PORT = 47806
 
@@ -102,22 +109,32 @@ SIM_RAW_STRUCT = struct.Struct("<BBBHQ4f3f3f")
 SIM_RAW_PACKET_SIZE = 53
 
 # Wire format mirroring mark4::SimSensorPacket (sim_link.hpp): version,
-# type, timestampUs, gyro[3], accel[3], baro, reset. Sensors only since
-# v11: the pilot state reaches the flight process out-of-band, as an
-# RcCommandPacket on its command receiver.
-SIM_SENSOR_STRUCT = struct.Struct("<BBQ3f3ffB")
-SIM_SENSOR_PACKET_SIZE = 39
+# type, timestampUs, gyro[3], accel[3], baro, reset, session id, lockstep
+# timeouts. Sensors only since v11: the pilot state reaches the flight
+# process out-of-band, as an RcCommandPacket on its command receiver.
+SIM_SENSOR_STRUCT = struct.Struct("<BBQ3f3ffBIH")
+SIM_SENSOR_PACKET_SIZE = 45
 
 # Wire format mirroring mark4::SimActuatorPacket (sim_link.hpp): version,
-# type, echoed timestampUs, motor[4].
-SIM_ACTUATOR_STRUCT = struct.Struct("<BBQ4f")
-SIM_ACTUATOR_PACKET_SIZE = 26
+# type, echoed timestampUs, motor[4], then the scenario block repeated on
+# every reply (SIM_SCENARIO_FIELDS below, at SIM_ACTUATOR_SCENARIO_OFFSET).
+SIM_ACTUATOR_STRUCT = struct.Struct("<BBQ4fBBQII3f3f4f")
+SIM_ACTUATOR_PACKET_SIZE = 84
+SIM_ACTUATOR_SCENARIO_OFFSET = 26
 
-# Wire format mirroring mark4::SimCommandPacket (commands.hpp): version,
-# type, command, kill, arm, mode, throttle, velocity[3], angular[3],
-# held, held tilt, held azimuth, swing.
-SIM_COMMAND_STRUCT = struct.Struct("<BBBBBBf3f3f4f")
-SIM_COMMAND_PACKET_SIZE = 50
+# Wire format mirroring mark4::SimScenarioPacket (commands.hpp): version,
+# type, then the scenario block: sequence, scenario, seed, throw delay,
+# hash window, velocity[3], angular[3], held, held tilt, held azimuth,
+# swing.
+SIM_SCENARIO_STRUCT = struct.Struct("<BBBBQII3f3f4f")
+SIM_SCENARIO_PACKET_SIZE = 60
+SIM_SCENARIO_SIZE = 58
+
+# Wire format mirroring mark4::SimRunStatsPacket (sim_stats.hpp): version,
+# type, source id, sequence, run id, flags, run start, run hash, duplicate
+# frames, lockstep timeouts.
+SIM_RUN_STATS_STRUCT = struct.Struct("<BBBHBBQQII")
+SIM_RUN_STATS_PACKET_SIZE = 31
 
 # Wire format mirroring mark4::RcCommandPacket (commands.hpp): version,
 # type, kill, arm, mode, throttle.
@@ -160,7 +177,8 @@ for _wire_struct, _wire_size, _name in (
     (SIM_RAW_STRUCT, SIM_RAW_PACKET_SIZE, "sim raw"),
     (SIM_SENSOR_STRUCT, SIM_SENSOR_PACKET_SIZE, "sim sensor"),
     (SIM_ACTUATOR_STRUCT, SIM_ACTUATOR_PACKET_SIZE, "sim actuator"),
-    (SIM_COMMAND_STRUCT, SIM_COMMAND_PACKET_SIZE, "sim command"),
+    (SIM_SCENARIO_STRUCT, SIM_SCENARIO_PACKET_SIZE, "sim scenario"),
+    (SIM_RUN_STATS_STRUCT, SIM_RUN_STATS_PACKET_SIZE, "sim run stats"),
     (RC_COMMAND_STRUCT, RC_COMMAND_PACKET_SIZE, "rc command"),
     (REBOOT_COMMAND_STRUCT, REBOOT_COMMAND_PACKET_SIZE, "reboot command"),
     (ANNOUNCE_STRUCT, ANNOUNCE_PACKET_SIZE, "announce"),
@@ -299,6 +317,35 @@ class TuningAck:
     param_id: int
     value: float
     status: int
+
+
+@dataclass(frozen=True)
+class SimRunStatsSample:
+    """One decoded run stats packet: what a simulated run amounted to."""
+
+    source_id: int
+    sequence: int
+    run_id: int
+    flags: int
+    run_start_us: int
+    run_hash: int
+    duplicate_frames: int
+    lockstep_timeouts: int
+
+    @property
+    def run_start_s(self) -> float:
+        """Simulated time the run started at, in seconds."""
+        return self.run_start_us * 1e-6
+
+    @property
+    def sealed(self) -> bool:
+        """True once the hash window elapsed and run_hash is final."""
+        return bool(self.flags & SIM_RUN_FLAG_HASH_SEALED)
+
+    @property
+    def degraded(self) -> bool:
+        """True when the link lost a tick during the run."""
+        return bool(self.flags & SIM_RUN_FLAG_LOCKSTEP_DEGRADED)
 
 
 def has_header(datagram: bytes, packet_type: int) -> bool:
@@ -483,12 +530,12 @@ def decode_tuning_ack(datagram: bytes) -> Optional[TuningAck]:
     return TuningAck(param_id=fields[2], value=fields[3], status=fields[4])
 
 
-def encode_sim_command(
-    command: int,
-    kill: int = 0,
-    arm: int = 0,
-    mode: int = RC_MODE_MANUAL,
-    throttle: float = 0.0,
+def encode_sim_scenario(
+    sequence: int,
+    scenario: int,
+    seed: int = 0,
+    throw_delay_us: int = 0,
+    hash_window_us: int = 0,
     velocity: Tuple[float, float, float] = (0.0, 0.0, 0.0),
     angular: Tuple[float, float, float] = (0.0, 0.0, 0.0),
     held_s: float = 0.0,
@@ -496,8 +543,34 @@ def encode_sim_command(
     held_azimuth: float = 0.0,
     swing_s: float = 0.0,
 ) -> bytes:
-    """Pack one SimCommandPacket; fields unused by the command are ignored."""
-    return SIM_COMMAND_STRUCT.pack(
-        PROTOCOL_VERSION, TYPE_SIM_COMMAND, command, kill, arm, mode, throttle,
+    """Pack one SimScenarioPacket; fields unused by the scenario are ignored.
+
+    The sequence byte is what makes a scenario idempotent: the plant plays a
+    block once per change of it, so the same packet may be resent freely.
+    Zero means "no scenario", so senders count 1..255 and wrap.
+    """
+    return SIM_SCENARIO_STRUCT.pack(
+        PROTOCOL_VERSION, TYPE_SIM_SCENARIO, sequence, scenario, seed,
+        throw_delay_us, hash_window_us,
         *velocity, *angular, held_s, held_tilt, held_azimuth, swing_s,
+    )
+
+
+def decode_sim_run_stats(datagram: bytes) -> Optional[SimRunStatsSample]:
+    """Decode one run stats datagram, None when not one."""
+    if len(datagram) != SIM_RUN_STATS_PACKET_SIZE:
+        return None
+    if not has_header(datagram, TYPE_SIM_RUN_STATS):
+        return None
+
+    fields = SIM_RUN_STATS_STRUCT.unpack(datagram)
+    return SimRunStatsSample(
+        source_id=fields[2],
+        sequence=fields[3],
+        run_id=fields[4],
+        flags=fields[5],
+        run_start_us=fields[6],
+        run_hash=fields[7],
+        duplicate_frames=fields[8],
+        lockstep_timeouts=fields[9],
     )

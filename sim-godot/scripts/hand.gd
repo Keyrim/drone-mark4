@@ -83,6 +83,25 @@ func is_holding() -> bool:
 	return _state != State.IDLE
 
 
+## Forget everything about the run that just ended.
+##
+## The grab counter matters as much as the state does: it drives the sway
+## and wobble phases, and it accumulates across runs. Without clearing it,
+## two runs given the same seed would be shaken differently depending on how
+## many runs had come before - which is exactly the kind of hidden history a
+## reproducible campaign must not have.
+func reset() -> void:
+	_state = State.IDLE
+	_time_s = 0.0
+	_grab_count = 0
+	_held_for_s = 0.0
+	_has_prev_target = false
+	_pending_release_velocity = Vector3.ZERO
+	_pending_release_spin = Vector3.ZERO
+	_pending_swing_s = 0.0
+	_release_spin = Vector3.ZERO
+
+
 ## Pick the drone up wherever it is and hold it in the given orientation.
 ## @param held_basis orientation the hand settles into (Godot frame)
 ## @param held_for_s hold duration before an automatic swing, <0 = wait

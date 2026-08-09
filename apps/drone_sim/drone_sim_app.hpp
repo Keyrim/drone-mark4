@@ -109,6 +109,15 @@ namespace mark4
         }
 
       private:
+        /// @brief Routes one datagram drained from the command uplink. A
+        ///        scenario packet is latched onto the motor sink, which
+        ///        carries it to the plant on the next lockstep reply, and
+        ///        its hash window is kept for the run it opens. Anything
+        ///        else is not this composition's business.
+        /// @param data datagram bytes
+        /// @param size datagram size
+        void forwardScenario(const std::uint8_t *data, std::size_t size);
+
         std::uint32_t m_maxFrames;     ///< frame budget for run()
         std::uint16_t m_simPort;       ///< sim link listen port
         std::uint16_t m_telemetryPort; ///< telemetry broadcast port
@@ -134,6 +143,12 @@ namespace mark4
         mark4::FlightCore m_core;
         mark4::TuningService m_tuningService{m_core, m_telemetrySender};
         mark4::Blackbox m_blackbox;
-        mark4::SimRunTracker m_runTracker;
+        mark4::SimRunTracker m_runTracker{m_telemetrySender, StreamSource::DRONE_SIM};
+
+        /// Hash window asked for by the last scenario, applied to the run
+        /// that scenario opens [us]; 0 means the tracker default.
+        std::uint32_t m_pendingHashWindowUs = 0U;
+
+        std::uint32_t m_lastSessionId = 0U; ///< simulator session of the last frame
     };
 } // namespace mark4

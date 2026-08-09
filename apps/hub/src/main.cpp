@@ -129,7 +129,6 @@ namespace
             "  --arena-radius F     circular wall around the launch point [m]\n"
             "  --frames N           frame budget of the flight process\n"
             "  --sim-port N         sim link port (default %u)\n"
-            "  --command-port N     scenario command port (default %u)\n"
             "  --rc-port N          rc uplink port (default %u)\n"
             "  --speed F|max        replay speed\n"
             "\n"
@@ -138,7 +137,6 @@ namespace
             "  --announce-port N    announce listen port (default %u)\n"
             "  --telemetry-port N   telemetry port watched by default (default %u)\n"
             "  --raw-port N         sim raw port watched by default (default %u)\n"
-            "  --sim-command-port N port scenario commands are sent to (default %u)\n"
             "  --serial DEV         board UART to own, none by default\n"
             "  --baud N             board UART speed (default %u)\n"
             "  --record             open a CSV recording at startup\n"
@@ -147,13 +145,11 @@ namespace
             "  --push-profile NAME  push this profile to every process that appears\n",
             program,
             static_cast<unsigned>(mark4::SIM_LINK_PORT),
-            static_cast<unsigned>(mark4::SIM_COMMAND_PORT),
             static_cast<unsigned>(mark4::RC_COMMAND_PORT),
             static_cast<unsigned>(mark4::HubApp::WS_PORT),
             static_cast<unsigned>(mark4::ANNOUNCE_PORT),
             static_cast<unsigned>(mark4::TELEMETRY_PORT),
             static_cast<unsigned>(mark4::SIM_RAW_PORT),
-            static_cast<unsigned>(mark4::SIM_COMMAND_PORT),
             mark4::HubApp::DEFAULT_SERIAL_BAUD));
     }
 
@@ -195,10 +191,6 @@ namespace
         if (std::strcmp(name, "--raw-port") == 0 && hasValue)
         {
             return parsePort(argv[++index], config.simRawPort);
-        }
-        if (std::strcmp(name, "--sim-command-port") == 0 && hasValue)
-        {
-            return parsePort(argv[++index], config.simCommandPort);
         }
         if (std::strcmp(name, "--serial") == 0 && hasValue)
         {
@@ -347,10 +339,8 @@ namespace
     /// @param argv argument values
     /// @param index index of the argument to read, advanced past what is consumed
     /// @param options options being filled
-    /// @param config configuration being filled
     /// @return true when the argument was one of these options and parsed
-    bool readUpOption(
-        int argc, char **argv, int &index, UpOptions &options, mark4::HubApp::Config &config)
+    bool readUpOption(int argc, char **argv, int &index, UpOptions &options)
     {
         const char *name = argv[index];
         const bool hasValue = index + 1 < argc;
@@ -391,10 +381,6 @@ namespace
         if (std::strcmp(name, "--sim-port") == 0 && hasValue)
         {
             return parsePort(argv[++index], options.simPort);
-        }
-        if (std::strcmp(name, "--command-port") == 0 && hasValue)
-        {
-            return parsePort(argv[++index], config.simCommandPort);
         }
         if (std::strcmp(name, "--rc-port") == 0 && hasValue)
         {
@@ -470,7 +456,7 @@ namespace
         for (int index = 3; index < argc; ++index)
         {
             if (!readServeOption(argc, argv, index, config) &&
-                !readUpOption(argc, argv, index, options, config))
+                !readUpOption(argc, argv, index, options))
             {
                 printUsage(argv[0]);
                 return 1;
@@ -508,8 +494,6 @@ namespace
         godot.arguments.emplace_back("--");
         godot.arguments.emplace_back("--flight-port");
         godot.arguments.push_back(std::to_string(options.simPort));
-        godot.arguments.emplace_back("--command-port");
-        godot.arguments.push_back(std::to_string(config.simCommandPort));
         godot.arguments.emplace_back("--raw-port");
         godot.arguments.push_back(std::to_string(config.simRawPort));
         godot.arguments.emplace_back("--rc-port");
@@ -574,7 +558,7 @@ namespace
         for (int index = 3; index < argc; ++index)
         {
             if (!readServeOption(argc, argv, index, config) &&
-                !readUpOption(argc, argv, index, options, config))
+                !readUpOption(argc, argv, index, options))
             {
                 printUsage(argv[0]);
                 return 1;
@@ -625,7 +609,7 @@ namespace
         for (int index = 4; index < argc; ++index)
         {
             if (!readServeOption(argc, argv, index, config) &&
-                !readUpOption(argc, argv, index, options, config))
+                !readUpOption(argc, argv, index, options))
             {
                 printUsage(argv[0]);
                 return 1;
