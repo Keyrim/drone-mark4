@@ -28,8 +28,11 @@ namespace mark4
         /// @param port destination port of the broadcast; the mirror copy
         ///        goes to telemetryMirrorPort(port). Configurable so several
         ///        instances can run side by side in a batch campaign.
+        /// @param mirror false for a stream that has no mirror consumer, so
+        ///        the port at telemetryMirrorPort(port) never sees traffic
+        ///        that does not belong to it
         /// @return true when the socket is ready to send
-        bool open(std::uint16_t port);
+        bool open(std::uint16_t port, bool mirror = true);
 
         /// @brief Broadcasts one packet. Best effort: a send failure is logged
         ///        once and the packet is dropped.
@@ -52,6 +55,7 @@ namespace mark4
       private:
         int m_socketFd = -1;              ///< -1 when closed
         std::uint16_t m_port = 0U;        ///< broadcast destination port
+        bool m_mirror = true;             ///< also send to the mirror port
         std::uint32_t m_packetCount = 0U; ///< packets actually sent
         std::size_t m_byteCount = 0U;     ///< bytes actually sent
         bool m_sendFailureLogged = false; ///< keeps a broken link from flooding stderr

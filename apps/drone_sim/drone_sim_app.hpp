@@ -8,9 +8,12 @@
 #include <cstdint>
 
 #include "flight_core/flight_core.hpp"
+#include "platform_common/announce_publisher.hpp"
 #include "platform_common/blackbox.hpp"
+#include "platform_common/rc_tracker.hpp"
 #include "platform_common/telemetry_publisher.hpp"
 #include "platform_sim/clock_sim.hpp"
+#include "platform_sim/command_receiver_sim.hpp"
 #include "platform_sim/log_sink_file.hpp"
 #include "platform_sim/motor_sink_sim.hpp"
 #include "platform_sim/sensor_source_sim.hpp"
@@ -40,9 +43,12 @@ namespace mark4
         /// @param simPort UDP port the sim link listens on
         /// @param telemetryPort UDP port telemetry is broadcast to (mirror
         ///        copies go to telemetryPort + 2)
+        /// @param rcPort UDP port the command receiver binds, for the RC
+        ///        stream the pilot keeps up
         explicit DroneSimApp(std::uint32_t maxFrames,
                              std::uint16_t simPort,
-                             std::uint16_t telemetryPort);
+                             std::uint16_t telemetryPort,
+                             std::uint16_t rcPort);
 
         /// @brief Initializes services in declaration order: binds the sim link,
         ///        opens the telemetry socket and the blackbox file. The first
@@ -89,6 +95,7 @@ namespace mark4
         std::uint32_t m_maxFrames;     ///< frame budget for run()
         std::uint16_t m_simPort;       ///< sim link listen port
         std::uint16_t m_telemetryPort; ///< telemetry broadcast port
+        std::uint16_t m_rcPort;        ///< command receiver listen port
 
         // Declaration order = construction order; dependencies are injected by
         // reference, so a service may only depend on those declared above it.
@@ -98,6 +105,12 @@ namespace mark4
         mark4::MotorSinkSim m_motorSink;
         mark4::TelemetrySenderSim m_telemetrySender;
         mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender, StreamSource::DRONE_SIM};
+        mark4::UdpLink m_rcLink;
+        mark4::CommandReceiverSim m_commandReceiver{m_rcLink};
+        mark4::RcTracker m_rcTracker{m_commandReceiver};
+        mark4::TelemetrySenderSim m_announceSender;
+        mark4::AnnouncePublisher m_announcePublisher{
+            m_announceSender, StreamSource::DRONE_SIM, m_telemetryPort, m_rcPort};
         std::array<char, LOG_PATH_SIZE> m_logFilePath; ///< one file per run, outlives m_logSink
         mark4::LogSinkFile m_logSink;
         mark4::FlightCore m_core;

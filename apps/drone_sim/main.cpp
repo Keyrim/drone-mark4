@@ -20,12 +20,14 @@ namespace
     {
         static_cast<void>(std::fprintf(
             stderr,
-            "usage: %s [frames > 0] [--sim-port N] [--telemetry-port N]\n"
+            "usage: %s [frames > 0] [--sim-port N] [--telemetry-port N] [--rc-port N]\n"
             "  --sim-port        UDP port the sim link listens on (default %u)\n"
-            "  --telemetry-port  UDP telemetry broadcast port, mirror on +2 (default %u)\n",
+            "  --telemetry-port  UDP telemetry broadcast port, mirror on +2 (default %u)\n"
+            "  --rc-port         UDP port the RC command receiver binds (default %u)\n",
             program,
             static_cast<unsigned>(mark4::SIM_LINK_PORT),
-            static_cast<unsigned>(mark4::TELEMETRY_PORT)));
+            static_cast<unsigned>(mark4::TELEMETRY_PORT),
+            static_cast<unsigned>(mark4::RC_COMMAND_PORT)));
     }
 
     /// @brief Parses a strictly positive integer bounded by maxValue.
@@ -48,6 +50,7 @@ int main(int argc, char **argv)
     std::uint32_t maxFrames = DEFAULT_MAX_FRAMES;
     std::uint16_t simPort = mark4::SIM_LINK_PORT;
     std::uint16_t telemetryPort = mark4::TELEMETRY_PORT;
+    std::uint16_t rcPort = mark4::RC_COMMAND_PORT;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -70,6 +73,15 @@ int main(int argc, char **argv)
             }
             telemetryPort = static_cast<std::uint16_t>(value);
         }
+        else if (std::strcmp(argv[i], "--rc-port") == 0 && i + 1 < argc)
+        {
+            if (!parsePositive(argv[++i], MAX_PORT, value))
+            {
+                printUsage(argv[0]);
+                return 1;
+            }
+            rcPort = static_cast<std::uint16_t>(value);
+        }
         else if (parsePositive(argv[i], static_cast<long>(UINT32_MAX), value))
         {
             maxFrames = static_cast<std::uint32_t>(value);
@@ -81,16 +93,19 @@ int main(int argc, char **argv)
         }
     }
 
-    mark4::DroneSimApp app(maxFrames, simPort, telemetryPort);
+    mark4::DroneSimApp app(maxFrames, simPort, telemetryPort, rcPort);
     if (!app.init())
     {
         static_cast<void>(std::fprintf(stderr, "drone_sim: initialization failed\n"));
         return 1;
     }
 
-    std::printf("drone_sim: waiting for sensor packets on udp/%u, telemetry broadcast on udp/%u\n",
+    std::printf("drone_sim: waiting for sensor packets on udp/%u, telemetry broadcast on udp/%u, "
+                "rc uplink on udp/%u, announcing on udp/%u\n",
                 static_cast<unsigned>(simPort),
-                static_cast<unsigned>(telemetryPort));
+                static_cast<unsigned>(telemetryPort),
+                static_cast<unsigned>(rcPort),
+                static_cast<unsigned>(mark4::ANNOUNCE_PORT));
 
     const std::uint32_t steps = app.run();
     if (steps == 0U)

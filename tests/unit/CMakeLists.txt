@@ -9,6 +9,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2)
 
 add_executable(unit_tests
+    test_announce.cpp
     test_attitude_estimator.cpp
     test_blackbox.cpp
     test_control.cpp
