@@ -3,7 +3,7 @@
  * wire structs (body x forward, y left, z up; world z up; right-handed).
  *
  * These are the page-side twin of euler_deg() and error_angle_deg() in
- * tools/ground-station/telemetry_wire.py and must stay numerically identical
+ * tools/telemetry_wire.py and must stay numerically identical
  * to them: the golden fixtures decode through both.
  */
 

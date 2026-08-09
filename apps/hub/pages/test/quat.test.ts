@@ -7,7 +7,7 @@ import { asQuat, errorAngleDeg, eulerDeg, type Quat } from "../src/shared/quat";
  * The two quaternions below are the ones the golden fixtures carry, read back
  * with the reference decoder. The expected angles were produced with:
  *
- *   python3 -c "import sys; sys.path.insert(0, 'tools/ground-station');
+ *   python3 -c "import sys; sys.path.insert(0, 'tools');
  *   import telemetry_wire as tw;
  *   t = tw.decode_telemetry(open('tests/golden/fixtures/telemetry.bin','rb').read());
  *   r = tw.decode_sim_raw(open('tests/golden/fixtures/sim_raw.bin','rb').read());

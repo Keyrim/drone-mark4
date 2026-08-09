@@ -193,10 +193,10 @@ cmake --build --preset desktop
 In another terminal, the telemetry viewer:
 
 ```sh
-cd tools/ground-station
-pipenv install
-pipenv run ./ground_station.py
+./build/desktop/apps/hub/hub serve
 ```
+
+then open `http://127.0.0.1:47810` for the plots.
 
 On the host, run the Godot project, then:
 
@@ -204,7 +204,7 @@ On the host, run the Godot project, then:
 2. At rest on the ground the accelerometer reads about 1.00 g.
 3. Press `SPACE`. During the throw the accelerometer jumps for about 120 ms,
    then drops to nearly 0 g for the whole ballistic phase, and the gyro shows
-   the tumble. The ground station plots the same rates, since both tools read
+   the tumble. The plots page shows the same rates, since both tools read
    the same flight process.
 4. Engage the kill switch from the hub and check that the motor commands
    returned by the flight process fall to zero.

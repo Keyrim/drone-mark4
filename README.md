@@ -75,13 +75,12 @@ telemetry to any listener.
 # Terminal 2 - sinusoidal sensor stream (standard library only)
 python3 tools/sim-stub/sim_stub.py --duration 0
 
-# Terminal 3 - live gyro plot (see tools/ground-station/README.md)
-cd tools/ground-station && pipenv install && pipenv run ./ground_station.py
+# Terminal 3 - decoding endpoint and web pages on http://127.0.0.1:47810
+./build/desktop/apps/hub/hub serve
 ```
 
-Python tools that need dependencies manage them with pipenv (`Pipfile` per
-tool); the image sets `PIPENV_VENV_IN_PROJECT=1` so each venv lives inside
-its tool's folder (`.venv/`, gitignored).
+Every python tool in the repository runs on the standard library alone, so
+there is nothing to install first.
 
 ## Debugging from VS Code
 
@@ -90,10 +89,7 @@ its tool's folder (`.venv/`, gitignored).
 - `drone_sim (gdb)` - debugs the CMake launch target: pick the `desktop`
   preset and the `drone_sim` target in the CMake Tools status bar, the
   target is rebuilt automatically before each launch;
-- `sim_stub (python)` - streams frames until stopped;
-- `ground_station (python)` - runs on `tools/ground-station/.venv`
-  (create it once with `pipenv install`);
-- `full chain` - compound entry starting all three at once.
+- `sim_stub (python)` - streams frames until stopped.
 
 The default build task (Ctrl+Shift+B) builds the active CMake configure
 preset.

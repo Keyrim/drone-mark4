@@ -64,25 +64,6 @@
                 "0"
             ],
             "console": "integratedTerminal"
-        },
-        {
-            "name": "ground_station (python)",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/tools/ground-station/ground_station.py",
-            "python": "${workspaceFolder}/tools/ground-station/.venv/bin/python",
-            "console": "integratedTerminal"
-        }
-    ],
-    "compounds": [
-        {
-            "name": "full chain (drone_sim + stub + ground station)",
-            "configurations": [
-                "drone_sim (gdb)",
-                "ground_station (python)",
-                "sim_stub (python)"
-            ],
-            "stopAll": true
         }
     ]
 }
