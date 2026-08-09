@@ -7,7 +7,8 @@ cd "$(dirname "$0")/.."
 
 mapfile -t files < <(git ls-files \
     '*.cpp' '*.hpp' '*.c' '*.h' '*.ld' '*.cmake' '*CMakeLists.txt' '*CMakePresets.json' \
-    '*.md' '*.py' '*.gd' '*.sh' '*.yml' '*.yaml' '*.json' '*.clang-format' '*.clang-tidy')
+    '*.md' '*.py' '*.gd' '*.sh' '*.yml' '*.yaml' '*.json' '*.clang-format' '*.clang-tidy' \
+    '*.ts' '*.js' '*.html' '*.css')
 
 # Everything outside tab/newline/printable ASCII, except the accented Latin
 # letters of Latin-1 (multiplication and division signs excluded).

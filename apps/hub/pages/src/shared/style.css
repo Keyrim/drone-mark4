@@ -1,0 +1,41 @@
+/*
+ * Shared stylesheet of the hub pages: the uPlot base rules plus the dark
+ * theme every page paints itself with. Bundled as a single dist/style.css.
+ */
+
+@import "uplot/dist/uPlot.min.css";
+
+:root {
+    --bg: #14171c;
+    --bg-panel: #1b1f26;
+    --bg-raised: #232830;
+    --border: #303743;
+    --fg: #dde2ea;
+    --fg-dim: #8b95a6;
+    --accent: #3987e5;
+    --ok: #199e70;
+    --warn: #c98500;
+    --bad: #e66767;
+    --mono: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+}
+
+body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 13px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
