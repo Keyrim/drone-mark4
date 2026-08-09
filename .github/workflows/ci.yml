@@ -45,6 +45,15 @@ jobs:
       - run: python3 tests/golden/test_golden.py
       - run: godot --path sim-godot --headless --import
       - run: godot --path sim-godot --headless --script res://tests/golden_check.gd -- "$GITHUB_WORKSPACE/tests/golden/fixtures"
+      # Cross-language end-to-end: the only check that runs the real physics,
+      # the real flight core and the real wire against each other. A golden
+      # fixture proves three parsers agree on bytes; this proves a throw
+      # still flies.
+      - run: python3 tools/batch/run_batch.py --runs 1 --parallel 1 --time-scale 20
+      # And the promise the campaign rests on: one seed, twice, one plant,
+      # one hash. It fails on a mismatch, on a hash that never sealed, and
+      # on a run that lost a lockstep tick.
+      - run: python3 tools/batch/run_batch.py --verify-repro --seed 7
 
   stm32:
     name: stm32 (cross-compilation)
