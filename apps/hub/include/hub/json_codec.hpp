@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "hub/discovery.hpp"
+#include "hub/tuning_profiles.hpp"
 #include "protocol/commands.hpp"
 #include "protocol/header.hpp"
 #include "protocol/sim_raw.hpp"
@@ -29,13 +30,17 @@ namespace mark4
     /// What a websocket client asked for.
     enum class ClientMessageType : std::uint8_t
     {
-        RC,          ///< pilot state to forward to a flight process
-        SIM_COMMAND, ///< scenario command for the simulator
-        REBOOT,      ///< reset the real board
-        RECORD,      ///< start or stop the CSV recording
-        TUNING_SET,  ///< write one tunable parameter
-        TUNING_GET,  ///< read one tunable parameter
-        TUNING_LIST  ///< walk the parameter table
+        RC,           ///< pilot state to forward to a flight process
+        SIM_COMMAND,  ///< scenario command for the simulator
+        REBOOT,       ///< reset the real board
+        RECORD,       ///< start or stop the CSV recording
+        TUNING_SET,   ///< write one tunable parameter
+        TUNING_GET,   ///< read one tunable parameter
+        TUNING_LIST,  ///< walk the parameter table
+        PROFILE_LIST, ///< name the stored tuning profiles
+        PROFILE_SAVE, ///< store one named set of values
+        PROFILE_LOAD, ///< read one named set of values back
+        PROFILE_PUSH  ///< send one named set to a flight process
     };
 
     /// One decoded client request. The wire packets are already built: the
@@ -53,6 +58,8 @@ namespace mark4
         TuningSetPacket tuningSet{};                    ///< TUNING_SET: packet to forward
         TuningGetPacket tuningGet{};                    ///< TUNING_GET: packet to forward
         TuningListPacket tuningList{};                  ///< TUNING_LIST: packet to forward
+        std::string profileName;                        ///< PROFILE_*: profile concerned
+        TuningValues profileValues;                     ///< PROFILE_SAVE: values to store
     };
 
     /// Counters and flags the hub publishes once per second.
@@ -105,6 +112,17 @@ namespace mark4
     /// @param source process the description came from
     /// @return one line of JSON
     std::string tuningInfoToJson(const TuningInfoPacket &packet, StreamSource source);
+
+    /// @brief Renders the names of the stored profiles as a JSON object.
+    /// @param names profile names
+    /// @return one line of JSON
+    std::string profileNamesToJson(const std::vector<std::string> &names);
+
+    /// @brief Renders one profile as a JSON object.
+    /// @param name profile name
+    /// @param values values it holds
+    /// @return one line of JSON
+    std::string profileToJson(const std::string &name, const TuningValues &values);
 
     /// @brief Renders the whole discovery table as a JSON object.
     /// @param processes live entries

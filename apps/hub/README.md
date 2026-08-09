@@ -38,6 +38,8 @@ telemetry port a process announces for as long as that process lives.
 --baud N             board UART speed (default 921600)
 --record             open a CSV recording at startup
 --log-dir DIR        directory recordings are written to (default logs)
+--profiles PATH      directory tuning profiles live in (default profiles)
+--push-profile NAME  push this profile to every process that appears
 ```
 
 ### `hub up sim [options]`
@@ -64,6 +66,11 @@ and exits with that child's code. One Ctrl-C ends the scenario.
 ```
 
 Every `serve` option is accepted too.
+
+### `hub profile list` / `hub profile show NAME`
+
+Plain file reads in the profiles directory: no socket, no running hub. See
+`profiles/README.md` for the file format.
 
 ### `hub up real [options]`
 
@@ -113,6 +120,10 @@ structs in `protocol/`.
 {"type":"tuningInfo","source":"drone_sim","index":0,"count":12,"paramId":101,
  "name":"rate_kp_rp","value":0.028,"minValue":0.0,"maxValue":0.5,
  "armedChange":true}
+
+{"type":"profiles","names":["bench","field-2"]}
+
+{"type":"profile","name":"bench","values":{"101":0.028}}
 ```
 
 `statusName` is one of `ok`, `unknownId`, `outOfBounds`, `lockedWhileArmed`.
@@ -139,6 +150,10 @@ disappears.
 {"type":"tuningSet","id":11,"target":"drone_sim","paramId":101,"value":0.028}
 {"type":"tuningGet","id":12,"target":"drone_sim","paramId":101}
 {"type":"tuningList","id":13,"target":"drone_sim","startIndex":0}
+{"type":"profileList","id":14}
+{"type":"profileSave","id":15,"name":"bench","values":{"101":0.028}}
+{"type":"profileLoad","id":16,"name":"bench"}
+{"type":"profilePush","id":17,"name":"bench","target":"drone_sim"}
 ```
 
 The parameter id key is `paramId`, never `id`: `id` is the correlation id
@@ -189,4 +204,8 @@ arrives.
   arriving over UDP: that copy is its own echo of what it just re-emitted.
   A second, genuinely different board reaching the hub over UDP while a
   first one is wired to it would therefore be invisible.
+- Tuned values do not survive a simulator reset: `drone_sim` rebuilds its
+  flight core on the reset (there is no state a teleport could keep) and
+  does not re-announce, so the hub has no event to push a profile on. Push
+  it again explicitly with `profilePush` after resetting the world.
 - POSIX only (`/proc/self/exe`, `posix_spawn`, `termios`, `poll`).

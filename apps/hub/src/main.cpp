@@ -14,6 +14,7 @@
 
 #include "hub/hub_app.hpp"
 #include "hub/launcher.hpp"
+#include "hub/tuning_profiles.hpp"
 
 namespace
 {
@@ -114,6 +115,8 @@ namespace
             "  up sim                start the simulator pair, then serve\n"
             "  up real               own the board UART, then serve\n"
             "  up replay <log.m4bb>  replay a recorded flight, then serve\n"
+            "  profile list          name the stored tuning profiles\n"
+            "  profile show NAME     print one stored tuning profile\n"
             "\n"
             "scenario options:\n"
             "  --no-serve           supervise the children only, serve nothing\n"
@@ -139,7 +142,9 @@ namespace
             "  --serial DEV         board UART to own, none by default\n"
             "  --baud N             board UART speed (default %u)\n"
             "  --record             open a CSV recording at startup\n"
-            "  --log-dir DIR        directory recordings are written to (default logs)\n",
+            "  --log-dir DIR        directory recordings are written to (default logs)\n"
+            "  --profiles PATH      directory tuning profiles live in (default profiles)\n"
+            "  --push-profile NAME  push this profile to every process that appears\n",
             program,
             static_cast<unsigned>(mark4::SIM_LINK_PORT),
             static_cast<unsigned>(mark4::SIM_COMMAND_PORT),
@@ -209,12 +214,77 @@ namespace
             config.logDirectory = argv[++index];
             return true;
         }
+        if (std::strcmp(name, "--profiles") == 0 && hasValue)
+        {
+            config.profilesDir = argv[++index];
+            return true;
+        }
+        if (std::strcmp(name, "--push-profile") == 0 && hasValue)
+        {
+            config.pushProfileName = argv[++index];
+            return true;
+        }
         if (std::strcmp(name, "--record") == 0)
         {
             config.recordOnStart = true;
             return true;
         }
         return false;
+    }
+
+    /// @brief Runs the profile subcommand family: plain file reads, no
+    ///        socket and no running hub, so a bench session can look at what
+    ///        it stored without starting anything.
+    /// @param argc argument count
+    /// @param argv argument values, argv[1] being the subcommand
+    /// @return process exit code
+    int runProfile(int argc, char **argv)
+    {
+        if (argc < 3)
+        {
+            printUsage(argv[0]);
+            return 1;
+        }
+        // "show" takes a profile name of its own; the options start after
+        // whatever the verb consumed.
+        const bool show = std::strcmp(argv[2], "show") == 0;
+        const bool list = std::strcmp(argv[2], "list") == 0;
+        const int firstOption = show ? 4 : 3;
+        if ((!show && !list) || argc < firstOption)
+        {
+            printUsage(argv[0]);
+            return 1;
+        }
+
+        mark4::HubApp::Config config;
+        for (int index = firstOption; index < argc; ++index)
+        {
+            if (!readServeOption(argc, argv, index, config))
+            {
+                printUsage(argv[0]);
+                return 1;
+            }
+        }
+        const mark4::TuningProfiles profiles(config.profilesDir);
+
+        if (list)
+        {
+            for (const std::string &name : profiles.list())
+            {
+                static_cast<void>(std::printf("%s\n", name.c_str()));
+            }
+            return 0;
+        }
+
+        mark4::TuningValues values;
+        std::string error;
+        if (!profiles.load(argv[3], values, error))
+        {
+            static_cast<void>(std::fprintf(stderr, "hub: %s\n", error.c_str()));
+            return 1;
+        }
+        static_cast<void>(std::printf("%s\n", mark4::profileToJson(argv[3], values).c_str()));
+        return 0;
     }
 
     /// @brief Runs the serve subcommand.
@@ -621,6 +691,10 @@ int main(int argc, char **argv)
     if (std::strcmp(argv[1], "up") == 0)
     {
         return runUp(argc, argv);
+    }
+    if (std::strcmp(argv[1], "profile") == 0)
+    {
+        return runProfile(argc, argv);
     }
     printUsage(argv[0]);
     return 1;

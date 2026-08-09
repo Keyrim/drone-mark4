@@ -14,6 +14,7 @@
 #include "hub/json_codec.hpp"
 #include "hub/serial_transport.hpp"
 #include "hub/stream_recorder.hpp"
+#include "hub/tuning_profiles.hpp"
 #include "hub/udp_transport.hpp"
 #include "hub/ws_bridge.hpp"
 #include "protocol/ports.hpp"
@@ -59,6 +60,9 @@ namespace mark4
             std::string logDirectory = "logs";               ///< where recordings are written
             bool recordOnStart = false;                      ///< open a CSV session at startup
             bool udpRebroadcast = true;                      ///< re-emit serial telemetry on UDP
+            std::string profilesDir = "profiles";            ///< directory the profiles live in
+            std::string pushProfileName;                     ///< profile pushed to every process
+                                                             ///< that appears, empty = none
         };
 
         /// @param config settings of this run
@@ -166,6 +170,15 @@ namespace mark4
         /// @param error refusal reason, empty when ok
         void answer(int id, bool ok, const std::string &error);
 
+        /// @brief Sends one whole profile to a process, parameter by
+        ///        parameter. Nothing stores tuning on the flight side, so a
+        ///        push is the only way values survive a restart.
+        /// @param name profile to push
+        /// @param target kind of process to push it to
+        /// @param errorOut receives the reason when the push cannot happen
+        /// @return true when every value went out
+        bool pushProfile(const std::string &name, StreamSource target, std::string &errorOut);
+
         /// @brief Sends the current discovery table to the clients.
         void broadcastDiscovery();
 
@@ -188,6 +201,7 @@ namespace mark4
 
         Config m_config;                         ///< settings of this run
         StreamRecorder m_recorder;               ///< CSV pair and blackbox file
+        TuningProfiles m_profiles;               ///< stored tuning profiles
         DiscoveryRegistry m_registry;            ///< live processes
         UdpTransport m_udp;                      ///< every UDP socket
         SerialTransport m_serial;                ///< board UART, when one is configured

@@ -29,7 +29,8 @@ FetchContent_MakeAvailable(ixwebsocket)
 add_library(hub_core STATIC
     src/discovery.cpp
     src/json_codec.cpp
-    src/stream_recorder.cpp)
+    src/stream_recorder.cpp
+    src/tuning_profiles.cpp)
 target_include_directories(hub_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(hub_core PUBLIC protocol nlohmann_json::nlohmann_json)
 target_link_libraries(hub_core PRIVATE drone_warnings)

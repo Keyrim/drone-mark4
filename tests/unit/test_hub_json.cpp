@@ -452,6 +452,45 @@ TEST_CASE("tuning info json reads a name that fills the whole wire field")
     CHECK(full["armedChange"] == true);
 }
 
+TEST_CASE("profile messages decode and render")
+{
+    const auto list = mark4::parseClientMessage(R"({"type":"profileList","id":10})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(list));
+    CHECK(std::get<mark4::ClientMessage>(list).type == mark4::ClientMessageType::PROFILE_LIST);
+
+    const auto save = mark4::parseClientMessage(
+        R"({"type":"profileSave","id":11,"name":"bench","values":{"101":0.028,"303":0.55}})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(save));
+    const auto &saveMessage = std::get<mark4::ClientMessage>(save);
+    CHECK(saveMessage.type == mark4::ClientMessageType::PROFILE_SAVE);
+    CHECK(saveMessage.profileName == "bench");
+    REQUIRE(saveMessage.profileValues.size() == 2U);
+    CHECK(saveMessage.profileValues.at(101U) == 0.028f);
+    CHECK(saveMessage.profileValues.at(303U) == 0.55f);
+
+    const auto load = mark4::parseClientMessage(R"({"type":"profileLoad","id":12,"name":"bench"})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(load));
+    CHECK(std::get<mark4::ClientMessage>(load).profileName == "bench");
+
+    const auto push = mark4::parseClientMessage(
+        R"({"type":"profilePush","id":13,"name":"bench","target":"drone_sim"})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(push));
+    const auto &pushMessage = std::get<mark4::ClientMessage>(push);
+    CHECK(pushMessage.type == mark4::ClientMessageType::PROFILE_PUSH);
+    CHECK(pushMessage.target == mark4::StreamSource::DRONE_SIM);
+
+    const nlohmann::json names = parsed(mark4::profileNamesToJson({"bench", "field-2"}));
+    CHECK(names["type"] == "profiles");
+    CHECK(names["names"] == nlohmann::json({"bench", "field-2"}));
+
+    mark4::TuningValues values;
+    values[101U] = 0.028f;
+    const nlohmann::json profile = parsed(mark4::profileToJson("bench", values));
+    CHECK(profile["type"] == "profile");
+    CHECK(profile["name"] == "bench");
+    CHECK(profile["values"]["101"] == 0.028f);
+}
+
 TEST_CASE("a malformed client message is refused, never thrown")
 {
     const char *rejected[] = {
@@ -485,6 +524,17 @@ TEST_CASE("a malformed client message is refused, never thrown")
         R"({"type":"tuningGet","target":"ghost","paramId":101})",
         R"({"type":"tuningList"})",
         R"({"type":"tuningList","target":"drone_sim","startIndex":"first"})",
+        R"({"type":"profileSave","values":{}})",
+        R"({"type":"profileSave","name":"../escape","values":{}})",
+        R"({"type":"profileSave","name":"with space","values":{}})",
+        R"({"type":"profileSave","name":"bench"})",
+        R"({"type":"profileSave","name":"bench","values":[1,2]})",
+        R"({"type":"profileSave","name":"bench","values":{"kp":0.1}})",
+        R"({"type":"profileSave","name":"bench","values":{"101":"fast"}})",
+        R"({"type":"profileSave","name":"bench","values":{"70000":0.1}})",
+        R"({"type":"profileLoad"})",
+        R"({"type":"profilePush","name":"bench"})",
+        R"({"type":"profilePush","name":"bench","target":"ghost"})",
     };
     for (const char *text : rejected)
     {

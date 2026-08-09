@@ -34,7 +34,8 @@ namespace mark4
 
     HubApp::HubApp(Config config)
         : m_config(std::move(config)),
-          m_recorder(m_config.logDirectory)
+          m_recorder(m_config.logDirectory),
+          m_profiles(m_config.profilesDir)
     {
     }
 
@@ -263,8 +264,52 @@ namespace mark4
                     std::printf("hub: %s disappeared\n", streamSourceName(change.process.kind)));
                 break;
         }
+        if (!m_config.pushProfileName.empty() && change.event != DiscoveryEvent::DISAPPEARED)
+        {
+            // A flight process has no flash: it boots on the defaults every
+            // time. Pushing on the announce is what makes a bench session
+            // survive a restart of the thing being tuned.
+            std::string error;
+            if (pushProfile(m_config.pushProfileName, change.process.kind, error))
+            {
+                static_cast<void>(std::printf("hub: pushed profile %s to %s\n",
+                                              m_config.pushProfileName.c_str(),
+                                              streamSourceName(change.process.kind)));
+            }
+            else
+            {
+                static_cast<void>(std::fprintf(stderr,
+                                               "hub: cannot push profile %s to %s: %s\n",
+                                               m_config.pushProfileName.c_str(),
+                                               streamSourceName(change.process.kind),
+                                               error.c_str()));
+            }
+        }
         static_cast<void>(std::fflush(stdout));
         broadcastDiscovery();
+    }
+
+    bool HubApp::pushProfile(const std::string &name, StreamSource target, std::string &errorOut)
+    {
+        TuningValues values;
+        if (!m_profiles.load(name, values, errorOut))
+        {
+            return false;
+        }
+        for (const auto &[id, value] : values)
+        {
+            TuningSetPacket packet{};
+            packet.version = PROTOCOL_VERSION;
+            packet.type = static_cast<std::uint8_t>(PacketType::TUNING_SET);
+            packet.id = id;
+            packet.value = value;
+            const auto bytes = wireBytes(packet);
+            if (!sendToTarget(target, bytes.data(), bytes.size(), errorOut))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     void HubApp::retainPort(std::uint16_t port)
@@ -366,6 +411,30 @@ namespace mark4
                 }
                 const auto bytes = wireBytes(message.reboot);
                 return sendToTarget(message.target, bytes.data(), bytes.size(), errorOut);
+            }
+            case ClientMessageType::PROFILE_LIST: {
+                m_ws.broadcastText(profileNamesToJson(m_profiles.list()));
+                return true;
+            }
+            case ClientMessageType::PROFILE_SAVE: {
+                if (!m_profiles.save(message.profileName, message.profileValues, errorOut))
+                {
+                    return false;
+                }
+                m_ws.broadcastText(profileNamesToJson(m_profiles.list()));
+                return true;
+            }
+            case ClientMessageType::PROFILE_LOAD: {
+                TuningValues values;
+                if (!m_profiles.load(message.profileName, values, errorOut))
+                {
+                    return false;
+                }
+                m_ws.broadcastText(profileToJson(message.profileName, values));
+                return true;
+            }
+            case ClientMessageType::PROFILE_PUSH: {
+                return pushProfile(message.profileName, message.target, errorOut);
             }
             case ClientMessageType::RECORD: {
                 if (message.recordStart)

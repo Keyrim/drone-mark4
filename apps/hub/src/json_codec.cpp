@@ -411,6 +411,78 @@ namespace mark4
             return true;
         }
 
+        /// @brief Reads the mandatory profile name of a profile request.
+        /// @param object object to read from
+        /// @param valueOut receives the name
+        /// @param errorOut receives the reason on failure
+        /// @return true when the field names a usable profile
+        bool readProfileName(const Json &object, std::string &valueOut, std::string &errorOut)
+        {
+            const auto found = object.find("name");
+            if (found == object.end() || !found->is_string())
+            {
+                errorOut = "field 'name' must be a profile name";
+                return false;
+            }
+            const auto name = found->get<std::string>();
+            if (!TuningProfiles::ValidName(name))
+            {
+                // Names become file names, so the check belongs at the
+                // boundary, before anything of the sort reaches the disk.
+                errorOut = "invalid profile name '" + name + "'";
+                return false;
+            }
+            valueOut = name;
+            return true;
+        }
+
+        /// @brief Reads the values object of a profile save request: keys are
+        ///        parameter ids as decimal strings, values are numbers.
+        /// @param object object to read from
+        /// @param valueOut receives the values
+        /// @param errorOut receives the reason on failure
+        /// @return true when every entry decoded
+        bool readProfileValues(const Json &object, TuningValues &valueOut, std::string &errorOut)
+        {
+            static constexpr std::int64_t MAX_ID = 65535;
+            // JSON object keys are strings, so a parameter id arrives as a
+            // decimal one and is accumulated digit by digit.
+            static constexpr std::int64_t ID_BASE = 10;
+            const auto found = object.find("values");
+            if (found == object.end() || !found->is_object())
+            {
+                errorOut = "field 'values' must be an object of paramId:value";
+                return false;
+            }
+            for (const auto &entry : found->items())
+            {
+                const std::string &key = entry.key();
+                if (key.empty() || !entry.value().is_number())
+                {
+                    errorOut = "field 'values' must be an object of paramId:value";
+                    return false;
+                }
+                std::int64_t id = 0;
+                for (const char character : key)
+                {
+                    if (character < '0' || character > '9')
+                    {
+                        errorOut = "parameter id '" + key + "' is not a decimal number";
+                        return false;
+                    }
+                    id = id * ID_BASE + (character - '0');
+                    if (id > MAX_ID)
+                    {
+                        errorOut = "parameter id '" + key + "' is out of range";
+                        return false;
+                    }
+                }
+                valueOut[static_cast<std::uint16_t>(id)] =
+                    static_cast<float>(entry.value().get<double>());
+            }
+            return true;
+        }
+
         /// @brief Fills the recording part of a client request.
         /// @param object message object
         /// @param message message being decoded
@@ -572,6 +644,33 @@ namespace mark4
         return message.dump();
     }
 
+    std::string profileNamesToJson(const std::vector<std::string> &names)
+    {
+        Json entries = Json::array();
+        for (const std::string &name : names)
+        {
+            entries.push_back(name);
+        }
+        Json message;
+        message["type"] = "profiles";
+        message["names"] = entries;
+        return message.dump();
+    }
+
+    std::string profileToJson(const std::string &name, const TuningValues &values)
+    {
+        Json entries = Json::object();
+        for (const auto &[id, value] : values)
+        {
+            entries[std::to_string(id)] = static_cast<double>(value);
+        }
+        Json message;
+        message["type"] = "profile";
+        message["name"] = name;
+        message["values"] = entries;
+        return message.dump();
+    }
+
     std::variant<ClientMessage, std::string> parseClientMessage(std::string_view text)
     {
         const Json root = Json::parse(text.begin(), text.end(), nullptr, false);
@@ -648,6 +747,36 @@ namespace mark4
         {
             message.type = ClientMessageType::TUNING_LIST;
             if (!parseTuningList(root, message, error))
+            {
+                return error;
+            }
+        }
+        else if (typeName == "profileList")
+        {
+            message.type = ClientMessageType::PROFILE_LIST;
+        }
+        else if (typeName == "profileSave")
+        {
+            message.type = ClientMessageType::PROFILE_SAVE;
+            if (!readProfileName(root, message.profileName, error) ||
+                !readProfileValues(root, message.profileValues, error))
+            {
+                return error;
+            }
+        }
+        else if (typeName == "profileLoad")
+        {
+            message.type = ClientMessageType::PROFILE_LOAD;
+            if (!readProfileName(root, message.profileName, error))
+            {
+                return error;
+            }
+        }
+        else if (typeName == "profilePush")
+        {
+            message.type = ClientMessageType::PROFILE_PUSH;
+            if (!readProfileName(root, message.profileName, error) ||
+                !readTarget(root, message.target, error))
             {
                 return error;
             }
