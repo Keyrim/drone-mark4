@@ -141,7 +141,7 @@ TEST_CASE("an out-of-order frame is ignored and the outputs hold")
 
     frame.timestampUs = timestamp;
     core.step(frame, actuators);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
     const std::array<float, 4> held = actuators.motor;
 
     // Same timestamp, then an older one: both ignored, outputs held, even
@@ -151,14 +151,14 @@ TEST_CASE("an out-of-order frame is ignored and the outputs hold")
     frame.timestampUs = timestamp - STEP_US;
     core.step(frame, actuators);
     REQUIRE(core.staleFrameCount() == 2U);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
     REQUIRE(actuators.motor == held);
 
     // The stream resumes where it left off: fresh frames step normally.
     frame.gyroRadS = {0.0f, 0.0f, 0.0f};
     frame.timestampUs = timestamp + STEP_US;
     core.step(frame, actuators);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
 }
 
 TEST_CASE("a frame carrying NaN or Inf is rejected as a whole")
@@ -174,7 +174,7 @@ TEST_CASE("a frame carrying NaN or Inf is rejected as a whole")
 
     frame.timestampUs = settled;
     core.step(frame, actuators);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
     const std::array<float, 4> held = actuators.motor;
 
     // One poisoned field per frame: each frame is ignored, the outputs
@@ -206,7 +206,7 @@ TEST_CASE("a frame carrying NaN or Inf is rejected as a whole")
         timestamp += STEP_US;
     }
     REQUIRE(core.invalidFrameCount() == 4U);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
     REQUIRE(actuators.motor == held);
     for (const float m : actuators.motor)
     {
@@ -217,7 +217,7 @@ TEST_CASE("a frame carrying NaN or Inf is rejected as a whole")
     // never accepted, so this one is fresh).
     frame.timestampUs = settled + STEP_US;
     core.step(frame, actuators);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
     for (const float m : actuators.motor)
     {
         REQUIRE(std::isfinite(m));
@@ -300,7 +300,7 @@ TEST_CASE("a raised throttle drives the motors through the hover stack")
     frame.baroPa = HELPER_BARO_PA;
     frame.timestampUs = timestamp;
     core.step(frame, actuators);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
     frame.timestampUs = timestamp + STEP_US;
     core.step(frame, actuators);
 
@@ -325,7 +325,7 @@ TEST_CASE("an impact cuts the motors and latches until the stick is lowered")
 
     frame.timestampUs = timestamp;
     core.step(frame, actuators);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
 
     // 10 g spike: immediate cutoff.
     frame.timestampUs = timestamp + STEP_US;
@@ -352,7 +352,7 @@ TEST_CASE("an impact cuts the motors and latches until the stick is lowered")
     frame.timestampUs = timestamp + 4U * STEP_US;
     frame.rc.throttle = 0.5f;
     core.step(frame, actuators);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
     REQUIRE(actuators.motor[0] > 0.0f);
 }
 
@@ -412,7 +412,7 @@ TEST_CASE("the stick-down boundary has hysteresis and cannot chatter")
     };
 
     stepWithThrottle(0.5f);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
 
     // Crossing below ARM_THROTTLE disarms; RC noise hovering inside the
     // hysteresis band afterwards must not re-enter stick flight.
@@ -427,11 +427,11 @@ TEST_CASE("the stick-down boundary has hysteresis and cannot chatter")
     // Only a deliberate raise past the release threshold flies again, and
     // noise back inside the band must not disarm mid-flight.
     stepWithThrottle(0.12f);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
     for (std::uint32_t i = 0U; i < 10U; ++i)
     {
         stepWithThrottle(i % 2U == 0U ? 0.09f : 0.06f);
-        REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+        REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
     }
 }
 
@@ -545,7 +545,7 @@ TEST_CASE("a detected throw spins up ahead of the apex and recovers into a hover
     frame.rc.throttle = 0.5f;
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
     core.step(frame, actuators);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
 }
 
 TEST_CASE("a ballistic phase ending on the ground returns to armed without spinning")
@@ -682,7 +682,7 @@ TEST_CASE("a kill clears the tilt streak: a rearm needs a fresh confirmation")
         stepOnce();
     }
     REQUIRE(estimatedUpZ() < mark4::FlightCore::CUTOFF_TILT_MIN_UP);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
 
     // 100 ms into the 300 ms confirmation window: kill, and stay killed for
     // well over the confirmation time.
@@ -690,7 +690,7 @@ TEST_CASE("a kill clears the tilt streak: a rearm needs a fresh confirmation")
     {
         stepOnce();
     }
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
     frame.rc.killSwitch = true;
     for (std::uint32_t i = 0U; i < 250U; ++i)
     {
@@ -703,13 +703,14 @@ TEST_CASE("a kill clears the tilt streak: a rearm needs a fresh confirmation")
     // demands the full confirmation again.
     frame.rc.killSwitch = false;
     stepOnce();
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
     stepOnce();
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
 
     // The tilt is real and sustained: the fresh confirmation still ends in
     // a cutoff after its full window.
-    for (std::uint32_t i = 0U; i < 200U && core.flightPhase() == mark4::FlightPhase::MANUAL; ++i)
+    for (std::uint32_t i = 0U; i < 200U && core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO;
+         ++i)
     {
         stepOnce();
     }
@@ -786,7 +787,7 @@ TEST_CASE("saturated rates during the ballistic coast cut instead of spinning up
     REQUIRE(actuators.motor[0] == 0.0f);
 }
 
-TEST_CASE("the manual throttle maps to a vertical velocity setpoint around mid stick")
+TEST_CASE("the altitude-auto throttle maps to a vertical velocity setpoint around mid stick")
 {
     // Three cores at rest, three stick positions: the commanded collective
     // must order climb > hold > sink, with hold near the hover collective.
@@ -805,7 +806,7 @@ TEST_CASE("the manual throttle maps to a vertical velocity setpoint around mid s
             core.step(frame, actuators);
             timestamp += STEP_US;
         }
-        REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+        REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
         return actuators.motor[0];
     };
 

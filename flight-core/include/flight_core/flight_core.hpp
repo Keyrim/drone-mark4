@@ -23,13 +23,13 @@ namespace mark4
     /// motors and returns to IDLE, whatever was in progress.
     enum class FlightPhase : std::uint8_t
     {
-        IDLE = 0U,      ///< motors stopped, waiting for the pilot
-        MANUAL = 1U,    ///< stick flight: throttle commands the vertical velocity
-        ARMED = 2U,     ///< armed for a throw: motors stopped, detector watched
-        BALLISTIC = 3U, ///< throw detected, coasting until the spin-up instant
-        RECOVERY = 4U,  ///< motors on, leveling from an arbitrary attitude
-        HOVER = 5U,     ///< recovered: altitude hold until the pilot takes over
-        CUTOFF = 6U,    ///< safety cutoff latched: motors stopped until rearm
+        IDLE = 0U,          ///< motors stopped, waiting for the pilot
+        ALTITUDE_AUTO = 1U, ///< piloted flight: the stick commands a vertical velocity
+        ARMED = 2U,         ///< armed for a throw: motors stopped, detector watched
+        BALLISTIC = 3U,     ///< throw detected, coasting until the spin-up instant
+        RECOVERY = 4U,      ///< motors on, leveling from an arbitrary attitude
+        HOVER = 5U,         ///< recovered: altitude hold until the pilot takes over
+        CUTOFF = 6U,        ///< safety cutoff latched: motors stopped until rearm
     };
 
     /// Synchronous, single-threaded flight core, paced by data arrival
@@ -160,8 +160,21 @@ namespace mark4
         /// release) at frame rate.
         static constexpr float STICK_UP_THROTTLE = 0.10f;
 
+        /// Throttle a centered stick sits at.
+        static constexpr float STICK_CENTER = 0.5f;
+
+        /// Half-width of the band around STICK_CENTER read as centered. A
+        /// spring-loaded stick never returns to the exact same point and the
+        /// RC quantization adds its own jitter; inside this band the vertical
+        /// velocity setpoint is exactly zero, so a released stick holds the
+        /// altitude instead of drifting at a fraction of a m/s.
+        static constexpr float STICK_CENTER_DEADBAND = 0.05f;
+
         /// Vertical velocity setpoint at full stick deflection [m/s]; mid
-        /// stick holds the altitude.
+        /// stick holds the altitude. The mapping is continuous: the
+        /// deflection is measured from the edge of the deadband, so leaving
+        /// the deadband starts at 0 m/s and full stick still reaches exactly
+        /// this value.
         static constexpr float STICK_VZ_RANGE_MPS = 2.0f;
 
         /// Frames further apart than this are gaps in the stream: the step
@@ -233,6 +246,12 @@ namespace mark4
         {
             return m_phase;
         }
+
+        /// @brief Maps a stick position to the vertical velocity it commands,
+        ///        deadband included.
+        /// @param throttle normalized stick position [0, 1]
+        /// @return vertical velocity setpoint, positive up [m/s]
+        [[nodiscard]] static float StickVerticalVelocityMps(float throttle);
 
       private:
         /// @return true when the timestamp moves time forward (or is the first)

@@ -191,7 +191,7 @@ TEST_CASE("the flight core derives the armed state from its own phase")
 
     // Stick up: flying. The estimator gain is locked, the rate gain is not.
     timestamp = feed(core, actuators, timestamp, 5U, mark4::GRAVITY_MPS2, 0.5f);
-    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
     REQUIRE(core.setParam(mark4::TUNING_ID_AHRS_KP, 4.0f) ==
             mark4::TuningStatus::LOCKED_WHILE_ARMED);
     REQUIRE(core.setParam(mark4::TUNING_ID_RATE_KP_ROLL_PITCH, 0.04f) == mark4::TuningStatus::OK);
@@ -223,7 +223,7 @@ TEST_CASE("a tuned gain reaches the motors on the very next step")
         feed(tuned, tunedOut, 0U, 100U, mark4::GRAVITY_MPS2, 0.5f, false, gyro);
     feed(reference, referenceOut, 0U, 100U, mark4::GRAVITY_MPS2, 0.5f, false, gyro);
     feed(control, controlOut, 0U, 100U, mark4::GRAVITY_MPS2, 0.5f, false, gyro);
-    REQUIRE(tuned.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(tuned.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
 
     REQUIRE(tuned.setParam(mark4::TUNING_ID_RATE_KP_ROLL_PITCH,
                            2.0f * mark4::RateController::DEFAULT_KP_ROLL_PITCH) ==

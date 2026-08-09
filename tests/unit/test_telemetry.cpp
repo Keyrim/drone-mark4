@@ -55,5 +55,5 @@ TEST_CASE("packTelemetry carries the estimated attitude next to the raw frame")
 
     // Mid stick, kill released: the core is in stick flight.
     REQUIRE(wire[offsetof(mark4::TelemetryPacket, flightPhase)] ==
-            static_cast<std::uint8_t>(mark4::FlightPhase::MANUAL));
+            static_cast<std::uint8_t>(mark4::FlightPhase::ALTITUDE_AUTO));
 }

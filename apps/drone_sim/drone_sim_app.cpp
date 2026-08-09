@@ -32,8 +32,8 @@ namespace
         {
             case mark4::FlightPhase::IDLE:
                 return "idle";
-            case mark4::FlightPhase::MANUAL:
-                return "manual";
+            case mark4::FlightPhase::ALTITUDE_AUTO:
+                return "altitude";
             case mark4::FlightPhase::ARMED:
                 return "armed";
             case mark4::FlightPhase::BALLISTIC:

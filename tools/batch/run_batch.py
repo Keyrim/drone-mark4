@@ -51,7 +51,7 @@ PHASE_IDLE = 0
 PHASE_ARMED = 2
 PHASE_HOVER = 5
 PHASE_CUTOFF = 6
-PHASE_NAMES = ["idle", "manual", "armed", "ballistic", "recovery", "hover", "cutoff"]
+PHASE_NAMES = ["idle", "altitude", "armed", "ballistic", "recovery", "hover", "cutoff"]
 
 # One UDP port range per instance: sim link, telemetry (+ mirror on +2),
 # raw state, scenario command listener and the drone_sim command receiver

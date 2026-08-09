@@ -148,10 +148,10 @@ namespace mark4
                     // absurd sensor readings never powers the motors at all.
                     const bool cutoff = ImpactTripped(sensors) || GyroSaturated(sensors) ||
                                         tiltCutoffConfirmed(sensors);
-                    m_phase = cutoff ? FlightPhase::CUTOFF : FlightPhase::MANUAL;
+                    m_phase = cutoff ? FlightPhase::CUTOFF : FlightPhase::ALTITUDE_AUTO;
                 }
                 break;
-            case FlightPhase::MANUAL:
+            case FlightPhase::ALTITUDE_AUTO:
                 if (stickDown)
                 {
                     // Lowering the stick is also the rearm gesture after a cutoff.
@@ -230,7 +230,7 @@ namespace mark4
                 {
                     // Raising the stick is the takeover gesture: from here the
                     // throttle commands the vertical velocity as in stick flight.
-                    m_phase = FlightPhase::MANUAL;
+                    m_phase = FlightPhase::ALTITUDE_AUTO;
                 }
                 break;
             case FlightPhase::CUTOFF:
@@ -277,7 +277,7 @@ namespace mark4
                 actuators.motor = mixMotors(collective, torqueCmd);
                 return;
             }
-            case FlightPhase::MANUAL:
+            case FlightPhase::ALTITUDE_AUTO:
             case FlightPhase::HOVER: {
                 // A post-throw hover briefly leans against the dead reckoned
                 // momentum of the throw, then levels for good: the braking is
@@ -304,11 +304,10 @@ namespace mark4
 
                 // Mid stick holds the altitude, full deflection climbs or sinks
                 // at STICK_VZ_RANGE_MPS. A post-throw hover ignores the stick
-                // (it is down) and holds until the pilot takes over.
-                const float vzSetpoint =
-                    m_phase == FlightPhase::HOVER
-                        ? 0.0f
-                        : (sensors.rc.throttle - 0.5f) * 2.0f * STICK_VZ_RANGE_MPS;
+                // and holds until the pilot takes over.
+                const float vzSetpoint = m_phase == FlightPhase::HOVER
+                                             ? 0.0f
+                                             : StickVerticalVelocityMps(sensors.rc.throttle);
                 const float collective = m_verticalController.update(
                     vzSetpoint, m_verticalEstimator.verticalVelocityMps(), dt);
 
@@ -316,6 +315,22 @@ namespace mark4
                 return;
             }
         }
+    }
+
+    float FlightCore::StickVerticalVelocityMps(float throttle)
+    {
+        // Deflection measured from the edge of the deadband, not from the
+        // centre: the map is continuous at the deadband edge (it leaves at
+        // 0 m/s), and full stick still reaches exactly STICK_VZ_RANGE_MPS.
+        const float error = throttle - STICK_CENTER;
+        const float magnitude = error < 0.0f ? -error : error;
+        if (magnitude <= STICK_CENTER_DEADBAND)
+        {
+            return 0.0f;
+        }
+        const float scaled = (magnitude - STICK_CENTER_DEADBAND) /
+                             (STICK_CENTER - STICK_CENTER_DEADBAND) * STICK_VZ_RANGE_MPS;
+        return error < 0.0f ? -scaled : scaled;
     }
 
     bool FlightCore::ImpactTripped(const SensorFrame &sensors)
