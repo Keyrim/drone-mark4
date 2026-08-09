@@ -50,9 +50,7 @@ namespace mark4
             {
                 updateEstimators(sensors, deriveDt(sensors.timestampUs));
             }
-            m_rateController.reset();
-            m_verticalController.reset();
-            m_phase = FlightPhase::IDLE;
+            resetMission();
             return;
         }
 
@@ -85,6 +83,15 @@ namespace mark4
     bool FlightCore::acceptsTimestamp(std::uint64_t timestampUs) const
     {
         return !m_hasPrevTimestamp || timestampUs > m_prevTimestampUs;
+    }
+
+    void FlightCore::resetMission()
+    {
+        m_phase = FlightPhase::IDLE;
+        m_rateController.reset();
+        m_verticalController.reset();
+        m_tiltExceeded = false;
+        m_brakeDone = false;
     }
 
     float FlightCore::deriveDt(std::uint64_t timestampUs)
@@ -139,7 +146,9 @@ namespace mark4
                 {
                     // Checked on entry too, so a takeoff attempt under already
                     // absurd sensor readings never powers the motors at all.
-                    m_phase = cutoffTripped(sensors) ? FlightPhase::CUTOFF : FlightPhase::MANUAL;
+                    const bool cutoff = impactTripped(sensors) || gyroSaturated(sensors) ||
+                                        tiltCutoffConfirmed(sensors);
+                    m_phase = cutoff ? FlightPhase::CUTOFF : FlightPhase::MANUAL;
                 }
                 break;
             case FlightPhase::MANUAL:
@@ -148,7 +157,8 @@ namespace mark4
                     // Lowering the stick is also the rearm gesture after a cutoff.
                     m_phase = FlightPhase::IDLE;
                 }
-                else if (cutoffTripped(sensors))
+                else if (impactTripped(sensors) || gyroSaturated(sensors) ||
+                         tiltCutoffConfirmed(sensors))
                 {
                     m_phase = FlightPhase::CUTOFF;
                 }
@@ -169,7 +179,7 @@ namespace mark4
                 {
                     m_phase = FlightPhase::IDLE;
                 }
-                else if (norm3(sensors.gyroRadS) > CUTOFF_GYRO_RADS)
+                else if (gyroSaturated(sensors))
                 {
                     // The gyro is near its full scale: the attitude estimate is
                     // lost and spinning up would fly blind. Fall inert instead.
@@ -192,7 +202,7 @@ namespace mark4
                 {
                     m_phase = FlightPhase::IDLE;
                 }
-                else if (cutoffTripped(sensors, false) ||
+                else if (impactTripped(sensors) || gyroSaturated(sensors) ||
                          sensors.timestampUs - m_recoveryStartUs > RECOVERY_TIMEOUT_US)
                 {
                     // No tilt cutoff here: being tilted is what a recovery is.
@@ -211,7 +221,8 @@ namespace mark4
                 {
                     m_phase = FlightPhase::IDLE;
                 }
-                else if (cutoffTripped(sensors))
+                else if (impactTripped(sensors) || gyroSaturated(sensors) ||
+                         tiltCutoffConfirmed(sensors))
                 {
                     m_phase = FlightPhase::CUTOFF;
                 }
@@ -246,7 +257,7 @@ namespace mark4
                 actuators.motor.fill(0.0f);
                 m_rateController.reset();
                 m_verticalController.reset();
-                m_tiltExceededSinceUs = 0U;
+                m_tiltExceeded = false;
                 return;
             case FlightPhase::RECOVERY: {
                 // Attitude first: the rate loop levels the drone while the
@@ -307,27 +318,25 @@ namespace mark4
         }
     }
 
-    bool FlightCore::cutoffTripped(const SensorFrame &sensors, bool withTilt)
+    bool FlightCore::impactTripped(const SensorFrame &sensors)
     {
-        if (norm3(sensors.accelMps2) > CUTOFF_ACCEL_MPS2)
-        {
-            return true; // impact
-        }
-        if (norm3(sensors.gyroRadS) > CUTOFF_GYRO_RADS)
-        {
-            return true; // rates near the sensor's full scale
-        }
-        if (!withTilt)
-        {
-            return false;
-        }
+        return norm3(sensors.accelMps2) > CUTOFF_ACCEL_MPS2;
+    }
 
+    bool FlightCore::gyroSaturated(const SensorFrame &sensors)
+    {
+        return norm3(sensors.gyroRadS) > CUTOFF_GYRO_RADS;
+    }
+
+    bool FlightCore::tiltCutoffConfirmed(const SensorFrame &sensors)
+    {
         // Below the threshold the drone is closer to upside down than the
-        // hover stack can handle.
+        // hover stack can handle; the confirmation filters transients.
         if (estimatedUpZ() < CUTOFF_TILT_MIN_UP)
         {
-            if (m_tiltExceededSinceUs == 0U)
+            if (!m_tiltExceeded)
             {
+                m_tiltExceeded = true;
                 m_tiltExceededSinceUs = sensors.timestampUs;
             }
             else if (sensors.timestampUs - m_tiltExceededSinceUs >= CUTOFF_TILT_CONFIRM_US)
@@ -337,7 +346,7 @@ namespace mark4
         }
         else
         {
-            m_tiltExceededSinceUs = 0U;
+            m_tiltExceeded = false;
         }
         return false;
     }

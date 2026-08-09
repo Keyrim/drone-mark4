@@ -17,8 +17,8 @@ namespace mark4
         m_state = ThrowState::IDLE;
         m_thrustStartUs = 0U;
         m_thrustLastUs = 0U;
-        m_freeFallStartUs = 0U;
-        m_exitStartUs = 0U;
+        m_inFreeFallStreak = false;
+        m_inExitStreak = false;
     }
 
     void ThrowDetector::update(const SensorFrame &frame, float verticalVelocityMps, float altitudeM)
@@ -37,7 +37,7 @@ namespace mark4
                     m_state = ThrowState::THRUST;
                     m_thrustStartUs = now;
                     m_thrustLastUs = now;
-                    m_freeFallStartUs = 0U;
+                    m_inFreeFallStreak = false;
                 }
                 break;
 
@@ -45,14 +45,15 @@ namespace mark4
                 if (norm >= THRUST_THRESHOLD_MPS2)
                 {
                     m_thrustLastUs = now;
-                    m_freeFallStartUs = 0U;
+                    m_inFreeFallStreak = false;
                 }
                 else if (norm < FREE_FALL_THRESHOLD_MPS2)
                 {
-                    if (m_freeFallStartUs == 0U)
+                    if (!m_inFreeFallStreak)
                     {
                         // Start of a free fall streak: this is the release
                         // candidate, freeze the vertical state right here.
+                        m_inFreeFallStreak = true;
                         m_freeFallStartUs = now;
                         m_candidateVelocityMps = verticalVelocityMps;
                         m_candidateAltitudeM = altitudeM;
@@ -74,7 +75,7 @@ namespace mark4
                                                                          m_candidateVelocityMps /
                                                                          TWO_G_MPS2;
                             m_state = ThrowState::BALLISTIC;
-                            m_exitStartUs = 0U;
+                            m_inExitStreak = false;
                         }
                         else
                         {
@@ -87,7 +88,7 @@ namespace mark4
                     // Between the two thresholds: transition after the hand opens,
                     // or just a move. The free fall streak is broken; give up if
                     // the release does not come.
-                    m_freeFallStartUs = 0U;
+                    m_inFreeFallStreak = false;
                     if (now - m_thrustLastUs >= RELEASE_TIMEOUT_US)
                     {
                         reset();
@@ -98,8 +99,9 @@ namespace mark4
             case ThrowState::BALLISTIC:
                 if (norm >= BALLISTIC_EXIT_MPS2)
                 {
-                    if (m_exitStartUs == 0U)
+                    if (!m_inExitStreak)
                     {
+                        m_inExitStreak = true;
                         m_exitStartUs = now;
                     }
                     else if (now - m_exitStartUs >= BALLISTIC_EXIT_CONFIRM_US)
@@ -109,7 +111,7 @@ namespace mark4
                 }
                 else
                 {
-                    m_exitStartUs = 0U;
+                    m_inExitStreak = false;
                 }
                 break;
         }

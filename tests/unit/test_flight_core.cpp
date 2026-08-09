@@ -593,6 +593,129 @@ TEST_CASE("leaving the cutoff needs both the stick down and the arm switch off")
     REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
 }
 
+TEST_CASE("a kill mid-recovery cuts the motors and ends the mission")
+{
+    mark4::FlightCore core;
+    mark4::ActuatorFrame actuators;
+
+    std::uint64_t timestamp = playThrow(core, actuators);
+    while (core.flightPhase() == mark4::FlightPhase::BALLISTIC)
+    {
+        timestamp = feed(core, actuators, timestamp, 1U, 0.0f, true);
+    }
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::RECOVERY);
+    REQUIRE(actuators.motor[0] > 0.0f);
+
+    mark4::SensorFrame frame;
+    frame.timestampUs = timestamp;
+    frame.rc.killSwitch = true;
+    frame.rc.armSwitch = true;
+    frame.baroPa = HELPER_BARO_PA;
+    core.step(frame, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
+    for (const float m : actuators.motor)
+    {
+        REQUIRE(m == 0.0f);
+    }
+
+    // Releasing the kill with the arm switch off must not resume anything.
+    frame.rc.killSwitch = false;
+    frame.rc.armSwitch = false;
+    frame.timestampUs = timestamp + STEP_US;
+    core.step(frame, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
+    REQUIRE(actuators.motor[0] == 0.0f);
+}
+
+TEST_CASE("a kill mid-hover cuts the motors and ends the mission")
+{
+    mark4::FlightCore core;
+    mark4::ActuatorFrame actuators;
+
+    std::uint64_t timestamp = playThrow(core, actuators);
+    for (std::uint32_t i = 0U; i < 500U && core.flightPhase() != mark4::FlightPhase::HOVER; ++i)
+    {
+        timestamp = feed(core, actuators, timestamp, 1U, 0.0f, true);
+    }
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::HOVER);
+
+    mark4::SensorFrame frame;
+    frame.timestampUs = timestamp;
+    frame.rc.killSwitch = true;
+    frame.rc.armSwitch = true;
+    frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
+    frame.baroPa = HELPER_BARO_PA;
+    core.step(frame, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
+    for (const float m : actuators.motor)
+    {
+        REQUIRE(m == 0.0f);
+    }
+}
+
+TEST_CASE("a kill clears the tilt streak: a rearm needs a fresh confirmation")
+{
+    mark4::FlightCore core;
+    mark4::SensorFrame frame;
+    mark4::ActuatorFrame actuators;
+    std::uint64_t timestamp = settle(core, actuators);
+    frame.rc.killSwitch = false;
+    frame.rc.throttle = 0.5f;
+    // Gravity almost sideways: the estimate converges beyond the tilt cutoff.
+    frame.accelMps2 = {0.0f, 0.985f * mark4::GRAVITY_MPS2, 0.174f * mark4::GRAVITY_MPS2};
+    frame.baroPa = HELPER_BARO_PA;
+
+    auto stepOnce = [&]() {
+        frame.timestampUs = timestamp;
+        core.step(frame, actuators);
+        timestamp += STEP_US;
+    };
+    auto estimatedUpZ = [&]() {
+        const mark4::Quaternion &q = core.attitude();
+        return q.w * q.w - q.x * q.x - q.y * q.y + q.z * q.z;
+    };
+
+    // Fly until the estimate crosses the tilt threshold: the streak begins.
+    for (std::uint32_t i = 0U; i < 5000U && estimatedUpZ() >= mark4::FlightCore::CUTOFF_TILT_MIN_UP;
+         ++i)
+    {
+        stepOnce();
+    }
+    REQUIRE(estimatedUpZ() < mark4::FlightCore::CUTOFF_TILT_MIN_UP);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+
+    // 100 ms into the 300 ms confirmation window: kill, and stay killed for
+    // well over the confirmation time.
+    for (std::uint32_t i = 0U; i < 50U; ++i)
+    {
+        stepOnce();
+    }
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    frame.rc.killSwitch = true;
+    for (std::uint32_t i = 0U; i < 250U; ++i)
+    {
+        stepOnce();
+    }
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
+
+    // Releasing the kill re-enters stick flight (the estimate is still
+    // tilted): a stale streak would cut immediately, a designed reset
+    // demands the full confirmation again.
+    frame.rc.killSwitch = false;
+    stepOnce();
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    stepOnce();
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+
+    // The tilt is real and sustained: the fresh confirmation still ends in
+    // a cutoff after its full window.
+    for (std::uint32_t i = 0U; i < 200U && core.flightPhase() == mark4::FlightPhase::MANUAL; ++i)
+    {
+        stepOnce();
+    }
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::CUTOFF);
+}
+
 TEST_CASE("the post-throw hover leans against the momentum then levels for good")
 {
     mark4::FlightCore core;

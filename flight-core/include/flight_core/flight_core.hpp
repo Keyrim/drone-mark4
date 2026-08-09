@@ -204,10 +204,23 @@ namespace mark4
         /// @brief Advances the time reference and derives the integration step.
         /// @return dt [s], 0 on the first frame or across a gap
         float deriveDt(std::uint64_t timestampUs);
+        /// @brief Ends the mission: resets everything mission-scoped and
+        ///        returns to IDLE. What survives, survives by design: the
+        ///        estimators keep tracking (fresh attitude on rearm), the
+        ///        throw detector keeps counting (the arm-time snapshot
+        ///        consumes pre-arm throws), the counters and the time
+        ///        reference keep their monotonic history.
+        void resetMission();
         void updateEstimators(const SensorFrame &sensors, float dt);
         void advancePhase(const SensorFrame &sensors);
         void runControl(const SensorFrame &sensors, float dt, ActuatorFrame &actuators);
-        [[nodiscard]] bool cutoffTripped(const SensorFrame &sensors, bool withTilt = true);
+        /// @return true when the accel norm says impact
+        [[nodiscard]] static bool impactTripped(const SensorFrame &sensors);
+        /// @return true when the gyro sits near its full scale
+        [[nodiscard]] static bool gyroSaturated(const SensorFrame &sensors);
+        /// @brief Advances the sustained-tilt streak with this frame.
+        /// @return true once the excessive tilt lasted CUTOFF_TILT_CONFIRM_US
+        [[nodiscard]] bool tiltCutoffConfirmed(const SensorFrame &sensors);
         [[nodiscard]] float estimatedUpZ() const;
         [[nodiscard]] std::array<float, 3> brakeUpWorld() const;
 
@@ -217,7 +230,8 @@ namespace mark4
         std::uint64_t m_recoveryStartUs = 0U;     ///< entry instant of RECOVERY [us]
         std::uint64_t m_hoverStartUs = 0U;        ///< entry instant of HOVER [us]
         bool m_brakeDone = false;                 ///< braking spent for this flight
-        std::uint64_t m_tiltExceededSinceUs = 0U; ///< start of the tilt streak, 0 = none
+        bool m_tiltExceeded = false;              ///< a tilt streak is in progress
+        std::uint64_t m_tiltExceededSinceUs = 0U; ///< start of the tilt streak [us]
         std::uint32_t m_stepCount = 0U;
         std::uint32_t m_staleFrameCount = 0U;   ///< frames with a non-increasing timestamp
         std::uint32_t m_invalidFrameCount = 0U; ///< frames with a NaN or Inf field

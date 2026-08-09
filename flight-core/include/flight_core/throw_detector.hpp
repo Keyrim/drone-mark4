@@ -108,8 +108,10 @@ namespace mark4
 
         std::uint64_t m_thrustStartUs = 0U;   ///< first frame above the thrust threshold
         std::uint64_t m_thrustLastUs = 0U;    ///< last frame above the thrust threshold
-        std::uint64_t m_freeFallStartUs = 0U; ///< start of the free fall streak, 0 = none
-        std::uint64_t m_exitStartUs = 0U;     ///< start of the ballistic exit streak, 0 = none
+        bool m_inFreeFallStreak = false;      ///< a free fall streak is in progress
+        std::uint64_t m_freeFallStartUs = 0U; ///< start of the free fall streak [us]
+        bool m_inExitStreak = false;          ///< a ballistic exit streak is in progress
+        std::uint64_t m_exitStartUs = 0U;     ///< start of the ballistic exit streak [us]
         float m_candidateVelocityMps = 0.0f;  ///< vertical velocity at the streak start
         float m_candidateAltitudeM = 0.0f;    ///< altitude at the streak start
 
