@@ -128,7 +128,10 @@ structs in `protocol/`.
 
 {"type":"status","recording":false,"serialOpen":true,
  "counts":{"telemetryRows":0,"simRawRows":0,"blackboxRecords":0,
-           "badFrames":0,"rejectedAnnounces":0},"clients":1}
+           "badFrames":0,"rejectedAnnounces":0},"clients":1,
+ "links":[{"stream":"telemetry","sourceId":2,"sourceName":"drone_sim",
+           "received":100,"lost":0,"duplicates":0,"resyncs":0,
+           "lossRate":0.0,"lastSequence":99}]}
 
 {"type":"ack","id":7,"ok":true,"error":""}
 
@@ -143,6 +146,15 @@ structs in `protocol/`.
 
 {"type":"profile","name":"bench","values":{"101":0.028}}
 ```
+
+`links` holds one entry per (stream, source) pair the hub has seen, read
+from the sequence number every stream packet carries. The number is 16 bits
+and wraps, so the distance between two packets is read in that arithmetic; a
+forward jump of more than 1024 is counted as one `resyncs` rather than as a
+thousand losses, because that is a sender restarting or the hub joining a
+stream already in flight. `sourceName` is what discovery calls that source,
+empty while nobody has announced it. `lossRate` is `lost / (received +
+lost)`.
 
 `statusName` is one of `ok`, `unknownId`, `outOfBounds`, `lockedWhileArmed`.
 `source` is inferred from the path the answer arrived by: the serial link

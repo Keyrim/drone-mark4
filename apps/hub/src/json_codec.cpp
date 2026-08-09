@@ -607,12 +607,29 @@ namespace mark4
         counts["badFrames"] = status.badFrames;
         counts["rejectedAnnounces"] = status.rejectedAnnounces;
 
+        Json links = Json::array();
+        for (const LinkHealth &link : status.links)
+        {
+            Json entry;
+            entry["stream"] = streamKindName(link.stream);
+            entry["sourceId"] = link.sourceId;
+            entry["sourceName"] = link.sourceName;
+            entry["received"] = link.received;
+            entry["lost"] = link.lost;
+            entry["duplicates"] = link.duplicates;
+            entry["resyncs"] = link.resyncs;
+            entry["lossRate"] = linkLossRate(link);
+            entry["lastSequence"] = link.lastSequence;
+            links.push_back(entry);
+        }
+
         Json message;
         message["type"] = "status";
         message["recording"] = status.recording;
         message["serialOpen"] = status.serialOpen;
         message["counts"] = counts;
         message["clients"] = status.clients;
+        message["links"] = links;
         return message.dump();
     }
 

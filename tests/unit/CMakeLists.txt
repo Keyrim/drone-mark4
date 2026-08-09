@@ -15,6 +15,7 @@ add_executable(unit_tests
     test_control.cpp
     test_flight_core.cpp
     test_hub_discovery.cpp
+    test_hub_health.cpp
     test_hub_json.cpp
     test_hub_recorder.cpp
     test_hub_tuning_profiles.cpp

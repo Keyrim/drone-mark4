@@ -13,6 +13,7 @@
 #include "hub/discovery.hpp"
 #include "hub/json_codec.hpp"
 #include "hub/serial_transport.hpp"
+#include "hub/stream_health.hpp"
 #include "hub/stream_recorder.hpp"
 #include "hub/tuning_profiles.hpp"
 #include "hub/udp_transport.hpp"
@@ -212,6 +213,7 @@ namespace mark4
         };
 
         Config m_config;                         ///< settings of this run
+        StreamHealth m_health;                   ///< sequence health of every link
         StreamRecorder m_recorder;               ///< CSV pair and blackbox file
         TuningProfiles m_profiles;               ///< stored tuning profiles
         DiscoveryRegistry m_registry;            ///< live processes

@@ -247,6 +247,7 @@ namespace mark4
     {
         TelemetryPacket packet{};
         std::memcpy(&packet, data, sizeof(packet));
+        m_health.onPacket(StreamKind::TELEMETRY, packet.sourceId, packet.sequence);
         m_recorder.onTelemetry(packet);
         m_ws.broadcastText(telemetryToJson(packet));
     }
@@ -255,6 +256,7 @@ namespace mark4
     {
         SimRawPacket packet{};
         std::memcpy(&packet, data, sizeof(packet));
+        m_health.onPacket(StreamKind::SIM_RAW, packet.sourceId, packet.sequence);
         m_recorder.onSimRaw(packet);
         m_ws.broadcastText(simRawToJson(packet));
     }
@@ -543,6 +545,22 @@ namespace mark4
         snapshot.badFrames = stats.badFrames;
         snapshot.rejectedAnnounces = m_registry.rejectedAnnounces();
         snapshot.clients = m_ws.clientCount();
+        snapshot.links = m_health.links();
+        for (LinkHealth &link : snapshot.links)
+        {
+            // The counters know a source byte; only the discovery table knows
+            // what that byte is called, and only while the process is alive.
+            const auto found =
+                std::find_if(m_registry.processes().begin(),
+                             m_registry.processes().end(),
+                             [&link](const DiscoveredProcess &process) {
+                                 return static_cast<std::uint8_t>(process.kind) == link.sourceId;
+                             });
+            if (found != m_registry.processes().end())
+            {
+                link.sourceName = streamSourceName(found->kind);
+            }
+        }
         return snapshot;
     }
 } // namespace mark4

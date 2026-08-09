@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "hub/discovery.hpp"
+#include "hub/stream_health.hpp"
 #include "hub/tuning_profiles.hpp"
 #include "protocol/commands.hpp"
 #include "protocol/header.hpp"
@@ -73,6 +74,7 @@ namespace mark4
         std::uint64_t badFrames = 0U;         ///< serial frames that decoded to nothing
         std::uint64_t rejectedAnnounces = 0U; ///< announces dropped as invalid
         std::size_t clients = 0U;             ///< websocket clients connected
+        std::vector<LinkHealth> links;        ///< sequence health, one entry per link
     };
 
     /// @brief Serialized bytes of a packed wire struct, ready for a socket.

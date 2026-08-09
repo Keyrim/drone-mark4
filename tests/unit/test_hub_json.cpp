@@ -204,6 +204,17 @@ TEST_CASE("status json carries the counters")
     status.rejectedAnnounces = 50U;
     status.clients = 3U;
 
+    mark4::LinkHealth link;
+    link.stream = mark4::StreamKind::SIM_RAW;
+    link.sourceId = 4U;
+    link.sourceName = "sim_plant";
+    link.received = 9U;
+    link.lost = 1U;
+    link.duplicates = 2U;
+    link.resyncs = 3U;
+    link.lastSequence = 123U;
+    status.links.push_back(link);
+
     const nlohmann::json message = parsed(mark4::statusToJson(status));
     CHECK(message["type"] == "status");
     CHECK(message["recording"] == true);
@@ -214,6 +225,18 @@ TEST_CASE("status json carries the counters")
     CHECK(message["counts"]["badFrames"] == 40U);
     CHECK(message["counts"]["rejectedAnnounces"] == 50U);
     CHECK(message["clients"] == 3U);
+
+    REQUIRE(message["links"].size() == 1U);
+    const nlohmann::json &entry = message["links"][0];
+    CHECK(entry["stream"] == "simRaw");
+    CHECK(entry["sourceId"] == 4U);
+    CHECK(entry["sourceName"] == "sim_plant");
+    CHECK(entry["received"] == 9U);
+    CHECK(entry["lost"] == 1U);
+    CHECK(entry["duplicates"] == 2U);
+    CHECK(entry["resyncs"] == 3U);
+    CHECK(entry["lossRate"] == 0.1);
+    CHECK(entry["lastSequence"] == 123U);
 }
 
 TEST_CASE("an ack answers one request by its correlation id")
