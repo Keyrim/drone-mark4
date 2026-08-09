@@ -1,7 +1,6 @@
 #include "firmware_app.hpp"
 
 #include <cstdint>
-#include <cstring>
 
 #include "flight_core/types.hpp"
 #include "platform_stm32/board.hpp"
@@ -88,7 +87,7 @@ namespace mark4
                   static_cast<unsigned long>(SensorSourceStm32::FRAME_RATE_HZ),
                   static_cast<unsigned long>(UART1_BAUD_RATE),
                   static_cast<unsigned long>(TelemetryPublisher::DECIMATION),
-                  static_cast<unsigned long>(RC_TIMEOUT_US / US_PER_MS));
+                  static_cast<unsigned long>(RcTracker::RC_TIMEOUT_US / US_PER_MS));
         return true;
     }
 
@@ -102,12 +101,6 @@ namespace mark4
         std::uint32_t lastFailureCount = 0U;
         bool degraded = false;
 
-        // Last pilot state seen on the uplink, safe until proven fresh:
-        // the SensorFrame defaults (kill engaged, disarmed) apply before
-        // the first packet and whenever the fail-safe trips.
-        mark4::RcInput rc;
-        std::uint64_t lastRcUs = 0U;
-        bool rcEverReceived = false;
         for (;;)
         {
             if (m_sensorSource.waitFrame(frame) != FrameWait::FRAME)
@@ -115,35 +108,26 @@ namespace mark4
                 continue; // the timer-paced source only ever produces FRAME
             }
 
+            // The tracker consumes the RC packets and hands back everything
+            // else, which this composition answers itself.
             std::uint8_t packet[SERIAL_MAX_PAYLOAD];
             for (;;)
             {
-                const std::size_t size = m_commandReceiver.poll(packet, sizeof(packet));
+                const std::size_t size =
+                    m_rcTracker.pump(packet, sizeof(packet), frame.timestampUs);
                 if (size == 0U)
                 {
                     break;
                 }
-                if (size == RC_COMMAND_PACKET_SIZE &&
-                    hasHeader(packet, size, PacketType::RC_COMMAND))
-                {
-                    RcCommandPacket command{};
-                    std::memcpy(&command, packet, sizeof(command));
-                    rc.killSwitch = command.killSwitch != 0U;
-                    rc.armSwitch = command.armSwitch != 0U;
-                    rc.throttle = command.throttle;
-                    lastRcUs = frame.timestampUs;
-                    rcEverReceived = true;
-                }
-                else if (size == REBOOT_COMMAND_PACKET_SIZE &&
-                         hasHeader(packet, size, PacketType::REBOOT_COMMAND) &&
-                         packet[2] == BOARD_REBOOT_MAGIC)
+                if (size == REBOOT_COMMAND_PACKET_SIZE &&
+                    hasHeader(packet, size, PacketType::REBOOT_COMMAND) &&
+                    packet[2] == BOARD_REBOOT_MAGIC)
                 {
                     rttWrite("rc: reboot command, resetting\n");
                     systemReset();
                 }
             }
-            const bool rcLost = !rcEverReceived || (frame.timestampUs - lastRcUs) > RC_TIMEOUT_US;
-            frame.rc = rcLost ? mark4::RcInput{} : rc;
+            m_rcTracker.graft(frame);
 
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);
@@ -186,7 +170,7 @@ namespace mark4
                           static_cast<unsigned long>(m_telemetrySender.packetsSent()),
                           static_cast<unsigned long>(m_telemetrySender.packetsDropped()),
                           static_cast<unsigned long>(m_commandReceiver.packetsReceived()),
-                          rcLost ? " (failsafe)" : "",
+                          m_rcTracker.failsafeActive(frame.timestampUs) ? " (failsafe)" : "",
                           static_cast<unsigned>(m_core.flightPhase()));
             }
         }

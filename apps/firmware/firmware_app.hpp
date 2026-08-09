@@ -7,6 +7,7 @@
 
 #include "flight_core/flight_core.hpp"
 #include "platform_common/blackbox.hpp"
+#include "platform_common/rc_tracker.hpp"
 #include "platform_common/telemetry_publisher.hpp"
 #include "platform_stm32/clock_stm32.hpp"
 #include "platform_stm32/command_receiver_stm32.hpp"
@@ -30,11 +31,6 @@ namespace mark4
       public:
         /// Frames between two status lines over RTT: one per second.
         static constexpr std::uint32_t FRAMES_PER_STATUS = SensorSourceStm32::FRAME_RATE_HZ;
-
-        /// Fail-safe: silence on the RC uplink longer than this reverts
-        /// to the safe state (kill engaged, disarmed). Five missed
-        /// packets at the 10 Hz the sender streams at.
-        static constexpr std::uint64_t RC_TIMEOUT_US = 500000U;
 
         FirmwareApp() = default;
 
@@ -62,6 +58,7 @@ namespace mark4
         mark4::TelemetrySenderStm32 m_telemetrySender;
         mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender, StreamSource::FIRMWARE};
         mark4::CommandReceiverStm32 m_commandReceiver;
+        mark4::RcTracker m_rcTracker{m_commandReceiver};
         mark4::LogSinkUart m_logSink{m_telemetrySender};
         mark4::Blackbox m_blackbox{m_logSink};
         mark4::FlightCore m_core;
