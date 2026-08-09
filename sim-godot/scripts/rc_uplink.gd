@@ -17,6 +17,11 @@ extends Node
 ## listens on (the sim binds its port exclusively, and the ghost view use
 ## case runs both at once). Harmless when no bridge is listening: the
 ## datagrams fall on the floor.
+##
+## The uplink never runs headless: a headless instance is a batch
+## campaign, and a campaign must not stream arm/kill states at the
+## real-board bridge port a bench session may be using. Interactive
+## sessions can opt out with --no-rc-uplink.
 
 ## Keep in sync with protocol/include/protocol/version.hpp.
 const PROTOCOL_VERSION := 9
@@ -48,6 +53,13 @@ var _since_last_send: float = 0.0
 
 
 func _ready() -> void:
+	if DisplayServer.get_name() == "headless":
+		# Batch campaigns run headless and share the machine with bench
+		# sessions; their pilot state must never reach the real board.
+		return
+	if SimArgs.has_flag("no-rc-uplink"):
+		print("rc uplink: disabled by --no-rc-uplink")
+		return
 	port = SimArgs.get_port("rc-port", port)
 	_pilot = get_node(pilot_path) as PilotInput
 	if _pilot == null:

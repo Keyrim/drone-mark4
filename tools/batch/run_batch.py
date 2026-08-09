@@ -46,7 +46,10 @@ PHASE_CUTOFF = 6
 PHASE_NAMES = ["idle", "manual", "armed", "ballistic", "recovery", "hover", "cutoff"]
 
 # One UDP port range per instance: sim link, telemetry (+ mirror on +2),
-# raw state and command listener never overlap between instances.
+# raw state, command listener and rc uplink never overlap between
+# instances. The rc port override is defense in depth: the uplink already
+# refuses to run headless, and even if that guard regressed the stream
+# must not land on the real-board bridge port.
 BASE_PORT = 48000
 PORT_STRIDE = 10
 
@@ -92,6 +95,7 @@ class Instance:
         self.telemetry_port = base + 1
         self.raw_port = base + 5
         self.command_port = base + 7
+        self.rc_port = base + 9
 
         log_dir = os.path.join(REPO_ROOT, "logs")
         os.makedirs(log_dir, exist_ok=True)
@@ -116,6 +120,8 @@ class Instance:
                 str(self.command_port),
                 "--raw-port",
                 str(self.raw_port),
+                "--rc-port",
+                str(self.rc_port),
                 "--lockstep",
                 "--time-scale",
                 str(args.time_scale),
