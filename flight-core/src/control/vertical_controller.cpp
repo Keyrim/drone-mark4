@@ -6,7 +6,7 @@ namespace mark4
     {
         const float error = setpointMps - verticalVelocityMps;
 
-        m_integral += DEFAULT_KI * error * dt;
+        m_integral += m_ki * error * dt;
         if (m_integral > INTEGRAL_LIMIT)
         {
             m_integral = INTEGRAL_LIMIT;
@@ -16,7 +16,7 @@ namespace mark4
             m_integral = -INTEGRAL_LIMIT;
         }
 
-        const float collective = m_hoverCollective + DEFAULT_KP * error + m_integral;
+        const float collective = m_hoverCollective + m_kp * error + m_integral;
         if (collective < 0.0f)
         {
             return 0.0f;

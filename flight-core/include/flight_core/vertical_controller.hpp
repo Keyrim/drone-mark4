@@ -30,9 +30,48 @@ namespace mark4
         static constexpr float INTEGRAL_LIMIT = 0.2f;
 
         /// @param hoverCollective feedforward collective at hover [0, 1]
-        explicit VerticalController(float hoverCollective = DEFAULT_HOVER_COLLECTIVE)
-            : m_hoverCollective(hoverCollective)
+        /// @param kp proportional gain [collective per m/s]
+        /// @param ki integral gain [collective per m]
+        explicit VerticalController(float hoverCollective = DEFAULT_HOVER_COLLECTIVE,
+                                    float kp = DEFAULT_KP,
+                                    float ki = DEFAULT_KI)
+            : m_hoverCollective(hoverCollective),
+              m_kp(kp),
+              m_ki(ki)
         {
+        }
+
+        /// @brief Sets the hover feedforward collective. Callable between two
+        ///        steps; the integrator state is deliberately preserved so a
+        ///        retune does not kick the loop.
+        /// @param hoverCollective feedforward collective at hover [0, 1]
+        void setHoverCollective(float hoverCollective)
+        {
+            m_hoverCollective = hoverCollective;
+        }
+
+        /// @brief Sets the proportional gain. Callable between two steps; the
+        ///        integrator state is deliberately preserved so a retune does
+        ///        not kick the loop.
+        /// @param kp proportional gain [collective per m/s]
+        void setKp(float kp)
+        {
+            m_kp = kp;
+        }
+
+        /// @brief Sets the integral gain. Callable between two steps; the
+        ///        integrator state is deliberately preserved so a retune does
+        ///        not kick the loop.
+        /// @param ki integral gain [collective per m]
+        void setKi(float ki)
+        {
+            m_ki = ki;
+        }
+
+        /// @return feedforward collective at hover [0, 1]
+        [[nodiscard]] float hoverCollective() const
+        {
+            return m_hoverCollective;
         }
 
         /// @brief Advances the loop by one step.
@@ -47,6 +86,8 @@ namespace mark4
 
       private:
         float m_hoverCollective; ///< feedforward collective at hover
+        float m_kp;              ///< proportional gain [collective per m/s]
+        float m_ki;              ///< integral gain [collective per m]
         float m_integral = 0.0f; ///< integrator state
     };
 } // namespace mark4

@@ -92,6 +92,24 @@ namespace mark4
         {
         }
 
+        /// @brief Sets the altitude correction gain. Callable between two
+        ///        steps; the altitude and velocity estimates are left as they
+        ///        are, the new gain only shapes how the next frames correct them.
+        /// @param altitudeGain correction gain on the altitude [1/s]
+        void setAltitudeGain(float altitudeGain)
+        {
+            m_altitudeGain = altitudeGain;
+        }
+
+        /// @brief Sets the velocity correction gain. Callable between two
+        ///        steps; the altitude and velocity estimates are left as they
+        ///        are, the new gain only shapes how the next frames correct them.
+        /// @param velocityGain correction gain on the velocity [1/s^2]
+        void setVelocityGain(float velocityGain)
+        {
+            m_velocityGain = velocityGain;
+        }
+
         /// @brief Advances the estimate with one sensor frame. The first
         ///        REFERENCE_SAMPLES resting frames only build the baro reference. The
         ///        caller owns the time policy (monotonicity, gap handling) and

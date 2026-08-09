@@ -1,5 +1,6 @@
 #include <array>
 #include <cmath>
+#include <cstddef>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -77,6 +78,30 @@ TEST_CASE("the rate controller pushes toward the setpoint and clamps its integra
     controller.reset();
     torque = controller.update({0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, 0.002f);
     REQUIRE(torque[0] == 0.0f);
+}
+
+TEST_CASE("the injected default gains behave exactly like the implicit ones")
+{
+    mark4::RateController implicitGains;
+    mark4::RateController explicitGains{mark4::RateController::DEFAULT_KP_ROLL_PITCH,
+                                        mark4::RateController::DEFAULT_KI_ROLL_PITCH,
+                                        mark4::RateController::DEFAULT_KP_YAW,
+                                        mark4::RateController::DEFAULT_KI_YAW};
+
+    // Same sequence through both: the outputs must match bit for bit, so
+    // making the gains injectable changed no arithmetic at all.
+    for (int i = 0; i < 100; ++i)
+    {
+        const float phase = 0.1f * static_cast<float>(i);
+        const std::array<float, 3> setpoint = {1.0f, -0.5f, 0.25f * phase};
+        const std::array<float, 3> gyro = {0.1f * phase, 0.0f, -0.2f};
+        const std::array<float, 3> fromImplicit = implicitGains.update(setpoint, gyro, 0.002f);
+        const std::array<float, 3> fromExplicit = explicitGains.update(setpoint, gyro, 0.002f);
+        for (std::size_t axis = 0U; axis < fromImplicit.size(); ++axis)
+        {
+            REQUIRE(fromImplicit[axis] == fromExplicit[axis]);
+        }
+    }
 }
 
 TEST_CASE("the attitude controller commands rates that reduce the tilt")

@@ -61,6 +61,24 @@ namespace mark4
         {
         }
 
+        /// @brief Sets the proportional gain. Callable between two steps; the
+        ///        bias integrator is deliberately left untouched, it holds a
+        ///        physical property of the gyro that no gain change invalidates.
+        /// @param kp proportional gain on the gravity direction error [1/s]
+        void setKp(float kp)
+        {
+            m_kp = kp;
+        }
+
+        /// @brief Sets the integral gain. Callable between two steps; the bias
+        ///        integrator is deliberately left untouched, it holds a
+        ///        physical property of the gyro that no gain change invalidates.
+        /// @param ki integral gain, drives the gyro bias estimate [1/s^2]
+        void setKi(float ki)
+        {
+            m_ki = ki;
+        }
+
         /// @brief Advances the estimate with one sensor frame. The caller owns
         ///        the time policy (monotonicity, gap handling) and hands the
         ///        integration step down; a non-positive dt is a no-op.

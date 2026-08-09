@@ -28,6 +28,15 @@ namespace mark4
         {
         }
 
+        /// @brief Sets the proportional gain. Callable between two steps; this
+        ///        loop is stateless, so the change takes effect on the next
+        ///        setpoint and nothing else.
+        /// @param kp proportional gain on the tilt error [1/s]
+        void setKp(float kp)
+        {
+            m_kp = kp;
+        }
+
         /// @brief Computes the body rate setpoints tilting the drone so its
         ///        thrust axis reaches the desired world direction. The default
         ///        direction is straight up: a pure leveling. A braking or

@@ -271,7 +271,7 @@ namespace mark4
                     m_attitudeController.rateSetpointRadS(m_attitudeEstimator.attitude());
                 const std::array<float, 3> torqueCmd =
                     m_rateController.update(rateSetpoint, sensors.gyroRadS, dt);
-                float collective = VerticalController::DEFAULT_HOVER_COLLECTIVE * estimatedUpZ();
+                float collective = m_verticalController.hoverCollective() * estimatedUpZ();
                 collective =
                     collective < RECOVERY_MIN_COLLECTIVE ? RECOVERY_MIN_COLLECTIVE : collective;
                 actuators.motor = mixMotors(collective, torqueCmd);

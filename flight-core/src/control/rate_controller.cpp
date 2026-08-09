@@ -19,17 +19,12 @@ namespace mark4
                                                 const std::array<float, 3> &gyroRadS,
                                                 float dt)
     {
-        const std::array<float, 3> kp = {
-            DEFAULT_KP_ROLL_PITCH, DEFAULT_KP_ROLL_PITCH, DEFAULT_KP_YAW};
-        const std::array<float, 3> ki = {
-            DEFAULT_KI_ROLL_PITCH, DEFAULT_KI_ROLL_PITCH, DEFAULT_KI_YAW};
-
         std::array<float, 3> torque{};
         for (std::size_t axis = 0U; axis < torque.size(); ++axis)
         {
             const float error = setpointRadS[axis] - gyroRadS[axis];
-            m_integral[axis] = clampAbs(m_integral[axis] + ki[axis] * error * dt, INTEGRAL_LIMIT);
-            torque[axis] = kp[axis] * error + m_integral[axis];
+            m_integral[axis] = clampAbs(m_integral[axis] + m_ki[axis] * error * dt, INTEGRAL_LIMIT);
+            torque[axis] = m_kp[axis] * error + m_integral[axis];
         }
         return torque;
     }
