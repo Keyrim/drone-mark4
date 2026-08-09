@@ -51,6 +51,9 @@ namespace mark4
             frameOut.rc.throttle = packet.throttle;
             frameOut.rc.armSwitch = packet.armSwitch != 0U;
             m_resetCount = packet.resetCount;
+            // Only a validated sensor packet may steer the motor replies:
+            // a stray datagram on the port must not stall the lockstep.
+            m_link.acceptLastSender();
             return FrameWait::FRAME;
         }
     }

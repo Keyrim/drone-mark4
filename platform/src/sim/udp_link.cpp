@@ -101,14 +101,23 @@ namespace mark4
             return 0U;
         }
 
-        m_lastSender = sender;
-        m_hasLastSender = true;
+        m_pendingSender = sender;
+        m_hasPendingSender = true;
         return static_cast<std::size_t>(received);
+    }
+
+    void UdpLink::acceptLastSender()
+    {
+        if (m_hasPendingSender)
+        {
+            m_replyTarget = m_pendingSender;
+            m_hasReplyTarget = true;
+        }
     }
 
     bool UdpLink::replyToLastSender(const std::uint8_t *data, std::size_t size)
     {
-        if (m_socketFd < 0 || !m_hasLastSender || data == nullptr)
+        if (m_socketFd < 0 || !m_hasReplyTarget || data == nullptr)
         {
             return false;
         }
@@ -117,8 +126,8 @@ namespace mark4
                                       data,
                                       size,
                                       0,
-                                      reinterpret_cast<const sockaddr *>(&m_lastSender),
-                                      sizeof(m_lastSender));
+                                      reinterpret_cast<const sockaddr *>(&m_replyTarget),
+                                      sizeof(m_replyTarget));
         if (sent < 0)
         {
             logErrno("sendto");

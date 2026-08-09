@@ -11,9 +11,13 @@
 namespace mark4
 {
     /// Owns one UDP socket bound to a local port: blocking receive with a
-    /// timeout, and a reply channel back to whoever sent the last datagram.
-    /// The socket is closed by the destructor; the object is neither copyable
-    /// nor movable so that the file descriptor has a single owner.
+    /// timeout, and a reply channel back to the last *accepted* sender. The
+    /// link itself never trusts a datagram: the consumer validates the bytes
+    /// it received, then calls acceptLastSender() to make that peer the reply
+    /// target - one stray datagram on the port can therefore never redirect
+    /// the replies. The socket is closed by the destructor; the object is
+    /// neither copyable nor movable so that the file descriptor has a single
+    /// owner.
     class UdpLink
     {
       public:
@@ -38,15 +42,19 @@ namespace mark4
         }
 
         /// @brief Blocks until one datagram arrives or the receive timeout
-        ///        expires. On success the sender address is recorded, so that
-        ///        replyToLastSender() knows where to answer.
+        ///        expires. The sender address is only remembered as a
+        ///        candidate: it becomes the reply target when the consumer,
+        ///        after validating the datagram, calls acceptLastSender().
         /// @param[out] bufferOut receives the datagram bytes
         /// @param capacity size of bufferOut; a longer datagram is truncated
         /// @return number of bytes received, 0 on timeout or error
         std::size_t receive(std::uint8_t *bufferOut, std::size_t capacity);
 
-        /// @brief Sends one datagram back to the sender of the last datagram
-        ///        received.
+        /// @brief Promotes the sender of the last received datagram to reply
+        ///        target. Call it once the datagram passed validation.
+        void acceptLastSender();
+
+        /// @brief Sends one datagram back to the last accepted sender.
         /// @param data bytes to send
         /// @param size number of bytes to send
         /// @return true when the whole datagram was handed to the stack
@@ -56,9 +64,11 @@ namespace mark4
         /// @brief Closes the socket if it is open and marks it closed.
         void closeSocket();
 
-        int m_socketFd = -1;            ///< -1 when closed
-        std::uint16_t m_boundPort = 0U; ///< local port, resolved after bind
-        sockaddr_in m_lastSender{};     ///< source of the last datagram received
-        bool m_hasLastSender = false;   ///< true once a datagram was received
+        int m_socketFd = -1;             ///< -1 when closed
+        std::uint16_t m_boundPort = 0U;  ///< local port, resolved after bind
+        sockaddr_in m_pendingSender{};   ///< source of the last datagram received
+        bool m_hasPendingSender = false; ///< true once a datagram was received
+        sockaddr_in m_replyTarget{};     ///< last accepted sender
+        bool m_hasReplyTarget = false;   ///< true once a sender was accepted
     };
 } // namespace mark4

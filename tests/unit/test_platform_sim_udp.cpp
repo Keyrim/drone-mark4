@@ -186,6 +186,39 @@ TEST_CASE("malformed datagrams are skipped and the next valid one is delivered")
     REQUIRE(frame.rc.throttle == TEST_THROTTLE);
 }
 
+TEST_CASE("a stray datagram cannot redirect the motor replies")
+{
+    mark4::UdpLink link;
+    REQUIRE(link.open(0U, TEST_TIMEOUT_MS));
+
+    mark4::SensorSourceSim source(link);
+    mark4::MotorSinkSim sink(link);
+    SimulatorStub simulator;
+    SimulatorStub intruder;
+
+    // The simulator establishes itself with a valid packet first.
+    const SensorDatagram datagram = makeSensorDatagram();
+    REQUIRE(simulator.sendTo(link.boundPort(), datagram.data(), datagram.size()));
+    mark4::SensorFrame frame;
+    REQUIRE(source.waitFrame(frame) == mark4::FrameWait::FRAME);
+
+    // A stray datagram lands on the port; the source rejects it (and times
+    // out waiting for a valid one), but the sender must not be latched.
+    const std::array<std::uint8_t, 4> garbage = {0xDEU, 0xADU, 0xBEU, 0xEFU};
+    REQUIRE(intruder.sendTo(link.boundPort(), garbage.data(), garbage.size()));
+    REQUIRE(source.waitFrame(frame) == mark4::FrameWait::TIMEOUT);
+
+    // The motor reply still reaches the simulator, not the intruder.
+    mark4::ActuatorFrame actuators;
+    actuators.timestampUs = frame.timestampUs;
+    actuators.motor = {0.1f, 0.2f, 0.3f, 0.4f};
+    sink.push(actuators);
+
+    std::array<std::uint8_t, 64> wire{};
+    REQUIRE(simulator.receive(wire.data(), wire.size()) == mark4::SIM_ACTUATOR_PACKET_SIZE);
+    REQUIRE(intruder.receive(wire.data(), wire.size()) == 0U);
+}
+
 TEST_CASE("an idle link ends the run")
 {
     mark4::UdpLink link;
