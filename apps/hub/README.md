@@ -105,6 +105,53 @@ stream), and every response carries `Cache-Control: no-store`. A URI holding
 a `..` component is refused: nothing outside the pages directory is
 reachable.
 
+## HTTP API
+
+`/api/` is the recordings, and only the recordings: files on disk, finished
+business, safe to read from any connection thread. Everything live is a
+websocket message. A handler here never touches the recorder, the discovery
+table or the counters, which is why the hub holds no lock.
+
+A recording is addressed by the exact `name` the listing gave it. That
+listing is the whole address space: a name it does not hold addresses
+nothing, so nothing a caller sends is ever turned into a path. An error is
+`{"error":"..."}` with the matching status.
+
+```
+GET /api/recordings
+  -> {"logDir":"logs","recordings":[
+       {"name":"board_20260807_150143.m4bb","kind":"blackbox","sizeBytes":N,
+        "modifiedUnixS":N,"estimatedRecords":N},
+       {"name":"streams_20260805_225701","kind":"streams","sizeBytes":N,
+        "modifiedUnixS":N,"telemetryFile":"..._telemetry.csv",
+        "simRawFile":"..._simraw.csv"}]}
+
+GET /api/recording?name=X[&from=&to=&maxPoints=]
+  streams   -> {"name","kind":"streams","window":{"fromUs":..,"toUs":..},
+                "telemetry":{"total":N,"stride":N,"count":N,
+                             "columns":[...],"rows":[[...]]},
+                "simRaw":{...}}
+  blackbox  -> {"name","kind":"blackbox","total":N,"stride":N,"count":N,
+                "skippedBytes":N,"columns":[...],"rows":[[...]]}
+```
+
+Most recent first; `simRawFile` is empty when the pair has no exact half;
+`batch_*.log` files are not recordings. A streams recording is named by the
+prefix its two files share, a blackbox recording by its file name.
+`estimatedRecords` is the file size divided by the record size, not a count:
+a listing must stay cheap however long the run was.
+
+`columns` are the header line of the recorded CSV, verbatim, or the fields of
+a blackbox record; rows are arrays, in that column order. `from` and `to`
+are timestamps in microseconds, `maxPoints` defaults to 2000 and is capped at
+20000. A decode walks the file twice, once to count and once to emit every
+`stride`-th point, so nothing large is ever held whole; the first and the
+last point of the window are always among them.
+
+`skippedBytes` counts what framed no record: a blackbox decode resynchronizes
+on the record marker after a torn write, and a torn write costs only the
+record it tore.
+
 ## Websocket messages
 
 One JSON object per message, keys named exactly like the fields of the wire

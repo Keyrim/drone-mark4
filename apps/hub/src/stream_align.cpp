@@ -21,6 +21,9 @@ namespace mark4
         /// Radians to degrees, spelled as the reference scoring spells it.
         constexpr double RAD_TO_DEG = 180.0 / std::numbers::pi;
 
+        /// A quaternion turns by twice the angle it carries.
+        constexpr double HALF_ANGLE = 2.0;
+
         /// Compensated running sum. Adding thousands of squares naively
         /// drops the small ones under the running total, and the loss lands
         /// where it hurts most: near a perfect attitude match the arc cosine
@@ -139,7 +142,7 @@ namespace mark4
         // A quaternion and its negation are the same rotation, hence the
         // absolute value; the clamp keeps a unit-norm rounding error out of
         // the domain of acos.
-        return RAD_TO_DEG * 2.0 * std::acos(std::min(1.0, std::fabs(dot.total())));
+        return RAD_TO_DEG * HALF_ANGLE * std::acos(std::min(1.0, std::fabs(dot.total())));
     }
 
     std::vector<AlignedPair> alignStreams(const std::vector<AlignSample> &telemetry,

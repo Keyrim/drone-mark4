@@ -3,10 +3,14 @@
 
 #include "hub/http_api.hpp"
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <system_error>
+#include <vector>
+
+#include "hub/recordings.hpp"
 
 namespace mark4
 {
@@ -107,6 +111,239 @@ namespace mark4
                                std::istreambuf_iterator<char>());
             return result;
         }
+
+        /// The parameters of one request, decoded.
+        using Query = std::vector<std::pair<std::string, std::string>>;
+
+        /// Value the letters of a hexadecimal digit start at.
+        constexpr int HEX_LETTER_BASE = 10;
+
+        /// @brief Value of one hexadecimal digit.
+        /// @param digit character to read
+        /// @return its value, -1 when it is not one
+        int hexDigit(char digit)
+        {
+            if (digit >= '0' && digit <= '9')
+            {
+                return digit - '0';
+            }
+            if (digit >= 'a' && digit <= 'f')
+            {
+                return digit - 'a' + HEX_LETTER_BASE;
+            }
+            if (digit >= 'A' && digit <= 'F')
+            {
+                return digit - 'A' + HEX_LETTER_BASE;
+            }
+            return -1;
+        }
+
+        /// @brief Undoes the percent encoding of a query value.
+        /// @param text text to decode
+        /// @return the decoded text; an incomplete escape is kept as written
+        std::string percentDecoded(std::string_view text)
+        {
+            static constexpr int HEX_SHIFT = 4;
+            std::string decoded;
+            decoded.reserve(text.size());
+            for (std::size_t index = 0U; index < text.size(); ++index)
+            {
+                if (text[index] == '+')
+                {
+                    decoded += ' ';
+                    continue;
+                }
+                if (text[index] != '%' || index + 2U >= text.size())
+                {
+                    decoded += text[index];
+                    continue;
+                }
+                const int high = hexDigit(text[index + 1U]);
+                const int low = hexDigit(text[index + 2U]);
+                if (high < 0 || low < 0)
+                {
+                    decoded += text[index];
+                    continue;
+                }
+                decoded += static_cast<char>((high << HEX_SHIFT) | low);
+                index += 2U;
+            }
+            return decoded;
+        }
+
+        /// @brief Splits the query string of a request target.
+        /// @param uri request target
+        /// @return the parameters, in the order they were written
+        Query parseQuery(std::string_view uri)
+        {
+            Query query;
+            const std::size_t mark = uri.find('?');
+            if (mark == std::string_view::npos)
+            {
+                return query;
+            }
+            std::string_view rest = uri.substr(mark + 1U);
+            while (!rest.empty())
+            {
+                const std::size_t end = rest.find('&');
+                const std::string_view item = rest.substr(0U, end);
+                rest = (end == std::string_view::npos) ? std::string_view() : rest.substr(end + 1U);
+                if (item.empty())
+                {
+                    continue;
+                }
+                const std::size_t equals = item.find('=');
+                if (equals == std::string_view::npos)
+                {
+                    query.emplace_back(percentDecoded(item), std::string());
+                    continue;
+                }
+                query.emplace_back(percentDecoded(item.substr(0U, equals)),
+                                   percentDecoded(item.substr(equals + 1U)));
+            }
+            return query;
+        }
+
+        /// @brief Value of one parameter.
+        /// @param query parameters of the request
+        /// @param key parameter to look for
+        /// @return its value, empty when it was not sent
+        std::string queryValue(const Query &query, const char *key)
+        {
+            for (const auto &item : query)
+            {
+                if (item.first == key)
+                {
+                    return item.second;
+                }
+            }
+            return {};
+        }
+
+        /// @brief One answer carrying a reason instead of a result.
+        /// @param status status code to answer with
+        /// @param reason what went wrong
+        /// @return the answer
+        HttpResult jsonError(int status, const std::string &reason)
+        {
+            HubJson body;
+            body["error"] = reason;
+            HttpResult result;
+            result.status = status;
+            result.contentType = "application/json";
+            result.body = body.dump();
+            return result;
+        }
+
+        /// @brief One answer carrying JSON.
+        /// @param body body to answer with
+        /// @return the answer
+        HttpResult jsonAnswer(const HubJson &body)
+        {
+            HttpResult result;
+            result.contentType = "application/json";
+            result.body = body.dump();
+            return result;
+        }
+
+        /// @brief Reads the window parameters of a request.
+        /// @param query parameters of the request
+        /// @param windowOut receives the window
+        /// @param errorOut receives the reason when a parameter is unusable
+        /// @return true when the parameters make a window
+        bool readWindow(const Query &query, SampleWindow &windowOut, std::string &errorOut)
+        {
+            static constexpr int BASE = 10;
+            const std::string from = queryValue(query, "from");
+            const std::string to = queryValue(query, "to");
+            const std::string maxPoints = queryValue(query, "maxPoints");
+            if (!from.empty())
+            {
+                windowOut.fromUs = std::strtoull(from.c_str(), nullptr, BASE);
+            }
+            if (!to.empty())
+            {
+                windowOut.toUs = std::strtoull(to.c_str(), nullptr, BASE);
+            }
+            if (!maxPoints.empty())
+            {
+                const auto wanted = std::strtoull(maxPoints.c_str(), nullptr, BASE);
+                if (wanted == 0U)
+                {
+                    errorOut = "maxPoints must be at least 1";
+                    return false;
+                }
+                windowOut.maxPoints = std::min<std::size_t>(wanted, POINT_LIMIT);
+            }
+            if (windowOut.fromUs > windowOut.toUs)
+            {
+                errorOut = "from must not be after to";
+                return false;
+            }
+            return true;
+        }
+
+        /// @brief Looks one recording up by the name a caller sent.
+        /// @param config where to read from
+        /// @param query parameters of the request
+        /// @param recordingOut receives the recording
+        /// @param errorOut receives the answer to send when there is none
+        /// @return true when the listing holds that name
+        bool lookUpRecording(const HttpConfig &config,
+                             const Query &query,
+                             Recording &recordingOut,
+                             HttpResult &errorOut)
+        {
+            const std::string name = queryValue(query, "name");
+            if (name.empty())
+            {
+                errorOut = jsonError(HTTP_BAD_REQUEST, "name is required");
+                return false;
+            }
+            // The listing is the whole address space: a name it does not hold
+            // addresses nothing, so nothing a caller sends ever becomes a
+            // path of its own.
+            if (!findRecording(listRecordings(config.logDir), name, recordingOut))
+            {
+                errorOut = jsonError(HTTP_NOT_FOUND, "no recording named " + name);
+                return false;
+            }
+            return true;
+        }
+
+        /// @brief Answers GET /api/recordings.
+        /// @param config where to read from
+        /// @return the answer
+        HttpResult apiRecordings(const HttpConfig &config)
+        {
+            return jsonAnswer(recordingsToJson(config.logDir, listRecordings(config.logDir)));
+        }
+
+        /// @brief Answers GET /api/recording.
+        /// @param config where to read from
+        /// @param query parameters of the request
+        /// @return the answer
+        HttpResult apiRecording(const HttpConfig &config, const Query &query)
+        {
+            Recording recording;
+            HttpResult failure;
+            if (!lookUpRecording(config, query, recording, failure))
+            {
+                return failure;
+            }
+            SampleWindow window;
+            std::string reason;
+            if (!readWindow(query, window, reason))
+            {
+                return jsonError(HTTP_BAD_REQUEST, reason);
+            }
+            const HubJson decoded = decodeRecording(config.logDir, recording, window);
+            if (decoded.is_null())
+            {
+                return jsonError(HTTP_NOT_FOUND, "cannot read " + recording.name);
+            }
+            return jsonAnswer(decoded);
+        }
     } // namespace
 
     std::string mimeTypeOf(std::string_view path)
@@ -136,9 +373,20 @@ namespace mark4
             result.body = "method not allowed";
             return result;
         }
-        const std::size_t query = uri.find('?');
-        const std::string_view path =
-            (query == std::string_view::npos) ? uri : uri.substr(0U, query);
+        const std::size_t mark = uri.find('?');
+        const std::string_view path = (mark == std::string_view::npos) ? uri : uri.substr(0U, mark);
+        if (path == "/api/recordings")
+        {
+            return apiRecordings(config);
+        }
+        if (path == "/api/recording")
+        {
+            return apiRecording(config, parseQuery(uri));
+        }
+        if (path.rfind("/api/", 0U) == 0U)
+        {
+            return jsonError(HTTP_NOT_FOUND, "no such endpoint");
+        }
         return servePage(config, path);
     }
 } // namespace mark4

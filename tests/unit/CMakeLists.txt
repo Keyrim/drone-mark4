@@ -17,8 +17,10 @@ add_executable(unit_tests
     test_hub_align.cpp
     test_hub_discovery.cpp
     test_hub_health.cpp
+    test_hub_http.cpp
     test_hub_json.cpp
     test_hub_recorder.cpp
+    test_hub_recordings.cpp
     test_hub_tuning_profiles.cpp
     test_pilot_modes.cpp
     test_platform_sim_udp.cpp
