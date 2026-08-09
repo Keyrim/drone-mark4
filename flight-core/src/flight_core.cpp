@@ -146,7 +146,7 @@ namespace mark4
                 {
                     // Checked on entry too, so a takeoff attempt under already
                     // absurd sensor readings never powers the motors at all.
-                    const bool cutoff = impactTripped(sensors) || gyroSaturated(sensors) ||
+                    const bool cutoff = ImpactTripped(sensors) || GyroSaturated(sensors) ||
                                         tiltCutoffConfirmed(sensors);
                     m_phase = cutoff ? FlightPhase::CUTOFF : FlightPhase::MANUAL;
                 }
@@ -157,7 +157,7 @@ namespace mark4
                     // Lowering the stick is also the rearm gesture after a cutoff.
                     m_phase = FlightPhase::IDLE;
                 }
-                else if (impactTripped(sensors) || gyroSaturated(sensors) ||
+                else if (ImpactTripped(sensors) || GyroSaturated(sensors) ||
                          tiltCutoffConfirmed(sensors))
                 {
                     m_phase = FlightPhase::CUTOFF;
@@ -179,7 +179,7 @@ namespace mark4
                 {
                     m_phase = FlightPhase::IDLE;
                 }
-                else if (gyroSaturated(sensors))
+                else if (GyroSaturated(sensors))
                 {
                     // The gyro is near its full scale: the attitude estimate is
                     // lost and spinning up would fly blind. Fall inert instead.
@@ -202,7 +202,7 @@ namespace mark4
                 {
                     m_phase = FlightPhase::IDLE;
                 }
-                else if (impactTripped(sensors) || gyroSaturated(sensors) ||
+                else if (ImpactTripped(sensors) || GyroSaturated(sensors) ||
                          sensors.timestampUs - m_recoveryStartUs > RECOVERY_TIMEOUT_US)
                 {
                     // No tilt cutoff here: being tilted is what a recovery is.
@@ -221,7 +221,7 @@ namespace mark4
                 {
                     m_phase = FlightPhase::IDLE;
                 }
-                else if (impactTripped(sensors) || gyroSaturated(sensors) ||
+                else if (ImpactTripped(sensors) || GyroSaturated(sensors) ||
                          tiltCutoffConfirmed(sensors))
                 {
                     m_phase = FlightPhase::CUTOFF;
@@ -318,12 +318,12 @@ namespace mark4
         }
     }
 
-    bool FlightCore::impactTripped(const SensorFrame &sensors)
+    bool FlightCore::ImpactTripped(const SensorFrame &sensors)
     {
         return norm3(sensors.accelMps2) > CUTOFF_ACCEL_MPS2;
     }
 
-    bool FlightCore::gyroSaturated(const SensorFrame &sensors)
+    bool FlightCore::GyroSaturated(const SensorFrame &sensors)
     {
         return norm3(sensors.gyroRadS) > CUTOFF_GYRO_RADS;
     }

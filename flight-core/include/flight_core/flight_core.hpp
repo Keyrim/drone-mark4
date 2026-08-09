@@ -215,9 +215,9 @@ namespace mark4
         void advancePhase(const SensorFrame &sensors);
         void runControl(const SensorFrame &sensors, float dt, ActuatorFrame &actuators);
         /// @return true when the accel norm says impact
-        [[nodiscard]] static bool impactTripped(const SensorFrame &sensors);
+        [[nodiscard]] static bool ImpactTripped(const SensorFrame &sensors);
         /// @return true when the gyro sits near its full scale
-        [[nodiscard]] static bool gyroSaturated(const SensorFrame &sensors);
+        [[nodiscard]] static bool GyroSaturated(const SensorFrame &sensors);
         /// @brief Advances the sustained-tilt streak with this frame.
         /// @return true once the excessive tilt lasted CUTOFF_TILT_CONFIRM_US
         [[nodiscard]] bool tiltCutoffConfirmed(const SensorFrame &sensors);

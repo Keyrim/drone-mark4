@@ -16,7 +16,7 @@ namespace mark4
         constexpr float MIN_PRESSURE_PA = 1000.0f;
     } // namespace
 
-    float VerticalEstimator::pressureAltitudeM(float pressurePa)
+    float VerticalEstimator::PressureAltitudeM(float pressurePa)
     {
         const float clampedPa = pressurePa < MIN_PRESSURE_PA ? MIN_PRESSURE_PA : pressurePa;
         const float ratio = clampedPa / SEA_LEVEL_PRESSURE_PA;
@@ -27,7 +27,7 @@ namespace mark4
     {
         const bool baroPlausible =
             frame.baroPa >= MIN_PLAUSIBLE_PA && frame.baroPa <= MAX_PLAUSIBLE_PA;
-        const float baroAltitudeM = pressureAltitudeM(frame.baroPa);
+        const float baroAltitudeM = PressureAltitudeM(frame.baroPa);
 
         if (!m_ready)
         {

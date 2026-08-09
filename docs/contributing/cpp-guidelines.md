@@ -14,6 +14,24 @@ This guide does **not** restate what a formatter and linter enforce. Each projec
 `.clang-format` and `.clang-tidy` are the source of truth for formatting and identifier casing -
 configure them to match the conventions below and let CI enforce them.
 
+## Project addendum: drone-mark4 <!-- omit in toc -->
+
+This repo applies the guide with overrides driven by the hard rules of the root `CLAUDE.md`
+(no exceptions/RTTI and no `new`/`delete` in flight-core and platform, no iostream in
+flight-core, no singletons anywhere):
+
+- **Error handling**: the exception guidance does not apply where `-fno-exceptions` rules
+  (flight-core, platform, every app linking `drone_strict`). Report failures with `bool`
+  returns and let the failing service log, as the App `init()` pattern does.
+- **Ownership and lifetime / factory and clone patterns**: `std::unique_ptr` factories and
+  `cloneUniquePtr()` rely on dynamic allocation. Here, services live as value members of an
+  App composition root and dependencies are injected by reference.
+- **`equals()` vs `operator==`**: the `dynamic_cast` based pattern needs RTTI, disabled in
+  flight-core and platform.
+
+Everything else applies as written; the root `.clang-format` / `.clang-tidy` are the enforced
+source of truth.
+
 ## Table of content <!-- omit in toc -->
 
 - [Naming](#naming)

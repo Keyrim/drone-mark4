@@ -1,5 +1,8 @@
 FormatStyle: file
 WarningsAsErrors: "*"
+# Diagnostics located in project headers must surface too; without this,
+# header-only code (protocol/ above all) is never analyzed at all.
+HeaderFilterRegex: "(apps|flight-core|platform|protocol|tests)/"
 HeaderFileExtensions: ["hpp"]
 ImplementationFileExtensions: ["cpp"]
 Checks: >
@@ -170,7 +173,8 @@ CheckOptions: {
         readability-identifier-naming.ClassCase: "CamelCase",
         readability-identifier-naming.ClassConstantCase: "UPPER_CASE",
         readability-identifier-naming.ClassConstexprCase: "UPPER_CASE",
-        readability-identifier-naming.ClassMemberCase: "CamelCase",
+        readability-identifier-naming.ClassMemberCase: "camelBack",
+        readability-identifier-naming.ClassMemberPrefix: "s_",
         readability-identifier-naming.ClassMethodCase: "CamelCase",
         readability-identifier-naming.ConceptCase: "CamelCase",
         readability-identifier-naming.ConstantMemberCase: "camelBack",

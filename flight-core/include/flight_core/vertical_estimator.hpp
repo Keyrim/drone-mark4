@@ -130,7 +130,7 @@ namespace mark4
         /// @brief Standard atmosphere altitude for a static pressure.
         /// @param pressurePa static pressure [Pa], clamped to a sane range
         /// @return absolute altitude above the standard sea level [m]
-        static float pressureAltitudeM(float pressurePa);
+        static float PressureAltitudeM(float pressurePa);
 
       private:
         float m_altitudeGain;                   ///< altitude correction gain [1/s]

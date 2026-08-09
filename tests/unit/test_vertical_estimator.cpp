@@ -12,7 +12,7 @@ namespace
     constexpr float STEP_S = 0.002f;
 
     /// Standard atmosphere pressure at an absolute altitude, mirroring the
-    /// simulator's sensor model (the inverse of pressureAltitudeM).
+    /// simulator's sensor model (the inverse of PressureAltitudeM).
     float pressureAtAltitude(float altitudeM)
     {
         return 101325.0f * std::pow(1.0f - 2.25577e-5f * altitudeM, 5.25588f);
@@ -231,7 +231,7 @@ TEST_CASE("the baro altitude conversion inverts the standard atmosphere")
     for (const float altitude : {0.0f, 50.0f, 500.0f, 2000.0f})
     {
         const float roundtrip =
-            mark4::VerticalEstimator::pressureAltitudeM(pressureAtAltitude(altitude));
+            mark4::VerticalEstimator::PressureAltitudeM(pressureAtAltitude(altitude));
         REQUIRE(std::fabs(roundtrip - altitude) < 0.01f);
     }
 }
