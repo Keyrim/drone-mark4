@@ -1,8 +1,8 @@
 /// @file
-/// @brief Stream recorder: the CSV pair is what tools/blackbox/stream_compare.py
-///        reads, so its exact shape is a contract with that script. The
-///        expected strings below are spelled out on purpose, and a silent
-///        drift on either side has to fail here.
+/// @brief Stream recorder: the CSV pair is what a python consumer would have
+///        written itself, so its exact shape is a contract with the wire and
+///        not an implementation detail. The expected strings below are
+///        spelled out on purpose, and a silent drift has to fail here.
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>
@@ -17,12 +17,12 @@
 
 namespace
 {
-    /// Header line of the telemetry CSV, as tools/blackbox/stream_compare.py reads it.
+    /// Header line of the telemetry CSV, as a python consumer reads it.
     constexpr const char *PYTHON_TELEMETRY_HEADER =
         "timestamp_us,gyro_x,gyro_y,gyro_z,quat_w,quat_x,quat_y,quat_z,"
         "bias_x,bias_y,bias_z,motor_0,motor_1,motor_2,motor_3,altitude_m,vz_mps";
 
-    /// Header line of the sim raw CSV, as tools/blackbox/stream_compare.py reads it.
+    /// Header line of the sim raw CSV, as a python consumer reads it.
     constexpr const char *PYTHON_SIM_RAW_HEADER =
         "timestamp_us,quat_w,quat_x,quat_y,quat_z,pos_x,pos_y,pos_z,vel_x,vel_y,vel_z";
 
