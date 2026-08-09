@@ -14,6 +14,7 @@ add_executable(unit_tests
     test_control.cpp
     test_flight_core.cpp
     test_platform_sim_udp.cpp
+    test_rc_tracker.cpp
     test_replay.cpp
     test_serial_framing.cpp
     test_telemetry.cpp
