@@ -6,9 +6,9 @@
 #include <cstdint>
 
 #include "flight_core/flight_core.hpp"
-#include "flight_core/telemetry.hpp"
 #include "flight_core/types.hpp"
 #include "platform/telemetry_sender.hpp"
+#include "platform_common/telemetry_packer.hpp"
 
 namespace mark4
 {

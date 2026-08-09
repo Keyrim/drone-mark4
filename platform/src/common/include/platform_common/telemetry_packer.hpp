@@ -1,17 +1,36 @@
-#include "flight_core/telemetry.hpp"
+#pragma once
 
+/// @file
+/// @brief Conversion of the flight core state into the telemetry wire
+///        format. An IO adapter of the composition layer: it reads only
+///        public accessors, so flight-core never sees a wire layout.
+
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 
-#include "protocol/version.hpp"
+#include "flight_core/flight_core.hpp"
+#include "flight_core/throw_detector.hpp"
+#include "flight_core/types.hpp"
+#include "protocol/header.hpp"
+#include "protocol/telemetry.hpp"
 
 namespace mark4
 {
-    std::array<std::uint8_t, TELEMETRY_PACKET_SIZE> packTelemetry(const SensorFrame &frame,
-                                                                  const ActuatorFrame &actuators,
-                                                                  const FlightCore &core,
-                                                                  StreamSource source,
-                                                                  std::uint16_t sequence)
+    /// @brief Packs one step into a telemetry datagram, ready to send.
+    /// @param frame sensor frame that entered the core
+    /// @param actuators actuator frame the core produced for it
+    /// @param core flight core, source of the estimated state
+    /// @param source stream identity of the sending process
+    /// @param sequence per-sender counter, increments on every packet sent
+    /// @return datagram bytes
+    inline std::array<std::uint8_t, TELEMETRY_PACKET_SIZE> packTelemetry(
+        const SensorFrame &frame,
+        const ActuatorFrame &actuators,
+        const FlightCore &core,
+        StreamSource source,
+        std::uint16_t sequence)
     {
         TelemetryPacket packet{};
         packet.version = PROTOCOL_VERSION;

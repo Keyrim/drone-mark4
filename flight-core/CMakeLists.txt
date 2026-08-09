@@ -13,8 +13,9 @@ add_library(flight_core STATIC
     src/estimator/attitude_estimator.cpp
     src/estimator/vertical_estimator.cpp
     src/flight_core.cpp
-    src/telemetry.cpp
     src/throw_launch/throw_detector.cpp)
+# Pure algorithms: no platform, no protocol, no wire. The library rebuilds
+# only when the algorithms change.
 target_link_libraries(flight_core
-    PUBLIC flight_core_types platform protocol
+    PUBLIC flight_core_types
     PRIVATE drone_warnings drone_strict)

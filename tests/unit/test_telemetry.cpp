@@ -5,8 +5,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "flight_core/flight_core.hpp"
-#include "flight_core/telemetry.hpp"
 #include "flight_core/types.hpp"
+#include "platform_common/telemetry_packer.hpp"
 #include "protocol/header.hpp"
 #include "protocol/telemetry.hpp"
 
