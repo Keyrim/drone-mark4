@@ -10,7 +10,6 @@
 #include <sys/types.h>
 
 #include "flight_core/throw_detector.hpp"
-#include "protocol/sim_link.hpp"
 
 namespace
 {

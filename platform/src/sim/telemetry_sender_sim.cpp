@@ -8,7 +8,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include "protocol/telemetry.hpp"
+#include "protocol/ports.hpp"
 
 namespace mark4
 {
@@ -85,7 +85,7 @@ namespace mark4
 
         // Same packet on the mirror port, for the consumer that cannot share
         // a bound port. Best effort: the main broadcast already went out.
-        target.sin_port = htons(static_cast<std::uint16_t>(m_port + 2U));
+        target.sin_port = htons(telemetryMirrorPort(m_port));
         static_cast<void>(::sendto(m_socketFd,
                                    data,
                                    size,

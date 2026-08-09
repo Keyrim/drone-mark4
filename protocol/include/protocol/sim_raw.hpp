@@ -10,11 +10,6 @@
 
 namespace mark4
 {
-    /// UDP port the simulator broadcasts its raw state to. Distinct from the
-    /// telemetry port so consumers can compare the estimated state (telemetry)
-    /// with the exact one (this stream) sample by sample.
-    inline constexpr std::uint16_t SIM_RAW_PORT = 47802U;
-
 #pragma pack(push, 1)
     /// Exact simulator state, straight from the physics engine: no sensor
     /// model, no noise, no estimation. Only a simulator can produce it.

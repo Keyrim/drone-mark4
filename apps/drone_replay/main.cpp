@@ -9,7 +9,7 @@
 #include "drone_replay_app.hpp"
 #include "flight_core/throw_detector.hpp"
 #include "platform_replay/sensor_source_replay.hpp"
-#include "protocol/telemetry.hpp"
+#include "protocol/ports.hpp"
 
 namespace
 {

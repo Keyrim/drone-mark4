@@ -7,8 +7,7 @@
 #include <cstring>
 
 #include "drone_sim_app.hpp"
-#include "protocol/sim_link.hpp"
-#include "protocol/telemetry.hpp"
+#include "protocol/ports.hpp"
 
 namespace
 {

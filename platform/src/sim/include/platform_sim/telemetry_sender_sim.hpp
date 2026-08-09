@@ -26,8 +26,7 @@ namespace mark4
 
         /// @brief Creates the broadcast socket.
         /// @param port destination port of the broadcast; the mirror copy
-        ///        goes to port + 2 (the defaults reproduce TELEMETRY_PORT
-        ///        and TELEMETRY_MIRROR_PORT). Configurable so several
+        ///        goes to telemetryMirrorPort(port). Configurable so several
         ///        instances can run side by side in a batch campaign.
         /// @return true when the socket is ready to send
         bool open(std::uint16_t port);

@@ -10,11 +10,6 @@
 
 namespace mark4
 {
-    /// UDP port the flight process listens on for sensor packets. Actuator
-    /// packets are sent back to the address and port the last sensor packet
-    /// came from, so the simulator needs no listening port of its own.
-    inline constexpr std::uint16_t SIM_LINK_PORT = 47800U;
-
 #pragma pack(push, 1)
     /// Sensor frame on the wire, simulator to flight process. Placeholder
     /// layout, not the final format (no lockstep handshake yet).

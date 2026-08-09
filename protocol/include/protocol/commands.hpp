@@ -10,15 +10,6 @@
 
 namespace mark4
 {
-    /// UDP port the simulator listens on for scenario commands.
-    inline constexpr std::uint16_t SIM_COMMAND_PORT = 47804U;
-
-    /// UDP port the serial bridge (PC script today, ESP32 later) listens
-    /// on for the pilot RC commands to relay to the real board. Distinct
-    /// from SIM_COMMAND_PORT: the simulator binds its port exclusively,
-    /// and the ghost view use case runs both at once.
-    inline constexpr std::uint16_t RC_COMMAND_PORT = 47805U;
-
     /// Teleports the drone back to its start pose, velocities zeroed. The
     /// flight process restarts through the reset counter of the sim link.
     inline constexpr std::uint8_t SIM_COMMAND_RESET = 1U;
