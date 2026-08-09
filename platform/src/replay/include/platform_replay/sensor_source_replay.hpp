@@ -40,11 +40,12 @@ namespace mark4
         /// @return true when the file is ready to be read
         bool init(const char *path);
 
-        /// @brief Reads the next record, sleeping first so the frame comes out
-        ///        on the recorded tempo scaled by the speed factor.
+        /// @brief Reads the next valid record, sleeping first so the frame
+        ///        comes out on the recorded tempo scaled by the speed factor.
+        ///        A damaged or unknown record costs only itself: the reader
+        ///        resynchronizes on the next record sync marker.
         /// @param[out] frameOut frame decoded from the record
-        /// @return true when a frame was decoded, false at end of file or on a
-        ///         record of an unsupported version
+        /// @return FRAME when a record was decoded, EXHAUSTED at end of file
         FrameWait waitFrame(mark4::SensorFrame &frameOut) override;
 
       private:

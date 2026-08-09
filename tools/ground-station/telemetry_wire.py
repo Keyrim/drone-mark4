@@ -162,6 +162,16 @@ for _wire_struct, _wire_size, _name in (
     )
 
 
+# Blackbox record (blackbox.hpp): self-framing, sync marker "M4" then
+# version, type, length, the sensor-step payload and a crc16 over
+# version..payload (little-endian). A .m4bb file is a plain sequence of
+# records; a damaged record costs only itself.
+BLACKBOX_SYNC0 = 0x4D
+BLACKBOX_SYNC1 = 0x34
+BLACKBOX_RECORD_STRUCT = struct.Struct("<BBBBBQ3f3ffBfB4fH")
+BLACKBOX_RECORD_SIZE = 65
+BLACKBOX_RECORD_PAYLOAD_SIZE = 58
+
 # Serial framing (serial_framing.hpp): SYNC0 SYNC1 length payload crc16,
 # the CRC covering the length byte and the payload, little-endian on the
 # wire.
@@ -187,6 +197,35 @@ def encode_serial_frame(payload: bytes) -> bytes:
     crc = crc16(CRC16_INIT, body)
     return bytes([SERIAL_SYNC0, SERIAL_SYNC1]) + body + bytes(
         [crc & 0xFF, crc >> 8])
+
+
+def valid_blackbox_record(record: bytes) -> bool:
+    """Framing check of one candidate record, mark4::validBlackboxRecord."""
+    if len(record) != BLACKBOX_RECORD_SIZE:
+        return False
+    if record[0] != BLACKBOX_SYNC0 or record[1] != BLACKBOX_SYNC1:
+        return False
+    if (record[2] != PROTOCOL_VERSION or record[3] != TYPE_BLACKBOX_RECORD
+            or record[4] != BLACKBOX_RECORD_PAYLOAD_SIZE):
+        return False
+    carried = record[-2] | record[-1] << 8
+    return carried == crc16(CRC16_INIT, record[2:-2])
+
+
+def iter_blackbox_records(data: bytes):
+    """Yield the field tuple of every valid record in a .m4bb byte string.
+
+    Resynchronizes on the record sync marker after damaged bytes, so a
+    torn write costs only the record it tore.
+    """
+    offset = 0
+    while offset + BLACKBOX_RECORD_SIZE <= len(data):
+        chunk = data[offset:offset + BLACKBOX_RECORD_SIZE]
+        if valid_blackbox_record(chunk):
+            yield BLACKBOX_RECORD_STRUCT.unpack(chunk)
+            offset += BLACKBOX_RECORD_SIZE
+        else:
+            offset += 1
 
 
 def telemetry_mirror_port(telemetry_port: int) -> int:

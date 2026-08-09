@@ -5,8 +5,8 @@
 
 #include <cstdint>
 
-#include "flight_core/blackbox.hpp"
 #include "flight_core/flight_core.hpp"
+#include "platform_common/blackbox.hpp"
 #include "platform_common/telemetry_publisher.hpp"
 #include "platform_stm32/clock_stm32.hpp"
 #include "platform_stm32/command_receiver_stm32.hpp"

@@ -7,9 +7,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "flight_core/blackbox.hpp"
 #include "flight_core/types.hpp"
 #include "platform/log_sink.hpp"
+#include "platform_common/blackbox.hpp"
+#include "protocol/blackbox.hpp"
+#include "protocol/header.hpp"
 
 namespace
 {
@@ -61,24 +63,29 @@ namespace
     }
 } // namespace
 
-TEST_CASE("the blackbox record layout is packed and starts with the version byte")
+TEST_CASE("the blackbox record layout is packed and self-framing")
 {
     STATIC_REQUIRE(sizeof(mark4::BlackboxRecord) == mark4::BLACKBOX_RECORD_SIZE);
-    STATIC_REQUIRE(mark4::BLACKBOX_RECORD_SIZE == 59U);
+    STATIC_REQUIRE(mark4::BLACKBOX_RECORD_SIZE == 65U);
     STATIC_REQUIRE(std::is_trivially_copyable_v<mark4::BlackboxRecord>);
 
-    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, recordVersion) == 0U);
-    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, timestampUs) == 1U);
-    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, gyroRadS) == 9U);
-    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, accelMps2) == 21U);
-    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, baroPa) == 33U);
-    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, killSwitch) == 37U);
-    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, throttle) == 38U);
-    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, armSwitch) == 42U);
-    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, motor) == 43U);
+    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, sync0) == 0U);
+    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, sync1) == 1U);
+    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, version) == 2U);
+    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, type) == 3U);
+    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, length) == 4U);
+    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, timestampUs) == 5U);
+    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, gyroRadS) == 13U);
+    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, accelMps2) == 25U);
+    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, baroPa) == 37U);
+    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, killSwitch) == 41U);
+    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, throttle) == 42U);
+    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, armSwitch) == 46U);
+    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, motor) == 47U);
+    STATIC_REQUIRE(offsetof(mark4::BlackboxRecord, crc) == 63U);
 }
 
-TEST_CASE("recording one step writes exactly one record carrying both frames")
+TEST_CASE("recording one step writes exactly one valid record carrying both frames")
 {
     LogSinkSpy sink;
     mark4::Blackbox blackbox(sink);
@@ -92,11 +99,15 @@ TEST_CASE("recording one step writes exactly one record carrying both frames")
     REQUIRE(sink.writeSizes().size() == 1U);
     REQUIRE(sink.writeSizes()[0] == mark4::BLACKBOX_RECORD_SIZE);
     REQUIRE(sink.bytes().size() == mark4::BLACKBOX_RECORD_SIZE);
-    REQUIRE(sink.bytes()[0] == mark4::BLACKBOX_VERSION);
+    REQUIRE(mark4::validBlackboxRecord(sink.bytes().data()));
+    REQUIRE(sink.bytes()[0] == mark4::BLACKBOX_SYNC0);
+    REQUIRE(sink.bytes()[1] == mark4::BLACKBOX_SYNC1);
+    REQUIRE(sink.bytes()[2] == mark4::PROTOCOL_VERSION);
+    REQUIRE(sink.bytes()[3] == static_cast<std::uint8_t>(mark4::PacketType::BLACKBOX_RECORD));
+    REQUIRE(sink.bytes()[4] == mark4::BLACKBOX_RECORD_PAYLOAD_SIZE);
 
     mark4::BlackboxRecord decoded{};
     std::memcpy(&decoded, sink.bytes().data(), sizeof(decoded));
-    REQUIRE(decoded.recordVersion == mark4::BLACKBOX_VERSION);
     REQUIRE(decoded.timestampUs == TEST_TIMESTAMP_US);
     REQUIRE(decoded.baroPa == TEST_BARO_PA);
     REQUIRE(decoded.killSwitch == 0U);
@@ -118,6 +129,34 @@ TEST_CASE("recording one step writes exactly one record carrying both frames")
     REQUIRE(gyro == TEST_GYRO_RAD_S);
     REQUIRE(accel == TEST_ACCEL_MPS2);
     REQUIRE(motor == TEST_MOTOR);
+}
+
+TEST_CASE("a corrupted record fails the framing check")
+{
+    LogSinkSpy sink;
+    mark4::Blackbox blackbox(sink);
+    blackbox.record(makeSensorFrame(), mark4::ActuatorFrame{});
+
+    std::array<std::uint8_t, mark4::BLACKBOX_RECORD_SIZE> bytes{};
+    std::memcpy(bytes.data(), sink.bytes().data(), bytes.size());
+    REQUIRE(mark4::validBlackboxRecord(bytes.data()));
+
+    SECTION("a flipped payload byte breaks the CRC")
+    {
+        bytes[offsetof(mark4::BlackboxRecord, baroPa)] ^= 0x01U;
+        REQUIRE(!mark4::validBlackboxRecord(bytes.data()));
+    }
+    SECTION("a flipped length byte breaks the CRC")
+    {
+        bytes[offsetof(mark4::BlackboxRecord, length)] ^= 0x01U;
+        REQUIRE(!mark4::validBlackboxRecord(bytes.data()));
+    }
+    SECTION("a wrong version is rejected before the CRC")
+    {
+        bytes[offsetof(mark4::BlackboxRecord, version)] =
+            static_cast<std::uint8_t>(mark4::PROTOCOL_VERSION + 1U);
+        REQUIRE(!mark4::validBlackboxRecord(bytes.data()));
+    }
 }
 
 TEST_CASE("an engaged kill switch is recorded as one")

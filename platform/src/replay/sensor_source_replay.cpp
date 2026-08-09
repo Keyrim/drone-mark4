@@ -6,7 +6,7 @@
 #include <cstring>
 #include <ctime>
 
-#include "flight_core/blackbox.hpp"
+#include "protocol/blackbox.hpp"
 
 namespace mark4
 {
@@ -68,11 +68,31 @@ namespace mark4
         {
             return FrameWait::EXHAUSTED; // end of file (a trailing partial record is dropped)
         }
-        if (bytes[0] != BLACKBOX_VERSION)
+
+        // A record that does not check out (torn write, unknown type, wrong
+        // version) costs only itself: hunt for the next sync marker one byte
+        // at a time until a whole valid record lines up.
+        std::size_t skipped = 0U;
+        while (!validBlackboxRecord(bytes.data()))
+        {
+            std::memmove(bytes.data(), bytes.data() + 1U, bytes.size() - 1U);
+            if (std::fread(&bytes[bytes.size() - 1U], 1U, 1U, m_file) != 1U)
+            {
+                if (skipped != 0U)
+                {
+                    static_cast<void>(std::fprintf(
+                        stderr,
+                        "SensorSourceReplay: %zu trailing bytes without a valid record\n",
+                        skipped + bytes.size()));
+                }
+                return FrameWait::EXHAUSTED;
+            }
+            ++skipped;
+        }
+        if (skipped != 0U)
         {
             static_cast<void>(std::fprintf(
-                stderr, "SensorSourceReplay: unsupported record version %u\n", bytes[0]));
-            return FrameWait::EXHAUSTED;
+                stderr, "SensorSourceReplay: skipped %zu bytes to resynchronize\n", skipped));
         }
 
         BlackboxRecord record{};

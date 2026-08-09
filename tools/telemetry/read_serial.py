@@ -9,6 +9,7 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ground-station"))
 from telemetry_wire import (
+    BLACKBOX_RECORD_SIZE,
     CRC16_INIT,
     SERIAL_SYNC0,
     SERIAL_SYNC1,
@@ -21,7 +22,6 @@ from telemetry_wire import (
 
 PORT = "/dev/ttyUSB0"
 BAUD = termios.B921600
-BLACKBOX_RECORD_SIZE = 59  # flight_core/blackbox.hpp, demuxed by size
 
 fd = os.open(PORT, os.O_RDONLY | os.O_NOCTTY)
 attrs = termios.tcgetattr(fd)

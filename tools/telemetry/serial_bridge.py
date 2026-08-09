@@ -5,9 +5,9 @@ every other tool on the UDP boundary of protocol/.
 Downlink: TelemetryPacket (identified by its version + type header) is
 re-broadcast over UDP exactly like drone_sim emits it (broadcast on 47801
 plus the 47803 mirror for Godot), so the ground station and the simulator
-ghost view work unchanged on real flights; blackbox records (still
-demuxed by size until the record format moves into protocol/) are
-appended to a .m4bb file that drone_replay plays back.
+ghost view work unchanged on real flights; blackbox records
+(self-framing protocol/ records, checked sync to CRC) are appended to a
+.m4bb file that drone_replay plays back.
 
 Uplink: SimCommandPacket RC datagrams received on udp/47805 (the same
 packet the Godot simulator consumes on 47804, on a port of its own
@@ -40,6 +40,7 @@ from telemetry_wire import (
     TELEMETRY_MIRROR_PORT,
     TELEMETRY_PACKET_SIZE,
     TELEMETRY_PORT,
+    BLACKBOX_RECORD_SIZE,
     TYPE_RC_COMMAND,
     TYPE_REBOOT_COMMAND,
     TYPE_SIM_COMMAND,
@@ -47,12 +48,11 @@ from telemetry_wire import (
     crc16,
     encode_serial_frame,
     has_header,
+    valid_blackbox_record,
 )
 
 PORT = "/dev/ttyUSB0"
 BAUD = termios.B921600
-BLACKBOX_RECORD_SIZE = 59  # flight_core/blackbox.hpp
-BLACKBOX_VERSION = 2
 
 if len(sys.argv) > 1:
     out_path = sys.argv[1]
@@ -139,7 +139,7 @@ try:
                 if crc != (byte << 8 | crc_low):
                     bad += 1
                 elif (length == BLACKBOX_RECORD_SIZE
-                      and payload[0] == BLACKBOX_VERSION):
+                      and valid_blackbox_record(bytes(payload))):
                     out.write(payload)
                     records += 1
                 elif (length == TELEMETRY_PACKET_SIZE

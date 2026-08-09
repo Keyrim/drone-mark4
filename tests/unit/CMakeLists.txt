@@ -20,8 +20,8 @@ add_executable(unit_tests
     test_throw_detector.cpp
     test_vertical_estimator.cpp)
 target_link_libraries(unit_tests
-    PRIVATE flight_core platform_sim platform_replay protocol Catch2::Catch2WithMain
-            drone_warnings)
+    PRIVATE flight_core platform_common platform_sim platform_replay protocol
+            Catch2::Catch2WithMain drone_warnings)
 # The libs under test are compiled with -fno-rtti (drone_strict) and emit no
 # typeinfo, so UBSan's vptr check cannot be applied to their classes from here
 # (it would reference symbols that are never emitted). Nothing is lost: those

@@ -7,8 +7,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "flight_core/blackbox.hpp"
 #include "flight_core/flight_core.hpp"
+#include "platform_common/blackbox.hpp"
 #include "platform_common/telemetry_publisher.hpp"
 #include "platform_sim/clock_sim.hpp"
 #include "platform_sim/log_sink_file.hpp"

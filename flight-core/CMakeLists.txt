@@ -6,7 +6,6 @@ target_include_directories(flight_core_types INTERFACE ${CMAKE_CURRENT_SOURCE_DI
 # Pure static library: no dynamic allocation, no exceptions, no RTTI,
 # no clock access, no waiting.
 add_library(flight_core STATIC
-    src/blackbox.cpp
     src/control/attitude_controller.cpp
     src/control/mixer.cpp
     src/control/rate_controller.cpp
