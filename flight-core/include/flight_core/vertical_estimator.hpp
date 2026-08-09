@@ -20,6 +20,13 @@ namespace mark4
     /// The altitude is relative to a baro reference averaged over the first
     /// REFERENCE_SAMPLES frames: the estimator reads zero where it woke up.
     ///
+    /// The baro channel is gated, because an MS5611 over I2C will produce
+    /// garbage eventually: a pressure outside the plausible window is a
+    /// sensor fault and contributes nothing (the estimate coasts on the
+    /// accelerometer), and the innovation of a plausible sample is clamped,
+    /// so one glitched frame moves the estimate by millimeters instead of
+    /// railing the vertical loop.
+    ///
     /// The horizontal velocity is dead reckoned from the same world frame
     /// projection: nothing measures it (no GPS, no flow), so the integration
     /// leaks toward zero with HORIZONTAL_LEAK_S. Anchored by the rest before
@@ -38,6 +45,23 @@ namespace mark4
 
         /// Number of frames averaged into the baro reference at startup.
         static constexpr std::uint32_t REFERENCE_SAMPLES = 50U;
+
+        /// Lower bound of the plausible static pressure window [Pa], about
+        /// 9000 m: a hand-thrown drone has no business past it, a zeroed or
+        /// glitched frame lands far below. Outside the window the sample is
+        /// a fault, not a measurement: it neither seeds the reference nor
+        /// corrects the estimate.
+        static constexpr float MIN_PLAUSIBLE_PA = 30000.0f;
+
+        /// Upper bound of the plausible static pressure window [Pa], with
+        /// margin below sea level.
+        static constexpr float MAX_PLAUSIBLE_PA = 110000.0f;
+
+        /// Clamp on the baro innovation [m]: a plausible but glitched sample
+        /// pulls the estimate by at most gain * MAX_INNOVATION_M * dt per
+        /// frame (millimeters), while a real standing error still converges
+        /// at a brisk, bounded rate.
+        static constexpr float MAX_INNOVATION_M = 2.0f;
 
         /// Leak time constant of the dead reckoned horizontal velocity [s]:
         /// long against a throw plus its braking, short against the drift of

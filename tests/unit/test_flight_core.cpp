@@ -11,6 +11,11 @@ namespace
 {
     constexpr std::uint64_t STEP_US = 2000U; // 500 Hz stream
 
+    /// Plausible static pressure carried by every helper frame. The default
+    /// SensorFrame reads 0 Pa, a faulted sensor: a core fed with it must
+    /// refuse to fly, so any test that flies has to provide a real baro.
+    constexpr float HELPER_BARO_PA = 101325.0f;
+
     /// @brief Feeds frames with the given accel on z, and optionally on x.
     /// @return timestamp to continue the stream from
     std::uint64_t feed(mark4::FlightCore &core,
@@ -29,6 +34,7 @@ namespace
             frame.rc.killSwitch = false;
             frame.rc.armSwitch = armSwitch;
             frame.accelMps2 = {accelX, 0.0f, accelZ};
+            frame.baroPa = HELPER_BARO_PA;
             core.step(frame, actuators);
             timestamp += STEP_US;
         }

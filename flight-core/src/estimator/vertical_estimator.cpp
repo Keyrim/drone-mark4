@@ -25,10 +25,16 @@ namespace mark4
 
     void VerticalEstimator::update(const SensorFrame &frame, float dtS, const Quaternion &attitude)
     {
+        const bool baroPlausible =
+            frame.baroPa >= MIN_PLAUSIBLE_PA && frame.baroPa <= MAX_PLAUSIBLE_PA;
         const float baroAltitudeM = pressureAltitudeM(frame.baroPa);
 
         if (!m_ready)
         {
+            if (!baroPlausible)
+            {
+                return; // a faulty sensor must never seed the reference
+            }
             m_referenceSumM += baroAltitudeM;
             ++m_referenceCount;
             if (m_referenceCount >= REFERENCE_SAMPLES)
@@ -71,7 +77,13 @@ namespace mark4
         m_velocityMps += verticalAccel * dtS;
         m_altitudeM += m_velocityMps * dtS;
 
-        const float errorM = (baroAltitudeM - m_referenceAltitudeM) - m_altitudeM;
+        if (!baroPlausible)
+        {
+            return; // no correction: coast on the accelerometer alone
+        }
+        float errorM = (baroAltitudeM - m_referenceAltitudeM) - m_altitudeM;
+        errorM = errorM > MAX_INNOVATION_M ? MAX_INNOVATION_M : errorM;
+        errorM = errorM < -MAX_INNOVATION_M ? -MAX_INNOVATION_M : errorM;
         m_altitudeM += m_altitudeGain * errorM * dtS;
         m_velocityMps += m_velocityGain * errorM * dtS;
     }

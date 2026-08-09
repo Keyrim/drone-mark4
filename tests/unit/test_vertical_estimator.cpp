@@ -109,6 +109,66 @@ TEST_CASE("free fall drives the velocity to minus g times t through the accelero
     REQUIRE(std::fabs(estimator.verticalVelocityMps() + mark4::GRAVITY_MPS2 * FALL_S) < 0.3f);
 }
 
+TEST_CASE("an implausible baro sample never seeds the reference")
+{
+    mark4::VerticalEstimator estimator;
+
+    // A zeroed sensor (the SensorFrame default) for well over the capture
+    // window: the estimator must keep refusing to run on it.
+    std::uint64_t timestamp = 0U;
+    for (std::uint32_t i = 0U; i < 4U * mark4::VerticalEstimator::REFERENCE_SAMPLES; ++i)
+    {
+        mark4::SensorFrame frame = makeFrame(timestamp, 100.0f, mark4::GRAVITY_MPS2);
+        frame.baroPa = 0.0f;
+        estimator.update(frame, STEP_S, {});
+        timestamp += STEP_US;
+    }
+    REQUIRE(!estimator.ready());
+
+    // Healthy samples resume the capture where it never started.
+    captureReference(estimator, 100.0f);
+    REQUIRE(estimator.ready());
+}
+
+TEST_CASE("a zeroed baro frame cannot poison the vertical state")
+{
+    mark4::VerticalEstimator estimator;
+    std::uint64_t timestamp = captureReference(estimator, 100.0f);
+    for (std::uint32_t i = 0U; i < 500U; ++i)
+    {
+        estimator.update(makeFrame(timestamp, 100.0f, mark4::GRAVITY_MPS2), STEP_S, {});
+        timestamp += STEP_US;
+    }
+    const float altitudeBefore = estimator.altitudeM();
+    const float velocityBefore = estimator.verticalVelocityMps();
+
+    // One glitch frame at 0 Pa (a 26 km baro altitude) used to move the
+    // altitude by ~145 m and the velocity by ~207 m/s in a single step.
+    mark4::SensorFrame glitch = makeFrame(timestamp, 100.0f, mark4::GRAVITY_MPS2);
+    glitch.baroPa = 0.0f;
+    estimator.update(glitch, STEP_S, {});
+
+    REQUIRE(std::fabs(estimator.altitudeM() - altitudeBefore) < 0.01f);
+    REQUIRE(std::fabs(estimator.verticalVelocityMps() - velocityBefore) < 0.01f);
+}
+
+TEST_CASE("a plausible baro jump is bounded by the innovation clamp")
+{
+    mark4::VerticalEstimator estimator;
+    std::uint64_t timestamp = captureReference(estimator, 100.0f);
+
+    // A 500 m step is inside the plausible pressure window but far beyond
+    // any real motion between two frames: the pull must be clamped.
+    estimator.update(makeFrame(timestamp, 600.0f, mark4::GRAVITY_MPS2), STEP_S, {});
+
+    const float maxAltitudeStep = mark4::VerticalEstimator::DEFAULT_ALTITUDE_GAIN *
+                                  mark4::VerticalEstimator::MAX_INNOVATION_M * STEP_S;
+    const float maxVelocityStep = mark4::VerticalEstimator::DEFAULT_VELOCITY_GAIN *
+                                  mark4::VerticalEstimator::MAX_INNOVATION_M * STEP_S;
+    REQUIRE(std::fabs(estimator.altitudeM()) <= maxAltitudeStep + 1e-4f);
+    REQUIRE(std::fabs(estimator.verticalVelocityMps()) <= maxVelocityStep + 1e-4f);
+}
+
 TEST_CASE("the baro altitude conversion inverts the standard atmosphere")
 {
     for (const float altitude : {0.0f, 50.0f, 500.0f, 2000.0f})
