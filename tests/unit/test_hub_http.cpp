@@ -197,6 +197,55 @@ TEST_CASE("an api request that names nothing real is refused with a reason")
     CHECK(nlohmann::json::parse(endpoint.body)["error"] == "no such endpoint");
 }
 
+TEST_CASE("the api scores one recorded pair and downloads its files")
+{
+    mark4::HttpConfig config;
+    config.logDir = scratchDirectory("hub_http_api_compare");
+    recordPair(config.logDir);
+    const std::string name = nlohmann::json::parse(
+        mark4::routeHttp(config, "GET", "/api/recordings").body)["recordings"][0]["name"];
+
+    const mark4::HttpResult scored = mark4::routeHttp(config, "GET", "/api/compare?name=" + name);
+    REQUIRE(scored.status == mark4::HTTP_OK);
+    const nlohmann::json body = nlohmann::json::parse(scored.body);
+    CHECK(body["maxGapUs"] == 30000U);
+    CHECK(body["alignedSamples"] == 4U);
+    CHECK(body["metrics"].size() == 3U);
+    CHECK(body["series"]["columns"][0] == "timestamp_us");
+
+    const mark4::HttpResult download =
+        mark4::routeHttp(config, "GET", "/api/file?name=" + name + "&part=simraw");
+    CHECK(download.status == mark4::HTTP_OK);
+    CHECK(download.contentType == "text/csv; charset=utf-8");
+    CHECK(download.attachmentName == name + "_simraw.csv");
+    CHECK(download.body.rfind("timestamp_us,quat_w", 0U) == 0U);
+
+    // A pair defaults to its estimated half: that is the one a human means.
+    CHECK(mark4::routeHttp(config, "GET", "/api/file?name=" + name).attachmentName ==
+          name + "_telemetry.csv");
+    CHECK(mark4::routeHttp(config, "GET", "/api/file?name=" + name + "&part=raw").status ==
+          mark4::HTTP_BAD_REQUEST);
+}
+
+TEST_CASE("a summary is a blackbox thing and a comparison a streams thing")
+{
+    mark4::HttpConfig config;
+    config.logDir = scratchDirectory("hub_http_api_kinds");
+    recordPair(config.logDir);
+    const std::string name = nlohmann::json::parse(
+        mark4::routeHttp(config, "GET", "/api/recordings").body)["recordings"][0]["name"];
+
+    const mark4::HttpResult summary = mark4::routeHttp(config, "GET", "/api/summary?name=" + name);
+    CHECK(summary.status == mark4::HTTP_BAD_REQUEST);
+    CHECK(nlohmann::json::parse(summary.body)["error"] == name + " is not a blackbox recording");
+
+    // And the other way round: a blackbox file has no exact state beside it.
+    writeFile(config.logDir + "/board_20260101_000000.m4bb", std::string());
+    const mark4::HttpResult compare =
+        mark4::routeHttp(config, "GET", "/api/compare?name=board_20260101_000000.m4bb");
+    CHECK(compare.status == mark4::HTTP_BAD_REQUEST);
+}
+
 TEST_CASE("a window that asks for nothing sensible is refused")
 {
     mark4::HttpConfig config;

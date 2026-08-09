@@ -4,6 +4,7 @@
 ///        browser can draw.
 
 #include <array>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cstring>
 #include <filesystem>
@@ -255,6 +256,73 @@ TEST_CASE("a torn blackbox file costs the bytes it tore and nothing more")
     CHECK(decoded["total"] == 3U);
     CHECK(decoded["skippedBytes"] == 17U);
     CHECK(decoded["rows"][2][0] == 3000U);
+}
+
+TEST_CASE("a recorded pair is scored by the same rule the live comparison uses")
+{
+    const std::string logDir = scratchDirectory("hub_recordings_compare");
+    recordPair(logDir, 10U);
+    const std::vector<mark4::Recording> recordings = mark4::listRecordings(logDir);
+
+    const mark4::HubJson scored =
+        mark4::compareRecording(logDir, recordings[0], mark4::SampleWindow{});
+    CHECK(scored["maxGapUs"] == 30000U);
+    CHECK(scored["alignedSamples"] == 10U);
+    CHECK(scored["unmatched"] == 0U);
+    REQUIRE(scored["metrics"].size() == 3U);
+    CHECK(scored["metrics"][0]["name"] == "attitude");
+    CHECK(scored["metrics"][0]["unit"] == "deg");
+    CHECK(scored["metrics"][1]["name"] == "altitude");
+    CHECK(scored["metrics"][2]["name"] == "verticalVelocity");
+    CHECK(scored["metrics"][0]["worstWindows"].size() == 1U);
+    CHECK(scored["metrics"][0]["worstWindows"][0].contains("startS"));
+    // The recorded pair holds the same altitude on both sides, so the only
+    // thing being checked here is the shape and the alignment, not the flying.
+    CHECK(scored["metrics"][1]["rms"] == 0.0);
+    REQUIRE(scored["series"]["columns"].size() == 4U);
+    CHECK(scored["series"]["columns"][0] == "timestamp_us");
+    CHECK(scored["series"]["columns"][3] == "vz_mps");
+    CHECK(scored["series"]["total"] == 10U);
+    CHECK(scored["series"]["rows"][0][0] == 1000U);
+}
+
+TEST_CASE("a blackbox summary says how long the run was and how torn")
+{
+    const std::string logDir = scratchDirectory("hub_recordings_summary");
+    writeBlackbox(logDir + "/board_20260101_000000.m4bb", 5U, 3U);
+    const std::vector<mark4::Recording> recordings = mark4::listRecordings(logDir);
+
+    const mark4::HubJson summary = mark4::summarizeBlackbox(logDir, recordings[0]);
+    CHECK(summary["records"] == 5U);
+    CHECK(summary["durationS"] == 0.004);
+    CHECK(summary["rateHz"] == 1000.0);
+    // Every record carries one g straight up and an engaged kill switch.
+    CHECK(summary["accelNormG"]["min"].get<double>() == Catch::Approx(1.0));
+    CHECK(summary["accelNormG"]["max"].get<double>() == Catch::Approx(1.0));
+    CHECK(summary["killRecords"] == 5U);
+    CHECK(summary["skippedBytes"] == 3U);
+}
+
+TEST_CASE("a blackbox file renders to the csv the old dump printed")
+{
+    const std::string logDir = scratchDirectory("hub_recordings_csv");
+    writeBlackbox(logDir + "/board_20260101_000000.m4bb", 2U, 0U);
+
+    const std::string csv = mark4::blackboxToCsv(logDir + "/board_20260101_000000.m4bb");
+    std::vector<std::string> lines;
+    std::size_t start = 0U;
+    while (start < csv.size())
+    {
+        const std::size_t end = csv.find('\n', start);
+        lines.push_back(csv.substr(start, end - start));
+        start = end + 1U;
+    }
+    REQUIRE(lines.size() == 3U);
+    CHECK(lines[0] == mark4::blackboxCsvHeader());
+    CHECK(lines[1] ==
+          "1000,0.25,-0.5,0.75,0.0,0.0,9.806650161743164,101325.0,1,0.5,1,"
+          "0.10000000149011612,0.20000000298023224,0.30000001192092896,0.4000000059604645");
+    CHECK(lines[2].rfind("2000,", 0U) == 0U);
 }
 
 TEST_CASE("a recording is addressed by the exact name the listing gave it")

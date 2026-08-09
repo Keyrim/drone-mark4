@@ -344,6 +344,131 @@ namespace mark4
             }
             return jsonAnswer(decoded);
         }
+
+        /// @brief Answers GET /api/compare.
+        /// @param config where to read from
+        /// @param query parameters of the request
+        /// @return the answer
+        HttpResult apiCompare(const HttpConfig &config, const Query &query)
+        {
+            Recording recording;
+            HttpResult failure;
+            if (!lookUpRecording(config, query, recording, failure))
+            {
+                return failure;
+            }
+            if (recording.kind != "streams" || recording.simRawFile.empty())
+            {
+                // There is nothing to compare an estimate against without the
+                // exact state recorded beside it.
+                return jsonError(HTTP_BAD_REQUEST,
+                                 recording.name + " has no exact state to compare against");
+            }
+            SampleWindow window;
+            std::string reason;
+            if (!readWindow(query, window, reason))
+            {
+                return jsonError(HTTP_BAD_REQUEST, reason);
+            }
+            const HubJson scored = compareRecording(config.logDir, recording, window);
+            if (scored.is_null())
+            {
+                return jsonError(HTTP_NOT_FOUND, "cannot read " + recording.name);
+            }
+            return jsonAnswer(scored);
+        }
+
+        /// @brief Answers GET /api/summary.
+        /// @param config where to read from
+        /// @param query parameters of the request
+        /// @return the answer
+        HttpResult apiSummary(const HttpConfig &config, const Query &query)
+        {
+            Recording recording;
+            HttpResult failure;
+            if (!lookUpRecording(config, query, recording, failure))
+            {
+                return failure;
+            }
+            if (recording.kind != "blackbox")
+            {
+                return jsonError(HTTP_BAD_REQUEST, recording.name + " is not a blackbox recording");
+            }
+            const HubJson summary = summarizeBlackbox(config.logDir, recording);
+            if (summary.is_null())
+            {
+                return jsonError(HTTP_NOT_FOUND, "cannot read " + recording.name);
+            }
+            return jsonAnswer(summary);
+        }
+
+        /// @brief Answers GET /api/file.
+        /// @param config where to read from
+        /// @param query parameters of the request
+        /// @return the answer, the file itself as a download
+        HttpResult apiFile(const HttpConfig &config, const Query &query)
+        {
+            Recording recording;
+            HttpResult failure;
+            if (!lookUpRecording(config, query, recording, failure))
+            {
+                return failure;
+            }
+            std::string part = queryValue(query, "part");
+            if (part.empty())
+            {
+                part = (recording.kind == "blackbox") ? "raw" : "telemetry";
+            }
+
+            std::string fileName;
+            if (recording.kind == "blackbox")
+            {
+                if (part == "csv")
+                {
+                    HttpResult result;
+                    result.contentType = "text/csv; charset=utf-8";
+                    result.body = blackboxToCsv(
+                        (std::filesystem::path(config.logDir) / recording.name).string());
+                    result.attachmentName = recording.name + ".csv";
+                    if (result.body.empty())
+                    {
+                        return jsonError(HTTP_NOT_FOUND, "cannot read " + recording.name);
+                    }
+                    return result;
+                }
+                if (part != "raw")
+                {
+                    return jsonError(HTTP_BAD_REQUEST, "no part named " + part);
+                }
+                fileName = recording.name;
+            }
+            else if (part == "telemetry")
+            {
+                fileName = recording.telemetryFile;
+            }
+            else if (part == "simraw")
+            {
+                fileName = recording.simRawFile;
+            }
+            else
+            {
+                return jsonError(HTTP_BAD_REQUEST, "no part named " + part);
+            }
+
+            HttpResult result;
+            // ponytail: the file is read whole because the http library takes
+            // a body and not a stream. A recording large enough to matter
+            // wants a chunked response instead.
+            if (fileName.empty() ||
+                !readWholeFile((std::filesystem::path(config.logDir) / fileName).string(),
+                               result.body))
+            {
+                return jsonError(HTTP_NOT_FOUND, "cannot read " + part + " of " + recording.name);
+            }
+            result.contentType = mimeTypeOf(fileName);
+            result.attachmentName = fileName;
+            return result;
+        }
     } // namespace
 
     std::string mimeTypeOf(std::string_view path)
@@ -382,6 +507,18 @@ namespace mark4
         if (path == "/api/recording")
         {
             return apiRecording(config, parseQuery(uri));
+        }
+        if (path == "/api/compare")
+        {
+            return apiCompare(config, parseQuery(uri));
+        }
+        if (path == "/api/summary")
+        {
+            return apiSummary(config, parseQuery(uri));
+        }
+        if (path == "/api/file")
+        {
+            return apiFile(config, parseQuery(uri));
         }
         if (path.rfind("/api/", 0U) == 0U)
         {

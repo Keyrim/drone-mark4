@@ -133,6 +133,21 @@ GET /api/recording?name=X[&from=&to=&maxPoints=]
                 "simRaw":{...}}
   blackbox  -> {"name","kind":"blackbox","total":N,"stride":N,"count":N,
                 "skippedBytes":N,"columns":[...],"rows":[[...]]}
+
+GET /api/compare?name=X[&from=&to=&maxPoints=]        (streams only)
+  -> {"maxGapUs":30000,"alignedSamples":N,"unmatched":N,"durationS":F,
+      "metrics":[{"name":"attitude","unit":"deg","rms":F,"max":F,
+                  "worstWindows":[{"startS":F,"rms":F}]}, ...],
+      "series":{"total":N,"stride":N,"count":N,
+                "columns":["timestamp_us","attitude_deg","altitude_m","vz_mps"],
+                "rows":[[...]]}}
+
+GET /api/summary?name=X                               (blackbox only)
+  -> {"records":N,"durationS":F,"rateHz":F,
+      "accelNormG":{"min":F,"max":F},"killRecords":N,"skippedBytes":N}
+
+GET /api/file?name=X[&part=telemetry|simraw|raw|csv]
+  -> the file itself, as an attachment
 ```
 
 Most recent first; `simRawFile` is empty when the pair has no exact half;
@@ -151,6 +166,12 @@ last point of the window are always among them.
 `skippedBytes` counts what framed no record: a blackbox decode resynchronizes
 on the record marker after a torn write, and a torn write costs only the
 record it tore.
+
+`/api/compare` runs the alignment and the scoring of the live `compare`
+message on the recorded pair, so the two agree by construction. `part`
+defaults to `telemetry` for a pair and to `raw` for a blackbox file;
+`part=csv` renders a blackbox file as one line per record, the columns being
+the fields of the record.
 
 ## Websocket messages
 

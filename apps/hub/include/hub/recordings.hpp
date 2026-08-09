@@ -86,6 +86,32 @@ namespace mark4
                             const Recording &recording,
                             const SampleWindow &window);
 
+    /// @brief Scores one streams recording: the same alignment and the same
+    ///        scoring the live comparison runs, on the recorded pair.
+    /// @param logDir directory the recording lives in
+    /// @param recording recording to score, of kind "streams"
+    /// @param window part of it to cover, and how finely
+    /// @return the JSON answer
+    HubJson compareRecording(const std::string &logDir,
+                             const Recording &recording,
+                             const SampleWindow &window);
+
+    /// @brief Summarizes one blackbox recording: how long, how fast, how
+    ///        hard it was shaken, how much of it was torn.
+    /// @param logDir directory the recording lives in
+    /// @param recording recording to summarize, of kind "blackbox"
+    /// @return the JSON answer
+    HubJson summarizeBlackbox(const std::string &logDir, const Recording &recording);
+
+    /// @brief Header line of the CSV rendering of a blackbox file.
+    /// @return the header
+    const char *blackboxCsvHeader();
+
+    /// @brief Renders a whole blackbox file as CSV, one line per record.
+    /// @param path file to render
+    /// @return the CSV text, empty when the file cannot be read
+    std::string blackboxToCsv(const std::string &path);
+
     /// @brief Reads a whole file.
     /// @param path file to read
     /// @param contentOut receives the bytes

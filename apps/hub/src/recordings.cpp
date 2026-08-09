@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -13,6 +14,8 @@
 #include <system_error>
 
 #include "hub/packed_field.hpp"
+#include "hub/stream_align.hpp"
+#include "hub/stream_recorder.hpp"
 #include "protocol/blackbox.hpp"
 
 namespace mark4
@@ -33,6 +36,9 @@ namespace mark4
 
         /// Base a recorded number is written in.
         constexpr int DECIMAL = 10;
+
+        /// Standard gravity, the unit an acceleration reads best in [m/s^2].
+        constexpr double G_MPS2 = 9.80665;
 
         /// Columns of the CSV rendering of a blackbox record.
         constexpr const char *BLACKBOX_CSV_HEADER =
@@ -391,6 +397,27 @@ namespace mark4
             return failure ? 0U : static_cast<std::uint64_t>(size);
         }
 
+        /// @brief Renders one metric of a score.
+        /// @param metric metric to render
+        /// @return the JSON object
+        HubJson metricToJson(const MetricScore &metric)
+        {
+            HubJson windows = HubJson::array();
+            for (const ScoreWindow &window : metric.worstWindows)
+            {
+                HubJson entry;
+                entry["startS"] = window.startS;
+                entry["rms"] = window.rms;
+                windows.push_back(entry);
+            }
+            HubJson answer;
+            answer["name"] = metric.name;
+            answer["unit"] = metric.unit;
+            answer["rms"] = metric.rms;
+            answer["max"] = metric.max;
+            answer["worstWindows"] = windows;
+            return answer;
+        }
     } // namespace
 
     std::vector<Recording> listRecordings(const std::string &logDir)
@@ -539,6 +566,184 @@ namespace mark4
                 ? HubJson()
                 : decodeStreamCsv((directory / recording.simRawFile).string(), window);
         return answer;
+    }
+
+    HubJson compareRecording(const std::string &logDir,
+                             const Recording &recording,
+                             const SampleWindow &window)
+    {
+        const std::filesystem::path directory(logDir);
+        std::vector<AlignSample> telemetry;
+        std::vector<AlignSample> simRaw;
+        if (!loadStreamSamples(
+                (directory / recording.telemetryFile).string(), TELEMETRY_COLUMNS, telemetry) ||
+            !loadStreamSamples(
+                (directory / recording.simRawFile).string(), SIM_RAW_COLUMNS, simRaw))
+        {
+            return {};
+        }
+
+        const auto inWindow = [&window](const AlignSample &sample) {
+            return sample.timestampUs >= static_cast<double>(window.fromUs) &&
+                   sample.timestampUs <= static_cast<double>(window.toUs);
+        };
+        static_cast<void>(telemetry.erase(
+            std::remove_if(telemetry.begin(),
+                           telemetry.end(),
+                           [&inWindow](const AlignSample &s) { return !inWindow(s); }),
+            telemetry.end()));
+        static_cast<void>(
+            simRaw.erase(std::remove_if(simRaw.begin(),
+                                        simRaw.end(),
+                                        [&inWindow](const AlignSample &s) { return !inWindow(s); }),
+                         simRaw.end()));
+
+        const std::vector<AlignedPair> pairs = alignStreams(telemetry, simRaw);
+        const CompareScore score = scorePairs(pairs, telemetry.size() - pairs.size());
+
+        HubJson metrics = HubJson::array();
+        for (const MetricScore &metric : score.metrics)
+        {
+            metrics.push_back(metricToJson(metric));
+        }
+
+        const std::size_t stride = strideFor(pairs.size(), window.maxPoints);
+        HubJson rows = HubJson::array();
+        for (std::size_t index = 0U; index < pairs.size(); ++index)
+        {
+            if (!keepPoint(index, pairs.size(), stride))
+            {
+                continue;
+            }
+            HubJson row = HubJson::array();
+            row.push_back(static_cast<std::uint64_t>(pairs[index].timestampUs));
+            row.push_back(pairs[index].attitudeErrorDeg);
+            row.push_back(pairs[index].altitudeErrorM);
+            row.push_back(pairs[index].verticalVelocityErrorMps);
+            rows.push_back(row);
+        }
+
+        HubJson series;
+        series["total"] = pairs.size();
+        series["stride"] = stride;
+        series["count"] = rows.size();
+        series["columns"] = {"timestamp_us", "attitude_deg", "altitude_m", "vz_mps"};
+        series["rows"] = rows;
+
+        HubJson answer;
+        answer["maxGapUs"] = static_cast<std::uint64_t>(MAX_ALIGN_GAP_US);
+        answer["alignedSamples"] = score.alignedSamples;
+        answer["unmatched"] = score.unmatched;
+        answer["durationS"] = score.durationS;
+        answer["metrics"] = metrics;
+        answer["series"] = series;
+        return answer;
+    }
+
+    HubJson summarizeBlackbox(const std::string &logDir, const Recording &recording)
+    {
+        BlackboxReader reader((std::filesystem::path(logDir) / recording.name).string());
+        if (!reader.isOpen())
+        {
+            return {};
+        }
+
+        BlackboxRecord record{};
+        std::uint64_t records = 0U;
+        std::uint64_t firstUs = 0U;
+        std::uint64_t lastUs = 0U;
+        std::uint64_t killRecords = 0U;
+        double minNormG = 0.0;
+        double maxNormG = 0.0;
+        while (reader.next(record))
+        {
+            const auto accel = readPackedField(&record.accelMps2);
+            const auto along = static_cast<double>(accel[0]);
+            const auto across = static_cast<double>(accel[1]);
+            const auto up = static_cast<double>(accel[2]);
+            const double normG = std::sqrt(along * along + across * across + up * up) / G_MPS2;
+            if (records == 0U)
+            {
+                firstUs = record.timestampUs;
+                minNormG = normG;
+                maxNormG = normG;
+            }
+            minNormG = std::min(minNormG, normG);
+            maxNormG = std::max(maxNormG, normG);
+            lastUs = record.timestampUs;
+            killRecords += record.killSwitch;
+            ++records;
+        }
+
+        const double durationS =
+            (records == 0U) ? 0.0 : static_cast<double>(lastUs - firstUs) / 1e6;
+        HubJson accelNorm;
+        accelNorm["min"] = minNormG;
+        accelNorm["max"] = maxNormG;
+
+        HubJson answer;
+        answer["records"] = records;
+        answer["durationS"] = durationS;
+        // A single record spans no time: a rate would be a division by zero
+        // dressed up as a measurement.
+        answer["rateHz"] =
+            (durationS > 0.0) ? (static_cast<double>(records - 1U) / durationS) : 0.0;
+        answer["accelNormG"] = accelNorm;
+        answer["killRecords"] = killRecords;
+        answer["skippedBytes"] = reader.skippedBytes();
+        return answer;
+    }
+
+    const char *blackboxCsvHeader()
+    {
+        return BLACKBOX_CSV_HEADER;
+    }
+
+    std::string blackboxToCsv(const std::string &path)
+    {
+        BlackboxReader reader(path);
+        if (!reader.isOpen())
+        {
+            return {};
+        }
+        // ponytail: the rendering is built whole before it is sent, because
+        // the http library takes a body and not a stream. A recording large
+        // enough to matter wants a chunked response instead.
+        std::string csv(BLACKBOX_CSV_HEADER);
+        csv += '\n';
+        BlackboxRecord record{};
+        while (reader.next(record))
+        {
+            const auto gyro = readPackedField(&record.gyroRadS);
+            const auto accel = readPackedField(&record.accelMps2);
+            const auto motor = readPackedField(&record.motor);
+            csv += std::to_string(record.timestampUs);
+            for (const float value : gyro)
+            {
+                csv += ',';
+                csv += formatCsvFloat(value);
+            }
+            for (const float value : accel)
+            {
+                csv += ',';
+                csv += formatCsvFloat(value);
+            }
+            csv += ',';
+            csv += formatCsvFloat(record.baroPa);
+            csv += ',';
+            csv += std::to_string(static_cast<unsigned>(record.killSwitch));
+            csv += ',';
+            csv += formatCsvFloat(record.throttle);
+            csv += ',';
+            csv += std::to_string(static_cast<unsigned>(record.armSwitch));
+            for (const float value : motor)
+            {
+                csv += ',';
+                csv += formatCsvFloat(value);
+            }
+            csv += '\n';
+        }
+        return csv;
     }
 
     bool readWholeFile(const std::string &path, std::string &contentOut)
