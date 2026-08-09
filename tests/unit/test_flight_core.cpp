@@ -1,5 +1,6 @@
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -143,6 +144,88 @@ TEST_CASE("an out-of-order frame is ignored and the outputs hold")
     frame.timestampUs = 4000U;
     core.step(frame, actuators);
     REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+}
+
+TEST_CASE("a frame carrying NaN or Inf is rejected as a whole")
+{
+    mark4::FlightCore core;
+    mark4::SensorFrame frame;
+    mark4::ActuatorFrame actuators;
+    frame.rc.killSwitch = false;
+    frame.rc.throttle = 0.5f;
+    frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
+
+    frame.timestampUs = 0U;
+    core.step(frame, actuators);
+    frame.timestampUs = 2000U;
+    core.step(frame, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    const std::array<float, 4> held = actuators.motor;
+
+    // One poisoned field per frame: each frame is ignored, the outputs
+    // hold and stay numeric, the phase does not move.
+    const float nan = std::nanf("");
+    const float inf = std::numeric_limits<float>::infinity();
+    mark4::SensorFrame bad = frame;
+    std::uint64_t timestamp = 4000U;
+    for (std::uint32_t poison = 0U; poison < 4U; ++poison)
+    {
+        bad = frame;
+        bad.timestampUs = timestamp;
+        switch (poison)
+        {
+            case 0U:
+                bad.gyroRadS[1] = nan;
+                break;
+            case 1U:
+                bad.accelMps2[2] = inf;
+                break;
+            case 2U:
+                bad.baroPa = nan;
+                break;
+            default:
+                bad.rc.throttle = inf;
+                break;
+        }
+        core.step(bad, actuators);
+        timestamp += 2000U;
+    }
+    REQUIRE(core.invalidFrameCount() == 4U);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(actuators.motor == held);
+    for (const float m : actuators.motor)
+    {
+        REQUIRE(std::isfinite(m));
+    }
+
+    // A clean frame resumes normal stepping (the poisoned timestamps were
+    // never accepted, so this one is fresh).
+    frame.timestampUs = 4000U;
+    core.step(frame, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    for (const float m : actuators.motor)
+    {
+        REQUIRE(std::isfinite(m));
+    }
+}
+
+TEST_CASE("the kill switch wins even on a NaN frame")
+{
+    mark4::FlightCore core;
+    mark4::SensorFrame frame;
+    mark4::ActuatorFrame actuators;
+    actuators.motor.fill(0.7f);
+
+    frame.rc.killSwitch = true;
+    frame.gyroRadS = {std::nanf(""), 0.0f, 0.0f};
+    frame.timestampUs = 1000U;
+    core.step(frame, actuators);
+
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
+    for (const float m : actuators.motor)
+    {
+        REQUIRE(m == 0.0f);
+    }
 }
 
 TEST_CASE("a backwards timestamp during the recovery does not latch the cutoff")

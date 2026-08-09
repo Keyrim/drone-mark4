@@ -38,15 +38,23 @@ namespace mark4
         /// @brief Runs one control step. The kill switch is honored first.
         ///
         /// Input contract. The kill switch is a level and is honored on every
-        /// frame, whatever else the frame carries. For everything else the
-        /// frame must move time forward: a timestamp not strictly above the
-        /// last accepted one is a transport artifact - the frame is ignored,
-        /// the outputs hold their previous values and the time reference does
-        /// not move (a rebased stream is a new session; the composition
-        /// signals it with a fresh core, it is never inferred here). Frames
-        /// further apart than MAX_STEP_S are gaps: the step runs but nothing
-        /// integrates over the hole. step() derives dt once under this policy
-        /// and passes it down; no other module does timestamp arithmetic.
+        /// frame, whatever else the frame carries. Any other frame must be
+        /// finite and move time forward, or it is rejected as a whole: the
+        /// outputs hold their previous values and no internal state advances.
+        /// - A NaN or Inf in any float field rejects the frame: NaN makes
+        ///   every safety comparison false, so scrubbing at this boundary is
+        ///   what keeps the cutoffs meaningful and the motors numeric. A lone
+        ///   glitch frame costs nothing; a persistent stream of them leaves
+        ///   the motors on their last command, and the RC kill (silence means
+        ///   kill) stays the way out, as for any other frozen input.
+        /// - A timestamp not strictly above the last accepted one is a
+        ///   transport artifact: rejected, and the time reference does not
+        ///   move (a rebased stream is a new session; the composition signals
+        ///   it with a fresh core, it is never inferred here).
+        /// - Frames further apart than MAX_STEP_S are gaps: the step runs but
+        ///   nothing integrates over the hole. step() derives dt once under
+        ///   this policy and passes it down; no other module does timestamp
+        ///   arithmetic.
         /// @param sensors latest sensor frame
         /// @param[out] actuators motor commands computed for this step
         void step(const SensorFrame &sensors, ActuatorFrame &actuators);
@@ -61,6 +69,12 @@ namespace mark4
         [[nodiscard]] std::uint32_t staleFrameCount() const
         {
             return m_staleFrameCount;
+        }
+
+        /// @return frames rejected for a non-finite float field (NaN or Inf)
+        [[nodiscard]] std::uint32_t invalidFrameCount() const
+        {
+            return m_invalidFrameCount;
         }
 
         /// @return estimated body-to-world attitude
@@ -191,8 +205,9 @@ namespace mark4
         bool m_brakeDone = false;                 ///< braking spent for this flight
         std::uint64_t m_tiltExceededSinceUs = 0U; ///< start of the tilt streak, 0 = none
         std::uint32_t m_stepCount = 0U;
-        std::uint32_t m_staleFrameCount = 0U; ///< frames with a non-increasing timestamp
-        std::array<float, 4> m_lastMotor{};   ///< outputs held when a frame is rejected
+        std::uint32_t m_staleFrameCount = 0U;   ///< frames with a non-increasing timestamp
+        std::uint32_t m_invalidFrameCount = 0U; ///< frames with a NaN or Inf field
+        std::array<float, 4> m_lastMotor{};     ///< outputs held when a frame is rejected
         AttitudeEstimator m_attitudeEstimator;
         VerticalEstimator m_verticalEstimator;
         ThrowDetector m_throwDetector;

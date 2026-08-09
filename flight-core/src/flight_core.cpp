@@ -1,6 +1,7 @@
 #include "flight_core/flight_core.hpp"
 
 #include <cmath>
+#include <cstddef>
 
 #include "flight_core/mixer.hpp"
 
@@ -14,6 +15,19 @@ namespace mark4
         float norm3(const std::array<float, 3> &v)
         {
             return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        }
+
+        /// @return true when every float field of the frame is finite
+        bool isFrameFinite(const SensorFrame &frame)
+        {
+            for (std::size_t axis = 0U; axis < 3U; ++axis)
+            {
+                if (!std::isfinite(frame.gyroRadS[axis]) || !std::isfinite(frame.accelMps2[axis]))
+                {
+                    return false;
+                }
+            }
+            return std::isfinite(frame.baroPa) && std::isfinite(frame.rc.throttle);
         }
     } // namespace
 
@@ -32,13 +46,23 @@ namespace mark4
         {
             actuators.motor.fill(0.0f);
             m_lastMotor = actuators.motor;
-            if (acceptsTimestamp(sensors.timestampUs))
+            if (isFrameFinite(sensors) && acceptsTimestamp(sensors.timestampUs))
             {
                 updateEstimators(sensors, deriveDt(sensors.timestampUs));
             }
             m_rateController.reset();
             m_verticalController.reset();
             m_phase = FlightPhase::IDLE;
+            return;
+        }
+
+        if (!isFrameFinite(sensors))
+        {
+            // NaN or Inf anywhere: the frame is garbage as a whole. NaN would
+            // sail through every cutoff comparison and reach the motors, so
+            // nothing downstream may ever see it.
+            ++m_invalidFrameCount;
+            actuators.motor = m_lastMotor;
             return;
         }
 
