@@ -15,7 +15,18 @@ FetchContent_MakeAvailable(nlohmann_json)
 # thread or a child process. This is the target the tests link.
 add_library(hub_core STATIC
     src/discovery.cpp
-    src/json_codec.cpp)
+    src/json_codec.cpp
+    src/stream_recorder.cpp)
 target_include_directories(hub_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(hub_core PUBLIC protocol nlohmann_json::nlohmann_json)
 target_link_libraries(hub_core PRIVATE drone_warnings)
+
+# The hub itself: hub_core plus everything that owns a resource. Desktop only,
+# and deliberately not linked against flight_core or platform - the hub speaks
+# protocol/ and nothing else.
+add_executable(hub
+    src/hub_app.cpp
+    src/main.cpp
+    src/serial_transport.cpp
+    src/udp_transport.cpp)
+target_link_libraries(hub PRIVATE hub_core protocol drone_warnings)

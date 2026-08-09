@@ -48,7 +48,7 @@ TEST_CASE("a first announce makes a process appear")
     CHECK(change->process.telemetryPort == 47801U);
     CHECK(change->process.commandPort == 47804U);
     CHECK(change->process.lastSeenUs == 1000U);
-    CHECK_FALSE(change->process.viaSerial);
+    CHECK(!(change->process.viaSerial));
     REQUIRE(registry.processes().size() == 1U);
     CHECK(registry.commandPortOf(mark4::StreamSource::DRONE_SIM) == 47804U);
 }
@@ -60,7 +60,7 @@ TEST_CASE("a repeated announce is a silent refresh")
     static_cast<void>(registry.onAnnounce(bytes.data(), bytes.size(), 1000U));
 
     const auto change = registry.onAnnounce(bytes.data(), bytes.size(), 2'000'000U);
-    CHECK_FALSE(change.has_value());
+    CHECK(!(change.has_value()));
     REQUIRE(registry.processes().size() == 1U);
     CHECK(registry.processes()[0].lastSeenUs == 2'000'000U);
 }
@@ -85,12 +85,12 @@ TEST_CASE("an unassigned session identity never reports a restart")
     const auto bytes = announce(mark4::StreamSource::DRONE_SIM, 0U, 47801U, 47804U);
     REQUIRE(registry.onAnnounce(bytes.data(), bytes.size(), 1000U).has_value());
 
-    CHECK_FALSE(registry.onAnnounce(bytes.data(), bytes.size(), 2000U).has_value());
+    CHECK(!(registry.onAnnounce(bytes.data(), bytes.size(), 2000U).has_value()));
     CHECK(registry.processes()[0].lastSeenUs == 2000U);
 
     // Even coming back from a real restart, a process that assigns no
     // identity can only ever look like the same one refreshing itself.
-    CHECK_FALSE(registry.onAnnounce(bytes.data(), bytes.size(), 3000U).has_value());
+    CHECK(!(registry.onAnnounce(bytes.data(), bytes.size(), 3000U).has_value()));
 }
 
 TEST_CASE("silence makes a process disappear exactly once")
@@ -136,7 +136,7 @@ TEST_CASE("serial telemetry synthesizes the firmware entry")
     CHECK(change->process.telemetryPort == 0U);
     CHECK(change->process.commandPort == 0U);
 
-    CHECK_FALSE(registry.onSerialTelemetry(2000U).has_value());
+    CHECK(!(registry.onSerialTelemetry(2000U).has_value()));
     REQUIRE(registry.processes().size() == 1U);
     CHECK(registry.processes()[0].lastSeenUs == 2000U);
 }
@@ -147,11 +147,11 @@ TEST_CASE("an announce on the wrong wire version is counted and dropped")
     auto bytes = announce(mark4::StreamSource::DRONE_SIM, 7U, 47801U, 47804U);
     bytes[0] = mark4::PROTOCOL_VERSION - 1U;
 
-    CHECK_FALSE(registry.onAnnounce(bytes.data(), bytes.size(), 1000U).has_value());
+    CHECK(!(registry.onAnnounce(bytes.data(), bytes.size(), 1000U).has_value()));
     CHECK(registry.processes().empty());
     CHECK(registry.rejectedAnnounces() == 1U);
 
     // A truncated datagram is just as invalid, and just as worth counting.
-    CHECK_FALSE(registry.onAnnounce(bytes.data(), bytes.size() - 1U, 1000U).has_value());
+    CHECK(!(registry.onAnnounce(bytes.data(), bytes.size() - 1U, 1000U).has_value()));
     CHECK(registry.rejectedAnnounces() == 2U);
 }

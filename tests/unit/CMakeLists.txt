@@ -15,6 +15,7 @@ add_executable(unit_tests
     test_flight_core.cpp
     test_hub_discovery.cpp
     test_hub_json.cpp
+    test_hub_recorder.cpp
     test_platform_sim_udp.cpp
     test_replay.cpp
     test_serial_framing.cpp
