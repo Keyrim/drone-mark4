@@ -53,11 +53,13 @@ namespace
     /// @param kill 1 = engaged
     /// @param arm 1 = armed
     /// @param throttle normalized throttle
+    /// @param mode one of the RC_MODE_* values
     /// @param version version byte, PROTOCOL_VERSION unless testing drift
     /// @return wire bytes of one RcCommandPacket
     std::vector<std::uint8_t> makeRcPacket(std::uint8_t kill,
                                            std::uint8_t arm,
                                            float throttle,
+                                           std::uint8_t mode = mark4::RC_MODE_MANUAL,
                                            std::uint8_t version = mark4::PROTOCOL_VERSION)
     {
         mark4::RcCommandPacket packet{};
@@ -65,7 +67,7 @@ namespace
         packet.type = static_cast<std::uint8_t>(mark4::PacketType::RC_COMMAND);
         packet.killSwitch = kill;
         packet.armSwitch = arm;
-        packet.mode = mark4::RC_MODE_MANUAL;
+        packet.mode = mode;
         packet.throttle = throttle;
 
         std::vector<std::uint8_t> wire(sizeof(packet));
@@ -230,7 +232,7 @@ TEST_CASE("a wrong version is not consumed as rc")
     PumpBuffer buffer{};
 
     const auto stale = static_cast<std::uint8_t>(mark4::PROTOCOL_VERSION - 1U);
-    receiver.push(makeRcPacket(0U, 1U, TEST_THROTTLE, stale));
+    receiver.push(makeRcPacket(0U, 1U, TEST_THROTTLE, mark4::RC_MODE_MANUAL, stale));
 
     // Right size, wrong version: handed back to the caller, state untouched.
     REQUIRE(tracker.pump(buffer.data(), buffer.size(), T0_US) == mark4::RC_COMMAND_PACKET_SIZE);
@@ -242,4 +244,61 @@ TEST_CASE("a wrong version is not consumed as rc")
     tracker.graft(frame);
     REQUIRE(frame.rc.killSwitch == true);
     REQUIRE(frame.rc.throttle == 0.0f);
+}
+
+TEST_CASE("the piloting mode of an rc packet reaches the frame")
+{
+    FakeCommandReceiver receiver;
+    mark4::RcTracker tracker(receiver);
+    PumpBuffer buffer{};
+
+    receiver.push(makeRcPacket(0U, 1U, TEST_THROTTLE, mark4::RC_MODE_ALTITUDE_AUTO));
+    REQUIRE(tracker.pump(buffer.data(), buffer.size(), T0_US) == 0U);
+
+    mark4::SensorFrame frame;
+    frame.timestampUs = T0_US;
+    tracker.graft(frame);
+    REQUIRE(frame.rc.mode == mark4::PilotMode::ALTITUDE_AUTO);
+
+    // Back to the manual byte: the mode is a level like the switches are.
+    receiver.push(makeRcPacket(0U, 1U, TEST_THROTTLE, mark4::RC_MODE_MANUAL));
+    REQUIRE(tracker.pump(buffer.data(), buffer.size(), T0_US) == 0U);
+    tracker.graft(frame);
+    REQUIRE(frame.rc.mode == mark4::PilotMode::MANUAL);
+}
+
+TEST_CASE("an unknown mode byte decodes to the safest mode")
+{
+    FakeCommandReceiver receiver;
+    mark4::RcTracker tracker(receiver);
+    PumpBuffer buffer{};
+
+    // A ground station from the future selecting a mode this build does not
+    // know: the packet is still valid RC, only the mode degrades.
+    receiver.push(makeRcPacket(0U, 1U, TEST_THROTTLE, 0x7FU));
+    REQUIRE(tracker.pump(buffer.data(), buffer.size(), T0_US) == 0U);
+    REQUIRE(tracker.rcPacketCount() == 1U);
+
+    mark4::SensorFrame frame;
+    frame.timestampUs = T0_US;
+    tracker.graft(frame);
+    REQUIRE(frame.rc.mode == mark4::PilotMode::MANUAL);
+    REQUIRE(frame.rc.armSwitch == true);
+}
+
+TEST_CASE("the fail-safe reverts the piloting mode too")
+{
+    FakeCommandReceiver receiver;
+    mark4::RcTracker tracker(receiver);
+    PumpBuffer buffer{};
+
+    receiver.push(makeRcPacket(0U, 1U, TEST_THROTTLE, mark4::RC_MODE_ALTITUDE_AUTO));
+    REQUIRE(tracker.pump(buffer.data(), buffer.size(), T0_US) == 0U);
+
+    mark4::SensorFrame lost;
+    lost.timestampUs = T0_US + mark4::RcTracker::RC_TIMEOUT_US + 1U;
+    REQUIRE(tracker.failsafeActive(lost.timestampUs));
+    tracker.graft(lost);
+    REQUIRE(lost.rc.mode == mark4::PilotMode::MANUAL);
+    REQUIRE(lost.rc.killSwitch == true);
 }

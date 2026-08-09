@@ -19,6 +19,14 @@
 
 namespace mark4
 {
+    // This adapter is where the wire mode byte and the flight-core enum meet:
+    // flight-core never includes a protocol header, so the two definitions are
+    // pinned to each other here, once, instead of drifting apart silently.
+    static_assert(static_cast<std::uint8_t>(PilotMode::MANUAL) == RC_MODE_MANUAL,
+                  "the manual mode must keep its wire value");
+    static_assert(static_cast<std::uint8_t>(PilotMode::ALTITUDE_AUTO) == RC_MODE_ALTITUDE_AUTO,
+                  "the altitude-auto mode must keep its wire value");
+
     /// Tracks the last pilot state seen on a command receiver and decides
     /// when silence means kill. Owns no clock: the caller passes the
     /// timestamp of the frame being processed, so the fail-safe is paced by
@@ -67,9 +75,12 @@ namespace mark4
                 m_rc.killSwitch = command.killSwitch != 0U;
                 m_rc.armSwitch = command.armSwitch != 0U;
                 m_rc.throttle = command.throttle;
-                /* command.mode is decoded and deliberately ignored: the
-                   piloting mode is wire-only for now, carried so the layout
-                   never breaks again when the modes land. */
+                /* An unknown mode byte decodes to the safest mode rather than
+                   being rejected: a newer ground station selecting a mode this
+                   build does not know must degrade to direct thrust, never to
+                   a mode that flies on its own. */
+                m_rc.mode = command.mode == RC_MODE_ALTITUDE_AUTO ? PilotMode::ALTITUDE_AUTO
+                                                                  : PilotMode::MANUAL;
                 m_lastRcUs = nowUs;
                 m_everReceived = true;
                 ++m_rcPacketCount;

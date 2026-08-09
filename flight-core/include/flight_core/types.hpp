@@ -22,12 +22,24 @@ namespace mark4
         float z = 0.0f; ///< vector part, body z
     };
 
+    /// Piloting mode selected by the pilot. MANUAL is 0 so a zeroed RcInput
+    /// (the fail-safe state) lands on the mode that never flies on its own.
+    /// The values mirror the wire-level RC_MODE_* constants one for one; the
+    /// platform adapter that decodes the uplink is where the two meet and
+    /// where they are asserted equal, so flight-core stays wire-free.
+    enum class PilotMode : std::uint8_t
+    {
+        MANUAL = 0U,        ///< the stick commands the collective directly
+        ALTITUDE_AUTO = 1U, ///< the stick commands a vertical velocity
+    };
+
     /// RC state. The kill switch is processed before anything else in step().
     struct RcInput
     {
-        bool killSwitch = true; ///< defaults to safe: motors cut
-        float throttle = 0.0f;  ///< normalized [0, 1]
-        bool armSwitch = false; ///< true = the core may fly on its own after a throw
+        bool killSwitch = true;             ///< defaults to safe: motors cut
+        float throttle = 0.0f;              ///< normalized [0, 1]
+        bool armSwitch = false;             ///< true = motors may run
+        PilotMode mode = PilotMode::MANUAL; ///< piloting mode, read while disarmed
     };
 
     /// Input of step(). Timestamped by platform at acquisition: the timestamp
