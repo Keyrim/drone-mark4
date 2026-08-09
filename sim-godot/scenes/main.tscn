@@ -217,7 +217,6 @@ script = ExtResource("4_pilot")
 
 [node name="SimCommand" type="Node" parent="Drone" unique_id=1313228877]
 script = ExtResource("10_sim_command")
-pilot_path = NodePath("../PilotInput")
 
 [node name="RcUplink" type="Node" parent="Drone"]
 script = ExtResource("13_rc_uplink")

@@ -138,12 +138,16 @@ Incremental, one observable win per step:
    Godot ghost work unchanged) and captures `.m4bb` files that
    `drone_replay` plays back. The uplink carries the pilot state
    (RcCommandPacket: kill, arm, throttle): the Godot simulator is the
-   cockpit (K = kill, A = arm, R = reboot the board via
-   RebootCommandPacket and an NVIC system reset), its RcUplink node
-   streams the state at 10 Hz to udp/47805 and the bridge relays it to
-   the UART; 500 ms of silence trips the fail-safe (kill engaged,
-   disarmed), so closing the simulator or the bridge is itself a safe
-   action.
+   cockpit (K = kill, A = arm), its RcUplink node streams the state at
+   10 Hz to udp/47805 and the bridge forwards it onto the UART
+   verbatim, standing in for the board's own command receiver; 500 ms
+   of silence trips the fail-safe (kill engaged, disarmed), so closing
+   the simulator or the bridge is itself a safe action. The same
+   packets on the same port fly `drone_sim`, so the RC path and its
+   fail-safe are exercised in every simulated flight, not only on the
+   bench. A RebootCommandPacket on the same port still reboots the
+   board (NVIC system reset), forwarded by the bridge like any other
+   uplink packet; no simulator key is wired to it.
 4. **Detection on real hands**: board armed and shaken in hand (no
    false spin-up expected), then thrown and caught - throw detection
    and apex prediction on real sensor data, compared against the

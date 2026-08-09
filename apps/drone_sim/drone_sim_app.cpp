@@ -2,6 +2,8 @@
 
 #include <array>
 #include <cerrno>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -10,10 +12,15 @@
 #include <sys/types.h>
 
 #include "flight_core/throw_detector.hpp"
+#include "protocol/ports.hpp"
 
 namespace
 {
     constexpr double US_PER_S = 1e6;
+
+    /// Larger than any command packet, so an oversized datagram comes out
+    /// with its real size instead of being truncated into a valid one.
+    constexpr std::size_t RC_BUFFER_SIZE = 64U;
 
     /// Permissions of the log directory when it has to be created: rwxr-xr-x.
     constexpr mode_t LOG_DIRECTORY_MODE = 0755;
@@ -78,10 +85,12 @@ namespace mark4
 {
     DroneSimApp::DroneSimApp(std::uint32_t maxFrames,
                              std::uint16_t simPort,
-                             std::uint16_t telemetryPort)
+                             std::uint16_t telemetryPort,
+                             std::uint16_t rcPort)
         : m_maxFrames(maxFrames),
           m_simPort(simPort),
           m_telemetryPort(telemetryPort),
+          m_rcPort(rcPort),
           m_sensorSource(m_simLink),
           m_motorSink(m_simLink),
           m_logFilePath(makeLogFilePath()),
@@ -97,6 +106,18 @@ namespace mark4
             return false;
         }
         if (!m_telemetrySender.open(m_telemetryPort))
+        {
+            return false;
+        }
+        // The receive timeout is irrelevant here: only receiveNonBlocking()
+        // is ever called on this link, so it never waits.
+        if (!m_rcLink.open(m_rcPort, 0U))
+        {
+            return false;
+        }
+        // No mirror: the announce port has no consumer that cannot share a
+        // bound port, and its +2 neighbor must not see stray traffic.
+        if (!m_announceSender.open(ANNOUNCE_PORT, /*mirror=*/false))
         {
             return false;
         }
@@ -143,11 +164,27 @@ namespace mark4
             lastResetCount = m_sensorSource.resetCount();
             resetCountSeen = true;
 
+            // Drain the command uplink. Nothing in this composition consumes
+            // the packets the tracker hands back yet (reboot, tuning later),
+            // so they are dropped on the floor.
+            std::array<std::uint8_t, RC_BUFFER_SIZE> command{};
+            while (m_rcTracker.pump(command.data(), command.size(), frame.timestampUs) != 0U)
+            {
+            }
+            // Grafted on every frame, not only when a packet arrived: the
+            // frame is reused across iterations, so skipping this would leave
+            // the previous iteration's RC on it and hide the fail-safe.
+            m_rcTracker.graft(frame);
+
             ++steps;
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);
             m_blackbox.record(frame, actuators);
             m_telemetryPublisher.publish(frame, actuators, m_core);
+            // Wall clock, not simulated time: one announce per second of real
+            // time whatever the sim time scale, which is the cadence the
+            // ground side counts on.
+            m_announcePublisher.publish(m_clock.nowUs());
 
             const mark4::ThrowDetector &detector = m_core.throwDetector();
             if (detector.throwCount() > announcedThrows)

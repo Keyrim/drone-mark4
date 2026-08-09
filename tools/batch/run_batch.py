@@ -8,6 +8,11 @@ judges the outcome from the telemetry: reaching a stable hover is a success,
 a safety cutoff or a timeout is a failure recorded with its parameters, so
 any failure can be replayed alone with --only-seed.
 
+Arming and the kill switch travel as an RcCommandPacket stream straight to
+each drone_sim command receiver, the same path a real flight uses: a
+background thread per instance repeats the held state fast enough that the
+flight process fail-safe never trips, whatever the time scale.
+
 Python stdlib only. Requires a Godot 4 binary able to open the sim-godot
 project (a Linux headless build works fine inside WSL or a container).
 """
@@ -28,10 +33,10 @@ from typing import List, Optional
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ground-station"))
 from telemetry_wire import (
     SIM_COMMAND_HAND_THROW,
-    SIM_COMMAND_RC,
     SIM_COMMAND_RESET,
     SIM_COMMAND_THROW,
     decode_telemetry,
+    encode_rc_command,
     encode_sim_command,
 )
 
@@ -45,10 +50,10 @@ PHASE_CUTOFF = 6
 PHASE_NAMES = ["idle", "manual", "armed", "ballistic", "recovery", "hover", "cutoff"]
 
 # One UDP port range per instance: sim link, telemetry (+ mirror on +2),
-# raw state, command listener and rc uplink never overlap between
-# instances. The rc port override is defense in depth: the uplink already
-# refuses to run headless, and even if that guard regressed the stream
-# must not land on the real-board bridge port.
+# raw state, scenario command listener and the drone_sim command receiver
+# the RC stream goes to never overlap between instances. Striding the rc
+# port also keeps a campaign away from the default port a bench session
+# may be using for the real board.
 BASE_PORT = 48000
 PORT_STRIDE = 10
 
@@ -119,8 +124,6 @@ class Instance:
                 str(self.command_port),
                 "--raw-port",
                 str(self.raw_port),
-                "--rc-port",
-                str(self.rc_port),
                 "--lockstep",
                 "--time-scale",
                 str(args.time_scale),
@@ -140,6 +143,8 @@ class Instance:
                 str(self.sim_port),
                 "--telemetry-port",
                 str(self.telemetry_port),
+                "--rc-port",
+                str(self.rc_port),
             ],
             stdout=self._log,
             stderr=subprocess.STDOUT,
@@ -154,7 +159,33 @@ class Instance:
         self.command = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._last_sample = None
 
+        # RC is a stream, not a shot: the flight process reverts to
+        # kill+disarmed after 500 ms of silence, so a campaign has to keep
+        # repeating the state it holds. Five sends per fail-safe window at
+        # any time scale, since the window is counted in simulated time.
+        self._rc_state = (0, 0, 0.0)
+        self._rc_stop = threading.Event()
+        self._rc_period_s = min(0.05, 0.1 / args.time_scale)
+        self._rc_thread = threading.Thread(target=self._stream_rc, daemon=True)
+        self._rc_thread.start()
+
+    def _stream_rc(self) -> None:
+        """Repeat the held RC state until close() stops the thread."""
+        while not self._rc_stop.wait(self._rc_period_s):
+            kill, arm, throttle = self._rc_state
+            # sendto is thread safe for datagrams: no lock needed around it.
+            self.command.sendto(
+                encode_rc_command(kill=kill, arm=arm, throttle=throttle),
+                ("127.0.0.1", self.rc_port),
+            )
+
+    def set_rc(self, kill: int = 0, arm: int = 0, throttle: float = 0.0) -> None:
+        """Change the state the RC thread repeats (tuple assignment is atomic)."""
+        self._rc_state = (kill, arm, throttle)
+
     def close(self) -> None:
+        self._rc_stop.set()
+        self._rc_thread.join(timeout=5.0)
         for process in (self.godot, self.drone_sim):
             if process.poll() is None:
                 process.terminate()
@@ -180,6 +211,7 @@ class Instance:
         held_azimuth: float = 0.0,
         swing_s: float = 0.0,
     ) -> None:
+        """Send one scenario command to the simulator (reset, throw, hand throw)."""
         packet = encode_sim_command(
             command, kill=kill, arm=arm, throttle=throttle,
             velocity=velocity, angular=angular,
@@ -262,14 +294,14 @@ class Instance:
         # A fresh world and a fresh flight core, then let the estimators
         # settle exactly like a drone powered up on the ground.
         self.drain_telemetry()
-        self.send_command(SIM_COMMAND_RC, kill=0, arm=0, throttle=0.0)
+        self.set_rc(kill=0, arm=0, throttle=0.0)
         self.send_command(SIM_COMMAND_RESET)
         if not self.wait_sim_seconds(SETTLE_SIM_S):
             result.outcome = "stalled"
             result.detail = "no telemetry while settling"
             return result
 
-        self.send_command(SIM_COMMAND_RC, kill=0, arm=1, throttle=0.0)
+        self.set_rc(kill=0, arm=1, throttle=0.0)
         if not self._wait_phase(PHASE_ARMED, ARM_BUDGET_SIM_S):
             result.outcome = "setup-failed"
             result.detail = "arming was not acknowledged"

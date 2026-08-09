@@ -7,12 +7,16 @@ extends Node
 ## mirrored by the constants in protocol.gd (the single GDScript copy):
 ## u8 version, u8 type, u8 command, u8 kill switch, u8 arm switch, u8 mode,
 ## f32 throttle, 3x f32 velocity [m/s], 3x f32 angular velocity [rad/s],
-## then the hand throw floats. Vectors arrive in the drone frame convention
-## of the protocol and are remapped to the Godot axes here.
+## then the hand throw floats. The RC fields are dead weight on this path
+## (kept so the layout does not move) and are ignored here. Vectors arrive
+## in the drone frame convention of the protocol and are remapped to the
+## Godot axes here.
 ##
-## RC commands are applied to the pilot state immediately; reset and throw
-## are one-shot requests the drone consumes at its next physics tick, exactly
-## like the keyboard pilot: commands never touch the physics state directly.
+## Reset, throw and hand throw are one-shot requests the drone consumes at
+## its next physics tick, exactly like the keyboard pilot: commands never
+## touch the physics state directly. RC is not among them - the pilot state
+## goes straight to the flight process command receiver, never through the
+## simulator.
 
 ## Axis remap from the drone frame to the Godot frame: the inverse of the
 ## GODOT_TO_DRONE basis used on the sensor path.
@@ -21,16 +25,12 @@ const DRONE_TO_GODOT := Basis(Vector3(0, 0, -1), Vector3(-1, 0, 0), Vector3(0, 1
 ## UDP port listened on, SIM_COMMAND_PORT in the headers.
 @export var command_port: int = 47804
 
-## Pilot the RC commands are applied to.
-@export var pilot_path: NodePath
-
 ## Number of valid command packets applied.
 var packets_received: int = 0
 ## Number of datagrams rejected because of their size or version.
 var packets_dropped: int = 0
 
 var _socket := PacketPeerUDP.new()
-var _pilot: PilotInput = null
 var _reset_requested := false
 var _throw_requested := false
 var _throw_velocity := Vector3.ZERO
@@ -43,8 +43,6 @@ var _swing_seconds: float = 0.0
 
 func _ready() -> void:
 	command_port = SimArgs.get_port("command-port", command_port)
-	if not pilot_path.is_empty():
-		_pilot = get_node_or_null(pilot_path) as PilotInput
 	var error := _socket.bind(command_port, "0.0.0.0")
 	if error != OK:
 		push_error("sim command: cannot bind port %d (error %d)" % [command_port, error])
@@ -121,11 +119,6 @@ func _decode(payload: PackedByteArray) -> bool:
 	match payload.decode_u8(2):
 		Protocol.SIM_COMMAND_RESET:
 			_reset_requested = true
-		Protocol.SIM_COMMAND_RC:
-			if _pilot != null:
-				_pilot.kill_switch = payload.decode_u8(3) != 0
-				_pilot.arm_switch = payload.decode_u8(4) != 0
-				_pilot.throttle = clampf(payload.decode_float(Protocol.SIM_COMMAND_THROTTLE_OFFSET), 0.0, 1.0)
 		Protocol.SIM_COMMAND_THROW:
 			_decode_throw_vectors(payload)
 			_throw_requested = true

@@ -12,7 +12,7 @@ class_name Protocol
 ## packets (telemetry, sim raw) follow with a source id byte and a u16
 ## sequence number.
 
-const VERSION := 10
+const VERSION := 11
 
 ## Packet types, the second byte of every packet (header.hpp).
 const TYPE_SIM_SENSOR := 1
@@ -38,14 +38,17 @@ const SOURCE_SIM_PLANT := 4
 
 ## Packed packet sizes (sim_link.hpp, telemetry.hpp, sim_raw.hpp,
 ## commands.hpp).
-const SIM_SENSOR_PACKET_SIZE := 45
+const SIM_SENSOR_PACKET_SIZE := 39
 const SIM_ACTUATOR_PACKET_SIZE := 26
 const TELEMETRY_PACKET_SIZE := 99
 const SIM_RAW_PACKET_SIZE := 53
 const SIM_COMMAND_PACKET_SIZE := 50
+const RC_COMMAND_PACKET_SIZE := 9
 
 ## Scenario commands carried by SimCommandPacket (commands.hpp).
 const SIM_COMMAND_RESET := 1
+## Retired since v11: RC travels as RcCommandPacket to the flight process
+## command receiver. The value stays reserved so the neighbors keep theirs.
 const SIM_COMMAND_RC := 2
 const SIM_COMMAND_THROW := 3
 const SIM_COMMAND_HAND_THROW := 4

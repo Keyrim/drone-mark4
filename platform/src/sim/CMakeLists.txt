@@ -5,6 +5,7 @@ add_library(platform_sim STATIC
     clock_sim.cpp
     udp_link.cpp
     sensor_source_sim.cpp
+    command_receiver_sim.cpp
     motor_sink_sim.cpp
     telemetry_sender_sim.cpp
     log_sink_file.cpp)

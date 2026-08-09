@@ -6,6 +6,13 @@ throws, using the real Godot physics as the single reference: it spawns N
 run, plays a randomized throw through the sim command channel and judges the
 outcome from the telemetry.
 
+Arming and the kill switch do not go through the simulator: they are streamed
+as `RcCommandPacket` straight at each `drone_sim` command receiver, the same
+path a real flight uses. A background thread per instance repeats the held
+state, fast enough that the 500 ms fail-safe never trips at any `--time-scale`
+(the window is counted in simulated time). Each instance strides its own rc
+port, so a campaign never lands on the port a bench session may be using.
+
 ## Requirements
 
 - `drone_sim` built for the desktop preset.

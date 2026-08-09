@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 #: First byte of every packet, must match mark4::PROTOCOL_VERSION.
-PROTOCOL_VERSION = 10
+PROTOCOL_VERSION = 11
 
 # Packet types, the second byte of every packet (mark4::PacketType).
 TYPE_SIM_SENSOR = 1
@@ -43,6 +43,8 @@ SOURCE_SIM_PLANT = 4
 
 # Scenario commands carried by SimCommandPacket (commands.hpp).
 SIM_COMMAND_RESET = 1
+# Retired since v11: RC travels as RcCommandPacket to the flight process
+# command receiver. The value stays reserved so the neighbors keep theirs.
 SIM_COMMAND_RC = 2
 SIM_COMMAND_THROW = 3
 SIM_COMMAND_HAND_THROW = 4
@@ -100,9 +102,11 @@ SIM_RAW_STRUCT = struct.Struct("<BBBHQ4f3f3f")
 SIM_RAW_PACKET_SIZE = 53
 
 # Wire format mirroring mark4::SimSensorPacket (sim_link.hpp): version,
-# type, timestampUs, gyro[3], accel[3], baro, kill, throttle, arm, reset.
-SIM_SENSOR_STRUCT = struct.Struct("<BBQ3f3ffBfBB")
-SIM_SENSOR_PACKET_SIZE = 45
+# type, timestampUs, gyro[3], accel[3], baro, reset. Sensors only since
+# v11: the pilot state reaches the flight process out-of-band, as an
+# RcCommandPacket on its command receiver.
+SIM_SENSOR_STRUCT = struct.Struct("<BBQ3f3ffB")
+SIM_SENSOR_PACKET_SIZE = 39
 
 # Wire format mirroring mark4::SimActuatorPacket (sim_link.hpp): version,
 # type, echoed timestampUs, motor[4].
@@ -430,6 +434,18 @@ def encode_sim_raw(sample: SimRawSample, version: int = PROTOCOL_VERSION) -> byt
         *sample.attitude_quat,
         *sample.position_m,
         *sample.velocity_mps,
+    )
+
+
+def encode_rc_command(
+    kill: int = 0,
+    arm: int = 0,
+    mode: int = RC_MODE_MANUAL,
+    throttle: float = 0.0,
+) -> bytes:
+    """Pack one RcCommandPacket; stream it, never fire it once (fail-safe)."""
+    return RC_COMMAND_STRUCT.pack(
+        PROTOCOL_VERSION, TYPE_RC_COMMAND, kill, arm, mode, throttle,
     )
 
 

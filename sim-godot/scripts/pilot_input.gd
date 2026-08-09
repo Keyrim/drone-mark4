@@ -3,10 +3,11 @@ extends Node
 
 ## Keyboard pilot.
 ##
-## Holds the two RC fields that travel in every sensor packet (kill switch and
-## throttle) and turns the throw and reset keys into one-shot requests that the
-## drone consumes on its next physics tick. This node never touches the physics
-## state itself, so key presses are always applied at a tick boundary.
+## Holds the pilot state (kill switch, arm switch, throttle) that RcUplink
+## streams to the flight process, and turns the throw and reset keys into
+## one-shot requests that the drone consumes on its next physics tick. This
+## node never touches the physics state itself, so key presses are always
+## applied at a tick boundary.
 ##
 ## Key bindings are declared as input actions in project.godot:
 ## K toggles the kill switch, A toggles the arm switch, Up and Down nudge the
@@ -25,21 +26,20 @@ const ACTION_GRAB := &"sim_grab"
 const ACTION_RESET := &"sim_reset"
 const ACTION_QUIT := &"sim_quit"
 
-## Kill switch state sent in the sensor packet, true means engaged (motors cut).
-## Starts released so the flight process runs its normal loop.
+## Kill switch state streamed to the flight process, true means engaged
+## (motors cut). Starts released so the flight process runs its normal loop.
 var kill_switch: bool = false
 
-## Normalized RC throttle sent in the sensor packet, in [0, 1].
+## Normalized RC throttle streamed to the flight process, in [0, 1].
 var throttle: float = 0.0
 
-## Arm switch state sent in the sensor packet, true means the flight process
-## may fly on its own after a throw.
+## Arm switch state streamed to the flight process, true means it may fly on
+## its own after a throw.
 var arm_switch: bool = false
 
 var _throw_requested: bool = false
 var _grab_requested: bool = false
 var _reset_requested: bool = false
-var _board_reset_requested: bool = false
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -58,10 +58,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed(ACTION_GRAB):
 		_grab_requested = true
 	elif event.is_action_pressed(ACTION_RESET):
-		# One key, both worlds: the sim consumes the first flag, the RC
-		# uplink turns the second into a board reboot command.
 		_reset_requested = true
-		_board_reset_requested = true
 	else:
 		return
 	get_viewport().set_input_as_handled()
@@ -85,14 +82,6 @@ func take_grab_request() -> bool:
 func take_reset_request() -> bool:
 	var requested := _reset_requested
 	_reset_requested = false
-	return requested
-
-
-## Return true once per R press, then clear the request. Separate flag from
-## take_reset_request so the sim and the RC uplink each see every press.
-func take_board_reset_request() -> bool:
-	var requested := _board_reset_requested
-	_board_reset_requested = false
 	return requested
 
 

@@ -60,22 +60,26 @@ from the Godot axes happens in `sim_link.gd` and `sim_raw_link.gd`.
 
 | Key        | Effect                                                        |
 | ---------- | ------------------------------------------------------------- |
-| `K`        | toggle the kill switch field (starts released)                 |
-| `Up`       | throttle field + 0.05                                          |
-| `Down`     | throttle field - 0.05                                          |
+| `K`        | toggle the kill switch (starts released)                       |
+| `Up`       | throttle + 0.05                                                |
+| `Down`     | throttle - 0.05                                                |
 | `SPACE`    | throw the drone                                                |
 | `R`        | reset the drone to its start pose, at rest, motors stopped     |
 | `ESC`      | quit                                                           |
 
-The kill switch and the throttle are only fields of the sensor packet: the
-simulator never cuts the motors itself. When the kill switch is engaged the
+The kill switch and the throttle never touch the physics: the simulator does
+not cut the motors itself. They are streamed to the flight process as
+`RcCommandPacket` by the `RcUplink` node, out-of-band from the sensor packet
+and on the exact path a real flight uses. When the kill switch is engaged the
 flight process is expected to answer with four zeros, and the motors spin down
-with their normal lag. That is exactly the path worth exercising.
+with their normal lag. That is exactly the path worth exercising - including
+the fail-safe, since stopping the stream (closing the simulator) is what a
+lost radio link looks like to the flight process.
 
 The usual sequence is `R` then `SPACE`. Pressing `SPACE` while the drone is
 already flying simply adds another push.
 
-What the throttle field does depends entirely on the flight process. With the
+What the throttle does depends entirely on the flight process. With the
 hover stack, the stick commands a vertical velocity: below 0.05 the drone is
 disarmed (motors stopped), mid stick holds the altitude, and full deflection
 climbs or sinks at 2 m/s; the attitude is leveled automatically. Raise the
@@ -130,12 +134,16 @@ the source of truth; `scripts/protocol.gd` is the single GDScript copy of
 its constants and `scripts/sim_link.gd` packs with them. Both packets are
 packed, little endian, version byte then type byte:
 
-- sensor packet, 45 bytes, simulator to flight process: `u8` version, `u8`
+- sensor packet, 39 bytes, simulator to flight process: `u8` version, `u8`
   type, `u64` timestamp in microseconds, 3 `f32` gyro [rad/s], 3 `f32`
-  accelerometer [m/s^2], `f32` pressure [Pa], `u8` kill switch (1 engaged),
-  `f32` throttle, `u8` arm switch, `u8` reset count.
+  accelerometer [m/s^2], `f32` pressure [Pa], `u8` reset count. Sensors
+  only: the pilot state is not a sensor reading and travels out-of-band.
 - actuator packet, 26 bytes, flight process to simulator: `u8` version,
   `u8` type, `u64` echoed timestamp, 4 `f32` motor commands in [0, 1].
+- rc command packet, 9 bytes, `RcUplink` to the flight process command
+  receiver (udp/47805 by default): `u8` version, `u8` type, `u8` kill
+  switch (1 engaged), `u8` arm switch, `u8` mode, `f32` throttle. Streamed
+  at 10 Hz; 500 ms of silence trips the flight process fail-safe.
 
 Datagrams with another size or another version byte are counted as dropped and
 ignored. Motor commands are clamped to [0, 1] on arrival.

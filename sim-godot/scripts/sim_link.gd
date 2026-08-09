@@ -11,12 +11,15 @@ extends Node
 ## The wire layout is defined by protocol/include/protocol/sim_link.hpp,
 ## mirrored by the constants in protocol.gd (the single GDScript copy):
 ##
-##   sensor   (45 bytes): u8 version, u8 type, u64 timestamp_us,
+##   sensor   (39 bytes): u8 version, u8 type, u64 timestamp_us,
 ##                        3x f32 gyro [rad/s], 3x f32 accel [m/s^2],
-##                        f32 baro [Pa], u8 kill switch, f32 throttle,
-##                        u8 arm switch, u8 reset count
+##                        f32 baro [Pa], u8 reset count
 ##   actuator (26 bytes): u8 version, u8 type, u64 echoed timestamp_us,
 ##                        4x f32 motor commands in [0, 1]
+##
+## Sensors only: the pilot state is not a sensor reading and does not
+## travel here. RcUplink streams it out-of-band to the flight process
+## command receiver, the same path the real board is flown through.
 ##
 ## Anything with another size, version or type byte is dropped. The echoed
 ## timestamp identifies the sensor packet a reply answers: in lockstep mode
@@ -115,25 +118,17 @@ func _exit_tree() -> void:
 ## @param gyro_rad_s body angular rates [rad/s].
 ## @param accel_mps2 specific force in the body frame [m/s^2].
 ## @param baro_pa static pressure [Pa].
-## @param kill_switch true when the kill switch is engaged.
-## @param throttle normalized RC throttle in [0, 1].
-## @param arm_switch true when the drone is armed for an autonomous throw flight.
 ## @param reset_count world reset counter, tells the flight process to restart.
 func exchange(
 	timestamp_us: int,
 	gyro_rad_s: Vector3,
 	accel_mps2: Vector3,
 	baro_pa: float,
-	kill_switch: bool,
-	throttle: float,
-	arm_switch: bool,
 	reset_count: int
 ) -> void:
 	if not _ready_to_send:
 		return
-	_send_sensor_packet(
-		timestamp_us, gyro_rad_s, accel_mps2, baro_pa, kill_switch, throttle, arm_switch, reset_count
-	)
+	_send_sensor_packet(timestamp_us, gyro_rad_s, accel_mps2, baro_pa, reset_count)
 	if lockstep:
 		if not _wait_for_reply():
 			lockstep_timeouts += 1
@@ -154,9 +149,6 @@ func _send_sensor_packet(
 	gyro_rad_s: Vector3,
 	accel_mps2: Vector3,
 	baro_pa: float,
-	kill_switch: bool,
-	throttle: float,
-	arm_switch: bool,
 	reset_count: int
 ) -> void:
 	var gyro_drone := GODOT_TO_DRONE * gyro_rad_s
@@ -172,9 +164,6 @@ func _send_sensor_packet(
 	_buffer.put_float(accel_drone.y)
 	_buffer.put_float(accel_drone.z)
 	_buffer.put_float(baro_pa)
-	_buffer.put_u8(1 if kill_switch else 0)
-	_buffer.put_float(throttle)
-	_buffer.put_u8(1 if arm_switch else 0)
 	_buffer.put_u8(reset_count)
 
 	var payload := _buffer.data_array

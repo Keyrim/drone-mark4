@@ -1,27 +1,34 @@
 class_name RcUplink
 extends Node
 
-## Streams the pilot state to the real board, through the serial bridge.
+## Streams the pilot state to a flight process command receiver.
 ##
 ## The keyboard pilot (K, A, Up/Down) is the single cockpit: its state is
-## packed as a SimCommandPacket RC command (protocol/include/protocol/
-## commands.hpp) and sent at 10 Hz over UDP to the serial bridge
-## (tools/telemetry/serial_bridge.py, RC_COMMAND_PORT), which relays it to
-## the flight controller over the UART. R sends a RESET command on top of
-## the stream: the bridge turns it into a board reboot, so the key that
-## restarts the sim world also restarts the real board. Streaming is the
-## contract: the firmware reverts to kill+disarmed after 500 ms of
-## silence, so closing the simulator is itself a safe action.
+## packed as an RcCommandPacket (protocol/include/protocol/commands.hpp)
+## and sent at 10 Hz over UDP to RC_COMMAND_PORT. The default destination
+## is the local drone_sim, so an interactive flight exercises the exact
+## RC path a real flight uses; pointing it at the serial bridge instead
+## (--rc-port, or the host export) flies the real board through the same
+## cockpit and the same packets.
 ##
-## The port is distinct from the scenario command port this simulator
-## listens on (the sim binds its port exclusively, and the ghost view use
-## case runs both at once). Harmless when no bridge is listening: the
-## datagrams fall on the floor.
+## We only send. The receiving flight process is the one that binds the
+## port, so nothing here ever fails because a receiver is missing: the
+## datagrams simply fall on the floor. Silence means kill: the receiver
+## reverts to kill+disarmed after 500 ms without a packet, so closing the
+## simulator is itself a safe action, and holding a state means repeating
+## it rather than sending it once.
+##
+## The cadence is wall-clock (_process), not simulated time, while the
+## fail-safe window is measured in simulated time by the flight process.
+## Above roughly time scale 5 the stream therefore looks intermittent to
+## the receiver and the fail-safe flaps; interactive sessions run at 1x,
+## and batch campaigns stream their own RC at a scaled period instead of
+## using this node.
 ##
 ## The uplink never runs headless: a headless instance is a batch
-## campaign, and a campaign must not stream arm/kill states at the
-## real-board bridge port a bench session may be using. Interactive
-## sessions can opt out with --no-rc-uplink.
+## campaign, and a campaign must not stream arm/kill states at a port a
+## bench session may be using. Interactive sessions can opt out with
+## --no-rc-uplink.
 
 ## Seconds between two packets: 10 Hz, five packets per fail-safe window.
 const SEND_PERIOD_S := 0.1
@@ -76,35 +83,24 @@ func _process(delta: float) -> void:
 	if not _ready_to_send:
 		return
 
-	# R reboots the board too: same key as the sim world reset, relayed by
-	# the bridge as a reboot command, sent immediately (not paced).
-	if _pilot.take_board_reset_request():
-		_send(Protocol.SIM_COMMAND_RESET)
-
 	_since_last_send += delta
 	if _since_last_send < SEND_PERIOD_S:
 		return
 	_since_last_send = 0.0
-	_send(Protocol.SIM_COMMAND_RC)
+	_send()
 
 
-## Pack and send one SimCommandPacket carrying the pilot state.
-##
-## @param command SIM_COMMAND_RC for the periodic state, SIM_COMMAND_RESET
-##        on R.
-func _send(command: int) -> void:
+## Pack and send one RcCommandPacket carrying the pilot state.
+func _send() -> void:
 	_buffer.clear()
 	_buffer.put_u8(Protocol.VERSION)
-	_buffer.put_u8(Protocol.TYPE_SIM_COMMAND)
-	_buffer.put_u8(command)
+	_buffer.put_u8(Protocol.TYPE_RC_COMMAND)
 	_buffer.put_u8(1 if _pilot.kill_switch else 0)
 	_buffer.put_u8(1 if _pilot.arm_switch else 0)
 	_buffer.put_u8(Protocol.RC_MODE_MANUAL)
 	_buffer.put_float(_pilot.throttle)
-	for _index in range(10):
-		_buffer.put_float(0.0)
 
 	var payload := _buffer.data_array
-	assert(payload.size() == Protocol.SIM_COMMAND_PACKET_SIZE)
+	assert(payload.size() == Protocol.RC_COMMAND_PACKET_SIZE)
 	if _socket.put_packet(payload) == OK:
 		packets_sent += 1

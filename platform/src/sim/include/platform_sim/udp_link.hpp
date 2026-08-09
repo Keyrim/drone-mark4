@@ -11,7 +11,8 @@
 namespace mark4
 {
     /// Owns one UDP socket bound to a local port: blocking receive with a
-    /// timeout, and a reply channel back to the last *accepted* sender. The
+    /// timeout, a non-blocking poll for the links a loop may not stall on,
+    /// and a reply channel back to the last *accepted* sender. The
     /// link itself never trusts a datagram: the consumer validates the bytes
     /// it received, then calls acceptLastSender() to make that peer the reply
     /// target - one stray datagram on the port can therefore never redirect
@@ -50,6 +51,14 @@ namespace mark4
         /// @return number of bytes received, 0 on timeout or error
         std::size_t receive(std::uint8_t *bufferOut, std::size_t capacity);
 
+        /// @brief Takes one pending datagram, or nothing, without ever
+        ///        blocking. The sender is remembered as a candidate exactly
+        ///        like receive() does.
+        /// @param[out] bufferOut receives the datagram bytes
+        /// @param capacity size of bufferOut; a longer datagram is truncated
+        /// @return number of bytes received, 0 when nothing was pending
+        std::size_t receiveNonBlocking(std::uint8_t *bufferOut, std::size_t capacity);
+
         /// @brief Promotes the sender of the last received datagram to reply
         ///        target. Call it once the datagram passed validation.
         void acceptLastSender();
@@ -61,6 +70,13 @@ namespace mark4
         bool replyToLastSender(const std::uint8_t *data, std::size_t size);
 
       private:
+        /// @brief Shared body of receive() and receiveNonBlocking().
+        /// @param flags recvfrom flags, MSG_DONTWAIT for the polling variant
+        /// @param[out] bufferOut receives the datagram bytes
+        /// @param capacity size of bufferOut
+        /// @return number of bytes received, 0 when nothing came out
+        std::size_t receiveWith(int flags, std::uint8_t *bufferOut, std::size_t capacity);
+
         /// @brief Closes the socket if it is open and marks it closed.
         void closeSocket();
 

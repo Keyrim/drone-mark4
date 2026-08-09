@@ -33,10 +33,12 @@ python3 tools/telemetry/serial_bridge.py [logs/flight.m4bb]
 
 The uplink has no dedicated tool: the Godot simulator is the cockpit.
 Its keyboard pilot (K = kill, A = arm, Up/Down = throttle) streams
-`SimCommandPacket` RC datagrams at 10 Hz to udp/47805
-(`RC_COMMAND_PORT`, distinct from the sim's own 47804 which Godot
-binds exclusively), and the bridge relays them to the board as
-`RcCommandPacket` over the UART. The firmware fail-safes to
+`RcCommandPacket` datagrams at 10 Hz to udp/47805 (`RC_COMMAND_PORT`),
+and the bridge forwards them onto the UART verbatim. The bridge is
+standing in for the board's own command receiver here, which is why it
+is the one binding that port; point the simulator at another one with
+`--rc-port` on both sides when a local `drone_sim` is also listening
+(ghost view: two receivers, two ports). The firmware fail-safes to
 kill+disarmed after 500 ms of silence, so closing either the bridge
 or the simulator is a safe action.
 

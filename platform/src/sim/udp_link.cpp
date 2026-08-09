@@ -82,6 +82,16 @@ namespace mark4
 
     std::size_t UdpLink::receive(std::uint8_t *bufferOut, std::size_t capacity)
     {
+        return receiveWith(0, bufferOut, capacity);
+    }
+
+    std::size_t UdpLink::receiveNonBlocking(std::uint8_t *bufferOut, std::size_t capacity)
+    {
+        return receiveWith(MSG_DONTWAIT, bufferOut, capacity);
+    }
+
+    std::size_t UdpLink::receiveWith(int flags, std::uint8_t *bufferOut, std::size_t capacity)
+    {
         if (m_socketFd < 0 || bufferOut == nullptr || capacity == 0U)
         {
             return 0U;
@@ -89,11 +99,17 @@ namespace mark4
 
         sockaddr_in sender{};
         socklen_t senderSize = sizeof(sender);
-        const ssize_t received = ::recvfrom(
-            m_socketFd, bufferOut, capacity, 0, reinterpret_cast<sockaddr *>(&sender), &senderSize);
+        const ssize_t received = ::recvfrom(m_socketFd,
+                                            bufferOut,
+                                            capacity,
+                                            flags,
+                                            reinterpret_cast<sockaddr *>(&sender),
+                                            &senderSize);
         if (received <= 0)
         {
-            // EAGAIN is the receive timeout, EINTR a signal: both are normal.
+            /* EAGAIN is the receive timeout, and the empty queue of a
+               MSG_DONTWAIT call (EWOULDBLOCK is the same value on this
+               platform); EINTR is a signal. All of them are normal. */
             if (received < 0 && errno != EAGAIN && errno != EINTR)
             {
                 logErrno("recvfrom");
