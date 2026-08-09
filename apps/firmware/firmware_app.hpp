@@ -9,6 +9,7 @@
 #include "platform_common/blackbox.hpp"
 #include "platform_common/rc_tracker.hpp"
 #include "platform_common/telemetry_publisher.hpp"
+#include "platform_common/tuning_service.hpp"
 #include "platform_stm32/clock_stm32.hpp"
 #include "platform_stm32/command_receiver_stm32.hpp"
 #include "platform_stm32/i2c_bus.hpp"
@@ -62,5 +63,6 @@ namespace mark4
         mark4::LogSinkUart m_logSink{m_telemetrySender};
         mark4::Blackbox m_blackbox{m_logSink};
         mark4::FlightCore m_core;
+        mark4::TuningService m_tuningService{m_core, m_telemetrySender};
     };
 } // namespace mark4

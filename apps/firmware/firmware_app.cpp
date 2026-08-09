@@ -126,6 +126,13 @@ namespace mark4
                     rttWrite("rc: reboot command, resetting\n");
                     systemReset();
                 }
+                else
+                {
+                    // Answered here, before the step below, so a value
+                    // written from the bench is in effect for the whole of
+                    // the next step and never changes one halfway through.
+                    static_cast<void>(m_tuningService.handle(packet, size));
+                }
             }
             m_rcTracker.graft(frame);
 
@@ -136,6 +143,10 @@ namespace mark4
 
             ++frames;
             m_telemetryPublisher.publish(frame, actuators, m_core);
+            // Paced answers to a list request: one description per frame, so
+            // a table dump never bursts ahead of the telemetry sharing the
+            // same UART.
+            m_tuningService.pump();
             if ((frames % FRAMES_PER_STATUS) == 0U)
             {
                 // A health counter that moved during the last window keeps
@@ -166,11 +177,14 @@ namespace mark4
                           static_cast<unsigned long>(m_sensorSource.overruns()),
                           static_cast<unsigned long>(m_sensorSource.readFailures()),
                           static_cast<unsigned long>(m_baro.failures()));
-                rttPrintf("tx: %lu sent %lu dropped  rc: %lu received%s  phase %u\n",
+                rttPrintf("tx: %lu sent %lu dropped  rc: %lu received%s  "
+                          "tuning: %lu asked %lu answered  phase %u\n",
                           static_cast<unsigned long>(m_telemetrySender.packetsSent()),
                           static_cast<unsigned long>(m_telemetrySender.packetsDropped()),
                           static_cast<unsigned long>(m_commandReceiver.packetsReceived()),
                           m_rcTracker.failsafeActive(frame.timestampUs) ? " (failsafe)" : "",
+                          static_cast<unsigned long>(m_tuningService.requestCount()),
+                          static_cast<unsigned long>(m_tuningService.answerCount()),
                           static_cast<unsigned>(m_core.flightPhase()));
             }
         }
