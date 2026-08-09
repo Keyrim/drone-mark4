@@ -23,6 +23,7 @@ add_executable(unit_tests
     test_rc_tracker.cpp
     test_replay.cpp
     test_serial_framing.cpp
+    test_sim_run_tracker.cpp
     test_telemetry.cpp
     test_throw_detector.cpp
     test_tuning.cpp

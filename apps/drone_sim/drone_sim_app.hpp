@@ -18,6 +18,7 @@
 #include "platform_sim/log_sink_file.hpp"
 #include "platform_sim/motor_sink_sim.hpp"
 #include "platform_sim/sensor_source_sim.hpp"
+#include "platform_sim/sim_run_tracker.hpp"
 #include "platform_sim/telemetry_sender_sim.hpp"
 #include "platform_sim/udp_link.hpp"
 #include "protocol/header.hpp"
@@ -95,6 +96,18 @@ namespace mark4
             return m_blackbox;
         }
 
+        /// @return sensor source, for post-run reporting
+        [[nodiscard]] const mark4::SensorSourceSim &accessSensorSource() const
+        {
+            return m_sensorSource;
+        }
+
+        /// @return run tracker, for post-run reporting
+        [[nodiscard]] const mark4::SimRunTracker &accessRunTracker() const
+        {
+            return m_runTracker;
+        }
+
       private:
         std::uint32_t m_maxFrames;     ///< frame budget for run()
         std::uint16_t m_simPort;       ///< sim link listen port
@@ -121,5 +134,6 @@ namespace mark4
         mark4::FlightCore m_core;
         mark4::TuningService m_tuningService{m_core, m_telemetrySender};
         mark4::Blackbox m_blackbox;
+        mark4::SimRunTracker m_runTracker;
     };
 } // namespace mark4

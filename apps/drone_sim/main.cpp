@@ -155,6 +155,14 @@ int main(int argc, char **argv)
                 static_cast<double>(motor[2]),
                 static_cast<double>(motor[3]));
 
+    const auto &tracker = app.accessRunTracker();
+    std::printf("drone_sim: run %u hash %016llx (%s), %u resent frames rejected%s\n",
+                static_cast<unsigned>(tracker.runId()),
+                static_cast<unsigned long long>(tracker.hash()),
+                tracker.sealed() ? "sealed" : "partial",
+                app.accessSensorSource().duplicateFrameCount(),
+                tracker.degraded() ? ", LINK DEGRADED" : "");
+
     const auto &logSink = app.accessLogSink();
     std::printf("drone_sim: %u blackbox records (%zu bytes) in %s\n",
                 app.accessBlackbox().recordCount(),

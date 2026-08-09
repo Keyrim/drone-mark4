@@ -142,6 +142,7 @@ namespace mark4
         mark4::FlightPhase previousPhase = mark4::FlightPhase::IDLE;
         std::uint8_t lastResetCount = 0U;
         bool resetCountSeen = false;
+        bool runSealed = false;
         while (steps < m_maxFrames)
         {
             if (m_sensorSource.waitFrame(frame) != mark4::FrameWait::FRAME)
@@ -156,7 +157,8 @@ namespace mark4
             // scratch, exactly like a power cycle on the bench. Tuned
             // parameters return to their defaults with it, like flash-less
             // hardware.
-            if (resetCountSeen && m_sensorSource.resetCount() != lastResetCount)
+            const bool worldReset = resetCountSeen && m_sensorSource.resetCount() != lastResetCount;
+            if (worldReset)
             {
                 m_core = mark4::FlightCore{};
                 announcedThrows = 0U;
@@ -164,6 +166,13 @@ namespace mark4
                 std::printf("drone_sim: simulator reset at t=%.3f s: flight core restarted\n",
                             static_cast<double>(frame.timestampUs) / US_PER_S);
                 static_cast<void>(std::fflush(stdout));
+            }
+            if (worldReset || !resetCountSeen)
+            {
+                // A run is what happens between two resets: the hash of the
+                // previous one is finished, this one starts from scratch.
+                m_runTracker.beginRun(m_sensorSource.resetCount(), frame.timestampUs, 0U);
+                runSealed = false;
             }
             lastResetCount = m_sensorSource.resetCount();
             resetCountSeen = true;
@@ -198,6 +207,18 @@ namespace mark4
             // a table dump never bursts ahead of the telemetry it shares the
             // link with.
             m_tuningService.pump();
+            m_runTracker.update(frame, actuators);
+            m_runTracker.noteLink(0U, m_sensorSource.duplicateFrameCount());
+            if (m_runTracker.sealed() && !runSealed)
+            {
+                runSealed = true;
+                std::printf("drone_sim: run %u hash %016llx over %u frames%s\n",
+                            static_cast<unsigned>(m_runTracker.runId()),
+                            static_cast<unsigned long long>(m_runTracker.hash()),
+                            m_runTracker.hashedFrames(),
+                            m_runTracker.degraded() ? ", LINK DEGRADED" : "");
+                static_cast<void>(std::fflush(stdout));
+            }
             // Wall clock, not simulated time: one announce per second of real
             // time whatever the sim time scale, which is the cadence the
             // ground side counts on.
