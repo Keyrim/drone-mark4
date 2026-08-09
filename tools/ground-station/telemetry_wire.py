@@ -134,8 +134,16 @@ REBOOT_COMMAND_PACKET_SIZE = 3
 ANNOUNCE_STRUCT = struct.Struct("<BBBIHH")
 ANNOUNCE_PACKET_SIZE = 11
 
-# Wire formats mirroring the tuning packets (tuning.hpp). Reserved:
-# nothing emits them yet.
+# Wire formats mirroring the tuning packets (tuning.hpp).
+# Statuses carried by a TuningAckPacket.
+TUNING_ACK_OK = 0
+TUNING_ACK_UNKNOWN_ID = 1
+TUNING_ACK_OUT_OF_BOUNDS = 2
+TUNING_ACK_LOCKED_WHILE_ARMED = 3
+
+# TuningInfoPacket flags bit: the parameter may change while armed.
+TUNING_FLAG_ARMED_CHANGE = 0x01
+
 TUNING_SET_STRUCT = struct.Struct("<BBHf")
 TUNING_SET_PACKET_SIZE = 8
 TUNING_GET_STRUCT = struct.Struct("<BBH")
@@ -282,6 +290,15 @@ class SimRawSample:
     def timestamp_s(self) -> float:
         """Simulated time in seconds."""
         return self.timestamp_us * 1e-6
+
+
+@dataclass(frozen=True)
+class TuningAck:
+    """One decoded answer to a tuning set or get."""
+
+    param_id: int
+    value: float
+    status: int
 
 
 def has_header(datagram: bytes, packet_type: int) -> bool:
@@ -447,6 +464,23 @@ def encode_rc_command(
     return RC_COMMAND_STRUCT.pack(
         PROTOCOL_VERSION, TYPE_RC_COMMAND, kill, arm, mode, throttle,
     )
+
+
+def encode_tuning_set(param_id: int, value: float) -> bytes:
+    """Pack one TuningSetPacket; answered by a TuningAckPacket."""
+    return TUNING_SET_STRUCT.pack(
+        PROTOCOL_VERSION, TYPE_TUNING_SET, param_id, value,
+    )
+
+
+def decode_tuning_ack(datagram: bytes) -> Optional[TuningAck]:
+    """Decode one tuning acknowledgement datagram, None when not one."""
+    if len(datagram) != TUNING_ACK_PACKET_SIZE:
+        return None
+    if not has_header(datagram, TYPE_TUNING_ACK):
+        return None
+    fields = TUNING_ACK_STRUCT.unpack(datagram)
+    return TuningAck(param_id=fields[2], value=fields[3], status=fields[4])
 
 
 def encode_sim_command(

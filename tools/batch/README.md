@@ -14,7 +14,9 @@ else, so the campaign is the only reader of its telemetry port.
 
 Arming and the kill switch do not go through the simulator: they are streamed
 as `RcCommandPacket` straight at each `drone_sim` command receiver, the same
-path a real flight uses. A background thread per instance repeats the held
+path a real flight uses. The campaign arms in altitude-auto mode with the
+stick centered, which is the interlock that mode is entered through; a
+centered stick is harmless while the arm switch is off. A background thread per instance repeats the held
 state, fast enough that the 500 ms fail-safe never trips at any `--time-scale`
 (the window is counted in simulated time). Each instance strides its own rc
 port, so a campaign never lands on the port a bench session may be using.
@@ -52,7 +54,22 @@ python3 tools/batch/run_batch.py --runs 200 --parallel 8 --hand
 
 # Safety campaign: hold and shake, never throw - the false spin-up rate
 python3 tools/batch/run_batch.py --runs 40 --parallel 4 --held-only
+
+# Sweep a gain: the same 200 throws at three hover collectives
+for value in 0.50 0.55 0.60; do
+    python3 tools/batch/run_batch.py --runs 200 --parallel 8 \
+        --set 303=$value --csv logs/hover_$value.csv
+done
 ```
+
+`--set ID=VALUE` writes one tuning parameter, repeatable, ids from
+`flight-core/include/flight_core/tuning_table.hpp`. The values are applied
+per run, after the world reset and before arming: the reset rebuilds the
+flight core from scratch, so a push done once at startup would only ever
+reach the first run. Every write is verified against its acknowledgement,
+and a parameter that is refused (unknown id, out of bounds, locked) ends the
+run as `setup-failed` with the status it came back with, rather than
+silently measuring the default.
 
 `--arena-radius` builds a translucent wall ring at the given distance (also
 available in the editor: the Arena node of the main scene). Drifting into it
@@ -72,8 +89,8 @@ be done against a windowed (non headless) Godot to watch the failure live.
   shows the furthest phase reached (a throw too weak for the detector stays
   in `armed`, by design).
 - `setup-failed` / `stalled`: the harness itself misbehaved (arming not
-  acknowledged, telemetry silent); these are tooling problems, not flight
-  results.
+  acknowledged, a `--set` refused or unanswered, telemetry silent); these are
+  tooling problems, not flight results.
 
 Reproducibility note: run i uses seed `--seed + i`, so a campaign is
 reproducible on the same machine and Godot build. Jolt does not guarantee

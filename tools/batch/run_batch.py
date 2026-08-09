@@ -40,9 +40,12 @@ from telemetry_wire import (
     SIM_COMMAND_HAND_THROW,
     SIM_COMMAND_RESET,
     SIM_COMMAND_THROW,
+    TUNING_ACK_OK,
     decode_telemetry,
+    decode_tuning_ack,
     encode_rc_command,
     encode_sim_command,
+    encode_tuning_set,
 )
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -74,6 +77,7 @@ ARM_BUDGET_SIM_S = 2.0    # arming must be acknowledged within this
 HELD_WATCH_SIM_S = 8.0    # held-only runs watch the shaken hand this long
 FLIGHT_BUDGET_SIM_S = 12.0  # throw to stable hover, or the run is a failure
 STABLE_HOVER_SIM_S = 3.0  # continuous hover time declaring success
+TUNING_BUDGET_SIM_S = 1.0 # every --set must be acknowledged within this
 WALL_BUDGET_S = 180.0     # hard wall-clock guard per run (hung pair)
 LAUNCHER_STOP_S = 10.0    # longer than the launcher's own 5 s kill grace
 
@@ -166,6 +170,7 @@ class Instance:
 
         self.command = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._last_sample = None
+        self._acks = []
 
         # RC is a stream, not a shot: the flight process reverts to
         # kill+disarmed after 500 ms of silence, so a campaign has to keep
@@ -247,7 +252,12 @@ class Instance:
             self.telemetry.settimeout(1.0)
 
     def next_sample(self):
-        """Block for the next telemetry sample, None on socket timeout."""
+        """Block for the next telemetry sample, None on socket timeout.
+
+        Tuning acks share the telemetry stream (the flight process answers on
+        the link it already broadcasts on), so they are picked out here and
+        queued for whoever is waiting on one.
+        """
         try:
             datagram = self.telemetry.recv(256)
         except socket.timeout:
@@ -255,7 +265,44 @@ class Instance:
         sample = decode_telemetry(datagram)
         if sample is not None:
             self._last_sample = sample
-        return sample
+            return sample
+        ack = decode_tuning_ack(datagram)
+        if ack is not None:
+            self._acks.append(ack)
+        return None
+
+    def apply_tuning(self, settings) -> Optional[str]:
+        """Write every --set value and wait for one ok ack each.
+
+        Applied per run, after the reset and before arming: the reset
+        rebuilds the flight core from scratch, so a push done once at startup
+        would only ever reach the first run.
+        """
+        if not settings:
+            return None
+        self._acks.clear()
+        for param_id, value in settings:
+            self.command.sendto(
+                encode_tuning_set(param_id, value), ("127.0.0.1", self.rc_port)
+            )
+        pending = {param_id for param_id, _ in settings}
+        start = self._sim_time(WALL_BUDGET_S)
+        if start is None:
+            return "no telemetry while tuning"
+        deadline = time.monotonic() + WALL_BUDGET_S
+        while time.monotonic() < deadline:
+            sample = self.next_sample()
+            for ack in self._acks:
+                if ack.status == TUNING_ACK_OK:
+                    pending.discard(ack.param_id)
+                elif ack.param_id in pending:
+                    return f"parameter {ack.param_id} refused, status {ack.status}"
+            self._acks.clear()
+            if not pending:
+                return None
+            if sample is not None and sample.timestamp_s - start > TUNING_BUDGET_SIM_S:
+                return f"no ack for {sorted(pending)}"
+        return "wall clock guard hit while tuning"
 
     def wait_first_sample(self, wall_budget_s: float) -> bool:
         """Wait for the pair to boot and the telemetry to flow."""
@@ -320,6 +367,12 @@ class Instance:
         if not self.wait_sim_seconds(SETTLE_SIM_S):
             result.outcome = "stalled"
             result.detail = "no telemetry while settling"
+            return result
+
+        failure = self.apply_tuning(args.set)
+        if failure is not None:
+            result.outcome = "setup-failed"
+            result.detail = failure
             return result
 
         self.set_rc(kill=0, arm=1, mode=RC_MODE_ALTITUDE_AUTO, throttle=0.5)
@@ -482,12 +535,27 @@ def main() -> int:
         "--held-only", action="store_true",
         help="never throw: hold and shake, measure the false spin-up rate",
     )
+    parser.add_argument(
+        "--set", action="append", default=[], metavar="ID=VALUE",
+        help="write one tuning parameter before every throw, repeatable",
+    )
     parser.add_argument("--csv", help="write every run to this CSV file")
     parser.add_argument(
         "--min-recovery", type=float, default=0.0,
         help="exit nonzero when the recovery rate falls under this [0, 1]",
     )
     args = parser.parse_args()
+
+    settings = []
+    for setting in args.set:
+        name, separator, value = setting.partition("=")
+        if not separator:
+            sys.exit(f"batch: --set wants ID=VALUE, got '{setting}'")
+        try:
+            settings.append((int(name), float(value)))
+        except ValueError:
+            sys.exit(f"batch: --set wants ID=VALUE, got '{setting}'")
+    args.set = settings
 
     if args.only_seed is not None:
         args.runs = 1
@@ -504,6 +572,12 @@ def main() -> int:
     results: List[RunResult] = []
     lock = threading.Lock()
     try:
+        if args.set:
+            print(
+                "batch: tuning "
+                + ", ".join(f"{param_id}={value:g}" for param_id, value in args.set),
+                flush=True,
+            )
         print(f"batch: waiting for {parallel} simulator pair(s) to boot...", flush=True)
         for instance in instances:
             if not instance.wait_first_sample(60.0):
