@@ -45,4 +45,10 @@ namespace mark4
     /// from SIM_COMMAND_PORT: the simulator binds its port exclusively,
     /// and the ghost view use case runs both at once.
     inline constexpr std::uint16_t RC_COMMAND_PORT = 47805U;
+
+    /// UDP port every flight process broadcasts its AnnouncePacket to. One
+    /// shared port for every instance and every kind: the packet itself
+    /// carries the ports that matter, so batch campaigns never stride this
+    /// one. Consumers bind with SO_REUSEADDR so several watchers coexist.
+    inline constexpr std::uint16_t ANNOUNCE_PORT = 47806U;
 } // namespace mark4

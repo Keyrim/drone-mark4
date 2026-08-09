@@ -62,6 +62,7 @@ SIM_RAW_PORT = 47802
 TELEMETRY_MIRROR_PORT = 47803
 SIM_COMMAND_PORT = 47804
 RC_COMMAND_PORT = 47805
+ANNOUNCE_PORT = 47806
 
 # Wire format, little-endian and packed, mirroring mark4::TelemetryPacket:
 #   uint8   version          = PROTOCOL_VERSION

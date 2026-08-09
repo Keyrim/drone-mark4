@@ -73,6 +73,7 @@ const SIM_RAW_PORT := 47802
 const TELEMETRY_MIRROR_PORT := 47803
 const SIM_COMMAND_PORT := 47804
 const RC_COMMAND_PORT := 47805
+const ANNOUNCE_PORT := 47806
 
 
 ## True when the payload opens with the protocol version and the given
