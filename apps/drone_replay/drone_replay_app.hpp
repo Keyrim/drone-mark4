@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include "flight_core/flight_core.hpp"
+#include "platform_common/telemetry_publisher.hpp"
 #include "platform_replay/sensor_source_replay.hpp"
 #include "platform_sim/telemetry_sender_sim.hpp"
 
@@ -47,14 +48,13 @@ namespace mark4
         }
 
       private:
-        void sendTelemetry(const mark4::SensorFrame &frame, const mark4::ActuatorFrame &actuators);
-
         const char *m_logPath; ///< blackbox file to replay, not owned
 
         // Declaration order = construction order; dependencies are injected by
         // reference, so a service may only depend on those declared above it.
         mark4::SensorSourceReplay m_sensorSource;
         mark4::TelemetrySenderSim m_telemetrySender;
+        mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender};
         mark4::FlightCore m_core;
     };
 } // namespace mark4

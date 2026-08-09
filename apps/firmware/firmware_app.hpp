@@ -7,6 +7,7 @@
 
 #include "flight_core/blackbox.hpp"
 #include "flight_core/flight_core.hpp"
+#include "platform_common/telemetry_publisher.hpp"
 #include "platform_stm32/clock_stm32.hpp"
 #include "platform_stm32/command_receiver_stm32.hpp"
 #include "platform_stm32/i2c_bus.hpp"
@@ -28,10 +29,6 @@ namespace mark4
       public:
         /// Frames between two status lines over RTT: one per second.
         static constexpr std::uint32_t FRAMES_PER_STATUS = SensorSourceStm32::FRAME_RATE_HZ;
-
-        /// Frames between two telemetry packets: 50 Hz, the same
-        /// decimation as the simulator app.
-        static constexpr std::uint32_t FRAMES_PER_TELEMETRY = 10U;
 
         /// Fail-safe: silence on the RC uplink longer than this reverts
         /// to the safe state (kill engaged, disarmed). Five missed
@@ -62,6 +59,7 @@ namespace mark4
         mark4::SensorSourceStm32 m_sensorSource{m_imu, m_baro, m_clock};
         mark4::MotorSinkNull m_motorSink;
         mark4::TelemetrySenderStm32 m_telemetrySender;
+        mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender};
         mark4::CommandReceiverStm32 m_commandReceiver;
         mark4::LogSinkUart m_logSink{m_telemetrySender};
         mark4::Blackbox m_blackbox{m_logSink};

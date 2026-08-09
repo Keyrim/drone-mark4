@@ -9,13 +9,11 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#include "flight_core/telemetry.hpp"
 #include "flight_core/throw_detector.hpp"
 #include "protocol/sim_link.hpp"
 
 namespace
 {
-    constexpr std::uint32_t TELEMETRY_DECIMATION = 10U;
     constexpr double US_PER_S = 1e6;
 
     /// Permissions of the log directory when it has to be created: rwxr-xr-x.
@@ -148,10 +146,7 @@ namespace mark4
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);
             m_blackbox.record(frame, actuators);
-            if (steps % TELEMETRY_DECIMATION == 0U)
-            {
-                sendTelemetry(frame, actuators);
-            }
+            m_telemetryPublisher.publish(frame, actuators, m_core);
 
             const mark4::ThrowDetector &detector = m_core.throwDetector();
             if (detector.throwCount() > announcedThrows)
@@ -190,10 +185,4 @@ namespace mark4
         return steps;
     }
 
-    void DroneSimApp::sendTelemetry(const mark4::SensorFrame &frame,
-                                    const mark4::ActuatorFrame &actuators)
-    {
-        const auto wire = mark4::packTelemetry(frame, actuators, m_core);
-        m_telemetrySender.send(wire.data(), wire.size());
-    }
 } // namespace mark4

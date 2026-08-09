@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <cstring>
 
-#include "flight_core/telemetry.hpp"
 #include "flight_core/types.hpp"
 #include "platform_stm32/board.hpp"
 #include "platform_stm32/rtt.hpp"
@@ -79,7 +78,7 @@ namespace mark4
                   "blackbox: every frame, same link; rc uplink armed with %lu ms fail-safe\n",
                   static_cast<unsigned long>(SensorSourceStm32::FRAME_RATE_HZ),
                   static_cast<unsigned long>(UART1_BAUD_RATE),
-                  static_cast<unsigned long>(FRAMES_PER_TELEMETRY),
+                  static_cast<unsigned long>(TelemetryPublisher::DECIMATION),
                   static_cast<unsigned long>(RC_TIMEOUT_US / 1000U));
         return true;
     }
@@ -141,11 +140,7 @@ namespace mark4
             updateStatusLeds(m_core.flightPhase(), frame.rc.killSwitch, degraded, frames);
 
             ++frames;
-            if ((frames % FRAMES_PER_TELEMETRY) == 0U)
-            {
-                const auto wire = packTelemetry(frame, actuators, m_core);
-                m_telemetrySender.send(wire.data(), wire.size());
-            }
+            m_telemetryPublisher.publish(frame, actuators, m_core);
             if ((frames % FRAMES_PER_STATUS) == 0U)
             {
                 // A health counter that moved during the last window keeps

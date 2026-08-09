@@ -9,6 +9,7 @@
 
 #include "flight_core/blackbox.hpp"
 #include "flight_core/flight_core.hpp"
+#include "platform_common/telemetry_publisher.hpp"
 #include "platform_sim/clock_sim.hpp"
 #include "platform_sim/log_sink_file.hpp"
 #include "platform_sim/motor_sink_sim.hpp"
@@ -84,8 +85,6 @@ namespace mark4
         }
 
       private:
-        void sendTelemetry(const mark4::SensorFrame &frame, const mark4::ActuatorFrame &actuators);
-
         std::uint32_t m_maxFrames;     ///< frame budget for run()
         std::uint16_t m_simPort;       ///< sim link listen port
         std::uint16_t m_telemetryPort; ///< telemetry broadcast port
@@ -97,6 +96,7 @@ namespace mark4
         mark4::SensorSourceSim m_sensorSource;
         mark4::MotorSinkSim m_motorSink;
         mark4::TelemetrySenderSim m_telemetrySender;
+        mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender};
         std::array<char, LOG_PATH_SIZE> m_logFilePath; ///< one file per run, outlives m_logSink
         mark4::LogSinkFile m_logSink;
         mark4::FlightCore m_core;
