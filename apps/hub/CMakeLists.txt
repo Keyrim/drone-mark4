@@ -39,6 +39,7 @@ target_link_libraries(hub_core PRIVATE drone_warnings)
 # protocol/ and nothing else.
 add_executable(hub
     src/hub_app.cpp
+    src/launcher.cpp
     src/main.cpp
     src/serial_transport.cpp
     src/udp_transport.cpp
