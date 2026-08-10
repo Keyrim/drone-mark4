@@ -155,9 +155,9 @@ External processes (do NOT link flight-core, speak only protocol/):
   noise/bias/quantization/real rates. Parameterizable "throw" command.
   "Viewer" mode: physics off, pose slaved to received telemetry (replay of
   real flights).
-- **Ground station** (`tools/ground-station/`): real-time plots, 3D attitude
-  view, command sending. Python + pyqtgraph to start (an ImGui/ImPlot rewrite
-  is possible later; the UDP boundary keeps the language free).
+- **Hub + web pages** (`apps/hub/`, `apps/hub/pages/`): session launcher,
+  discovery, recording; real-time plots, 3D attitude view and command
+  console served as web pages over one HTTP/WebSocket port.
 - **ESP32 bridge** (`esp32-bridge/`).
 
 Telemetry is emitted as **UDP broadcast/multicast**: any combination of tools
@@ -188,7 +188,7 @@ drone-mark4/
 |       |-- sim/                   # both presets (+ private include/, udp/uart transports)
 |       `-- replay/                # desktop preset
 |-- apps/{firmware,drone_sim,drone_replay}/
-|-- tools/ground-station/
+|-- tools/
 |-- sim-godot/
 |-- esp32-bridge/
 |-- tests/{unit,scenarios}/
@@ -208,7 +208,7 @@ and are linked by the apps.
   (heavy graphical editor, godot-tools LSP connected over TCP, port 6005 to
   forward; two VSCode windows: one attached to the container for C++, one on
   the host for sim-godot/).
-- X11/WSLg for the ground station from the container (`--device=/dev/dri`
+- X11/WSLg for windowed Godot from the container (`--device=/dev/dri`
   for the GPU).
 - Network: `--network=host` (simplest for container <-> host UDP broadcast).
 - Flash/debug: `JLinkGDBServer` launched on the HOST, `gdb-multiarch` in the
@@ -232,7 +232,7 @@ and are linked by the apps.
 - gdb-multiarch; **J-Link tools** (Segger .deb package - note in the README
   that the user must accept the Segger license; provide the build argument or
   documented step if the automated download is a problem).
-- Python 3 + pip (ground station, scripts).
+- Python 3 (stdlib-only scripts); node + pnpm (web pages).
 - **Non-root user with NOPASSWD sudo**, UID/GID mapped for the devcontainer.
 
 ## 6. Build

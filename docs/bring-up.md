@@ -127,16 +127,15 @@ Incremental, one observable win per step:
 2. **IMU driver**: MPU6050 over I2C, timer-paced sampling into
    SensorFrames; barometer driver for whatever the scan identified.
 3. **Telemetry**: SensorFrames streamed over UART1 through the FTDI to
-   the ground station; blackbox over the same link. Done: 50 Hz
+   the PC; blackbox over the same link. Done: 50 Hz
    TelemetryPacket stream plus full-rate blackbox records at 921600
    baud (about 40 % of the line), each wrapped in the serial framing of
    `protocol/serial_framing.hpp` (a UART has no datagram boundaries),
    interrupt-driven behind a ring buffer, demuxed by payload size on
-   the PC. `tools/telemetry/read_serial.py` checks the link; the `hub`
-   (`hub up real --serial /dev/ttyUSB0`) is the single serial consumer
-   of a session: it re-broadcasts telemetry over UDP (ground station
-   and Godot ghost work unchanged) and captures `.m4bb` files that
-   `drone_replay` plays back. The uplink carries the pilot state
+   the PC. The `hub` (`hub up real --serial /dev/ttyUSB0`) is the
+   single serial consumer of a session: it re-broadcasts telemetry over
+   UDP, serves the web pages that plot it, and captures `.m4bb` files
+   that `drone_replay` plays back. The uplink carries the pilot state
    (RcCommandPacket: kill, arm, throttle): an `rc` message aimed at
    `firmware` on the hub websocket endpoint is framed onto the UART
    verbatim, and 500 ms of silence trips the fail-safe (kill engaged,

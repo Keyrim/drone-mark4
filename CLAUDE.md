@@ -50,9 +50,14 @@ ctest --preset desktop -R "kill switch"
 # Run the simulator app (500 iterations by default, exit code 0 expected)
 ./build/desktop/apps/drone_sim/drone_sim [iterations] [--sim-port N] [--telemetry-port N]
 
-# Start a full session (Godot + drone_sim + decoding websocket on 47810);
-# `hub up real|replay` and `hub serve` are the other entry points
+# Start a full session (Godot + drone_sim + web pages and websocket on
+# http://127.0.0.1:47810); `hub up real|replay` and `hub serve` are the
+# other entry points
 ./build/desktop/apps/hub/hub up sim
+
+# Web pages (TypeScript, pnpm via corepack; the hub serves
+# apps/hub/pages/dist). Also: watch / typecheck / test
+cd apps/hub/pages && pnpm install --frozen-lockfile && pnpm build
 
 # Monte Carlo throw campaign through headless Godot (see tools/batch/README.md)
 python3 tools/batch/run_batch.py --runs 100 --parallel 4 [--godot /path/to/godot4]
@@ -105,12 +110,13 @@ Three libraries, one rule of dependency flow:
   (telemetry, sim raw) add sourceId + u16 sequence; sizes, field offsets
   and little-endianness are static_asserted. The wire has exactly one
   copy per language: the C++ headers (source of truth),
-  `tools/ground-station/telemetry_wire.py` (all python tools import it)
+  `tools/telemetry_wire.py` (all python tools import it)
   and `sim-godot/scripts/protocol.gd` (all Godot scripts read it), both
   guarded by the golden fixtures in `tests/golden/fixtures/` that CI
-  decodes in all three languages. External processes (Godot sim, ground
-  station, ESP32 bridge) speak ONLY protocol/ over UDP and never link
-  flight-core.
+  decodes in all three languages. External processes (Godot sim, hub,
+  ESP32 bridge) speak ONLY protocol/ over UDP and never link
+  flight-core; the web pages (`apps/hub/pages/`) speak only the hub's
+  JSON over WebSocket/HTTP and never the wire.
 
 Each executable is flight-core plus one composition of platform services,
 assembled in an App class (see `apps/drone_sim/drone_sim_app.hpp`): services

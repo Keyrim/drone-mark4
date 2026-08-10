@@ -27,7 +27,7 @@ Documentation:
   implementation set per variant. No singletons: each executable has an
   explicit composition root in its main.
 - `protocol/` - header-only library, versioned packed structs, spoken by
-  everyone (firmware, sim, Godot, ground station).
+  everyone (firmware, sim, Godot, hub).
 
 ## Build
 

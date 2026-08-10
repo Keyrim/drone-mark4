@@ -15,8 +15,9 @@ flowchart LR
     end
 
     ESP["ESP32 bridge<br/>UART <-> UDP WiFi"]
-    GODOT["Godot simulator<br/>(on the host)"]
-    GS["Ground station<br/>plots, 3D view, commands"]
+    GODOT["Godot simulator<br/>(plant only)"]
+    HUB["hub<br/>discovery, recording, launcher"]
+    PAGES["web pages<br/>plots, console, 3D attitude"]
     BUS(("Telemetry<br/>UDP broadcast"))
 
     FW <--> ESP
@@ -24,15 +25,16 @@ flowchart LR
     DR -->|"blackbox replay"| BUS
     ESP --> BUS
     DS --> BUS
-    BUS --> GS
-    BUS --> GODOT
+    BUS --> HUB
+    HUB <-->|"HTTP + WebSocket<br/>one port"| PAGES
 ```
 
 - **A single output bus**: telemetry goes out as UDP broadcast; any
   combination of tools listens simultaneously, whatever the source (firmware
   through the ESP32, simulation, replay).
-- **Godot and the ground station never link flight-core**: they only know
-  `protocol/` (packed structs, versioned from the first byte).
+- **Godot and the hub never link flight-core**: they only know `protocol/`
+  (packed structs, versioned from the first byte). The web pages only know
+  the hub's JSON over WebSocket/HTTP, never the wire.
 - The sim link's **lockstep** mode (the simulator waits for the motor
   response before advancing its physics) buys determinism, faster-than-real-
   time runs and debugger single-stepping.

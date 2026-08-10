@@ -17,7 +17,7 @@ services:
     # development machine tradeoff, revisit if this compose ever leaves it.
     privileged: true
 
-    # GPU acceleration for the ground station (WSLg / native X). Optional:
+    # GPU acceleration for windowed Godot (WSLg / native X). Optional:
     # /dev/dri only exists when the host exposes a GPU (WSL vGPU, native
     # DRI) - uncomment if so; software rendering is enough otherwise.
     # devices:
@@ -36,7 +36,7 @@ services:
       # logins survive image rebuilds.
       - claude-config:/home/dev/.claude
       - gh-config:/home/dev/.config/gh
-      # X11 socket (WSLg or native X) for the ground station.
+      # X11 socket (WSLg or native X) for windowed Godot.
       - /tmp/.X11-unix:/tmp/.X11-unix
       # Host /dev, so USB devices hot-plugged after the container started
       # (usbipd attach / detach cycles) appear without a restart.
