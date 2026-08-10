@@ -133,6 +133,24 @@ namespace mark4
         return m_logSink.init();
     }
 
+    void DroneSimApp::drainCommands(std::uint64_t nowUs)
+    {
+        // The tracker consumes the RC packets and hands back everything
+        // else; a scenario goes on to the plant and the tuning service
+        // claims what it recognizes out of the rest.
+        std::array<std::uint8_t, RC_BUFFER_SIZE> command{};
+        for (;;)
+        {
+            const std::size_t size = m_rcTracker.pump(command.data(), command.size(), nowUs);
+            if (size == 0U)
+            {
+                break;
+            }
+            forwardScenario(command.data(), size);
+            static_cast<void>(m_tuningService.handle(command.data(), size));
+        }
+    }
+
     void DroneSimApp::forwardScenario(const std::uint8_t *data, std::size_t size)
     {
         if (size != mark4::SIM_SCENARIO_PACKET_SIZE ||
@@ -165,14 +183,38 @@ namespace mark4
         std::uint8_t lastResetCount = 0U;
         bool resetCountSeen = false;
         bool runSealed = false;
-        while (steps < m_maxFrames)
+        // Starts true so the very first silent wait says "not ready" once
+        bool platformReady = true;
+        while (m_maxFrames == 0U || steps < m_maxFrames)
         {
             if (m_sensorSource.waitFrame(frame) != mark4::FrameWait::FRAME)
             {
-                // TIMEOUT after IDLE_TIMEOUT_MS of silence: the simulator is
-                // gone, or never came. This composition treats it as the end
-                // of the run; main() turns a zero-frame run into a failure.
-                break;
+                // No sensor data: the plant is gone, or not there yet. On a
+                // real board a silent sensor grounds the drone but does not
+                // reboot it, so this composition stays up too - it keeps
+                // announcing itself and waits for the world to come back.
+                if (platformReady)
+                {
+                    std::printf("drone_sim: platform not ready, waiting for sensor frames "
+                                "on udp/%u\n",
+                                static_cast<unsigned>(m_simPort));
+                    static_cast<void>(std::fflush(stdout));
+                    platformReady = false;
+                }
+                m_announcePublisher.publish(m_clock.nowUs());
+                // The command path needs no world: tuning reads and writes
+                // keep answering and the RC stream keeps being tracked, so
+                // the bench can push coefficients to a grounded drone. Only
+                // flying needs sensors. The last frame timestamp is the best
+                // "now" available while the sim clock is silent.
+                drainCommands(frame.timestampUs);
+                continue;
+            }
+            if (!platformReady)
+            {
+                std::printf("drone_sim: platform ready, sensor frames are flowing\n");
+                static_cast<void>(std::fflush(stdout));
+                platformReady = true;
             }
             // A simulator world reset teleports the drone: no estimator can
             // (or should) track that, so the flight core restarts from
@@ -212,24 +254,10 @@ namespace mark4
             lastResetCount = m_sensorSource.resetCount();
             resetCountSeen = true;
 
-            // Drain the command uplink. The tracker consumes the RC packets
-            // and hands back everything else; a scenario goes on to the plant
-            // and the tuning service claims what it recognizes out of the
-            // rest, all before the step below, so a value written from the
-            // ground is in effect for the whole of the next step and never
-            // changes one halfway through.
-            std::array<std::uint8_t, RC_BUFFER_SIZE> command{};
-            for (;;)
-            {
-                const std::size_t size =
-                    m_rcTracker.pump(command.data(), command.size(), frame.timestampUs);
-                if (size == 0U)
-                {
-                    break;
-                }
-                forwardScenario(command.data(), size);
-                static_cast<void>(m_tuningService.handle(command.data(), size));
-            }
+            // Drain the command uplink before the step below, so a value
+            // written from the ground is in effect for the whole of the next
+            // step and never changes one halfway through.
+            drainCommands(frame.timestampUs);
             // Grafted on every frame, not only when a packet arrived: the
             // frame is reused across iterations, so skipping this would leave
             // the previous iteration's RC on it and hide the fail-safe.

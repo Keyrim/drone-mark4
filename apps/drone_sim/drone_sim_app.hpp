@@ -32,8 +32,11 @@ namespace mark4
     class DroneSimApp
     {
       public:
-        /// Delay without any sensor packet after which the run stops [ms].
-        static constexpr std::uint32_t IDLE_TIMEOUT_MS = 2000U;
+        /// Granularity of the sensor wait [ms]. A silent plant does not end
+        /// the run - the platform is just not ready, like a dead sensor on a
+        /// real board - but the loop must keep waking up to announce itself,
+        /// and the announce contract is one per second.
+        static constexpr std::uint32_t IDLE_TIMEOUT_MS = 500U;
 
         /// Directory the blackbox file is created in, relative to the cwd.
         static constexpr const char *LOG_DIRECTORY = "logs";
@@ -41,7 +44,8 @@ namespace mark4
         /// Size of the buffer holding the timestamped blackbox file path.
         static constexpr std::size_t LOG_PATH_SIZE = 64U;
 
-        /// @param maxFrames number of frames to process before stopping
+        /// @param maxFrames number of frames to process before stopping,
+        ///        0 = no limit (the run ends with the operator or the link)
         /// @param simPort UDP port the sim link listens on
         /// @param telemetryPort UDP port telemetry is broadcast to
         /// @param rcPort UDP port the command receiver binds, for the RC
@@ -116,6 +120,13 @@ namespace mark4
         /// @param data datagram bytes
         /// @param size datagram size
         void forwardScenario(const std::uint8_t *data, std::size_t size);
+
+        /// @brief Drains the command uplink: RC into the tracker, scenarios
+        ///        to the plant, tuning answered. Runs on every loop wakeup,
+        ///        frames or not - the command path needs no world, so tuning
+        ///        a grounded drone works while the platform is not ready.
+        /// @param nowUs instant handed to the RC fail-safe [us]
+        void drainCommands(std::uint64_t nowUs);
 
         std::uint32_t m_maxFrames;     ///< frame budget for run()
         std::uint16_t m_simPort;       ///< sim link listen port

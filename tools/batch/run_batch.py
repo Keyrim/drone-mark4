@@ -81,10 +81,6 @@ PHASE_NAMES = [
 BASE_PORT = 48000
 PORT_STRIDE = 10
 
-# Frame budget of the flight process: large enough that a run ends because
-# the campaign ended it, never because a counter ran out.
-SIM_FRAMES = 4000000000
-
 THROW_DELAY_SIM_S = 2.0   # reset to throw: baro reference + attitude convergence
 HELD_WATCH_SIM_S = 8.0    # held-only runs watch the shaken hand this long
 FLIGHT_BUDGET_SIM_S = 12.0  # throw to stable hover, or the run is a failure
@@ -175,7 +171,6 @@ class Instance:
         self.flight = subprocess.Popen(
             [
                 args.drone_sim,
-                str(SIM_FRAMES),
                 "--sim-port",
                 str(self.sim_port),
                 "--telemetry-port",

@@ -10,9 +10,17 @@
 #include "platform_common/session_id.hpp"
 #include "protocol/ports.hpp"
 
+// Frame budget baked in at build time (see the cache variable in
+// CMakeLists.txt); 0 = no limit, the run ends with the operator or the link.
+// A finite budget is a bench or CI decision, never a launch decision, so it
+// is not an argument.
+#ifndef DRONE_SIM_FRAME_LIMIT
+#define DRONE_SIM_FRAME_LIMIT 0U
+#endif
+
 namespace
 {
-    constexpr std::uint32_t DEFAULT_MAX_FRAMES = 500U;
+    constexpr std::uint32_t MAX_FRAMES = DRONE_SIM_FRAME_LIMIT;
     constexpr int STRTOL_BASE = 10;
     constexpr std::uint64_t US_PER_MS = 1000U;
     constexpr long MAX_PORT = 65535L;
@@ -21,7 +29,7 @@ namespace
     {
         static_cast<void>(std::fprintf(
             stderr,
-            "usage: %s [frames > 0] [--sim-port N] [--telemetry-port N] [--rc-port N]\n"
+            "usage: %s [--sim-port N] [--telemetry-port N] [--rc-port N]\n"
             "  --sim-port        UDP port the sim link listens on (default %u)\n"
             "  --telemetry-port  UDP telemetry broadcast port (default %u)\n"
             "  --rc-port         UDP port the RC command receiver binds (default %u)\n",
@@ -48,7 +56,6 @@ namespace
 
 int main(int argc, char **argv)
 {
-    std::uint32_t maxFrames = DEFAULT_MAX_FRAMES;
     std::uint16_t simPort = mark4::SIM_LINK_PORT;
     std::uint16_t telemetryPort = mark4::TELEMETRY_PORT;
     std::uint16_t rcPort = mark4::RC_COMMAND_PORT;
@@ -83,10 +90,6 @@ int main(int argc, char **argv)
             }
             rcPort = static_cast<std::uint16_t>(value);
         }
-        else if (parsePositive(argv[i], static_cast<long>(UINT32_MAX), value))
-        {
-            maxFrames = static_cast<std::uint32_t>(value);
-        }
         else
         {
             printUsage(argv[0]);
@@ -95,7 +98,7 @@ int main(int argc, char **argv)
     }
 
     const std::uint32_t sessionId = mark4::makeSessionId();
-    mark4::DroneSimApp app(maxFrames, simPort, telemetryPort, rcPort, sessionId);
+    mark4::DroneSimApp app(MAX_FRAMES, simPort, telemetryPort, rcPort, sessionId);
     if (!app.init())
     {
         static_cast<void>(std::fprintf(stderr, "drone_sim: initialization failed\n"));
