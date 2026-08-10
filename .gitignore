@@ -18,3 +18,6 @@ __pycache__/
 !.vscode/extensions.json
 !.vscode/launch.json
 !.vscode/tasks.json
+
+# pnpm side-effect store (pages toolchain)
+.pnpm-store/
