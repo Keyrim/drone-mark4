@@ -28,6 +28,29 @@ export const PALETTE = [
     "#d95926",
 ];
 
+/** StreamSource of the protocol header, one name per process kind. */
+export const SOURCE_NAMES = new Map<number, string>([
+    [1, "firmware"],
+    [2, "drone_sim"],
+    [3, "drone_replay"],
+    [4, "sim_plant"],
+]);
+
+/**
+ * One color per drone, shared by the widgets and the 3D view so an operator
+ * maps them at a glance. Keyed by StreamSource kind: the wire has no
+ * per-instance identity yet, so a kind is a drone.
+ */
+export const SOURCE_COLORS = new Map<number, string>([
+    [1, "#e66767"],
+    [2, "#3987e5"],
+    [3, "#9085e9"],
+]);
+
+export function sourceColor(kind: number): string {
+    return SOURCE_COLORS.get(kind) ?? "#8b95a6";
+}
+
 /** One plottable quantity: stable key, how it looks, how it reads. */
 export interface SeriesDef {
     /** Stable identity, stored in the view configs */

@@ -18,7 +18,7 @@ import { SeriesBuffer, type LaneConfig, type Mode } from "../lanes/model";
 import { Ruler, RULER_H } from "../lanes/ruler";
 import { clampToData, pan, ticks, zoom, type Viewport } from "../lanes/timebase";
 import { HubSocket, type HubMessage } from "../shared/hub_socket";
-import { DEFAULT_LANES, LIVE_SERIES, LiveSampler } from "../shared/series";
+import { DEFAULT_LANES, LIVE_SERIES, LiveSampler, SOURCE_NAMES } from "../shared/series";
 import { Shell } from "../shared/shell";
 import { ReplayPanel } from "./replay_panel";
 
@@ -108,6 +108,41 @@ function toolbarButton(label: string, onClick: (button: HTMLButtonElement) => vo
     button.addEventListener("click", () => onClick(button));
     shell.toolbar.appendChild(button);
     return button;
+}
+
+// Several drones may stream at once; the lanes draw exactly one. The first
+// source seen locks the selector, switching it starts the buffers over.
+let sourceKind: number | null = null;
+const seenSources = new Set<number>();
+const sourceSelect = document.createElement("select");
+sourceSelect.className = "config-select";
+sourceSelect.title = "telemetry source the lanes draw";
+sourceSelect.addEventListener("change", () => {
+    sourceKind = Number(sourceSelect.value);
+    for (const buffer of liveBuffers.values()) {
+        buffer.clear();
+    }
+    originUs = null;
+    dirty = true;
+});
+shell.toolbar.appendChild(sourceSelect);
+
+function noteSource(kind: number): void {
+    if (seenSources.has(kind)) {
+        return;
+    }
+    seenSources.add(kind);
+    if (sourceKind === null) {
+        sourceKind = kind;
+    }
+    sourceSelect.replaceChildren();
+    for (const id of [...seenSources].sort((a, b) => a - b)) {
+        const option = document.createElement("option");
+        option.value = String(id);
+        option.textContent = SOURCE_NAMES.get(id) ?? `source ${id}`;
+        sourceSelect.appendChild(option);
+    }
+    sourceSelect.value = String(sourceKind);
 }
 
 const modeButtons: HTMLButtonElement[] = (["live", "replay"] as Mode[]).map((wanted) =>
@@ -208,6 +243,10 @@ socket.on("simRaw", (message: HubMessage) => {
 
 socket.on("telemetry", (message: HubMessage) => {
     if (paused || mode !== "live") {
+        return;
+    }
+    noteSource(Number(message["sourceId"]));
+    if (Number(message["sourceId"]) !== sourceKind) {
         return;
     }
     const row = sampler.sample(message);
