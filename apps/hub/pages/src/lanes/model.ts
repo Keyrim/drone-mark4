@@ -109,6 +109,18 @@ export function groupByLane(
     return out;
 }
 
+/**
+ * The lanes with the one at `from` moved to sit at `to`, in place. Indexes
+ * outside the array leave it untouched, so a drop on a border is a no-op.
+ */
+export function moveLane(lanes: LaneConfig[], from: number, to: number): void {
+    if (from === to || from < 0 || to < 0 || from >= lanes.length || to >= lanes.length) {
+        return;
+    }
+    const [moved] = lanes.splice(from, 1);
+    lanes.splice(to, 0, moved!);
+}
+
 const STORE_KEY = "mark4.pages.viewConfigs";
 
 /** Named view configs saved in this browser. */

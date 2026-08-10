@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { groupByLane, SeriesBuffer } from "../src/lanes/model";
+import { groupByLane, moveLane, SeriesBuffer } from "../src/lanes/model";
 import { LiveSampler, seriesByKey, type SeriesDef } from "../src/shared/series";
 
 function def(key: string): SeriesDef {
@@ -129,4 +129,27 @@ test("LiveSampler ignores a simRaw without an attitude", () => {
     const sampler = new LiveSampler();
     sampler.latchSimRaw({ type: "simRaw", timestampUs: 1 });
     assert.equal(sampler.sample(TELEMETRY).values.get("alt.exact"), null);
+});
+
+test("moveLane moves a lane to the drop index", () => {
+    const lanes = [
+        { title: "a", keys: [] },
+        { title: "b", keys: [] },
+        { title: "c", keys: [] },
+    ];
+    moveLane(lanes, 0, 2);
+    assert.deepEqual(lanes.map((lane) => lane.title), ["b", "c", "a"]);
+    moveLane(lanes, 2, 0);
+    assert.deepEqual(lanes.map((lane) => lane.title), ["a", "b", "c"]);
+});
+
+test("moveLane ignores an index outside the array", () => {
+    const lanes = [
+        { title: "a", keys: [] },
+        { title: "b", keys: [] },
+    ];
+    moveLane(lanes, 0, 5);
+    moveLane(lanes, -1, 1);
+    moveLane(lanes, 1, 1);
+    assert.deepEqual(lanes.map((lane) => lane.title), ["a", "b"]);
 });

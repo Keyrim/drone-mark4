@@ -6,6 +6,7 @@
 import { LIVE_SERIES, type SeriesDef } from "../shared/series";
 import {
     loadViewConfigs,
+    moveLane,
     saveViewConfigs,
     type LaneConfig,
     type ViewConfig,
@@ -19,6 +20,7 @@ export class ConfigPanel {
     private lanes: LaneConfig[];
     private configs: ViewConfig[] = loadViewConfigs();
     private current = DEFAULT_NAME;
+    private dragFrom: number | null = null;
     private readonly picker: HTMLSelectElement;
     private readonly laneList: HTMLElement;
 
@@ -134,6 +136,38 @@ export class ConfigPanel {
     private laneRow(lane: LaneConfig, index: number): HTMLElement {
         const row = document.createElement("div");
         row.className = "config-lane";
+
+        // The row is only draggable from its grip, so dragging never fights
+        // the text inputs and selects living on the same line.
+        const grip = document.createElement("span");
+        grip.className = "config-grip";
+        grip.textContent = "::";
+        grip.title = "Drag to reorder";
+        grip.addEventListener("mousedown", () => {
+            row.draggable = true;
+        });
+        row.addEventListener("dragstart", (event) => {
+            this.dragFrom = index;
+            event.dataTransfer?.setData("text/plain", String(index));
+        });
+        row.addEventListener("dragend", () => {
+            row.draggable = false;
+            this.dragFrom = null;
+        });
+        row.addEventListener("dragover", (event) => {
+            if (this.dragFrom !== null && this.dragFrom !== index) {
+                event.preventDefault();
+            }
+        });
+        row.addEventListener("drop", (event) => {
+            event.preventDefault();
+            if (this.dragFrom !== null && this.dragFrom !== index) {
+                moveLane(this.lanes, this.dragFrom, index);
+                this.changed();
+            }
+            this.dragFrom = null;
+        });
+        row.appendChild(grip);
 
         const title = document.createElement("input");
         title.className = "config-title";
