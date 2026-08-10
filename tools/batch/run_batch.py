@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Monte Carlo throw campaign through the Godot simulator.
 
-Starts N scenarios through `hub up sim --no-serve`, one launcher process per
-instance, each on its own UDP port range and each running the real physics
-and the real flight core in lockstep, faster than real time. The hub owns the
-Godot import, the start order and the teardown of the pair; the campaign only
-picks the ports and judges what comes back.
+Starts N simulator pairs (headless Godot plus drone_sim), each on its own
+UDP port range and each running the real physics and the real flight core in
+lockstep, faster than real time. The campaign spawns and tears down the pairs
+itself; the hub is a bench tool and plays no part here.
 
 One run is one scenario packet. The packet opens with a reset and carries
 everything the run needs - the seed, the delay before the throw, the throw
@@ -31,9 +30,9 @@ reachable.
 --set writes tuning parameters once per run, after the reset that rebuilt the
 flight core and before the throw, so a sweep measures the value it names.
 
-Python stdlib only. Requires the hub and drone_sim built for the desktop
-preset, plus a Godot 4 binary able to open the sim-godot project (a Linux
-headless build works fine inside WSL or a container).
+Python stdlib only. Requires drone_sim built for the desktop preset, plus a
+Godot 4 binary able to open the sim-godot project (a Linux headless build
+works fine inside WSL or a container).
 """
 
 import argparse
@@ -92,7 +91,8 @@ FLIGHT_BUDGET_SIM_S = 12.0  # throw to stable hover, or the run is a failure
 STABLE_HOVER_SIM_S = 3.0  # continuous hover time declaring success
 TUNING_BUDGET_SIM_S = 1.0 # every --set must be acknowledged within this
 WALL_BUDGET_S = 180.0     # hard wall-clock guard per run (hung pair)
-LAUNCHER_STOP_S = 10.0    # longer than the launcher's own 5 s kill grace
+PAIR_STOP_S = 10.0        # SIGTERM grace before a pair member is killed
+GODOT_SETTLE_S = 0.5      # godot boots first, it resends until answered
 SCENARIO_RETRY_S = 0.2    # resend period until the plant acknowledges a run
 
 # Simulated time the flight process hashes from the reset tick: the whole run
@@ -128,7 +128,7 @@ class RunResult:
 
 
 class Instance:
-    """One hub-launched simulator pair bound to its own port range."""
+    """One simulator pair (godot + drone_sim) bound to its own port range."""
 
     def __init__(self, index: int, args: argparse.Namespace):
         self.index = index
@@ -145,36 +145,43 @@ class Instance:
             os.path.join(log_dir, f"batch_{stamp}_i{index}.log"), "w", encoding="utf-8"
         )
 
-        # One process per instance: the hub launcher imports the Godot
-        # project if needed, starts Godot before the flight process, and
-        # takes the whole group down when it is asked to stop. --no-serve
-        # keeps it out of the way: the campaign owns the sockets.
-        self.launcher = subprocess.Popen(
+        # Godot first: it resends until the flight process answers, while
+        # the flight process would sit on an empty socket through a slow
+        # Godot boot and eat into the boot budget.
+        self.plant = subprocess.Popen(
             [
-                args.hub,
-                "up",
-                "sim",
-                "--no-serve",
-                "--headless",
-                "--lockstep",
-                "--godot",
                 args.godot,
-                "--drone-sim",
-                args.drone_sim,
-                "--sim-port",
+                "--headless",
+                "--path",
+                os.path.join(REPO_ROOT, "sim-godot"),
+                "--",
+                "--flight-port",
                 str(self.sim_port),
-                "--telemetry-port",
-                str(self.telemetry_port),
                 "--raw-port",
                 str(self.raw_port),
                 "--rc-port",
                 str(self.rc_port),
+                "--lockstep",
                 "--time-scale",
                 str(args.time_scale),
                 "--arena-radius",
                 str(args.arena_radius),
-                "--frames",
+            ],
+            stdout=self._log,
+            stderr=subprocess.STDOUT,
+            cwd=REPO_ROOT,
+        )
+        time.sleep(GODOT_SETTLE_S)
+        self.flight = subprocess.Popen(
+            [
+                args.drone_sim,
                 str(SIM_FRAMES),
+                "--sim-port",
+                str(self.sim_port),
+                "--telemetry-port",
+                str(self.telemetry_port),
+                "--rc-port",
+                str(self.rc_port),
             ],
             stdout=self._log,
             stderr=subprocess.STDOUT,
@@ -238,15 +245,14 @@ class Instance:
     def close(self) -> None:
         self._rc_stop.set()
         self._rc_thread.join(timeout=5.0)
-        # SIGTERM to the launcher only: it takes its own children down with
-        # it, so reaping it is enough to reap the pair.
-        if self.launcher.poll() is None:
-            self.launcher.terminate()
-        try:
-            self.launcher.wait(timeout=LAUNCHER_STOP_S)
-        except subprocess.TimeoutExpired:
-            self.launcher.kill()
-            self.launcher.wait()
+        for child in (self.flight, self.plant):
+            if child.poll() is None:
+                child.terminate()
+            try:
+                child.wait(timeout=PAIR_STOP_S)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()
         self.telemetry.close()
         self.command.close()
         self._log.close()
@@ -362,9 +368,9 @@ class Instance:
                 telemetry_seen = True
             if telemetry_seen and self.last_stats is not None:
                 return True
-            # The launcher outlives its children: it exiting means the pair
-            # is gone, whatever took it down.
-            if self.launcher.poll() is not None:
+            # Either member exiting means the pair is gone, whatever took
+            # it down.
+            if self.plant.poll() is not None or self.flight.poll() is not None:
                 return False
         return False
 
@@ -584,6 +590,27 @@ def report_repro(results: List[RunResult]) -> int:
     return 0
 
 
+def ensure_import(godot: str) -> None:
+    """Import the Godot project once, before any pair spawns.
+
+    A fresh checkout has no .godot cache and parallel instances would race
+    the import; one serialized headless import settles it for the campaign.
+    """
+    project = os.path.join(REPO_ROOT, "sim-godot")
+    if os.path.isdir(os.path.join(project, ".godot")):
+        return
+    print("batch: importing the godot project (first run)...", flush=True)
+    done = subprocess.run(
+        [godot, "--headless", "--path", project, "--import"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
+        cwd=REPO_ROOT,
+        check=False,
+    )
+    if done.returncode != 0:
+        sys.exit(f"batch: the godot import failed (code {done.returncode})")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=100, help="number of throws")
@@ -595,11 +622,6 @@ def main() -> int:
         "--drone-sim",
         default=os.path.join(REPO_ROOT, "build", "desktop", "apps", "drone_sim", "drone_sim"),
         help="drone_sim binary",
-    )
-    parser.add_argument(
-        "--hub",
-        default=os.path.join(REPO_ROOT, "build", "desktop", "apps", "hub", "hub"),
-        help="hub binary, used as the scenario launcher",
     )
     parser.add_argument("--time-scale", type=float, default=20.0, help="sim speed factor")
     parser.add_argument(
@@ -652,8 +674,7 @@ def main() -> int:
 
     if not os.path.isfile(args.drone_sim):
         sys.exit(f"batch: drone_sim binary not found: {args.drone_sim} (build it first)")
-    if not os.path.isfile(args.hub):
-        sys.exit(f"batch: hub binary not found: {args.hub} (build it first)")
+    ensure_import(args.godot)
 
     parallel = max(1, min(args.parallel, args.runs))
     instances = [Instance(i, args) for i in range(parallel)]

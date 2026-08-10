@@ -32,6 +32,15 @@ namespace ix
 
 namespace mark4
 {
+    /// One inbound websocket message, tagged with the connection it came
+    /// from so the poll loop can tell two clients apart (the RC warning
+    /// counts pilots, not tabs).
+    struct InboundText
+    {
+        std::string clientId; ///< library id of the connection
+        std::string text;     ///< the message body
+    };
+
     /// Endpoint the hub publishes to, takes commands from, and serves the
     /// pages of.
     class WsBridge
@@ -67,7 +76,7 @@ namespace mark4
 
         /// @brief Takes everything clients have sent since the last call.
         /// @return the messages, oldest first
-        std::vector<std::string> drainInbound();
+        std::vector<InboundText> drainInbound();
 
         /// @return number of connected clients
         [[nodiscard]] std::size_t clientCount() const
@@ -88,7 +97,7 @@ namespace mark4
         std::unique_ptr<ix::HttpServer> m_server; ///< the library server, null until start()
         HttpConfig m_http;                        ///< what the HTTP side reads from
         std::mutex m_inboundMutex;                ///< guards the inbound queue
-        std::vector<std::string> m_inbound;       ///< messages waiting for the poll loop
+        std::vector<InboundText> m_inbound;       ///< messages waiting for the poll loop
         std::atomic_size_t m_clients{0U};         ///< connected clients
         std::atomic_bool m_connected{false};      ///< a client connected since last asked
     };

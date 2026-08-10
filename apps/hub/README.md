@@ -21,83 +21,36 @@ It links `protocol/` headers and nothing else: never `flight-core`, never
 
 ```sh
 cmake --preset desktop && cmake --build --preset desktop
-./build/desktop/apps/hub/hub serve
+./build/desktop/apps/hub/hub
 ```
 
-## Subcommands
+The hub takes **no arguments**. It decodes, records and serves with its
+built-in defaults (endpoint on 127.0.0.1:47810, announce 47806, telemetry
+47801, sim raw 47802, recordings in `logs/`, profiles in `profiles/`, pages
+in `apps/hub/pages/dist` resolved from the binary location); it watches the
+default ports from the start and follows any extra telemetry port a process
+announces for as long as that process lives. Everything operational is
+driven at runtime through the websocket by the pages: opening the board
+UART (`serial` message, Add drone block of the control page), toggling the
+stream recording (`record` message; a CSV session opens at startup),
+replaying a blackbox (`replay` message), and the tuning profiles. A default
+worth changing is a compile-time change in `protocol/ports.hpp` or
+`HubApp::Config`, not a flag.
 
-### `hub serve [options]`
-
-Decode, record and serve. Watches the announce port, the default telemetry
-port and the default sim raw port from the start, and follows any extra
-telemetry port a process announces for as long as that process lives.
-
-```
---ws-port N          endpoint port, websocket and pages (default 47810)
---bind ADDR          address the endpoint binds to (default 127.0.0.1)
---pages DIR          directory the static pages are read from
---announce-port N    announce listen port (default 47806)
---telemetry-port N   telemetry port watched by default (default 47801)
---raw-port N         sim raw port watched by default (default 47802)
---serial DEV         board UART to own, none by default
---baud N             board UART speed (default 921600)
---record             open a CSV recording at startup
---log-dir DIR        directory recordings are written to (default logs)
---profiles PATH      directory tuning profiles live in (default profiles)
---push-profile NAME  push this profile to every process that appears
-```
-
-### `hub up sim [options]`
-
-Starts the Godot simulator and the flight process, then serves next to them.
-The Godot project is imported first if it has never been (a fresh checkout).
-Godot is started before the flight process: it resends until the flight
-process answers, while the flight process would give up waiting for a slow
-Godot boot. When any child exits, the hub stops, takes the whole group down
-and exits with that child's code. One Ctrl-C ends the scenario.
-
-```
---godot PATH       godot 4 binary (default godot)
---drone-sim PATH   drone_sim binary (default: next to the hub binary)
---headless         run godot without a window
---lockstep         run the simulator in lockstep with the flight process
---time-scale F     simulator speed factor
---arena-radius F   circular wall around the launch point [m]
---frames N         frame budget of the flight process
---sim-port N       sim link port (default 47800)
---rc-port N        rc uplink port (default 47805)
---no-serve         supervise the children only, serve nothing
-```
-
-Every `serve` option is accepted too.
-
-### `hub profile list` / `hub profile show NAME`
-
-Plain file reads in the profiles directory: no socket, no running hub. See
-`profiles/README.md` for the file format.
-
-### `hub up real [options]`
-
-Owns the board UART and serves. The link is required: the hub refuses to
-start when the port cannot be opened. Default device `/dev/ttyUSB0`.
-
-### `hub up replay <log.m4bb> [options]`
-
-Replays a recording next to the hub.
-
-```
---speed F|max        replay speed
---drone-replay PATH  drone_replay binary (default: next to the hub binary)
---no-serve           supervise the child only, serve nothing
-```
+The hub never starts Godot or a flight process: both are yours to run and
+restart at will (Godot from its own terminal or the "godot sim" VS Code
+task, `drone_sim` from anywhere). The plant idles and resends until
+the sim port answers, discovery picks each incarnation up within a second,
+so the hub is the process that stays up for the whole bench session. The
+one child the hub ever spawns is `drone_replay`, on a stored blackbox, for
+the re-execute feature.
 
 ## Pages
 
 `GET /` serves `index.html` from the pages directory, `GET /<path>` the file
-at that path below it. `--pages` names the directory; without it the hub
-resolves `apps/hub/pages/dist` from its own location, falling back to that
-relative path. A missing directory is one log line at startup and a 404 per
-request, never a startup failure.
+at that path below it. The hub resolves `apps/hub/pages/dist` from its own
+location, falling back to that relative path. A missing directory is one log
+line at startup and a 404 per request, never a startup failure.
 
 The Content-Type comes from the extension (`.html`, `.js`, `.mjs`, `.css`,
 `.svg`, `.json`, `.csv`, `.ico`, `.png`; anything else is an opaque byte
@@ -196,7 +149,7 @@ structs in `protocol/`.
 
 {"type":"status","recording":false,"serialOpen":true,
  "counts":{"telemetryRows":0,"simRawRows":0,"blackboxRecords":0,
-           "badFrames":0,"rejectedAnnounces":0},"clients":1,
+           "badFrames":0,"rejectedAnnounces":0},"clients":1,"rcClients":0,
  "links":[{"stream":"telemetry","sourceId":2,"sourceName":"drone_sim",
            "received":100,"lost":0,"duplicates":0,"resyncs":0,
            "lossRate":0.0,"lastSequence":99}]}
@@ -265,6 +218,8 @@ disappears.
 {"type":"profileLoad","id":16,"name":"bench"}
 {"type":"profilePush","id":17,"name":"bench","target":"drone_sim"}
 {"type":"replay","id":18,"name":"board_20260807_150143.m4bb","speed":"max"}
+{"type":"serial","id":19,"action":"open","device":"/dev/ttyUSB0","baud":921600}
+{"type":"serial","id":20,"action":"close"}
 ```
 
 The parameter id key is `paramId`, never `id`: `id` is the correlation id
@@ -287,7 +242,7 @@ hub stamps a rolling one, so two scenarios in a row are two runs.
 
 A `replay` starts a `drone_replay` next to the hub on one blackbox recording
 of the log directory, addressed by the exact `name` `/api/recordings` gave
-it: `hub up replay` without leaving the page. The child announces itself, so
+it: a replay session without leaving the page. The child announces itself, so
 discovery names it and its telemetry joins the usual stream; the `ack` says
 it started, not that it finished. `speed` is optional, `"max"` or a positive
 number as a string, and nothing else ever reaches the command line. One
@@ -321,9 +276,9 @@ arrives.
   `no process of kind <kind>`; a scenario has to be up first.
 - Every announce carries `sessionId` 0 for now, so a process that restarts
   on the same ports is not seen as a new session.
-- A `replay` message inside a `hub up sim` or `hub up replay` session starts
-  a second broadcaster on the telemetry port: the hub only owns the children
-  a client asked it for, not the ones the command line brought.
+- A `replay` message next to a live flight process starts a second
+  broadcaster on the telemetry port; naming the source in each page is what
+  keeps that readable.
 - Acks are broadcast to every connected client rather than sent back to the
   one that asked: a client correlates the answer with the `id` it sent and
   ignores the rest. This keeps the endpoint free of any per-client state

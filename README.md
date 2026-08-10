@@ -76,7 +76,7 @@ telemetry to any listener.
 python3 tools/sim-stub/sim_stub.py --duration 0
 
 # Terminal 3 - decoding endpoint and web pages on http://127.0.0.1:47810
-./build/desktop/apps/hub/hub serve
+./build/desktop/apps/hub/hub
 ```
 
 Every python tool in the repository runs on the standard library alone, so

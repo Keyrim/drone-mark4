@@ -74,7 +74,6 @@ namespace mark4
             [this](const std::shared_ptr<ix::ConnectionState> &state,
                    ix::WebSocket &socket,
                    const ix::WebSocketMessagePtr &message) {
-                static_cast<void>(state);
                 static_cast<void>(socket);
                 switch (message->type)
                 {
@@ -93,7 +92,7 @@ namespace mark4
                         const std::lock_guard<std::mutex> guard(m_inboundMutex);
                         if (m_inbound.size() < MAX_INBOUND)
                         {
-                            m_inbound.push_back(message->str);
+                            m_inbound.push_back(InboundText{state->getId(), message->str});
                         }
                         break;
                     }
@@ -138,9 +137,9 @@ namespace mark4
         }
     }
 
-    std::vector<std::string> WsBridge::drainInbound()
+    std::vector<InboundText> WsBridge::drainInbound()
     {
-        std::vector<std::string> taken;
+        std::vector<InboundText> taken;
         const std::lock_guard<std::mutex> guard(m_inboundMutex);
         taken.swap(m_inbound);
         return taken;

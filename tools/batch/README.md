@@ -2,8 +2,8 @@
 
 `run_batch.py` measures the recovery rate of the flight core over randomized
 throws, using the real Godot physics as the single reference: it starts N
-scenarios through `hub up sim --no-serve`, sends one scenario packet per run
-and judges the outcome from the telemetry.
+simulator pairs (headless Godot plus `drone_sim`) itself, sends one scenario
+packet per run and judges the outcome from the telemetry.
 
 One run is one packet. It opens with a reset and carries everything the run
 needs - the seed, the delay before the throw, the throw itself - so the whole
@@ -15,11 +15,10 @@ reply; resending it is free, since the plant plays a block once per change of
 its sequence byte, and the campaign resends every 200 ms until the plant
 reports the new run.
 
-One launcher process per instance, one port range per instance. The hub owns
-the pair (Godot import, start order, teardown of the whole group when it is
-asked to stop); the campaign only picks the ports, drives the scenario and
-judges. `--no-serve` keeps the hub off the sockets: it supervises and nothing
-else, so the campaign is the only reader of its telemetry port.
+One pair per instance, one port range per instance. The campaign owns the
+pair: Godot boots first (it resends until the flight process answers), the
+teardown terminates both, and the campaign is the only reader of its
+telemetry port. The hub plays no part in a campaign.
 
 Arming and the kill switch do not go through the simulator: they are streamed
 as `RcCommandPacket` straight at each `drone_sim` command receiver, the same
@@ -50,15 +49,14 @@ and the arming would have to move into the scenario.
 
 ## Requirements
 
-- `hub` and `drone_sim` built for the desktop preset. Override their paths
-  with `--hub` and `--drone-sim`.
+- `drone_sim` built for the desktop preset. Override its path with
+  `--drone-sim`.
 - A Godot 4 binary able to open `sim-godot/` (same version as the editor).
   Headless needs no GPU: a Linux build works inside WSL or a container.
   Pass it with `--godot /path/to/godot` if it is not on the PATH.
 
-The first run on a fresh checkout imports the Godot project automatically
-(the launcher does it). Run one instance first on such a checkout: parallel
-instances would otherwise import the same project at the same time.
+The first run on a fresh checkout imports the Godot project automatically,
+once, before any pair spawns, so parallel instances never race the import.
 
 ## Usage
 

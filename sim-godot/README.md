@@ -187,7 +187,7 @@ cmake --build --preset desktop
 In another terminal, the telemetry viewer:
 
 ```sh
-./build/desktop/apps/hub/hub serve
+./build/desktop/apps/hub/hub
 ```
 
 then open `http://127.0.0.1:47810` for the plots.

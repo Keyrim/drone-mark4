@@ -43,7 +43,8 @@ namespace mark4
         PROFILE_SAVE, ///< store one named set of values
         PROFILE_LOAD, ///< read one named set of values back
         PROFILE_PUSH, ///< send one named set to a flight process
-        REPLAY        ///< replay one stored blackbox recording
+        REPLAY,       ///< replay one stored blackbox recording
+        SERIAL        ///< open or close the board UART
     };
 
     /// One decoded client request. The wire packets are already built: the
@@ -66,6 +67,9 @@ namespace mark4
         std::string recordingName;                      ///< REPLAY: recording to play back
         std::string replaySpeed;                        ///< REPLAY: tempo, "max" or a positive
                                                         ///< number, empty = the recorded one
+        bool serialConnect = false;                     ///< SERIAL: true = open, false = close
+        std::string serialDevice;                       ///< SERIAL: device to open
+        std::uint32_t serialBaud = 0U;                  ///< SERIAL: line speed [baud]
     };
 
     /// Counters and flags the hub publishes once per second.
@@ -79,6 +83,7 @@ namespace mark4
         std::uint64_t badFrames = 0U;         ///< serial frames that decoded to nothing
         std::uint64_t rejectedAnnounces = 0U; ///< announces dropped as invalid
         std::size_t clients = 0U;             ///< websocket clients connected
+        std::size_t rcClients = 0U;           ///< clients that streamed RC recently
         std::vector<LinkHealth> links;        ///< sequence health, one entry per link
     };
 

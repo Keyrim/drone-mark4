@@ -43,13 +43,6 @@ namespace mark4
     /// @return the path
     std::string defaultProjectPath(const char *relative);
 
-    /// @brief Runs one child to completion, for a preparation step that must
-    ///        finish before a scenario starts.
-    /// @param spec what to run
-    /// @param exitCodeOut receives the exit code
-    /// @return true when the child ran and could be waited for
-    bool runChildToCompletion(const ChildSpec &spec, int &exitCodeOut);
-
     /// The children of one scenario, alive together and dying together.
     class ProcessGroup
     {

@@ -33,10 +33,10 @@ reason and never takes the hub down with it.
 ## Using them
 
 ```sh
-hub profile list                 # names in this directory
-hub profile show bench           # one profile, as JSON
-hub serve --push-profile bench   # push it to every process that announces
-hub serve --profiles /other/dir  # read profiles from elsewhere
+ls profiles/                     # names in this directory, one .json each
+cat profiles/bench.json          # one profile, as JSON
+# pushing a profile to a process is the tuning panel of the control page
+# (websocket messages profileList/profileLoad/profilePush)
 ```
 
 Over the websocket: `profileList`, `profileSave`, `profileLoad` and

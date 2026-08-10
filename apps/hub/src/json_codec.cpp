@@ -211,9 +211,12 @@ namespace mark4
             {
                 return true;
             }
-            if (!found->is_number_integer())
+            if (!found->is_number_integer() || found->get<std::int64_t>() < 0 ||
+                found->get<std::int64_t>() > std::numeric_limits<int>::max())
             {
-                errorOut = "field 'id' must be an integer";
+                // An id outside the int range would come back wrapped in the
+                // ack and never match the request that carried it
+                errorOut = "field 'id' must be an integer fitting 31 bits";
                 return false;
             }
             valueOut = found->get<int>();
@@ -573,6 +576,44 @@ namespace mark4
             message.recordStart = action == "start";
             return true;
         }
+
+        /// @brief Fills the serial part of a client request.
+        /// @param object message object
+        /// @param message message being decoded
+        /// @param errorOut receives the reason on failure
+        /// @return true when the action is valid and open names a device
+        bool parseSerial(const Json &object, ClientMessage &message, std::string &errorOut)
+        {
+            const auto action = object.find("action");
+            if (action == object.end() || !action->is_string() ||
+                (action->get<std::string>() != "open" && action->get<std::string>() != "close"))
+            {
+                errorOut = R"(field 'action' must be "open" or "close")";
+                return false;
+            }
+            message.serialConnect = action->get<std::string>() == "open";
+            if (!message.serialConnect)
+            {
+                return true;
+            }
+            const auto device = object.find("device");
+            if (device == object.end() || !device->is_string() ||
+                device->get<std::string>().empty())
+            {
+                errorOut = "field 'device' must name the UART to open";
+                return false;
+            }
+            message.serialDevice = device->get<std::string>();
+            const auto baud = object.find("baud");
+            if (baud == object.end() || !baud->is_number_unsigned() ||
+                baud->get<std::uint64_t>() == 0U || baud->get<std::uint64_t>() > UINT32_MAX)
+            {
+                errorOut = "field 'baud' must be a positive line speed";
+                return false;
+            }
+            message.serialBaud = static_cast<std::uint32_t>(baud->get<std::uint64_t>());
+            return true;
+        }
     } // namespace
 
     std::string telemetryToJson(const TelemetryPacket &packet)
@@ -689,6 +730,7 @@ namespace mark4
         message["serialOpen"] = status.serialOpen;
         message["counts"] = counts;
         message["clients"] = status.clients;
+        message["rcClients"] = status.rcClients;
         message["links"] = links;
         return message.dump();
     }
@@ -884,6 +926,14 @@ namespace mark4
         {
             message.type = ClientMessageType::REPLAY;
             if (!parseReplay(root, message, error))
+            {
+                return error;
+            }
+        }
+        else if (typeName == "serial")
+        {
+            message.type = ClientMessageType::SERIAL;
+            if (!parseSerial(root, message, error))
             {
                 return error;
             }

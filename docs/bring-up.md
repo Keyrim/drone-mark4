@@ -132,7 +132,8 @@ Incremental, one observable win per step:
    baud (about 40 % of the line), each wrapped in the serial framing of
    `protocol/serial_framing.hpp` (a UART has no datagram boundaries),
    interrupt-driven behind a ring buffer, demuxed by payload size on
-   the PC. The `hub` (`hub up real --serial /dev/ttyUSB0`) is the
+   the PC. The `hub` (UART opened from the Board panel of the control
+   page) is the
    single serial consumer of a session: it re-broadcasts telemetry over
    UDP, serves the web pages that plot it, and captures `.m4bb` files
    that `drone_replay` plays back. The uplink carries the pilot state

@@ -137,6 +137,12 @@ namespace mark4
         }
     }
 
+    void SerialTransport::release()
+    {
+        close();
+        m_device.clear();
+    }
+
     void SerialTransport::drain(const PayloadHandler &onPayload)
     {
         if (m_fd < 0)

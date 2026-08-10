@@ -445,15 +445,21 @@ namespace mark4
 
     void HubApp::handleClientMessages()
     {
-        for (const std::string &text : m_ws.drainInbound())
+        for (const InboundText &inbound : m_ws.drainInbound())
         {
-            const auto decoded = parseClientMessage(text);
+            const auto decoded = parseClientMessage(inbound.text);
             if (const auto *reason = std::get_if<std::string>(&decoded))
             {
-                answer(clientMessageId(text), false, *reason);
+                answer(clientMessageId(inbound.text), false, *reason);
                 continue;
             }
             const auto &message = std::get<ClientMessage>(decoded);
+            if (message.type == ClientMessageType::RC)
+            {
+                // Remember who pilots, so the status can warn about a second
+                // pilot without counting the tabs that only watch.
+                m_rcSeenUs[inbound.clientId] = monotonicUs();
+            }
             std::string error;
             const bool done = applyClientMessage(message, error);
             answer(message.id, done, error);
@@ -539,6 +545,22 @@ namespace mark4
             case ClientMessageType::REPLAY: {
                 return startReplay(message.recordingName, message.replaySpeed, errorOut);
             }
+            case ClientMessageType::SERIAL: {
+                if (message.serialConnect)
+                {
+                    if (!m_serial.open(message.serialDevice, message.serialBaud))
+                    {
+                        errorOut = "cannot open " + message.serialDevice;
+                        return false;
+                    }
+                }
+                else
+                {
+                    m_serial.release();
+                }
+                broadcastStatus();
+                return true;
+            }
             case ClientMessageType::RECORD: {
                 if (message.recordStart)
                 {
@@ -596,6 +618,9 @@ namespace mark4
             onDiscoveryChange(change);
         }
         m_serial.maintain(nowUs / US_PER_MS);
+        std::erase_if(m_rcSeenUs, [nowUs](const auto &entry) {
+            return nowUs - entry.second > RC_PILOT_WINDOW_US;
+        });
         // A replay that reached the end of its file must be reaped, or it
         // stays a zombie for as long as the hub runs.
         static_cast<void>(m_replays.anyExited());
@@ -628,6 +653,11 @@ namespace mark4
         snapshot.badFrames = stats.badFrames;
         snapshot.rejectedAnnounces = m_registry.rejectedAnnounces();
         snapshot.clients = m_ws.clientCount();
+        const std::uint64_t nowUs = monotonicUs();
+        snapshot.rcClients = static_cast<std::size_t>(
+            std::count_if(m_rcSeenUs.begin(), m_rcSeenUs.end(), [nowUs](const auto &entry) {
+                return nowUs - entry.second <= RC_PILOT_WINDOW_US;
+            }));
         snapshot.links = m_health.links();
         for (LinkHealth &link : snapshot.links)
         {

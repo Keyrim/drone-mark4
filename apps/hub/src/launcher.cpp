@@ -246,22 +246,4 @@ namespace mark4
         return m_firstExitCode;
     }
 
-    bool runChildToCompletion(const ChildSpec &spec, int &exitCodeOut)
-    {
-        pid_t pid = -1;
-        if (!spawnChild(spec, false, pid))
-        {
-            return false;
-        }
-        int status = 0;
-        while (::waitpid(pid, &status, 0) < 0)
-        {
-            if (errno != EINTR)
-            {
-                return false;
-            }
-        }
-        exitCodeOut = exitCodeOf(status);
-        return true;
-    }
 } // namespace mark4

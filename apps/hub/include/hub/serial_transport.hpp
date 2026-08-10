@@ -47,6 +47,11 @@ namespace mark4
         /// @brief Closes the port, if it is open.
         void close();
 
+        /// @brief Closes the port and forgets the device: maintain() stops
+        ///        reopening it. This is the deliberate operator close, where
+        ///        close() is the transient one a read error takes.
+        void release();
+
         /// @return true when the port is usable
         [[nodiscard]] bool isOpen() const
         {

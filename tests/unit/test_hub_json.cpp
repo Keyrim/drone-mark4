@@ -203,6 +203,7 @@ TEST_CASE("status json carries the counters")
     status.badFrames = 40U;
     status.rejectedAnnounces = 50U;
     status.clients = 3U;
+    status.rcClients = 2U;
 
     mark4::LinkHealth link;
     link.stream = mark4::StreamKind::SIM_RAW;
@@ -225,6 +226,7 @@ TEST_CASE("status json carries the counters")
     CHECK(message["counts"]["badFrames"] == 40U);
     CHECK(message["counts"]["rejectedAnnounces"] == 50U);
     CHECK(message["clients"] == 3U);
+    CHECK(message["rcClients"] == 2U);
 
     REQUIRE(message["links"].size() == 1U);
     const nlohmann::json &entry = message["links"][0];
@@ -363,6 +365,42 @@ TEST_CASE("a record message toggles the csv session")
     const auto stop = mark4::parseClientMessage(R"({"type":"record","action":"stop"})");
     REQUIRE(std::holds_alternative<mark4::ClientMessage>(stop));
     CHECK(!(std::get<mark4::ClientMessage>(stop).recordStart));
+}
+
+TEST_CASE("a correlation id past the int range is refused, never wrapped")
+{
+    // A wrapped id would come back in the ack and match nothing: the page
+    // would see a timeout instead of an answer
+    const auto tooBig =
+        mark4::parseClientMessage(R"({"type":"record","action":"start","id":4294901760})");
+    CHECK(std::holds_alternative<std::string>(tooBig));
+    const auto negative =
+        mark4::parseClientMessage(R"({"type":"record","action":"start","id":-2})");
+    CHECK(std::holds_alternative<std::string>(negative));
+}
+
+TEST_CASE("a serial message opens or closes the board uart")
+{
+    const auto open = mark4::parseClientMessage(
+        R"({"type":"serial","action":"open","device":"/dev/ttyUSB0","baud":921600})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(open));
+    const auto &opened = std::get<mark4::ClientMessage>(open);
+    CHECK(opened.type == mark4::ClientMessageType::SERIAL);
+    CHECK(opened.serialConnect);
+    CHECK(opened.serialDevice == "/dev/ttyUSB0");
+    CHECK(opened.serialBaud == 921600U);
+
+    const auto close = mark4::parseClientMessage(R"({"type":"serial","action":"close"})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(close));
+    CHECK(!(std::get<mark4::ClientMessage>(close).serialConnect));
+
+    // An open without a device or with a null speed addresses nothing
+    const auto noDevice =
+        mark4::parseClientMessage(R"({"type":"serial","action":"open","baud":921600})");
+    CHECK(std::holds_alternative<std::string>(noDevice));
+    const auto noBaud = mark4::parseClientMessage(
+        R"({"type":"serial","action":"open","device":"/dev/ttyUSB0","baud":0})");
+    CHECK(std::holds_alternative<std::string>(noBaud));
 }
 
 TEST_CASE("a tuning set message becomes the exact tuning set wire packet")

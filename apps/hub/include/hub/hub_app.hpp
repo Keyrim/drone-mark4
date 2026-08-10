@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -46,6 +47,10 @@ namespace mark4
         /// Period of the status message [ms].
         static constexpr std::uint64_t STATUS_PERIOD_MS = 1000U;
 
+        /// A client whose last RC message is older than this no longer
+        /// counts as a pilot (the stream runs at 10 Hz while engaged).
+        static constexpr std::uint64_t RC_PILOT_WINDOW_US = 2'000'000U;
+
         /// Default line speed of the board UART [baud].
         static constexpr std::uint32_t DEFAULT_SERIAL_BAUD = 921600U;
 
@@ -64,7 +69,7 @@ namespace mark4
             std::string serialDevice;                       ///< board UART, empty = none
             std::uint32_t serialBaud = DEFAULT_SERIAL_BAUD; ///< board UART speed [baud]
             std::string logDirectory = "logs";              ///< where recordings are written
-            bool recordOnStart = false;                     ///< open a CSV session at startup
+            bool recordOnStart = true;                      ///< open a CSV session at startup
             bool udpRebroadcast = true;                     ///< re-emit serial telemetry on UDP
             std::string profilesDir = "profiles";           ///< directory the profiles live in
             std::string pushProfileName;                    ///< profile pushed to every process
@@ -240,5 +245,6 @@ namespace mark4
         std::uint8_t m_scenarioSequence = 0U;    ///< rolling number stamped on a
                                                  ///< scenario the client left at 0
         ProcessGroup m_replays;                  ///< drone_replay children a client asked for
+        std::map<std::string, std::uint64_t> m_rcSeenUs; ///< last RC instant per client
     };
 } // namespace mark4
