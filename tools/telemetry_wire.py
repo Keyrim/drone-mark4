@@ -67,7 +67,8 @@ BOARD_REBOOT_MAGIC = 0xB7
 SIM_LINK_PORT = 47800
 TELEMETRY_PORT = 47801
 SIM_RAW_PORT = 47802
-TELEMETRY_MIRROR_PORT = 47803
+# 47803 is unassigned: it used to mirror the telemetry broadcast for the
+# one consumer whose socket stack could not share a bound port.
 # 47804 is unassigned: the simulator binds no listening port any more, and
 # scenarios reach it inside the lockstep reply.
 RC_COMMAND_PORT = 47805
@@ -257,14 +258,6 @@ def iter_blackbox_records(data: bytes):
             offset += BLACKBOX_RECORD_SIZE
         else:
             offset += 1
-
-
-def telemetry_mirror_port(telemetry_port: int) -> int:
-    """Mirror of a telemetry port, mark4::telemetryMirrorPort."""
-    return telemetry_port + 2
-
-
-assert telemetry_mirror_port(TELEMETRY_PORT) == TELEMETRY_MIRROR_PORT
 
 
 @dataclass(frozen=True)

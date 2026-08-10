@@ -122,9 +122,7 @@ namespace mark4
         {
             return false;
         }
-        // No mirror: the announce port has no consumer that cannot share a
-        // bound port, and its +2 neighbor must not see stray traffic.
-        if (!m_announceSender.open(ANNOUNCE_PORT, /*mirror=*/false))
+        if (!m_announceSender.open(ANNOUNCE_PORT))
         {
             return false;
         }

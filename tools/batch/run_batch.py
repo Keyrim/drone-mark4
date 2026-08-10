@@ -75,8 +75,8 @@ PHASE_NAMES = [
     "idle", "altitude", "armed", "ballistic", "recovery", "hover", "cutoff", "manual",
 ]
 
-# One UDP port range per instance: sim link, telemetry (+ mirror on +2), raw
-# state and the drone_sim command receiver never overlap between instances.
+# One UDP port range per instance: sim link, telemetry, raw state and the
+# drone_sim command receiver never overlap between instances.
 # Striding the rc port also keeps a campaign away from the default port a
 # bench session may be using for the real board.
 BASE_PORT = 48000

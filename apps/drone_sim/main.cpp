@@ -23,7 +23,7 @@ namespace
             stderr,
             "usage: %s [frames > 0] [--sim-port N] [--telemetry-port N] [--rc-port N]\n"
             "  --sim-port        UDP port the sim link listens on (default %u)\n"
-            "  --telemetry-port  UDP telemetry broadcast port, mirror on +2 (default %u)\n"
+            "  --telemetry-port  UDP telemetry broadcast port (default %u)\n"
             "  --rc-port         UDP port the RC command receiver binds (default %u)\n",
             program,
             static_cast<unsigned>(mark4::SIM_LINK_PORT),

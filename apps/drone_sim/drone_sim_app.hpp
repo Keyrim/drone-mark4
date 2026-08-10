@@ -43,8 +43,7 @@ namespace mark4
 
         /// @param maxFrames number of frames to process before stopping
         /// @param simPort UDP port the sim link listens on
-        /// @param telemetryPort UDP port telemetry is broadcast to (mirror
-        ///        copies go to telemetryPort + 2)
+        /// @param telemetryPort UDP port telemetry is broadcast to
         /// @param rcPort UDP port the command receiver binds, for the RC
         ///        stream the pilot keeps up
         /// @param sessionId identity of this process start, announced so the

@@ -8,8 +8,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include "protocol/ports.hpp"
-
 namespace mark4
 {
     namespace
@@ -32,10 +30,9 @@ namespace mark4
         }
     }
 
-    bool TelemetrySenderSim::open(std::uint16_t port, bool mirror)
+    bool TelemetrySenderSim::open(std::uint16_t port)
     {
         m_port = port;
-        m_mirror = mirror;
         if (m_socketFd >= 0)
         {
             static_cast<void>(std::fprintf(stderr, "TelemetrySenderSim: already open\n"));
@@ -82,19 +79,6 @@ namespace mark4
                 m_sendFailureLogged = true;
             }
             return;
-        }
-
-        if (m_mirror)
-        {
-            // Same packet on the mirror port, for the consumer that cannot
-            // share a bound port. Best effort: the main broadcast went out.
-            target.sin_port = htons(telemetryMirrorPort(m_port));
-            static_cast<void>(::sendto(m_socketFd,
-                                       data,
-                                       size,
-                                       0,
-                                       reinterpret_cast<const sockaddr *>(&target),
-                                       sizeof(target)));
         }
 
         ++m_packetCount;

@@ -24,18 +24,9 @@ namespace mark4
     /// with the exact one (this stream) sample by sample.
     inline constexpr std::uint16_t SIM_RAW_PORT = 47802U;
 
-    /// @brief Mirror of a telemetry port, for the single consumer whose
-    ///        socket stack cannot share a bound port (Godot's UDP sockets
-    ///        bind exclusively). Every telemetry packet is also sent there.
-    /// @param telemetryPort port the telemetry broadcast goes to
-    /// @return port the mirror copy goes to
-    constexpr std::uint16_t telemetryMirrorPort(std::uint16_t telemetryPort)
-    {
-        return static_cast<std::uint16_t>(telemetryPort + 2U);
-    }
-
-    /// Mirror of the default telemetry broadcast port.
-    inline constexpr std::uint16_t TELEMETRY_MIRROR_PORT = telemetryMirrorPort(TELEMETRY_PORT);
+    // 47803 is unassigned: it used to mirror the telemetry broadcast for the
+    // one consumer whose socket stack could not share a bound port. Every
+    // consumer left sets SO_REUSEADDR and reads udp/47801 directly.
 
     // 47804 is unassigned: the simulator used to bind it for scenario
     // commands, and binds no listening port at all any more. Scenarios reach

@@ -25,9 +25,7 @@ namespace mark4
         {
             return false;
         }
-        // No mirror: the announce port has no consumer that cannot share a
-        // bound port, and its +2 neighbor must not see stray traffic.
-        return m_announceSender.open(m_announcePort, /*mirror=*/false);
+        return m_announceSender.open(m_announcePort);
     }
 
     std::uint32_t DroneReplayApp::run()

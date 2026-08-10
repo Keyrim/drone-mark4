@@ -82,7 +82,8 @@ const SCENARIO_HELD_OFFSET := 42
 const SIM_LINK_PORT := 47800
 const TELEMETRY_PORT := 47801
 const SIM_RAW_PORT := 47802
-const TELEMETRY_MIRROR_PORT := 47803
+## 47803 is unassigned: it used to mirror the telemetry broadcast for the
+## one consumer whose socket stack could not share a bound port.
 ## 47804 is unassigned: this project binds no command port any more, and
 ## scenarios reach it inside the lockstep reply.
 const RC_COMMAND_PORT := 47805

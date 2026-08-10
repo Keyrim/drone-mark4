@@ -188,11 +188,8 @@ namespace mark4
             onTelemetryPacket(payload);
             if (m_config.udpRebroadcast)
             {
-                // The ground station and the simulator ghost view listen on
-                // UDP and know nothing about this cable.
+                // UDP listeners know nothing about this cable.
                 static_cast<void>(m_udp.broadcast(payload, size, m_config.telemetryPort));
-                static_cast<void>(
-                    m_udp.broadcast(payload, size, telemetryMirrorPort(m_config.telemetryPort)));
             }
             return;
         }
