@@ -1,6 +1,8 @@
 /**
- * The three.js side of the attitude page: two drone gizmos over a grid, and
- * the little orbit camera that looks at them.
+ * The three.js side of the attitude view: one gizmo per connected drone
+ * over a grid, all superimposed at the origin, and the little orbit camera
+ * that looks at them. The caller names each drone by an id and a color; the
+ * translucent ghost is the exact simulator attitude, when one streams.
  *
  * Everything here draws in the render frame (y up, -z forward); the drone
  * frame never reaches this module, the caller hands over attitudes already
@@ -11,9 +13,10 @@ import * as THREE from "three";
 
 import type { Quat } from "../shared/quat";
 
-const ESTIMATED_COLOR = 0x3987e5;
-const EXACT_COLOR = 0xc98500;
-const GHOST_OPACITY = 0.35;
+// The ghost wears the simulated drone's color: it is ITS truth, drawn
+// translucent behind its estimate.
+const EXACT_COLOR = 0x3987e5;
+const GHOST_OPACITY = 0.3;
 
 /** Camera distance bounds, in metres. */
 const MIN_RADIUS = 0.35;
@@ -78,8 +81,8 @@ export class AttitudeScene {
     private readonly renderer: THREE.WebGLRenderer;
     private readonly scene = new THREE.Scene();
     private readonly camera = new THREE.PerspectiveCamera(45, 1, 0.05, 100);
-    private readonly estimated = makeGizmo(ESTIMATED_COLOR, 1);
     private readonly ghost = makeGizmo(EXACT_COLOR, GHOST_OPACITY);
+    private readonly drones = new Map<number, THREE.Group>();
     /** Camera position in spherical coordinates around the origin. */
     private radius = 1.1;
     private theta = Math.PI / 4;
@@ -97,17 +100,32 @@ export class AttitudeScene {
         sun.position.set(1, 2, 1.5);
         this.scene.add(sun);
 
-        this.estimated.add(makeAxes());
-        this.scene.add(this.estimated);
         this.scene.add(this.ghost);
 
         this.bindOrbit(this.renderer.domElement);
         this.resize();
     }
 
-    /** Attitude of the solid gizmo, already in the render frame. */
-    setEstimated(q: Quat): void {
-        this.estimated.quaternion.set(q[1], q[2], q[3], q[0]);
+    /** Attitude of one drone's gizmo, created on first sight in its color. */
+    setDrone(id: number, q: Quat, color: string): void {
+        let gizmo = this.drones.get(id);
+        if (gizmo === undefined) {
+            gizmo = makeGizmo(new THREE.Color(color).getHex(), 1);
+            gizmo.add(makeAxes());
+            this.drones.set(id, gizmo);
+            this.scene.add(gizmo);
+        }
+        gizmo.quaternion.set(q[1], q[2], q[3], q[0]);
+    }
+
+    /** Drop the gizmos of drones that are gone. */
+    keepDrones(ids: ReadonlySet<number>): void {
+        for (const [id, gizmo] of this.drones) {
+            if (!ids.has(id)) {
+                this.scene.remove(gizmo);
+                this.drones.delete(id);
+            }
+        }
     }
 
     setExact(q: Quat): void {

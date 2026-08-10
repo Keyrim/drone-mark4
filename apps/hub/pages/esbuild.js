@@ -27,6 +27,11 @@ const entryPoints = Object.fromEntries([
     ["style", path.join(SRC, "shared", "style.css")],
 ]);
 
+// A deleted page must not survive as a stale bundle the hub still serves
+if (!watch) {
+    fs.rmSync(DIST, { recursive: true, force: true });
+}
+
 /** Copies the page markup next to the bundles. */
 function copyHtml() {
     fs.mkdirSync(DIST, { recursive: true });

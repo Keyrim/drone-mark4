@@ -25,6 +25,7 @@ declare module "three" {
         clone(): Color;
         lerp(other: Color, alpha: number): this;
         multiplyScalar(scalar: number): this;
+        getHex(): number;
     }
 
     export class Object3D {
@@ -32,6 +33,7 @@ declare module "three" {
         readonly quaternion: Quaternion;
         visible: boolean;
         add(...objects: Object3D[]): this;
+        remove(...objects: Object3D[]): this;
     }
 
     export class Group extends Object3D {}

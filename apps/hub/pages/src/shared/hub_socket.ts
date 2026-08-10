@@ -31,6 +31,12 @@ const REQUEST_TIMEOUT_MS = 5000;
 /** Correlation ids are numbered inside a per-tab nonce block of this size. */
 const NONCE_BLOCK = 65536;
 
+/**
+ * Nonce ceiling: the hub reads the id as a 32-bit signed integer, so
+ * nonce * NONCE_BLOCK + counter must stay below 2^31.
+ */
+const NONCE_MAX = 32768;
+
 export class HubSocket {
     private socket: WebSocket | null = null;
     private readonly handlers = new Map<string, Handler[]>();
@@ -43,7 +49,7 @@ export class HubSocket {
      * Acks are broadcast to every client, so an id must identify the tab that
      * asked. Each tab draws a random block and numbers its requests inside it.
      */
-    private readonly nonce = Math.floor(Math.random() * NONCE_BLOCK);
+    private readonly nonce = Math.floor(Math.random() * NONCE_MAX);
     private counter = 0;
 
     constructor(private readonly url = `ws://${location.host}`) {

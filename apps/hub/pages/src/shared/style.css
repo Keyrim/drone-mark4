@@ -58,22 +58,13 @@ body {
     color: var(--fg-dim);
 }
 
-.nav-link {
-    color: var(--fg-dim);
+a.nav-open {
     text-decoration: none;
-    padding: 3px 8px;
-    border-radius: 4px;
+    color: var(--fg-dim);
 }
 
-.nav-link:hover {
+a.nav-open:hover {
     color: var(--fg);
-    background: var(--bg-raised);
-}
-
-.nav-link.active {
-    color: var(--fg);
-    background: var(--bg-raised);
-    box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .nav-tools {
@@ -122,8 +113,14 @@ body {
     flex-shrink: 0;
 }
 
+
 .discovery-empty {
     color: var(--fg-dim);
+    white-space: nowrap;
+}
+
+input.config-title.baud {
+    width: 70px;
 }
 
 .chip {
@@ -378,9 +375,40 @@ input.config-title {
 /* ===== Console ===== */
 
 .content.console {
-    overflow-y: auto;
+    display: grid;
+    grid-template-columns: minmax(0, 11fr) minmax(0, 9fr);
+    align-items: stretch;
     padding: 10px;
     gap: 10px;
+    overflow: hidden;
+}
+
+@media (width <= 900px) {
+    .content.console {
+        grid-template-columns: minmax(0, 1fr);
+        overflow-y: auto;
+    }
+}
+
+.console-col {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+/* Observation column: the attitude view takes whatever the readout leaves */
+.console-col.observe {
+    overflow: hidden;
+}
+
+.console-col.observe .att-panel {
+    flex: 1;
+}
+
+.bar-grow {
+    flex: 1;
 }
 
 .panel {
@@ -497,37 +525,277 @@ input.config-title {
     font-weight: 600;
 }
 
-/* ===== Pilot ===== */
+/* ===== Drone widgets ===== */
 
-.pilot-controls {
+.drone-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.drone-widget {
+    display: flex;
+    flex-direction: column;
+}
+
+.dw-obs {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 6px;
+    gap: 10px;
+    padding: 6px 10px;
 }
 
-.pilot-help {
-    color: var(--fg-dim);
-    font-size: 11px;
-    font-family: var(--mono);
-}
-
-.pilot-banner {
-    position: fixed;
-    inset: 0 0 auto 0;
-    z-index: 100;
-    padding: 6px 12px;
-    background: var(--bad);
-    color: #fff;
+.dw-phase {
+    padding: 2px 9px;
+    border-radius: 5px;
+    background: var(--bg-raised);
+    color: var(--fg);
     font-family: var(--mono);
     font-size: 12px;
-    font-weight: 600;
-    box-shadow: 0 2px 8px rgb(0 0 0 / 45%);
+    font-weight: 700;
 }
 
-.pilot-warning:not(:empty) {
-    margin-top: 3px;
+.dw-phase.good {
+    background: var(--ok);
+    color: #08110d;
+}
+
+.dw-phase.bad {
+    background: var(--bad);
+    color: #fff;
+}
+
+.dw-phase.warn {
+    background: var(--warn);
+    color: #191104;
+}
+
+/* Silent drone: the readings are history, not state */
+.drone-widget.silent .dw-reading,
+.drone-widget.silent .dw-motors {
+    opacity: 0.4;
+}
+
+.dw-reading {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--fg-dim);
+}
+
+.dw-reading b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--fg);
+    font-weight: 500;
+}
+
+.dw-motors {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px 14px;
+    padding: 2px 10px 7px;
+}
+
+.dw-motor {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-dim);
+}
+
+.dw-motor b {
+    min-width: 30px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--fg);
+    font-weight: 500;
+}
+
+.dw-motor-track {
+    flex: 1;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--bg-raised);
+    overflow: hidden;
+}
+
+.dw-motor-fill {
+    height: 100%;
+    background: var(--accent);
+    opacity: 0.85;
+}
+
+.dw-rc {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+    padding: 7px 10px;
+    border-top: 1px solid var(--border);
+}
+
+.dw-throttle {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    color: var(--fg-dim);
+    flex: 1;
+    min-width: 170px;
+}
+
+.dw-throttle input[type="range"] {
+    flex: 1;
+    min-width: 80px;
+    accent-color: var(--accent);
+}
+
+.dw-throttle b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    min-width: 36px;
+    text-align: right;
+    color: var(--fg);
+}
+
+.dw-details {
+    border-top: 1px solid var(--border);
+}
+
+.dw-details > summary {
+    padding: 5px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg-dim);
+    cursor: pointer;
+    user-select: none;
+}
+
+.dw-details > summary:hover {
+    color: var(--fg);
+}
+
+.dw-details .panel {
+    border: none;
+}
+
+.add-drone {
+    border-style: dashed;
+}
+
+.add-tab {
+    color: var(--fg-dim);
+}
+
+.add-tab.active {
+    color: #fff;
+}
+
+.btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.btn:disabled:hover {
+    border-color: var(--border);
+    color: var(--fg-dim);
+}
+
+/* ===== Switches ===== */
+
+.switch-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    color: var(--fg-dim);
+    cursor: pointer;
+    user-select: none;
+}
+
+.switch-row input {
+    display: none;
+}
+
+.switch {
+    width: 30px;
+    height: 16px;
+    border-radius: 8px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    position: relative;
+    transition: background 0.12s;
+    flex-shrink: 0;
+}
+
+.switch::after {
+    content: "";
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--fg-dim);
+    transition: transform 0.12s, background 0.12s;
+}
+
+.switch-row input:checked + .switch {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.switch-row input:checked + .switch::after {
+    transform: translateX(14px);
+    background: #fff;
+}
+
+.switch-row input.danger:checked + .switch {
+    background: var(--bad);
+    border-color: var(--bad);
+}
+
+/* ===== Attitude panel ===== */
+
+.att-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 320px;
+}
+
+.att-stage {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    touch-action: none;
+}
+
+.att-stage canvas {
+    display: block;
+}
+
+.att-legend {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: 10px;
+    font-size: 11px;
     font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    color: var(--fg-dim);
+}
+
+.att-legend-entry {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
 }
 
 /* ===== Toasts ===== */
@@ -602,6 +870,18 @@ input.config-title {
 
 .config-chip-remove:hover {
     color: var(--bad);
+}
+
+.config-grip {
+    font-family: var(--mono);
+    color: var(--fg-dim);
+    cursor: grab;
+    padding: 0 2px;
+    user-select: none;
+}
+
+.config-lane[draggable="true"] {
+    opacity: 0.6;
 }
 
 .config-title {

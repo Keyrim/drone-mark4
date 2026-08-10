@@ -17,7 +17,7 @@ flowchart LR
     ESP["ESP32 bridge<br/>UART <-> UDP WiFi"]
     GODOT["Godot simulator<br/>(plant only)"]
     HUB["hub<br/>discovery, recording, launcher"]
-    PAGES["web pages<br/>plots, console, 3D attitude"]
+    PAGES["web pages<br/>control, plots"]
     BUS(("Telemetry<br/>UDP broadcast"))
 
     FW <--> ESP
