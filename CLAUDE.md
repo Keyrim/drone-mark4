@@ -141,9 +141,9 @@ every project target, not by FetchContent deps such as Catch2).
 
 `.github/workflows/devcontainer-image.yml` rebuilds the dev image and pushes
 it to GHCR (`ghcr.io/keyrim/drone-mark4-devcontainer`) when `.devcontainer/`
-changes; `ci.yml` runs 5 jobs (desktop+tests+golden decode in python and
-GDScript, stm32, desktop-san, format+ascii, tidy desktop+stm32) inside
-that image, pinned by digest.
+changes; `ci.yml` runs 6 jobs (desktop+tests+golden decode in python and
+GDScript, stm32, desktop-san, pages pnpm typecheck+build+test,
+format+ascii, tidy desktop+stm32) inside that image, pinned by digest.
 After a `.devcontainer/` change, bump the digest in `ci.yml` to the one the
 image workflow pushed (`docker manifest inspect ...:latest`). Container jobs need `options: --user root` (the
 image defaults to user `dev`, the runner mounts workdirs for another UID).

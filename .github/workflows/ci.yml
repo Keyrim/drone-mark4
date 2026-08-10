@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:cae2507542edc4f32d35755ef8bfda0ee6370074fc56f29f2680c63cf8bee966
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:8945e31ee9412e44fdfdd6494839e53b05f76618695a38ba06d2bd788721efdb
       # The image runs as user "dev"; the runner's mounted workdirs belong to
       # another UID, so container jobs must run as root.
       options: --user root
@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:cae2507542edc4f32d35755ef8bfda0ee6370074fc56f29f2680c63cf8bee966
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:8945e31ee9412e44fdfdd6494839e53b05f76618695a38ba06d2bd788721efdb
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -75,7 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:cae2507542edc4f32d35755ef8bfda0ee6370074fc56f29f2680c63cf8bee966
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:8945e31ee9412e44fdfdd6494839e53b05f76618695a38ba06d2bd788721efdb
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -86,12 +86,32 @@ jobs:
       - run: cmake --build --preset desktop-san
       - run: ctest --preset desktop-san
 
+  pages:
+    name: pages (typecheck + build + tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:8945e31ee9412e44fdfdd6494839e53b05f76618695a38ba06d2bd788721efdb
+      options: --user root
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        working-directory: apps/hub/pages
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build
+      - run: pnpm test
+
   format:
     name: clang-format + ascii
     runs-on: ubuntu-latest
     timeout-minutes: 10
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:cae2507542edc4f32d35755ef8bfda0ee6370074fc56f29f2680c63cf8bee966
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:8945e31ee9412e44fdfdd6494839e53b05f76618695a38ba06d2bd788721efdb
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -107,7 +127,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:cae2507542edc4f32d35755ef8bfda0ee6370074fc56f29f2680c63cf8bee966
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:8945e31ee9412e44fdfdd6494839e53b05f76618695a38ba06d2bd788721efdb
       options: --user root
       credentials:
         username: ${{ github.actor }}
