@@ -9,6 +9,14 @@
 	// server listens on this TCP port.
 	"forwardPorts": [6005],
 
+	// WSL2 mirrored networking exposes the container ports on the Windows
+	// localhost natively; VS Code auto-forwarding only duplicates them, and
+	// a stale tunnel keeps the port reserved on the Windows side (seen on
+	// the hub endpoint: bind failed with no visible listener).
+	"otherPortsAttributes": {
+		"onAutoForward": "ignore"
+	},
+
 	// The named volumes (Claude/gh config) are created by the Docker daemon
 	// (root): hand them back to the container user on first start.
 	"postCreateCommand": "sudo chown -R dev:dev /home/dev/.claude /home/dev/.config/gh",

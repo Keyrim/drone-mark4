@@ -104,6 +104,15 @@ ENV PATH="/opt/SEGGER/JLink:${PATH}"
 #   batches, windowed through WSLg/X11 for interactive sessions. The editor
 #   on the host remains an option, both point at the same sim-godot/ project.
 # -----------------------------------------------------------------------------
+# X11 client libraries Godot dlopens for the windowed mode (WSLg). Rendering
+# falls back to OpenGL on llvmpipe: the container exposes no Vulkan surface.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libxcursor1 \
+        libxinerama1 \
+        libxrandr2 \
+        libxi6 \
+        libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
 RUN wget -q -O /tmp/godot.zip \
         "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip" \
     && unzip -q /tmp/godot.zip -d /opt/godot \
