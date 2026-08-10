@@ -2,6 +2,94 @@
     "version": "2.0.0",
     "tasks": [
         {
+            "label": "godot sim",
+            "detail": "The plant, windowed, in its own terminal. It idles and resends until a flight process answers on the sim port.",
+            "type": "shell",
+            "command": "godot",
+            "args": [
+                "--path",
+                "${workspaceFolder}/sim-godot"
+            ],
+            "isBackground": true,
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "never",
+                "panel": "dedicated",
+                "group": "session"
+            }
+        },
+        {
+            "label": "build app",
+            "detail": "Build one app by name: the (preset, target) pair comes from apps.json.",
+            "type": "shell",
+            "command": "python3",
+            "args": [
+                "${workspaceFolder}/scripts/build_app.py",
+                "${input:app}"
+            ],
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "group": "build"
+        },
+        {
+            "label": "run app",
+            "detail": "Build one app by name, then run it in its own terminal (run command from apps.json).",
+            "type": "shell",
+            "command": "python3",
+            "args": [
+                "${workspaceFolder}/scripts/run_app.py",
+                "${input:runnableApp}"
+            ],
+            "isBackground": true,
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "group": "session"
+            }
+        },
+        {
+            "label": "build drone_sim",
+            "type": "shell",
+            "command": "python3",
+            "args": [
+                "${workspaceFolder}/scripts/build_app.py",
+                "drone_sim"
+            ],
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "build hub",
+            "type": "shell",
+            "command": "python3",
+            "args": [
+                "${workspaceFolder}/scripts/build_app.py",
+                "hub"
+            ],
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "build firmware",
+            "type": "shell",
+            "command": "python3",
+            "args": [
+                "${workspaceFolder}/scripts/build_app.py",
+                "firmware"
+            ],
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
             "label": "CMake: build",
             "type": "cmake",
             "command": "build",
@@ -25,6 +113,34 @@
                 "panel": "shared"
             },
             "group": "build"
+        }
+    ],
+    "inputs": [
+        {
+            "id": "app",
+            "type": "pickString",
+            "description": "App to build (declared in apps.json)",
+            "options": [
+                "drone_sim",
+                "hub",
+                "drone_replay",
+                "firmware",
+                "tests",
+                "tests_san"
+            ],
+            "default": "drone_sim"
+        },
+        {
+            "id": "runnableApp",
+            "type": "pickString",
+            "description": "App to run (apps declaring a run command in apps.json)",
+            "options": [
+                "drone_sim",
+                "hub",
+                "tests",
+                "tests_san"
+            ],
+            "default": "drone_sim"
         }
     ]
 }

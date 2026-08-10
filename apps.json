@@ -1,0 +1,38 @@
+{
+    "apps": [
+        {
+            "name": "drone_sim",
+            "cmakePreset": "desktop",
+            "target": "drone_sim",
+            "run": ["build/desktop/apps/drone_sim/drone_sim"]
+        },
+        {
+            "name": "hub",
+            "cmakePreset": "desktop",
+            "target": "hub",
+            "run": ["build/desktop/apps/hub/hub"]
+        },
+        {
+            "name": "drone_replay",
+            "cmakePreset": "desktop",
+            "target": "drone_replay"
+        },
+        {
+            "name": "firmware",
+            "cmakePreset": "stm32",
+            "target": "firmware"
+        },
+        {
+            "name": "tests",
+            "cmakePreset": "desktop",
+            "target": "unit_tests",
+            "run": ["ctest", "--preset", "desktop"]
+        },
+        {
+            "name": "tests_san",
+            "cmakePreset": "desktop-san",
+            "target": "unit_tests",
+            "run": ["ctest", "--preset", "desktop-san"]
+        }
+    ]
+}
