@@ -37,6 +37,10 @@ live in `docs/plan-dev.md`; read it before starting any new milestone.
 # Configure + build + test (desktop, gcc)
 cmake --preset desktop && cmake --build --preset desktop && ctest --preset desktop
 
+# Build one app by name (an app = a (cmake preset, target) pair in apps.json;
+# also the "build app" VS Code task)
+python3 scripts/build_app.py drone_sim
+
 # Same under ASan/UBSan
 cmake --preset desktop-san && cmake --build --preset desktop-san && ctest --preset desktop-san
 
@@ -47,13 +51,18 @@ cmake --preset stm32 && cmake --build --preset stm32
 ./build/desktop/tests/unit/unit_tests "kill switch forces all motors to zero"
 ctest --preset desktop -R "kill switch"
 
-# Run the simulator app (500 iterations by default, exit code 0 expected)
-./build/desktop/apps/drone_sim/drone_sim [iterations] [--sim-port N] [--telemetry-port N]
+# Run the flight process (no frame limit by default; a finite budget is the
+# DRONE_SIM_FRAME_LIMIT cmake cache variable, never a runtime argument)
+./build/desktop/apps/drone_sim/drone_sim [--sim-port N] [--telemetry-port N]
 
-# Start a full session (Godot + drone_sim + web pages and websocket on
-# http://127.0.0.1:47810); `hub up real|replay` and `hub serve` are the
-# other entry points
-./build/desktop/apps/hub/hub up sim
+# Start a bench session: the hub takes no arguments, serves the pages and
+# websocket on http://127.0.0.1:47810 and stays up; everything operational
+# (board UART, recording, replay, profiles) is driven from the pages.
+# Godot (own terminal or the "godot sim" VS Code task) and drone_sim are
+# started and restarted by hand, discovery picks them up.
+./build/desktop/apps/hub/hub
+godot --path sim-godot
+./build/desktop/apps/drone_sim/drone_sim
 
 # Web pages (TypeScript, pnpm via corepack; the hub serves
 # apps/hub/pages/dist). Also: watch / typecheck / test
