@@ -1,0 +1,210 @@
+{
+    "name": "vscode-mark4",
+    "displayName": "Mark4",
+    "description": "Bench tooling: build and run the apps, drive the bench, dock the hub pages in the editor.",
+    "publisher": "tmagne",
+    "version": "0.1.6",
+    "private": true,
+    "type": "module",
+    "packageManager": "pnpm@11.21.0",
+    "engines": {
+        "vscode": "^1.100.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "main": "./dist/extension.cjs",
+    "scripts": {
+        "build": "node esbuild.js",
+        "watch": "node esbuild.js --watch",
+        "typecheck": "tsc --noEmit",
+        "package": "pnpm dlx @vscode/vsce package --no-dependencies --allow-missing-repository --skip-license"
+    },
+    "devDependencies": {
+        "@types/node": "22.19.0",
+        "@types/vscode": "1.100.0",
+        "esbuild": "0.25.12",
+        "typescript": "5.9.3"
+    },
+    "contributes": {
+        "taskDefinitions": [
+            {
+                "type": "mark4",
+                "properties": {
+                    "action": {
+                        "type": "string"
+                    },
+                    "app": {
+                        "type": "string"
+                    }
+                }
+            }
+        ],
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "mark4",
+                    "title": "Mark4",
+                    "icon": "media/mark4.svg"
+                }
+            ]
+        },
+        "views": {
+            "mark4": [
+                {
+                    "id": "mark4.apps",
+                    "name": "Apps"
+                },
+                {
+                    "id": "mark4.bench",
+                    "name": "Bench"
+                }
+            ]
+        },
+        "commands": [
+            {
+                "command": "mark4.buildApp",
+                "title": "Build App",
+                "category": "Mark4",
+                "icon": "$(tools)"
+            },
+            {
+                "command": "mark4.runApp",
+                "title": "Run App",
+                "category": "Mark4",
+                "icon": "$(play)"
+            },
+            {
+                "command": "mark4.stopApp",
+                "title": "Stop App",
+                "category": "Mark4",
+                "icon": "$(debug-stop)"
+            },
+            {
+                "command": "mark4.debugApp",
+                "title": "Debug App",
+                "category": "Mark4",
+                "icon": "$(debug-alt)"
+            },
+            {
+                "command": "mark4.startHub",
+                "title": "Start Hub",
+                "category": "Mark4",
+                "icon": "$(play)"
+            },
+            {
+                "command": "mark4.stopHub",
+                "title": "Stop Hub",
+                "category": "Mark4",
+                "icon": "$(debug-stop)"
+            },
+            {
+                "command": "mark4.startGodot",
+                "title": "Start Godot Sim",
+                "category": "Mark4",
+                "icon": "$(play)"
+            },
+            {
+                "command": "mark4.stopGodot",
+                "title": "Stop Godot Sim",
+                "category": "Mark4",
+                "icon": "$(debug-stop)"
+            },
+            {
+                "command": "mark4.openControl",
+                "title": "Open Control Page",
+                "category": "Mark4",
+                "icon": "$(browser)"
+            },
+            {
+                "command": "mark4.openPlots",
+                "title": "Open Plots Page",
+                "category": "Mark4",
+                "icon": "$(graph-line)"
+            },
+            {
+                "command": "mark4.benchSession",
+                "title": "Bench Session",
+                "category": "Mark4",
+                "icon": "$(rocket)"
+            }
+        ],
+        "menus": {
+            "view/title": [
+                {
+                    "command": "mark4.benchSession",
+                    "when": "view == mark4.bench",
+                    "group": "navigation"
+                }
+            ],
+            "view/item/context": [
+                {
+                    "command": "mark4.buildApp",
+                    "when": "view == mark4.apps && viewItem =~ /^app/",
+                    "group": "inline@1"
+                },
+                {
+                    "command": "mark4.runApp",
+                    "when": "view == mark4.apps && viewItem =~ /:run/",
+                    "group": "inline@2"
+                },
+                {
+                    "command": "mark4.stopApp",
+                    "when": "view == mark4.apps && viewItem =~ /:stop/",
+                    "group": "inline@2"
+                },
+                {
+                    "command": "mark4.debugApp",
+                    "when": "view == mark4.apps && viewItem =~ /:debug/",
+                    "group": "inline@3"
+                },
+                {
+                    "command": "mark4.startHub",
+                    "when": "view == mark4.bench && viewItem == hubDown",
+                    "group": "inline"
+                },
+                {
+                    "command": "mark4.stopHub",
+                    "when": "view == mark4.bench && viewItem == hubTask",
+                    "group": "inline"
+                },
+                {
+                    "command": "mark4.startGodot",
+                    "when": "view == mark4.bench && viewItem == godotIdle",
+                    "group": "inline"
+                },
+                {
+                    "command": "mark4.stopGodot",
+                    "when": "view == mark4.bench && viewItem == godotTask",
+                    "group": "inline"
+                }
+            ],
+            "commandPalette": [
+                {
+                    "command": "mark4.buildApp",
+                    "when": "false"
+                },
+                {
+                    "command": "mark4.runApp",
+                    "when": "false"
+                },
+                {
+                    "command": "mark4.stopApp",
+                    "when": "false"
+                },
+                {
+                    "command": "mark4.debugApp",
+                    "when": "false"
+                },
+                {
+                    "command": "mark4.stopHub",
+                    "when": "false"
+                },
+                {
+                    "command": "mark4.stopGodot",
+                    "when": "false"
+                }
+            ]
+        }
+    }
+}

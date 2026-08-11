@@ -2,6 +2,20 @@
     "version": "2.0.0",
     "tasks": [
         {
+            "label": "install mark4 extension",
+            "detail": "On folder open: build and install tools/vscode-mark4 when its version changed. Reload the window after an install.",
+            "type": "shell",
+            "command": "${workspaceFolder}/tools/vscode-mark4/install.sh",
+            "runOptions": {
+                "runOn": "folderOpen"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated"
+            }
+        },
+        {
             "label": "godot sim",
             "detail": "The plant, windowed, in its own terminal. It idles and resends until a flight process answers on the sim port.",
             "type": "shell",

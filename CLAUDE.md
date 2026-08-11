@@ -68,6 +68,10 @@ godot --path sim-godot
 # apps/hub/pages/dist). Also: watch / typecheck / test
 cd apps/hub/pages && pnpm install --frozen-lockfile && pnpm build
 
+# Editor extension (Mark4 sidebar + hub pages as webviews; local .vsix, no
+# marketplace, no CI job). Install: "Extensions: Install from VSIX".
+cd tools/vscode-mark4 && pnpm install --frozen-lockfile && pnpm build && pnpm package
+
 # Monte Carlo throw campaign through headless Godot (see tools/batch/README.md)
 python3 tools/batch/run_batch.py --runs 100 --parallel 4 [--godot /path/to/godot4]
 

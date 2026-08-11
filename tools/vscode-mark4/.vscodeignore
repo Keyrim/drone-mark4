@@ -1,0 +1,7 @@
+src/
+esbuild.js
+tsconfig.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
+.gitignore
+**/*.map
