@@ -1,21 +1,14 @@
 /**
- * Page shell shared by the two hub windows: the top bar with the connection
- * dot, the link that opens the other window, the discovery bar naming the
- * drones the hub can see, and the toast strip every page reports through.
+ * Page shell shared by the two hub windows: the top bar opens with the
+ * chips naming the drones the hub can see (the page name already sits in
+ * the tab title), then the connection dot, and the toast strip every page
+ * reports through.
  *
  * There is no in-page navigation: control and plots are two windows meant
  * to live on two screens, each with its own websocket to the hub.
  */
 
 import type { Ack, HubMessage, HubSocket } from "./hub_socket";
-
-export type PageId = "plots" | "console";
-
-/** The window the top bar offers to open, from each page. */
-const OTHER: Record<PageId, { label: string; href: string }> = {
-    plots: { label: "Open control", href: "index.html" },
-    console: { label: "Open plots", href: "plots.html" },
-};
 
 interface DiscoveredProcess {
     kindName: string;
@@ -42,14 +35,13 @@ export class Shell {
     private readonly counters: HTMLElement;
     private readonly toasts: HTMLElement;
 
-    constructor(private readonly socket: HubSocket, active: PageId) {
+    constructor(private readonly socket: HubSocket) {
         const nav = document.createElement("nav");
         nav.className = "nav";
 
-        const brand = document.createElement("span");
-        brand.className = "nav-brand";
-        brand.textContent = active === "plots" ? "mark4 plots" : "mark4 control";
-        nav.appendChild(brand);
+        this.discovery = document.createElement("div");
+        this.discovery.className = "discovery";
+        nav.appendChild(this.discovery);
 
         this.toolbar = document.createElement("div");
         this.toolbar.className = "nav-tools";
@@ -59,22 +51,12 @@ export class Shell {
         this.counters.className = "nav-counters";
         nav.appendChild(this.counters);
 
-        const other = document.createElement("a");
-        other.className = "btn nav-open";
-        other.href = OTHER[active].href;
-        other.target = "_blank";
-        other.textContent = OTHER[active].label;
-        nav.appendChild(other);
-
         this.dot = document.createElement("span");
         this.dot.className = "dot";
         this.dotLabel = document.createElement("span");
         this.dotLabel.className = "nav-state";
         nav.appendChild(this.dot);
         nav.appendChild(this.dotLabel);
-
-        this.discovery = document.createElement("div");
-        this.discovery.className = "discovery";
 
         this.content = document.createElement("main");
         this.content.className = "content";
@@ -83,9 +65,12 @@ export class Shell {
         this.toasts.className = "toasts";
 
         document.body.appendChild(nav);
-        document.body.appendChild(this.discovery);
         document.body.appendChild(this.content);
         document.body.appendChild(this.toasts);
+        this.setDiscovery([]);
+        if (window.parent !== window) {
+            forwardShortcuts();
+        }
 
         socket.onState((state) => {
             this.dot.className = `dot ${state}`;
@@ -159,4 +144,32 @@ export class Shell {
         }
         this.counters.textContent = parts.join(" | ");
     }
+}
+
+/**
+ * Forwards shortcut-like keydowns (a modifier or an F key) to the embedding
+ * page: key events never leave an iframe on their own, so editor bindings
+ * like toggling the terminal go dead when the page has the focus. The
+ * embedder re-dispatches them where the editor listens.
+ */
+function forwardShortcuts(): void {
+    window.addEventListener("keydown", (event) => {
+        if (!event.ctrlKey && !event.altKey && !event.metaKey && !/^F\d{1,2}$/.test(event.key)) {
+            return;
+        }
+        window.parent.postMessage(
+            {
+                type: "mark4-shortcut",
+                key: event.key,
+                code: event.code,
+                keyCode: event.keyCode,
+                ctrlKey: event.ctrlKey,
+                shiftKey: event.shiftKey,
+                altKey: event.altKey,
+                metaKey: event.metaKey,
+                repeat: event.repeat,
+            },
+            "*",
+        );
+    });
 }

@@ -22,6 +22,7 @@ export class ConfigPanel {
     private current = DEFAULT_NAME;
     private dragFrom: number | null = null;
     private readonly picker: HTMLSelectElement;
+    private readonly nameInput: HTMLInputElement;
     private readonly laneList: HTMLElement;
 
     constructor(
@@ -41,7 +42,14 @@ export class ConfigPanel {
         this.picker.addEventListener("change", () => this.select(this.picker.value));
         bar.appendChild(this.picker);
 
-        bar.appendChild(this.button("Save as...", () => this.saveAs()));
+        // An inline field, not prompt(): modal dialogs are dead inside an
+        // editor webview (sandboxed iframe), prompt() returns null there.
+        this.nameInput = document.createElement("input");
+        this.nameInput.className = "config-title";
+        this.nameInput.placeholder = "view name";
+        bar.appendChild(this.nameInput);
+
+        bar.appendChild(this.button("Save", () => this.saveAs()));
         bar.appendChild(this.button("Delete", () => this.remove()));
         bar.appendChild(this.button("Add lane", () => this.addLane()));
         this.root.appendChild(bar);
@@ -86,17 +94,20 @@ export class ConfigPanel {
         this.onChanged(this.lanes);
     }
 
+    /** Saves under the typed name, or back onto the current named view. */
     private saveAs(): void {
-        const name = prompt("View name", this.current === DEFAULT_NAME ? "" : this.current);
-        if (name === null || name.trim() === "" || name.trim() === DEFAULT_NAME) {
+        const typed = this.nameInput.value.trim();
+        const name = typed !== "" ? typed : this.current;
+        if (name === "" || name === DEFAULT_NAME) {
             return;
         }
-        this.current = name.trim();
+        this.current = name;
         this.configs = [
             ...this.configs.filter((c) => c.name !== this.current),
             { name: this.current, lanes: clone(this.lanes) },
         ];
         saveViewConfigs(this.configs);
+        this.nameInput.value = "";
         this.refreshPicker();
     }
 

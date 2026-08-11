@@ -52,21 +52,6 @@ body {
     flex-shrink: 0;
 }
 
-.nav-brand {
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    color: var(--fg-dim);
-}
-
-a.nav-open {
-    text-decoration: none;
-    color: var(--fg-dim);
-}
-
-a.nav-open:hover {
-    color: var(--fg);
-}
-
 .nav-tools {
     flex: 1;
     display: flex;
@@ -105,12 +90,9 @@ a.nav-open:hover {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 12px;
-    background: var(--bg);
-    border-bottom: 1px solid var(--border);
     font-size: 11px;
     overflow-x: auto;
-    flex-shrink: 0;
+    min-width: 0;
 }
 
 

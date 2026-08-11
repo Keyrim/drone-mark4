@@ -27,7 +27,7 @@ const DEFAULT_WINDOW_S = 20;
 const US_PER_S = 1e6;
 
 const socket = new HubSocket();
-const shell = new Shell(socket, "plots");
+const shell = new Shell(socket);
 
 const liveBuffers = new Map<string, SeriesBuffer>(
     LIVE_SERIES.map((def) => [def.key, new SeriesBuffer(def)])

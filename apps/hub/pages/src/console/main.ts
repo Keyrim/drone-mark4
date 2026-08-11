@@ -21,7 +21,7 @@ import { AttitudePanel } from "./attitude_panel";
 import { DroneWidget, type WidgetHooks } from "./drone_widget";
 
 const socket = new HubSocket();
-const shell = new Shell(socket, "console");
+const shell = new Shell(socket);
 
 /** Recording last re-executed from this page, for the replay widget. */
 let lastReplay: { name: string } | null = null;
