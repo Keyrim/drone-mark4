@@ -85,13 +85,13 @@ test("formatDuration switches to minutes past a minute", () => {
     assert.equal(formatDuration(83.4), "1 min 23.4 s");
 });
 
-test("formatValue trims and falls back to exponential", () => {
+test("formatValue keeps a fixed decimal count and falls back to exponential", () => {
     assert.equal(formatValue(null), "-");
     assert.equal(formatValue(Number.NaN), "-");
-    assert.equal(formatValue(1.5), "1.5");
-    assert.equal(formatValue(1.23456789), "1.23457");
-    assert.equal(formatValue(0), "0");
-    assert.equal(formatValue(1.5e-7), "1.500e-7");
+    assert.equal(formatValue(1.5), "1.500");
+    assert.equal(formatValue(1.23456789), "1.235");
+    assert.equal(formatValue(0), "0.000");
+    assert.equal(formatValue(1.5e-7), "0.000");
     assert.equal(formatValue(2.5e7), "2.500e+7");
 });
 

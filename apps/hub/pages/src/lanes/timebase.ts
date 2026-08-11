@@ -113,17 +113,13 @@ export function formatDuration(seconds: number): string {
     return `${m} min ${(s - m * 60).toFixed(1)} s`;
 }
 
-/** Compact value formatting for the lane readouts */
+/** Value formatting for the lane readouts: a fixed decimal count, so a
+ *  readout refreshed every frame keeps a steady width instead of blinking. */
 export function formatValue(v: number | null | undefined): string {
     if (v === null || v === undefined || !isFinite(v)) {
         return "-";
     }
-    const abs = Math.abs(v);
-    if (abs !== 0 && (abs >= 1e6 || abs < 1e-4)) {
-        return v.toExponential(3);
-    }
-    // Up to 6 significant digits, trailing zeros trimmed
-    return String(Number(v.toPrecision(6)));
+    return Math.abs(v) >= 1e6 ? v.toExponential(3) : v.toFixed(3);
 }
 
 /** Index of the last element of the ascending array t that is <= x, or -1 */
