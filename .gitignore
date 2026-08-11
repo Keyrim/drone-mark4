@@ -21,3 +21,6 @@ __pycache__/
 
 # pnpm side-effect store (pages toolchain)
 .pnpm-store/
+
+# Scratch (handoffs, reference clones)
+tmp/
