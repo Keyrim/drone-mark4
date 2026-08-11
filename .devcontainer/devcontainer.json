@@ -34,6 +34,13 @@
 				"mhutchie.git-graph"
 			],
 			"settings": {
+				// WSL2 mirrored networking already exposes every container
+				// port on the Windows localhost; the VS Code forwarder adds
+				// nothing and its Windows-side listener leaks (vscode.exe
+				// kept the hub port bound after the forward was stopped by
+				// hand). So: never auto-forward, never restore old forwards.
+				"remote.autoForwardPorts": false,
+				"remote.restoreForwardedPorts": false,
 				// clangd is the language server; cpptools is kept for its
 				// desktop debugger (cppdbg) only; cortex-debug drives the
 				// on-target sessions through JLinkGDBServer.
