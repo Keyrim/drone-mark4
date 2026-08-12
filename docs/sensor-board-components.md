@@ -52,9 +52,11 @@ already sufficient; the LSM6DSR gives 7x margin.
 
 ## Chosen set, wiring summary
 
-- U4 LSM6DSRTR: SPI3, CS = MPU_CS. SDX/SCX/OCS_AUX/SDO_AUX to GND
-  (datasheet mode 1), INT1/INT2 not connected. VDD 100 nF + 2.2 uF,
-  VDDIO 100 nF.
+- U4 LSM6DSRTR: SPI3, CS = MPU_CS. SDx/SCx to GND; OCS_Aux and
+  SDO_Aux LEFT UNCONNECTED (datasheet mode 1 - both have internal
+  pull-ups, grounding them is out of spec), INT1/INT2 not connected.
+  VDD 100 nF (datasheet) + 2.2 uF bulk (designer addition), VDDIO
+  100 nF.
 - U5 SPA06-003: I2C1 addr 0x76 (SDO to GND), CSB to 3V3, VDD/VDDIO 100 nF
   each. Keep the pressure port clear of silkscreen, flux and the connector.
 - U3 QMC5883P: I2C1 addr 0x2C, 4.7 uF reservoir on pin C1, VDD 100 nF.
