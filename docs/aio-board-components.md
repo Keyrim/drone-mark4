@@ -61,7 +61,7 @@ part, fine at 5.6x the price).
 | UART connectors x2 (CON-1, CON-3) | JST SM04B-SRSS-TB | C160404 | $0.43 | 11k | Extended | Genuine JST, SIDE entry (SM..B; the BM..B variants are top-entry, do not substitute) |
 | GPS connector (CON-2) | JST SM06B-SRSS-TB | C160405 | $0.30 | 15k | Extended | 3V3/GND/UART/I2C = 6 pins exactly |
 | ESC connector (ESC-3) | JST SM08B-SRSS-TB | C160407 | $0.33 | 205k | Extended | Same part as the sensor-board study; mark1 pinout copied at capture |
-| SWD header (CON-4) | 2.54 mm 1x6 male | C2337 | $0.16 | 68k | Extended | Kept 2.54 mm so the existing J-Link OB cable plugs 1:1 (MCU-2); DNP at assembly, hand-solder |
+| SWD header (CON-4) | through-hole 2.54 mm 1x6 footprint | none | - | - | not assembled | No BOM line: hand-populated with 3 pins from bench stock (GND/SWCLK/SWDIO per MCU-2); all 6 positions routed |
 | Buck inductor 4.7 uH | Sunlord SWPA5040S4R7MT | C48496 | $0.08 | 4.1k (THIN) | Extended | Shielded 5x5x4; Isat 3.5 A min (>= 2.7 required), DCR 30 mOhm |
 | Buck CIN 10 uF/25 V 0805 | Samsung CL21A106KAYNNNE | C15850 | $0.10 | 10M | Basic | |
 | Buck COUT 2x 22 uF/25 V 0805 | Samsung CL21A226MAQNNNE | C45783 | $0.45 | 4M | Basic | |
@@ -97,8 +97,9 @@ inductor SWPA4030S4R7MT (C57269, 4x4x3, Isat 2.9 A, 10x stock).
 
 Unique Extended references on the assembled side: USB-C, ESD, crystal,
 LDO, buzzer, 3x JST, inductor, plus the Standard-only sensors - roughly
-9-10 feeder fees (~30 USD fixed) on top of the setup/stencil/X-ray
+9 feeder fees (~27 USD fixed) on top of the setup/stencil/X-ray
 baseline of `sensor-board-components.md`. Per-board secondary parts add
-about $2.6 to the ~15 USD main BOM. SRC-3 trims: SWD header always DNP
-(hand-solder), buzzer and spare UART connector DNP-able. Volatile stock
-to re-check at order time: crystal (435), inductor (4.1k), LDO (1.3k).
+about $2.5 to the ~15 USD main BOM. The SWD header is never assembled
+(bare through-hole footprint, MCU-2); remaining SRC-3 trims if the
+quote needs it: buzzer and spare UART connector. Volatile stock to
+re-check at order time: crystal (435), inductor (4.1k), LDO (1.3k).

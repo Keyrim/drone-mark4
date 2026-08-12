@@ -31,9 +31,13 @@ append, never renumber.
   the F405 at current LCSC pricing, same package, current-generation
   peripherals (I2C v2 removes the F4 BUSY erratum class, SPI with FIFO),
   and the de facto FPV industry successor of the F405.
-- MCU-2 The SWD header MUST be 6 pins with the mark1 `Prog` pinout
-  (3V3, SWCLK, GND, SWDIO, NRST, SWO) so the existing J-Link OB cable
-  plugs 1:1.
+- MCU-2 The SWD header is a through-hole 2.54 mm 6-position footprint
+  with the mark1 `Prog` pinout (3V3, SWCLK, GND, SWDIO, NRST, SWO),
+  NOT assembled: hand-populated with 3 pins (GND, SWCLK, SWDIO), which
+  the whole mark1 bring-up proved sufficient - the J-Link OB VTref is
+  hardcoded, the homemade RTT runs over SWD memory access (no SWO
+  needed), and BOOT0 (MCU-3) is the recovery path NRST would have
+  covered. Routing all 6 keeps the 1:1 cable option free.
 - MCU-3 BOOT0 MUST be pulled low through a jumper or solder bridge that
   can force it high (system bootloader = free recovery path; mark1 had
   BOOT0 hard-grounded and SWD as the only way in). The pin has no
