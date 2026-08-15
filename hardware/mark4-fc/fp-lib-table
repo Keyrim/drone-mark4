@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "mark4-fc")(type "KiCad")(uri "${KIPRJMOD}/../lib/mark4-fc.pretty")(options "")(descr "mark4-fc project footprints"))
+)

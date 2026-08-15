@@ -160,8 +160,17 @@ append, never renumber.
   impossible on the 64-pin package with USB present - see the resource
   budget in `aio-board-design.md`).
 - ESC-2 An ESC telemetry UART RX SHOULD be wired to the ESC connector.
-- ESC-3 The ESC connector reuses the mark1 board pinout (confirmed);
-  copy it from the mark1 schematic at capture time.
+- ESC-3 The ESC connector is an 8-position JST-SH, pinout frozen
+  2026-08-15: 1 GND, 2 +12V (board main input, PWR-1), 3 M4, 4 M3,
+  5 M2, 6 M1, 7 CURR (analog current sense pad, PWR-4), 8 TLM (ESC
+  telemetry UART RX, ESC-2). This is the mark1 `esc` pinout with one
+  change: mark1 pin 2 was a duplicate GND and becomes the 12 V input
+  (mark1 was fed through its separate power_board connector, which
+  this board drops). Battery voltage/current readings come from the
+  serial telemetry on pin 8 when the ESC provides them; the CURR
+  analog path is the DNP-able fallback (SRC-3). Verify the actual
+  4-in-1 harness wire order against this table before crimping the
+  cable (cable-side concern, not a schematic one).
 
 ## 7. External connectors
 

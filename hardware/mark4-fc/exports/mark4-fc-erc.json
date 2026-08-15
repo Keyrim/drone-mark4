@@ -1,0 +1,119 @@
+{
+    "$schema": "https://schemas.kicad.org/erc.v1.json",
+    "coordinate_units": "mm",
+    "date": "2026-08-15T21:23:46",
+    "ignored_checks": [
+        {
+            "description": "Global label only appears once in the schematic",
+            "key": "single_global_label"
+        },
+        {
+            "description": "Four connection points are joined together",
+            "key": "four_way_junction"
+        },
+        {
+            "description": "SPICE model issue",
+            "key": "simulation_model_issue"
+        },
+        {
+            "description": "Assigned footprint doesn't match footprint filters",
+            "key": "footprint_filter"
+        }
+    ],
+    "included_severities": [
+        "error",
+        "warning",
+        "exclusion"
+    ],
+    "kicad_version": "10.0.5",
+    "sheets": [
+        {
+            "path": "/",
+            "uuid_path": "/30be79cb-0cbd-4664-b75b-d8a85c58cd22",
+            "violations": []
+        },
+        {
+            "path": "/Power/",
+            "uuid_path": "/30be79cb-0cbd-4664-b75b-d8a85c58cd22/85b4bf94-11b9-4f31-a283-85fa4320ed67",
+            "violations": []
+        },
+        {
+            "path": "/MCU/",
+            "uuid_path": "/30be79cb-0cbd-4664-b75b-d8a85c58cd22/91613667-32a2-42b2-aeba-8646756e1841",
+            "violations": []
+        },
+        {
+            "path": "/Sensors/",
+            "uuid_path": "/30be79cb-0cbd-4664-b75b-d8a85c58cd22/00e666b2-78f0-4326-a304-bf12f938ec1c",
+            "violations": [
+                {
+                    "description": "Pins of type Bidirectional and Power output are connected",
+                    "items": [
+                        {
+                            "description": "Symbol U4 Pin 2 [SDx, Bidirectional, Line]",
+                            "pos": {
+                                "x": 0.8509,
+                                "y": 0.9652
+                            },
+                            "uuid": "d5e96913-92fe-4520-9ca8-22fd6aff21a3"
+                        },
+                        {
+                            "description": "Symbol #FLG04 Pin 1 [Power output, Line]",
+                            "pos": {
+                                "x": 0.9906,
+                                "y": 1.5494
+                            },
+                            "uuid": "af32604a-ae29-4591-811e-edea62367e0a"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "Pins of type Bidirectional and Power output are connected",
+                    "items": [
+                        {
+                            "description": "Symbol U4 Pin 3 [SCx, Bidirectional, Line]",
+                            "pos": {
+                                "x": 0.8509,
+                                "y": 0.9906
+                            },
+                            "uuid": "9ae335c5-4a54-4f9c-884d-23ecf4b4822e"
+                        },
+                        {
+                            "description": "Symbol #FLG04 Pin 1 [Power output, Line]",
+                            "pos": {
+                                "x": 0.9906,
+                                "y": 1.5494
+                            },
+                            "uuid": "af32604a-ae29-4591-811e-edea62367e0a"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                }
+            ]
+        },
+        {
+            "path": "/Storage/",
+            "uuid_path": "/30be79cb-0cbd-4664-b75b-d8a85c58cd22/895b7a05-357f-4255-9743-2cffead8ec01",
+            "violations": []
+        },
+        {
+            "path": "/USB/",
+            "uuid_path": "/30be79cb-0cbd-4664-b75b-d8a85c58cd22/35a1898a-4dd5-4480-93c4-fd802c664522",
+            "violations": []
+        },
+        {
+            "path": "/Connectors/",
+            "uuid_path": "/30be79cb-0cbd-4664-b75b-d8a85c58cd22/2688c7bf-ff43-4cb5-a350-50863f857655",
+            "violations": []
+        },
+        {
+            "path": "/Indicators/",
+            "uuid_path": "/30be79cb-0cbd-4664-b75b-d8a85c58cd22/008c2437-4250-49f4-85fb-e6917071cc45",
+            "violations": []
+        }
+    ],
+    "source": "mark4-fc.kicad_sch"
+}

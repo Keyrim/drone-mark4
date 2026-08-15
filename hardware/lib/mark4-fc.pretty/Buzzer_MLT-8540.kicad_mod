@@ -1,0 +1,295 @@
+(footprint "Buzzer_MLT-8540"
+	(version 20260206)
+	(generator "mark4-fc-lib")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(descr "Jiangsu Huaneng MLT-8540 electromagnetic buzzer, passive (externally driven), 8.5x8.5x4.0mm body with chamfered corners, lateral sound port on the side opposite the leads, manufacturer recommended soldering pattern (spec 5/22/2017 section 5.2, page 4: four 2.3x2.3mm lands, 4.8mm gap, 7.1mm pitch, pin 1 = + lead, pin 2 = - lead, two unnumbered dummy pads), LCSC C95300, https://datasheet.lcsc.com/datasheet/pdf/17029ffb5c8448009da246b8950eef1a.pdf")
+	(tags "buzzer magnetic electromagnetic passive external drive SMD MLT-8540 C95300")
+	(property "Reference" "REF**"
+		(at 0 -5.95 0)
+		(layer "F.SilkS")
+		(uuid "3b7c9d20-1000-4000-8000-000000000001")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "Buzzer_MLT-8540"
+		(at 0 5.95 0)
+		(layer "F.Fab")
+		(uuid "3b7c9d20-1000-4000-8000-000000000002")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/17029ffb5c8448009da246b8950eef1a.pdf"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "3b7c9d20-1000-4000-8000-000000000003")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" "Magnetic buzzer, passive external drive, 8.5x8.5x4.0mm SMD, MLT-8540"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "3b7c9d20-1000-4000-8000-000000000004")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(duplicate_pad_numbers_are_jumpers no)
+
+	(fp_line
+		(start -2.1 -4.36)
+		(end 2.1 -4.36)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "3b7c9d20-2000-4000-8000-000000000001")
+	)
+	(fp_line
+		(start -2.1 4.36)
+		(end 2.1 4.36)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "3b7c9d20-2000-4000-8000-000000000002")
+	)
+	(fp_line
+		(start -4.36 -2.1)
+		(end -4.36 2.1)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "3b7c9d20-2000-4000-8000-000000000003")
+	)
+	(fp_line
+		(start 4.36 -2.1)
+		(end 4.36 2.1)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "3b7c9d20-2000-4000-8000-000000000004")
+	)
+	(fp_text user "+"
+		(at -5.45 -3.55 0)
+		(layer "F.SilkS")
+		(uuid "3b7c9d20-2000-4000-8000-000000000005")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+
+	(fp_rect
+		(start -4.95 -4.95)
+		(end 4.95 4.95)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "3b7c9d20-3000-4000-8000-000000000001")
+	)
+
+	(fp_line
+		(start -4.25 -2.75)
+		(end -2.75 -4.25)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "3b7c9d20-4000-4000-8000-000000000001")
+	)
+	(fp_line
+		(start -2.75 -4.25)
+		(end 2.75 -4.25)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "3b7c9d20-4000-4000-8000-000000000002")
+	)
+	(fp_line
+		(start 2.75 -4.25)
+		(end 4.25 -2.75)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "3b7c9d20-4000-4000-8000-000000000003")
+	)
+	(fp_line
+		(start 4.25 -2.75)
+		(end 4.25 2.75)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "3b7c9d20-4000-4000-8000-000000000004")
+	)
+	(fp_line
+		(start 4.25 2.75)
+		(end 2.75 4.25)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "3b7c9d20-4000-4000-8000-000000000005")
+	)
+	(fp_line
+		(start 2.75 4.25)
+		(end -2.75 4.25)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "3b7c9d20-4000-4000-8000-000000000006")
+	)
+	(fp_line
+		(start -2.75 4.25)
+		(end -4.25 2.75)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "3b7c9d20-4000-4000-8000-000000000007")
+	)
+	(fp_line
+		(start -4.25 2.75)
+		(end -4.25 -2.75)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "3b7c9d20-4000-4000-8000-000000000008")
+	)
+
+	(fp_rect
+		(start 3.35 -1.1)
+		(end 4.25 1.1)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "3b7c9d20-4000-4000-8000-000000000009")
+	)
+	(fp_line
+		(start 2.35 -0.6)
+		(end 3.05 0)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "3b7c9d20-4000-4000-8000-00000000000a")
+	)
+	(fp_line
+		(start 3.05 0)
+		(end 2.35 0.6)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "3b7c9d20-4000-4000-8000-00000000000b")
+	)
+	(fp_line
+		(start 2.35 0.6)
+		(end 2.35 -0.6)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "3b7c9d20-4000-4000-8000-00000000000c")
+	)
+	(fp_text user "+"
+		(at -2.7 -2.7 0)
+		(layer "F.Fab")
+		(uuid "3b7c9d20-4000-4000-8000-00000000000d")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "3b7c9d20-4000-4000-8000-00000000000e")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+
+	(pad "1" smd roundrect
+		(at -3.55 -3.55)
+		(size 2.3 2.3)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.108696)
+		(uuid "3b7c9d20-5000-4000-8000-000000000001")
+	)
+	(pad "2" smd roundrect
+		(at -3.55 3.55)
+		(size 2.3 2.3)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.108696)
+		(uuid "3b7c9d20-5000-4000-8000-000000000002")
+	)
+	(pad "" smd roundrect
+		(at 3.55 -3.55)
+		(size 2.3 2.3)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.108696)
+		(uuid "3b7c9d20-5000-4000-8000-000000000003")
+	)
+	(pad "" smd roundrect
+		(at 3.55 3.55)
+		(size 2.3 2.3)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.108696)
+		(uuid "3b7c9d20-5000-4000-8000-000000000004")
+	)
+	(embedded_fonts no)
+)

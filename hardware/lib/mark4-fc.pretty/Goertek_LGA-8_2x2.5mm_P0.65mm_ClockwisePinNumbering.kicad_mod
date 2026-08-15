@@ -1,0 +1,271 @@
+(footprint "Goertek_LGA-8_2x2.5mm_P0.65mm_ClockwisePinNumbering"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(descr "Goertek LGA-8, 2.0x2.5x0.95mm body, 0.65mm pitch, 1.45mm row spacing, 0.35x0.35mm lands, clockwise pin numbering (pin 1 top left in top view). Used by SPA06-003 barometric pressure sensor. Land pattern derived 1:1 from package terminals, datasheet Ver2.0 Figure 5 (page 34) and Figure 7 (page 35), https://cdn-shop.adafruit.com/product-files/6420/spa06-003.PDF")
+	(tags "lga land grid array goertek spa06 pressure sensor")
+	(property "Reference" "REF**"
+		(at 0 -2.1 0)
+		(layer "F.SilkS")
+		(uuid "0a1b2c3d-0001-4000-8000-000000000001")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "Goertek_LGA-8_2x2.5mm_P0.65mm_ClockwisePinNumbering"
+		(at 0 2.1 0)
+		(layer "F.Fab")
+		(uuid "0a1b2c3d-0001-4000-8000-000000000002")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" "https://cdn-shop.adafruit.com/product-files/6420/spa06-003.PDF"
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "0a1b2c3d-0001-4000-8000-000000000003")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" "Goertek LGA-8 2.0x2.5mm P0.65mm, clockwise pin numbering (SPA06-003)"
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "0a1b2c3d-0001-4000-8000-000000000004")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_line
+		(start -1.36 -1.11)
+		(end 1.36 -1.11)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "0a1b2c3d-0002-4000-8000-000000000001")
+	)
+	(fp_line
+		(start 1.36 -1.11)
+		(end 1.36 1.11)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "0a1b2c3d-0002-4000-8000-000000000002")
+	)
+	(fp_line
+		(start 1.36 1.11)
+		(end -1.36 1.11)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "0a1b2c3d-0002-4000-8000-000000000003")
+	)
+	(fp_line
+		(start -1.36 1.11)
+		(end -1.36 -1.11)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "0a1b2c3d-0002-4000-8000-000000000004")
+	)
+	(fp_poly
+		(pts
+			(xy -1.46 -1.21) (xy -1.82 -1.21) (xy -1.46 -1.57) (xy -1.46 -1.21)
+		)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill yes)
+		(layer "F.SilkS")
+		(uuid "0a1b2c3d-0002-4000-8000-000000000005")
+	)
+	(fp_line
+		(start -0.95 -1)
+		(end 1.25 -1)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "0a1b2c3d-0003-4000-8000-000000000001")
+	)
+	(fp_line
+		(start 1.25 -1)
+		(end 1.25 1)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "0a1b2c3d-0003-4000-8000-000000000002")
+	)
+	(fp_line
+		(start 1.25 1)
+		(end -1.25 1)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "0a1b2c3d-0003-4000-8000-000000000003")
+	)
+	(fp_line
+		(start -1.25 1)
+		(end -1.25 -0.7)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "0a1b2c3d-0003-4000-8000-000000000004")
+	)
+	(fp_line
+		(start -1.25 -0.7)
+		(end -0.95 -1)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "0a1b2c3d-0003-4000-8000-000000000005")
+	)
+	(fp_circle
+		(center 0.425 0.175)
+		(end 0.575 0.175)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "0a1b2c3d-0003-4000-8000-000000000006")
+	)
+	(fp_line
+		(start -1.5 -1.25)
+		(end 1.5 -1.25)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "0a1b2c3d-0004-4000-8000-000000000001")
+	)
+	(fp_line
+		(start 1.5 -1.25)
+		(end 1.5 1.25)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "0a1b2c3d-0004-4000-8000-000000000002")
+	)
+	(fp_line
+		(start 1.5 1.25)
+		(end -1.5 1.25)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "0a1b2c3d-0004-4000-8000-000000000003")
+	)
+	(fp_line
+		(start -1.5 1.25)
+		(end -1.5 -1.25)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "0a1b2c3d-0004-4000-8000-000000000004")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "0a1b2c3d-0005-4000-8000-000000000001")
+		(effects
+			(font
+				(size 0.5 0.5)
+				(thickness 0.075)
+			)
+		)
+	)
+	(pad "1" smd rect
+		(at -0.975 -0.725)
+		(size 0.35 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "0a1b2c3d-0006-4000-8000-000000000001")
+	)
+	(pad "2" smd rect
+		(at -0.325 -0.725)
+		(size 0.35 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "0a1b2c3d-0006-4000-8000-000000000002")
+	)
+	(pad "3" smd rect
+		(at 0.325 -0.725)
+		(size 0.35 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "0a1b2c3d-0006-4000-8000-000000000003")
+	)
+	(pad "4" smd rect
+		(at 0.975 -0.725)
+		(size 0.35 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "0a1b2c3d-0006-4000-8000-000000000004")
+	)
+	(pad "5" smd rect
+		(at 0.975 0.725)
+		(size 0.35 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "0a1b2c3d-0006-4000-8000-000000000005")
+	)
+	(pad "6" smd rect
+		(at 0.325 0.725)
+		(size 0.35 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "0a1b2c3d-0006-4000-8000-000000000006")
+	)
+	(pad "7" smd rect
+		(at -0.325 0.725)
+		(size 0.35 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "0a1b2c3d-0006-4000-8000-000000000007")
+	)
+	(pad "8" smd rect
+		(at -0.975 0.725)
+		(size 0.35 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "0a1b2c3d-0006-4000-8000-000000000008")
+	)
+	(embedded_fonts no)
+)

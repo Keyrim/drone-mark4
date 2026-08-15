@@ -1,0 +1,34 @@
+ERC report (2026-08-15T21:23:49, Encoding UTF8)
+Report includes: Errors, Warnings, Exclusions
+
+***** Sheet /
+
+***** Sheet /Power/
+
+***** Sheet /MCU/
+
+***** Sheet /Sensors/
+[pin_to_pin]: Pins of type Bidirectional and Power output are connected
+    ; warning
+    @(85.09 mm, 96.52 mm): Symbol U4 Pin 2 [SDx, Bidirectional, Line]
+    @(99.06 mm, 154.94 mm): Symbol #FLG04 Pin 1 [Power output, Line]
+[pin_to_pin]: Pins of type Bidirectional and Power output are connected
+    ; warning
+    @(85.09 mm, 99.06 mm): Symbol U4 Pin 3 [SCx, Bidirectional, Line]
+    @(99.06 mm, 154.94 mm): Symbol #FLG04 Pin 1 [Power output, Line]
+
+***** Sheet /Storage/
+
+***** Sheet /USB/
+
+***** Sheet /Connectors/
+
+***** Sheet /Indicators/
+
+ ** ERC messages: 2  Errors 0  Warnings 2
+
+ ** Ignored checks:
+    - Global label only appears once in the schematic
+    - Four connection points are joined together
+    - SPICE model issue
+    - Assigned footprint doesn't match footprint filters
