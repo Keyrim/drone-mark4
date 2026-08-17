@@ -1,0 +1,2 @@
+# Defaults applied when sdkconfig is generated; sdkconfig itself is not tracked.
+CONFIG_IDF_TARGET="esp32c3"

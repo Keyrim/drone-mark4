@@ -22,5 +22,10 @@ __pycache__/
 # pnpm side-effect store (pages toolchain)
 .pnpm-store/
 
+# ESP-IDF (only sdkconfig.defaults is tracked)
+esp32-bridge/build/
+esp32-bridge/sdkconfig
+esp32-bridge/sdkconfig.old
+
 # Scratch (handoffs, reference clones)
 tmp/
