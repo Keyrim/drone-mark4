@@ -1,7 +1,7 @@
 # =============================================================================
 # drone-mark4 - development image
 #
-# Ships both toolchains (native gcc + arm-none-eabi), the code quality tools
+# Ships the three toolchains (native gcc, arm-none-eabi, ESP-IDF), the code quality tools
 # (clang-format/clang-tidy pinned via apt.llvm.org), the debug tools
 # (gdb-multiarch, J-Link), plus gh and Claude Code.
 # Also serves as the CI image (pushed to GHCR): a single source of truth.
@@ -18,6 +18,10 @@ ARG JLINK_VERSION=V812
 ARG GODOT_VERSION=4.7.1-stable
 ARG NODE_VERSION=22.21.1
 ARG PNPM_VERSION=11.21.0
+ARG IDF_VERSION=v6.0.2
+# Chips the ESP-IDF toolchains are installed for (comma separated); the board
+# is an ESP32-C3 SuperMini. Adding a chip later is this line and nothing else.
+ARG IDF_TARGETS=esp32c3
 
 # -----------------------------------------------------------------------------
 # Layer 1 - base tools, native compiler, build system, debug, Python
@@ -143,6 +147,55 @@ RUN wget -qO /tmp/node.tar.xz \
     && corepack enable \
     && corepack install -g pnpm@${PNPM_VERSION} \
     && node --version && pnpm --version
+
+# -----------------------------------------------------------------------------
+# Layer 6b - ESP-IDF for the ESP32 bridge (esp32-bridge/)
+#   Shallow clone of the pinned release into /opt/esp-idf, toolchains into
+#   /opt/esp-tools. Both live under /opt and are made world readable so the
+#   same install serves the dev user and the root user CI jobs run as (same
+#   reason as COREPACK_HOME above).
+#   The download cache (${IDF_TOOLS_PATH}/dist, tarballs already unpacked) is
+#   deleted right after install to keep the image lean. openocd-esp32 stays,
+#   although the bridge is flashed and monitored over USB serial and never
+#   over JTAG: it is a 2.6 MB download next to the 2.8 GB riscv32-esp-elf
+#   toolchain, and tools.json marks it install=always, so export.sh refuses
+#   to activate the environment when it is missing.
+#   idf.py is wrapped in /usr/local/bin so it works in a fresh shell with no
+#   "source export.sh" step. The build runs git describe against /opt/esp-idf
+#   and against its submodules, all root owned, so every one of those paths is
+#   whitelisted in the system git config or a non-root build fails on dubious
+#   ownership. Enumerating the submodules is not paranoia: safe.directory
+#   takes no path prefix, only exact paths (or a bare * for everything).
+# -----------------------------------------------------------------------------
+ENV IDF_PATH=/opt/esp-idf
+ENV IDF_TOOLS_PATH=/opt/esp-tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        flex \
+        bison \
+        gperf \
+        libffi-dev \
+        libssl-dev \
+        libusb-1.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --recursive --shallow-submodules \
+        --branch "${IDF_VERSION}" https://github.com/espressif/esp-idf "${IDF_PATH}" \
+    && git config --system --add safe.directory "${IDF_PATH}" \
+    && git -C "${IDF_PATH}" submodule foreach --recursive --quiet \
+        'git config --system --add safe.directory "${PWD}"' \
+    && "${IDF_PATH}/install.sh" "${IDF_TARGETS}" \
+    && rm -rf "${IDF_TOOLS_PATH}/dist" \
+    && chmod -R a+rX "${IDF_PATH}" "${IDF_TOOLS_PATH}"
+
+# Sourcing export.sh on every call costs a second but keeps a single source of
+# truth for the environment (PATH, python venv, tool versions).
+RUN printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        '# Wrapper: enter the ESP-IDF environment, then run the real idf.py.' \
+        'set -e' \
+        '. "${IDF_PATH}/export.sh" > /dev/null' \
+        'exec "${IDF_PATH}/tools/idf.py" "$@"' \
+        > /usr/local/bin/idf.py \
+    && chmod 0755 /usr/local/bin/idf.py
 
 # -----------------------------------------------------------------------------
 # Layer 7 - non-root user with NOPASSWD sudo
