@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:4a63797d2c81484b8d5a71ad6e714deb24ade18ecfcb211f207e6b93d0e072ea
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:5ca7258dc134473cc26dd9802c6691a798eb500ad41ba32125fb4688ef43787f
       # The image runs as user "dev"; the runner's mounted workdirs belong to
       # another UID, so container jobs must run as root.
       options: --user root
@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:4a63797d2c81484b8d5a71ad6e714deb24ade18ecfcb211f207e6b93d0e072ea
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:5ca7258dc134473cc26dd9802c6691a798eb500ad41ba32125fb4688ef43787f
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -70,12 +70,27 @@ jobs:
       - run: cmake --preset stm32
       - run: cmake --build --preset stm32
 
+  esp32:
+    name: esp32 (bridge firmware)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:5ca7258dc134473cc26dd9802c6691a798eb500ad41ba32125fb4688ef43787f
+      options: --user root
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: idf.py -C esp32-bridge build
+
   desktop-san:
     name: desktop-san (ASan/UBSan)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:4a63797d2c81484b8d5a71ad6e714deb24ade18ecfcb211f207e6b93d0e072ea
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:5ca7258dc134473cc26dd9802c6691a798eb500ad41ba32125fb4688ef43787f
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -91,7 +106,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:4a63797d2c81484b8d5a71ad6e714deb24ade18ecfcb211f207e6b93d0e072ea
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:5ca7258dc134473cc26dd9802c6691a798eb500ad41ba32125fb4688ef43787f
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -111,7 +126,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:4a63797d2c81484b8d5a71ad6e714deb24ade18ecfcb211f207e6b93d0e072ea
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:5ca7258dc134473cc26dd9802c6691a798eb500ad41ba32125fb4688ef43787f
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -127,7 +142,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:4a63797d2c81484b8d5a71ad6e714deb24ade18ecfcb211f207e6b93d0e072ea
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:5ca7258dc134473cc26dd9802c6691a798eb500ad41ba32125fb4688ef43787f
       options: --user root
       credentials:
         username: ${{ github.actor }}
