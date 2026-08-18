@@ -1339,6 +1339,17 @@
 				)
 			)
 		)
+		(property "MPN" "0603WAF1002T5E"
+			(at 72.39 78.74 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "Notes" "/HOLD (IO3) pull-up, NEVER a hard tie: same QE=1 reason as R9"
 			(at 72.39 78.74 0)
 			(hide yes)
@@ -1517,6 +1528,17 @@
 				)
 			)
 		)
+		(property "MPN" "0603WAF1002T5E"
+			(at 99.06 78.74 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "Notes" "/CS pull-up (STO-1): the die has no internal one and the datasheet requires /CS to track VCC at power-up, when the MCU pin is still high-Z"
 			(at 99.06 78.74 0)
 			(hide yes)
@@ -1685,6 +1707,17 @@
 			)
 		)
 		(property "LCSC" "C25804"
+			(at 80.01 78.74 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1002T5E"
 			(at 80.01 78.74 0)
 			(hide yes)
 			(show_name no)

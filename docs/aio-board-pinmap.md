@@ -57,8 +57,8 @@ list, confirmed on DS11853):
 | 4 | PC15 | free (OSC32_OUT) | - | - | json | Same as PC14 |
 | 5 | PH0 | HSE OSC_IN | - | MCU-4 | json | 8 MHz crystal, two load caps per crystal datasheet, guard ring |
 | 6 | PH1 | HSE OSC_OUT | - | MCU-4 | json | Crystal other terminal; keep the loop tiny, no traces underneath |
-| 7 | NRST | Reset, SWD header pin 5 | - | MCU-2, CON-4 | n/a | 100 nF to GND at the pin (DS Figure 47); internal pull-up 30-50k. NOT 5 V tolerant (4.0 V max) |
-| 8 | PC0 | ADC1_IN10, 12 V rail sense | analog | PWR-4 | json | Divider from the 12 V input, ~100 nF to GND at the pin, plus Schottky to GND (DS Table 60: zero negative-injection tolerance on PC0..PC3) |
+| 7 | NRST | Reset | - | MCU-2 | n/a | 100 nF to GND at the pin (DS Figure 47); internal pull-up 30-50k. NOT 5 V tolerant (4.0 V max). No longer brought out since the header went to 3 positions (2026-08-18): no connect-under-reset, BOOT0 is the recovery path |
+| 8 | PC0 | ADC1_IN10, VBAT sense | analog | PWR-4 | json | Divider from the VBAT pad (25.2 V max, 6S), ~100 nF to GND at the pin, plus Schottky to GND (DS Table 60: zero negative-injection tolerance on PC0..PC3) |
 | 9 | PC1 | ADC1_IN11, ESC current-sense pad | analog | PWR-4 | json | Pad only, may be DNP (SRC-3) |
 | 10 | PC2 | free | - | - | n/a | Analog-capable (ADC1_IN12) test point |
 | 11 | PC3 | free | - | - | n/a | Analog-capable (ADC1_IN13) test point |
@@ -93,19 +93,19 @@ list, confirmed on DS11853):
 | 40 | PC9 | TIM8_CH4, motor 4 | AF3 | ESC-1 | json | |
 | 41 | PA8 | free | - | - | n/a | Good test point: MCO_1 (AF0) for clock bring-up |
 | 42 | PA9 | free | - | - | json | OTG_FS_VBUS is an ADDITIONAL function here (no AF involved). VBUS sensing stays disabled (GCCFG.VBDEN=0 is the reset state) and firmware forces B-valid via GOTGCTL BVALOEN=1 + BVALOVAL=1; no divider, pin fully free. If ever reclaimed with sensing on, mind the internal 2.4-8k pull-down |
-| 43 | PA10 | free | - | - | json | OTG_FS_ID (AF10); device-only board, OTG ID unused |
+| 43 | PA10 | TIM1_CH3, addressable LED strip data | AF1 | IND-3 | json | Assigned 2026-08-17. PWM + DMA2 S6C6 for WS2812 timing; 330 R in series to J8. OTG_FS_ID (AF10) is what is given up, and it is useless on a device-only board (this is why PA10 was taken and not PA9, which keeps VBUS sensing as an option) |
 | 44 | PA11 | OTG_FS_DM | AF10 | CON-5 | json | 90 R differential pair with PA12, ESD array, no series resistors |
 | 45 | PA12 | OTG_FS_DP | AF10 | CON-5 | json | |
-| 46 | PA13 | SWDIO, SWD header pin 4 | AF0 | MCU-2, CON-4 | json+rm | Internal pull-up at reset; keep the trace short |
+| 46 | PA13 | SWDIO, SWD header pin 1 | AF0 | MCU-2, CON-4 | json+rm | Internal pull-up at reset; keep the trace short |
 | 47 | VSS | Ground | - | - | n/a | |
 | 48 | VDD | 3V3 | - | PWR-2 | n/a | 100 nF at the pin |
 | 49 | PA14 | SWCLK, SWD header pin 2 | AF0 | MCU-2, CON-4 | json+rm | Internal pull-down at reset |
 | 50 | PA15 | free | - | - | n/a | JTDI at reset (AF0); usable as GPIO once MODER is set. Test point |
 | 51 | PC10 | free | - | - | n/a | Alternate USART3_TX / UART4_TX if routing forces a change |
 | 52 | PC11 | free | - | - | n/a | Alternate USART3_RX / UART4_RX |
-| 53 | PC12 | free | - | - | n/a | Test point |
+| 53 | PC12 | GPIO in, power source status | - | PWR-3 | n/a | Assigned 2026-08-17. Open-drain ST output of the U8 power mux with a 10k pull-up to 3V3: high = running on the ESC BEC, low = running on bench USB or thermal shutdown. Plain input, no AF |
 | 54 | PD2 | free | - | - | n/a | Only GPIOD pin on this package. Test point |
-| 55 | PB3 | SWO (JTDO/TRACESWO), SWD header pin 6 | AF0 | MCU-2, CON-4 | json+rm | Fixed by MCU-2; this is why SPI1 uses PA5, not PB3 |
+| 55 | PB3 | free (JTDO/TRACESWO) | AF0 | - | json+rm | Was the SWO header pin until 2026-08-18; unconnected now. It is still why SPI1 uses PA5 rather than PB3, and it is the pin to take if trace output is ever wanted |
 | 56 | PB4 | free | - | - | n/a | NJTRST at reset (AF0); usable as GPIO. Test point |
 | 57 | PB5 | GPIO out, buzzer drive | - | IND-2 | n/a | Transistor-driven; TIM3_CH2 (AF2) on this pin gives tones later |
 | 58 | PB6 | USART1_TX (telemetry) | AF7 | CON-1 | json | 921600 baud bench link / ESP32 bridge |
@@ -151,7 +151,7 @@ read from the JSON.
   in the IMU pin cluster; EXTI4 has no other user on this board, and
   PA4 (the other EXTI4 candidate in the cluster) is the IMU CS with no
   EXTI need.
-- **12 V sense = PC0 = ADC1_IN10.** In the analog corner next to
+- **VBAT sense = PC0 = ADC1_IN10.** In the analog corner next to
   VSSA/VDDA (positions 12/13) and far from PA0/PA1, which UART4 owns;
   ADC1_IN0..IN7 all sit on PA0..PA7, which are taken by GPS, ESC UART
   and SPI1.
@@ -184,6 +184,7 @@ n; `request` is the channel selector 0..7.
 | SPI2_TX = DMA1 S4 C0 | SPI2 TX: DMA1_CH4, request 0 (only entry) | MATCH |
 | SPI2_RX = DMA1 S3 C0 | SPI2 RX: DMA1_CH3, request 0 (only entry) | MATCH |
 | UART4_TX exists only on DMA1 S4 C4 | UART4 TX: DMA1_CH4, request 4 (only entry) | MATCH |
+| TIM1_CH3 = DMA2 S6 C6 | TIM1 CH3: DMA2_CH6, request 6 (also request 0 on the same stream, the burst/DMAR entry) | MATCH |
 
 So the collision the design doc used to justify a poll/IRQ-only GPS is
 real: UART4_TX has exactly one stream, DMA1 S4, which is the committed
@@ -195,8 +196,7 @@ Extra facts found while checking, none of them a problem today:
   DMA1_CH3 req 4 and DMA1_CH4 req 7, i.e. the same two streams as
   SPI2_RX (S3) and SPI2_TX (S4). The spare UART is therefore IRQ-only
   for the same reason as the GPS, as long as the flash keeps both S3 and
-  S4. Worth adding to the design doc's collision list at its next edit
-  (not edited here).
+  S4. Now carried in the design doc's collision list.
 - **USART1_RX is free**: DMA2_CH2 req 4 or DMA2_CH5 req 4. Both streams
   are also SPI1 alternates (SPI1_RX on S2, SPI1_TX on S5), so if
   USART1_RX ever goes DMA, SPI1 must stay on its primary S0/S3 pair -
@@ -211,7 +211,7 @@ Extra facts found while checking, none of them a problem today:
 
 ## 4. Free pins (test point candidates)
 
-15 GPIOs are unassigned:
+13 GPIOs are unassigned:
 
 | Pin | # | Why it is interesting |
 |---|---|---|
@@ -222,12 +222,10 @@ Extra facts found while checking, none of them a problem today:
 | PC3 | 11 | ADC1_IN13, spare analog input |
 | PB2 | 27 | Plain GPIO |
 | PA8 | 41 | MCO_1 (AF0): clock bring-up probe; also TIM1_CH1 |
-| PA9 | 42 | OTG_FS VBUS sense if USB VBUS detection is wanted |
-| PA10 | 43 | OTG_FS_ID (unused, device-only); USART1_RX alternate |
+| PA9 | 42 | OTG_FS VBUS sense if USB VBUS detection is wanted; also TIM1_CH2 |
 | PA15 | 50 | JTDI at reset; TIM2_CH1 |
 | PC10 | 51 | USART3_TX or UART4_TX alternate |
 | PC11 | 52 | USART3_RX or UART4_RX alternate |
-| PC12 | 53 | Plain GPIO; UART5_TX alternate |
 | PD2 | 54 | Only GPIOD pin; UART5_RX alternate |
 | PB4 | 56 | NJTRST at reset; TIM3_CH1 |
 
@@ -265,8 +263,8 @@ Resolved 2026-08-12 by the DS11853/RM0431 verification pass:
 
 - 5 V tolerance: CLOSED, see the package-facts list (everything used
   is FT/FTf; PA4/PA5 TTa internal-only; NRST not FT; the PC0 divider
-  must clamp below VDDA at the 12 V rail max, with the Schottky of the
-  table note).
+  must clamp below VDDA at the VBAT max, 25.2 V / 6S, with the
+  Schottky of the table note).
 - VCAP_2: CLOSED - absent on LQFP64 (DS 6.3.2 note, Table 19), one
   4.7 uF ESR 0.1-0.2 Ohm on position 30.
 - PB2/BOOT1: CLOSED - PB2 is a plain FT GPIO on F72x, no boot

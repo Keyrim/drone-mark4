@@ -1,0 +1,116 @@
+(footprint "SolderPad_1x01_THT"
+	(version 20260206)
+	(generator "manual")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(descr "Single solder pad, one plated through-hole, 0.8 mm drill, 1.6 mm pad (0.4 mm annular ring). Not a connector and not an assembled part: the stripped wire is passed through the hole and soldered, so the barrel carries the mechanical load instead of a surface land. The hole is reachable and labelled from both faces, so the wire can be soldered from whichever side suits the build - which is also what makes a second row usable, the back row being soldered from below. This footprint replaces the 1xN pad groups (decided 2026-08-17): one instance per pad, placed freely, so external IO no longer reserves a fixed length of board edge. The silkscreen label is the component VALUE, so each instance names its own signal (TX1, M1, VBAT, ...); it is drawn vertically on BOTH faces so a long name does not run over the neighbouring pads. Courtyard is copper + 0.25 and deliberately excludes the label, as in the pad groups it supersedes: DRC will NOT protect label legibility, check it by eye. The reference designator and the value FIELD are both on F.Fab, not on the silkscreen: the only silkscreen text is the ${VALUE} label, because the signal name is what a wire needs and a refdes next to it would just collide with it (MEC-5). Board feature, kept out of the BOM and of the position file.")
+	(tags "solder pad wire single through hole THT free placement dual sided silkscreen")
+	(property "Reference" "REF**"
+		(at 0 2.7 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "7a41f600-1000-4000-8000-000000000001")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "SolderPad_1x01_THT"
+		(at 0 -5.4 90)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "7a41f600-1000-4000-8000-000000000002")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "7a41f600-1000-4000-8000-000000000003")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" "Single through-hole solder pad, freely placed, silkscreen label taken from the component value"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "7a41f600-1000-4000-8000-000000000004")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr through_hole exclude_from_pos_files exclude_from_bom)
+	(duplicate_pad_numbers_are_jumpers no)
+
+	(fp_text user "${VALUE}"
+		(at 0 -2.54 90)
+		(layer "F.SilkS")
+		(uuid "7a41f600-1000-4000-8000-000000000010")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(fp_text user "${VALUE}"
+		(at 0 -2.54 90)
+		(layer "B.SilkS")
+		(uuid "7a41f600-1000-4000-8000-000000000011")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+			(justify mirror)
+		)
+	)
+
+	(fp_rect
+		(start -1.05 -1.05)
+		(end 1.05 1.05)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "7a41f600-1000-4000-8000-000000000020")
+	)
+
+	(fp_circle
+		(center 0 0)
+		(end 0.8 0)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "7a41f600-1000-4000-8000-000000000030")
+	)
+
+	(pad "1" thru_hole circle
+		(at 0 0)
+		(size 1.6 1.6)
+		(drill 0.8)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "7a41f600-1000-4000-8000-000000000040")
+	)
+	(embedded_fonts no)
+)

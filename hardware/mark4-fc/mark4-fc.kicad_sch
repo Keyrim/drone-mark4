@@ -533,6 +533,46 @@
 	)
 	(wire
 		(pts
+			(xy 90.17 53.34) (xy 95.25 53.34)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d5000000-1000-4000-8000-000000000005")
+	)
+	(wire
+		(pts
+			(xy 124.46 68.58) (xy 119.38 68.58)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d5000000-1000-4000-8000-000000000006")
+	)
+	(wire
+		(pts
+			(xy 180.34 99.06) (xy 185.42 99.06)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d5000000-1000-4000-8000-000000000007")
+	)
+	(wire
+		(pts
+			(xy 224.79 132.08) (xy 219.71 132.08)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d5000000-1000-4000-8000-000000000008")
+	)
+	(wire
+		(pts
 			(xy 180.34 76.2) (xy 185.42 76.2)
 		)
 		(stroke
@@ -651,7 +691,7 @@
 		)
 		(uuid "0885b6cb-4925-4a3f-b59d-c94172a915f8")
 	)
-	(label "12V_SENSE"
+	(label "VBAT_SENSE"
 		(at 95.25 50.8 0)
 		(effects
 			(font
@@ -741,7 +781,7 @@
 		)
 		(uuid "2c063e4a-9593-4478-9737-2e9b308cea59")
 	)
-	(label "12V_SENSE"
+	(label "VBAT_SENSE"
 		(at 119.38 45.72 180)
 		(effects
 			(font
@@ -1181,6 +1221,46 @@
 		)
 		(uuid "d03e507f-8a96-4f26-86af-a90fb875c4dd")
 	)
+	(label "PWR_SRC"
+		(at 95.25 53.34 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "d5000000-1000-4000-8000-000000000009")
+	)
+	(label "PWR_SRC"
+		(at 119.38 68.58 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "d5000000-1000-4000-8000-00000000000a")
+	)
+	(label "LED_DATA"
+		(at 185.42 99.06 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "d5000000-1000-4000-8000-00000000000b")
+	)
+	(label "LED_DATA"
+		(at 219.71 132.08 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "d5000000-1000-4000-8000-00000000000c")
+	)
 	(label "SPI2_MOSI"
 		(at 185.42 66.04 0)
 		(effects
@@ -1445,7 +1525,7 @@
 	)
 	(sheet
 		(at 224.79 88.9)
-		(size 45.72 43.18)
+		(size 45.72 45.72)
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
@@ -1631,6 +1711,16 @@
 				(justify left)
 			)
 		)
+		(pin "LED_DATA" input
+			(at 224.79 132.08 180)
+			(uuid "d5000000-1000-4000-8000-000000000004")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
 		(instances
 			(project "mark4-fc"
 				(path "/30be79cb-0cbd-4664-b75b-d8a85c58cd22"
@@ -1743,9 +1833,19 @@
 				(justify left bottom)
 			)
 		)
-		(pin "12V_SENSE" output
+		(pin "VBAT_SENSE" output
 			(at 90.17 50.8 0)
 			(uuid "91121a94-dca5-496d-b547-77b1fc289527")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "PWR_SRC" output
+			(at 90.17 53.34 0)
+			(uuid "d5000000-1000-4000-8000-000000000001")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1885,7 +1985,7 @@
 				(justify left bottom)
 			)
 		)
-		(pin "12V_SENSE" input
+		(pin "VBAT_SENSE" input
 			(at 124.46 45.72 180)
 			(uuid "c0357e03-3156-45af-97f7-5533e246c1fe")
 			(effects
@@ -2178,6 +2278,26 @@
 		(pin "USB_DP" bidirectional
 			(at 180.34 96.52 0)
 			(uuid "bf79d985-007c-4f2c-8204-ccf90635a0e7")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "PWR_SRC" input
+			(at 124.46 68.58 180)
+			(uuid "d5000000-1000-4000-8000-000000000002")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "LED_DATA" output
+			(at 180.34 99.06 0)
+			(uuid "d5000000-1000-4000-8000-000000000003")
 			(effects
 				(font
 					(size 1.27 1.27)

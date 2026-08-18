@@ -1674,6 +1674,17 @@
 				)
 			)
 		)
+		(property "MPN" "0603WAF1001T5E"
+			(at 53.34 149.86 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "Notes" "Base resistor from PB5 (BUZZER). 1k gives deep saturation at the ~220 mA coil current."
 			(at 53.34 149.86 0)
 			(hide yes)
@@ -1786,9 +1797,17 @@
 				)
 			)
 		)
-    (property "MPN" "NCD0603Y2" (at 101.6 101.6 0)
-      (effects (font (size 1.27 1.27)) (hide yes))
-    )
+		(property "MPN" "NCD0603Y2"
+			(at 101.6 101.6 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(pin "1"
 			(uuid "9aace9af-f908-4ce6-8523-de69e0e6a38d")
 		)
@@ -1869,6 +1888,17 @@
 			)
 		)
 		(property "LCSC" "C21190"
+			(at 88.9 101.6 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1001T5E"
 			(at 88.9 101.6 0)
 			(hide yes)
 			(show_name no)
@@ -1970,6 +2000,17 @@
 			)
 		)
 		(property "LCSC" "C21190"
+			(at 88.9 88.9 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1001T5E"
 			(at 88.9 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -2356,6 +2397,17 @@
 			)
 		)
 		(property "LCSC" "C25804"
+			(at 60.96 156.21 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1002T5E"
 			(at 60.96 156.21 0)
 			(hide yes)
 			(show_name no)
@@ -2858,9 +2910,17 @@
 				)
 			)
 		)
-    (property "MPN" "0805W8F510KT5E" (at 76.2 127.0 0)
-      (effects (font (size 1.27 1.27)) (hide yes))
-    )
+		(property "MPN" "0805W8F510KT5E"
+			(at 76.2 127 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(pin "1"
 			(uuid "f9ec2520-d8b5-4f0c-9532-dbd6843be554")
 		)
@@ -2962,9 +3022,17 @@
 				)
 			)
 		)
-    (property "MPN" "KT-0603R" (at 101.6 88.9 0)
-      (effects (font (size 1.27 1.27)) (hide yes))
-    )
+		(property "MPN" "KT-0603R"
+			(at 101.6 88.9 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(pin "1"
 			(uuid "c235d81a-6a80-4106-9683-b203ba0346ab")
 		)

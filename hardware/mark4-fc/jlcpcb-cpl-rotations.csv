@@ -1,0 +1,108 @@
+# JLCPCB CPL rotation corrections: degrees to ADD to the KiCad rotation.
+#
+# Why this file exists: KiCad's footprint orientation does not match the
+# orientation of JLCPCB's own part library, so exporting the raw KiCad rotation
+# places several packages turned. Found 2026-08-17 when Theo saw the SOT-223
+# LDO (U2) sitting 180 degrees off on the JLC preview - on this revision and on
+# the previous one, so it had never been right.
+#
+# The correction is indexed by LCSC REFERENCE, not by footprint family. That is
+# not a stylistic choice, it is what the measurements showed: D4 (C2286) and D5
+# (C89811) are both LED_0603 on the same KiCad footprint yet need 180 and 0
+# respectively, because their two manufacturers drew their EasyEDA footprints
+# differently. A footprint-keyed table cannot express that.
+#
+# How each value was obtained (scripted, not guessed): fetch the real EasyEDA
+# footprint of the reference from
+#   https://easyeda.com/api/products/<LCSC>/components?version=6.4.19.5
+# then compare it with the KiCad footprint we actually use, twice over -
+# angle from pad centroid to pad 1, and angle of the vector between the two
+# farthest common pads. Both methods agreed on every part below, with residuals
+# under 5 degrees, and they reproduce the three corrections already confirmed on
+# the JLC preview (U2, U3, U5). They also contradicted the community table
+# twice, see the notes.
+#
+# Format: LCSC,degrees,note
+#
+# --- measured, mark4-fc rev A ---
+C2071056,270,U1 AP63205WU TSOT-23-6. Community table says 180 and is WRONG here; Theo read 90 or 270 off the preview and the measurement says 270
+C15578,180,U2 TLV1117LV33 SOT-223. The one that started this; confirmed on the preview after correction
+C118207,270,U3 STM32F722RET6 LQFP-64. Was silently wrong: a square package turned 270 still looks right unless you check the pin-1 marker
+C784817,180,U4 LSM6DSRTR LGA-14. No community rule existed; Theo flagged it on the preview
+C30589048,90,U5 SPA06-003 LGA-8. Same value as the Bosch part in the community table, which our footprint mirrors pad for pad
+C97521,270,U6 W25Q128JVSIQ SOIC-8. Silently wrong like the MCU
+C7519,270,U7 USBLC6-2SC6 SOT-23-6
+C3235557,270,U8 TPS2116DRLR SOT-583-8. No community rule exists for this package; Theo flagged it
+C2146,180,Q1 S8050 SOT-23. Community table says -90 and is WRONG here. Nobody had spotted it - a 3-lead package turned 90 degrees is not obvious on a preview
+C2286,180,D4 KT-0603R red LED
+C89811,0,D5 NCD0603Y2 yellow LED. Same footprint as D4 but needs no correction - see the note at the top
+C7502705,0,D3 BAT54W SOD-123
+C81598,0,D6 1N4148W SOD-123
+C712812,0,Y1 8 MHz crystal 3225
+C48496,0,L1 Sunlord SWPA5040S
+C165948,180,J2 USB-C receptacle. NOT measured: the EasyEDA footprint merges and possibly swaps the A/B rows of this reversible connector so the automatic comparison is ambiguous (it returns 0). 180 is what the preview shows to be right - the opening faces the board edge. Re-check by eye on any respin
+#
+# Resistors and capacitors are deliberately absent: 0603/0805 R and C are
+# symmetrical, so 0 or 180 makes no difference and there is nothing to get
+# wrong.
+#
+# --- fallback, by footprint name regex ---
+# Only used for a part with no LCSC row above, i.e. a newly added component.
+# Source: https://github.com/matthewlai/JLCKicadTools (fetched 2026-08-17).
+# Treat any hit here as a GUESS to be measured and moved up: this table was
+# wrong for two of our nine mapped parts (TSOT-23 and SOT-23).
+"^R_Array_Convex_",90
+"^R_Array_Concave_",90
+"^SOT-223",180
+"^SOT-23",-90
+"^SOT-89",180
+"^TSOT-23",180
+"^SOT-353",180
+"^SOT-363",180
+"^LQFP-",270
+"^TQFP-",270
+"^SOP-4_",0
+"^SOP-(?!18_)",270
+"^TSSOP-",270
+"^SSOP-",270
+"^DFN-",270
+"^SOIC-",270
+"^SOP-18_",0
+"^VSSOP-8_3.0x3.0mm_P0.65mm",270
+"^VSSOP-8_",180
+"^VSSOP-10_",270
+"^VSON-8_",270
+"^TSOP-6",270
+"^UDFN-10",270
+"^USON-10",270
+"^TDSON-8-1",270
+"^CP_EIA-",180
+"^CP_Elec_8x5.4",180
+"^CP_Elec_8x10.5",180
+"^CP_Elec_6.3x7.7",180
+"^CP_Elec_8x6.7",180
+"^CP_Elec_8x10",180
+"^CP_Elec_10x10",180
+"^(.*?_|V)?QFN-(16|20|24|28|40)(-|_|$)",270
+"^Bosch_LGA-8_2x2.5mm_P0.65mm_ClockwisePinNumbering",90
+"^Goertek_LGA-8_2x2.5mm_P0.65mm_ClockwisePinNumbering",90
+"^PowerPAK_SO-8_Single",270
+"^HTSSOP-28-1EP_4.4x9.7mm*",270
+"^PUIAudio_SMT_0825_S_4_R*",270
+"^USB_C_Receptacle_HRO_TYPE-C-31-M-12*",180
+"^ESP32-W",270
+"^SOIC127P798X216-8N",-90
+"^SO-14",-90
+"^HTSSOP-",270
+"^Relay_DPDT_Omron_G6K-2F-Y",270
+"^RP2040-QFN-56",270
+"^TO-277",90
+"^SW_SPST_B3",90
+"^Transformer_Ethernet_Pulse_HX0068ANL",270
+"^JST_GH_SM",180
+"^JST_PH_S",180
+"^Diodes_PowerDI3333-8",270
+"^Quectel_L80-R",270
+"^SC-74-6",180
+"^SOT-143",180
+"^LED_WS2812B-2020_PLCC4_2.0x2.0mm",90

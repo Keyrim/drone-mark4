@@ -2127,6 +2127,17 @@
 				)
 			)
 		)
+		(property "MPN" "0603WAF1002T5E"
+			(at 180.34 102.87 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "Notes" "SDO to GND through 10k = I2C address 0x76 (SNS-3); a 10k rather than a short keeps the SDO-as-interrupt option open"
 			(at 180.34 102.87 0)
 			(hide yes)
@@ -3682,6 +3693,17 @@
 			)
 		)
 		(property "LCSC" "C25804"
+			(at 128.27 87.63 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0603WAF1002T5E"
 			(at 128.27 87.63 0)
 			(hide yes)
 			(show_name no)
