@@ -6,8 +6,8 @@
  * The board is a cable, not a peer: it carries bytes and never looks at them,
  * so a change of wire format needs no firmware here. It raises its own access
  * point, learns where to send from the first datagram the ground tool sends,
- * then forwards everything the flight controller writes on the UART. The
- * other direction is wired but not forwarded yet.
+ * then forwards both directions: what the flight controller writes on the
+ * UART goes out as datagrams, what comes in as datagrams goes down the UART.
  */
 
 #include <errno.h>
@@ -44,10 +44,15 @@ static const char *TAG = "bridge";
 #define BRIDGE_UART_RX_PIN 20
 #define BRIDGE_UART_TX_PIN 21
 
-/// Bytes the UART driver buffers, about 44 ms of a full line. A WiFi stall
-/// longer than that drops bytes and the frame parser on the ground
-/// resynchronizes on the next sync pair.
+/// Bytes the UART driver buffers on the downlink, about 44 ms of a full line.
+/// A WiFi stall longer than that drops bytes and the frame parser on the
+/// ground resynchronizes on the next sync pair.
 #define BRIDGE_UART_RX_BUFFER 4096
+
+/// Bytes the UART driver buffers on the uplink. The commands going that way
+/// are rare and small; the buffer is there so writing them hands off to the
+/// driver instead of holding the loop for the whole transmission.
+#define BRIDGE_UART_TX_BUFFER 1024
 
 /// Bytes gathered into one datagram, and how long the bridge waits for them.
 /// Whichever comes first: the wait bounds the added latency, the size bounds
@@ -55,9 +60,10 @@ static const char *TAG = "bridge";
 #define BRIDGE_CHUNK_BYTES 512
 #define BRIDGE_CHUNK_WAIT_MS 2U
 
-/// Bytes read from one uplink datagram. Nothing is done with them yet, only
-/// the address they come from matters.
-#define BRIDGE_UPLINK_SCRATCH 64
+/// Bytes read from one uplink datagram. One frame of the ground tool fits
+/// well inside this, and a larger datagram would be truncated rather than
+/// split, which the frame parser on the board would then drop.
+#define BRIDGE_UPLINK_BYTES 512
 
 /// Address the downlink goes to, learned from the datagrams the ground tool
 /// sends. Written and read by the single task of the application.
@@ -107,7 +113,8 @@ static void startUart(void)
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
         .source_clk = UART_SCLK_DEFAULT,
     };
-    ESP_ERROR_CHECK(uart_driver_install(BRIDGE_UART_PORT, BRIDGE_UART_RX_BUFFER, 0, 0, NULL, 0));
+    ESP_ERROR_CHECK(uart_driver_install(
+        BRIDGE_UART_PORT, BRIDGE_UART_RX_BUFFER, BRIDGE_UART_TX_BUFFER, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(BRIDGE_UART_PORT, &config));
     ESP_ERROR_CHECK(uart_set_pin(BRIDGE_UART_PORT,
                                  BRIDGE_UART_TX_PIN,
@@ -141,19 +148,23 @@ static int openSocket(void)
 }
 
 /**
- * @brief Drains the uplink and remembers where it comes from. The payload is
- *        dropped on purpose: only the address is used so far.
+ * @brief Drains what the ground tool sent, remembers where it comes from and
+ *        writes it to the flight controller. The keepalive the ground tool
+ *        sends is carried like everything else: the bridge has no idea it is
+ *        one, and the frame parser on the board skips it while hunting for a
+ *        sync pair.
  * @param sock socket of the bridge
  */
-static void learnPeer(int sock)
+static void pumpUplink(int sock)
 {
-    uint8_t scratch[BRIDGE_UPLINK_SCRATCH];
+    static uint8_t scratch[BRIDGE_UPLINK_BYTES];
     struct sockaddr_in from;
     socklen_t fromLength = sizeof(from);
 
+    int size = 0;
     while (
-        recvfrom(
-            sock, scratch, sizeof(scratch), MSG_DONTWAIT, (struct sockaddr *)&from, &fromLength) >
+        (size = recvfrom(
+             sock, scratch, sizeof(scratch), MSG_DONTWAIT, (struct sockaddr *)&from, &fromLength)) >
         0)
     {
         if (!s_peerKnown || from.sin_addr.s_addr != s_peer.sin_addr.s_addr ||
@@ -168,6 +179,11 @@ static void learnPeer(int sock)
         s_peer = from;
         s_peerKnown = true;
         fromLength = sizeof(from);
+
+        if (uart_write_bytes(BRIDGE_UART_PORT, scratch, (size_t)size) != size)
+        {
+            ESP_LOGW(TAG, "dropped %d uplink bytes", size);
+        }
     }
 }
 
@@ -193,7 +209,7 @@ void app_main(void)
 
     for (;;)
     {
-        learnPeer(sock);
+        pumpUplink(sock);
 
         // Reading with a timeout is the whole aggregation: it returns on a
         // full chunk or when the wait expires, and it keeps draining the

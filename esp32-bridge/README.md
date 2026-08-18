@@ -10,9 +10,10 @@ The board raises its own access point, `mark4-bridge` (WPA2, see
 192.168.4.1. It sends the downlink to whoever last sent it a datagram, so the
 ground tool speaks first; the hub does that on its own, every second, from
 `SerialTransport`. Bytes read on UART1 are gathered until 512 of them are in or
-2 ms have passed, whichever comes first, then leave as one datagram. The other
-direction is wired but not forwarded yet: what the ground tool sends is read
-for its address and dropped.
+2 ms have passed, whichever comes first, then leave as one datagram. Datagrams
+coming the other way are written on the UART as they arrive, keepalives
+included: the bridge cannot tell one from a command, and the frame parser on
+the board skips whatever is not a frame.
 
 ## Wiring
 
