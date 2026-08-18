@@ -27,6 +27,16 @@ namespace mark4
         /// Bytes read from the port per drain().
         static constexpr std::size_t READ_CHUNK = 4096U;
 
+        /// Device prefix naming the WiFi bridge instead of a serial port, as
+        /// in udp:192.168.4.1:47830. Same stream, same framing, same fd: only
+        /// the way the bytes reach this machine changes.
+        static constexpr const char *UDP_PREFIX = "udp:";
+
+        /// Delay between two hello datagrams [ms]. The bridge sends its
+        /// downlink to whoever last said hello, so this is what a bridge that
+        /// rebooted waits before speaking again.
+        static constexpr std::uint64_t HELLO_PERIOD_MS = 1000U;
+
         /// Called once per frame whose CRC checked out.
         using PayloadHandler = std::function<void(const std::uint8_t *, std::size_t)>;
 
@@ -95,9 +105,22 @@ namespace mark4
         /// @return true when the port is open and configured
         bool openPort(bool reportFailure);
 
+        /// @brief Opens the UDP link a UDP_PREFIX device names. The socket is
+        ///        connected, so the rest of the class keeps treating the link
+        ///        as one descriptor to read from and write to.
+        /// @param reportFailure true to log why the link could not be opened
+        /// @return true when the link is usable
+        bool openDatagram(bool reportFailure);
+
+        /// @brief Sends the datagram the bridge learns our address from.
+        /// @return true when it went out
+        [[nodiscard]] bool sendHello() const;
+
         std::string m_device;            ///< device path, empty when unconfigured
         std::uint32_t m_baud = 0U;       ///< configured line speed [baud]
         int m_fd = -1;                   ///< open descriptor, -1 when closed
+        bool m_isDatagram = false;       ///< true when the link is the WiFi bridge
+        std::uint64_t m_helloAtMs = 0U;  ///< earliest next hello datagram [ms]
         std::uint64_t m_reopenAtMs = 0U; ///< earliest next reopen attempt [ms]
         SerialFrameParser m_parser;      ///< incremental decoder of the downlink
     };

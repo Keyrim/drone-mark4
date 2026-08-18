@@ -4,11 +4,15 @@
 
 #include "hub/serial_transport.hpp"
 
+#include <arpa/inet.h>
 #include <array>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -69,6 +73,12 @@ namespace mark4
     {
         close();
 
+        m_isDatagram = m_device.rfind(UDP_PREFIX, 0U) == 0U;
+        if (m_isDatagram)
+        {
+            return openDatagram(reportFailure);
+        }
+
         speed_t speed = B0;
         if (!baudConstant(m_baud, speed))
         {
@@ -128,6 +138,64 @@ namespace mark4
         return true;
     }
 
+    bool SerialTransport::openDatagram(bool reportFailure)
+    {
+        const std::string target = m_device.substr(std::strlen(UDP_PREFIX));
+        const std::size_t colon = target.rfind(':');
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        const unsigned long port = colon == std::string::npos
+                                       ? 0UL
+                                       : std::strtoul(target.c_str() + colon + 1U, nullptr, 10);
+        if (colon == std::string::npos || port == 0UL || port > UINT16_MAX ||
+            ::inet_pton(AF_INET, target.substr(0U, colon).c_str(), &address.sin_addr) != 1)
+        {
+            static_cast<void>(
+                std::fprintf(stderr, "hub: %s is not udp:address:port\n", m_device.c_str()));
+            return false;
+        }
+        address.sin_port = htons(static_cast<std::uint16_t>(port));
+
+        const int fd = ::socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+        if (fd < 0)
+        {
+            if (reportFailure)
+            {
+                static_cast<void>(
+                    std::fprintf(stderr, "hub: cannot open a socket: %s\n", std::strerror(errno)));
+            }
+            return false;
+        }
+        // Connecting a datagram socket picks the route, fixes the source
+        // address and filters what comes back to that one peer. It also makes
+        // read() and write() work, so drain() and sendPacket() do not care
+        // which kind of link they are on.
+        if (::connect(fd, reinterpret_cast<const sockaddr *>(&address), sizeof(address)) < 0)
+        {
+            if (reportFailure)
+            {
+                static_cast<void>(std::fprintf(
+                    stderr, "hub: cannot reach %s: %s\n", m_device.c_str(), std::strerror(errno)));
+            }
+            static_cast<void>(::close(fd));
+            return false;
+        }
+
+        m_fd = fd;
+        m_helloAtMs = 0U;
+        m_parser = SerialFrameParser{};
+        return true;
+    }
+
+    bool SerialTransport::sendHello() const
+    {
+        // One byte the framing can only skip: the bridge reads the address it
+        // came from and drops it, and a board that ever saw it would discard
+        // it while hunting for the sync pair.
+        const std::uint8_t hello = 0U;
+        return ::write(m_fd, &hello, sizeof(hello)) == static_cast<ssize_t>(sizeof(hello));
+    }
+
     void SerialTransport::close()
     {
         if (m_fd >= 0)
@@ -155,7 +223,10 @@ namespace mark4
             const ssize_t read = ::read(m_fd, chunk.data(), chunk.size());
             if (read < 0)
             {
-                if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+                // ECONNREFUSED is the bridge answering an ICMP error for a
+                // datagram we sent while it was down: the socket stays usable.
+                if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ||
+                    errno == ECONNREFUSED)
                 {
                     return;
                 }
@@ -187,7 +258,26 @@ namespace mark4
 
     void SerialTransport::maintain(std::uint64_t nowMs)
     {
-        if (m_fd >= 0 || m_device.empty())
+        if (m_fd >= 0)
+        {
+            // Nothing keeps a datagram link alive but the hello: the bridge
+            // forgets where to send when we stop, and a hello that cannot go
+            // out means the network went away, which reopening will heal.
+            if (m_isDatagram && nowMs >= m_helloAtMs)
+            {
+                m_helloAtMs = nowMs + HELLO_PERIOD_MS;
+                if (!sendHello())
+                {
+                    static_cast<void>(std::fprintf(stderr,
+                                                   "hub: %s went away (%s), will reopen\n",
+                                                   m_device.c_str(),
+                                                   std::strerror(errno)));
+                    close();
+                }
+            }
+            return;
+        }
+        if (m_device.empty())
         {
             return;
         }
