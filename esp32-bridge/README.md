@@ -1,10 +1,31 @@
 # ESP32 bridge
 
 Firmware for the ESP32-C3 SuperMini (IPEX variant) sitting between the FC and
-the ground tools. The transparent UART (921600 baud to 2 Mbaud) <-> UDP WiFi
-bridge is not written yet: this is a heartbeat skeleton that logs one line per
-second, no WiFi, no UART, no GPIO. When the bridge exists it will speak only
-`protocol/`.
+the ground tools, in place of the USB serial dongle. It is a cable, not a peer:
+it carries bytes and never looks at them, so nothing here has to follow the
+wire format of `protocol/`.
+
+The board raises its own access point, `mark4-bridge` (WPA2, see
+`bridge_main.c`), and binds UDP port 47830 on the ESP-IDF default address
+192.168.4.1. It sends the downlink to whoever last sent it a datagram, so the
+ground tool speaks first; the hub does that on its own, every second, from
+`SerialTransport`. Bytes read on UART1 are gathered until 512 of them are in or
+2 ms have passed, whichever comes first, then leave as one datagram. The other
+direction is wired but not forwarded yet: what the ground tool sends is read
+for its address and dropped.
+
+## Wiring
+
+| ESP32-C3 | Flight controller  |
+| -------- | ------------------ |
+| GPIO20   | UART TX (board out)|
+| GPIO21   | UART RX (board in) |
+| GND      | GND                |
+| 5V       | UART connector +5  |
+
+921600 baud, 8N1, no flow control. The console stays on the USB Serial/JTAG
+port of the module, which is why `sdkconfig.defaults` moves it off the UART
+pins.
 
 ## Build and flash
 
@@ -17,11 +38,15 @@ idf.py -C esp32-bridge -p /dev/ttyACM0 flash monitor
 idf.py -C esp32-bridge fullclean                   # wipe build/ and sdkconfig
 ```
 
-`sdkconfig.defaults` pins the `esp32c3` target and is the only tracked
-configuration; `sdkconfig` and `build/` are generated. The port is whatever the
-board enumerates as once attached to WSL with `usbipd` (`/dev/ttyACM*` for the
-native USB serial of the C3, `/dev/ttyUSB*` behind a USB-serial chip).
+`sdkconfig.defaults` pins the `esp32c3` target and the console, and is the only
+tracked configuration; `sdkconfig` and `build/` are generated. The port is
+whatever the board enumerates as once attached to WSL with `usbipd`
+(`/dev/ttyACM*` for the native USB serial of the C3, `/dev/ttyUSB*` behind a
+USB-serial chip).
 
-The console target is left at the ESP-IDF default. The SuperMini exposes the
-USB Serial/JTAG peripheral on its USB-C port, so seeing `monitor` output may
-need `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`: to be confirmed on the real board.
+## Using it from the hub
+
+Join the `mark4-bridge` network, then open `udp:192.168.4.1:47830` in the board
+panel where a device path usually goes. The hub treats it as the same framed
+stream a cable carries, reopens it on its own when the network comes back, and
+the line speed field is ignored.

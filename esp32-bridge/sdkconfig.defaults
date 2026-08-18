@@ -1,2 +1,6 @@
 # Defaults applied when sdkconfig is generated; sdkconfig itself is not tracked.
 CONFIG_IDF_TARGET="esp32c3"
+
+# The module exposes the USB Serial/JTAG peripheral on its USB-C port and
+# nothing on the default console pins, which the UART link needs anyway.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
