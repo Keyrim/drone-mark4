@@ -21,6 +21,11 @@
 	// (root): hand them back to the container user on first start.
 	"postCreateCommand": "sudo chown -R dev:dev /home/dev/.claude /home/dev/.config/gh",
 
+	// XDG_RUNTIME_DIR (forwarded by compose for WSLg) must exist in the
+	// container: the VS Code server puts the `code` CLI IPC sockets there,
+	// and without the directory the CLI cannot reach the server at all.
+	"postStartCommand": "sudo install -d -m 700 -o dev -g dev /run/user/1000",
+
 	"customizations": {
 		"vscode": {
 			"extensions": [
