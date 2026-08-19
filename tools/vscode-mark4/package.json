@@ -18,11 +18,12 @@
         "build": "node esbuild.js",
         "watch": "node esbuild.js --watch",
         "typecheck": "tsc --noEmit",
-        "package": "pnpm dlx @vscode/vsce package --no-dependencies --allow-missing-repository --skip-license"
+        "package": "vsce package --no-dependencies --allow-missing-repository --skip-license"
     },
     "devDependencies": {
         "@types/node": "22.19.0",
         "@types/vscode": "1.100.0",
+        "@vscode/vsce": "^3.9.2",
         "esbuild": "0.25.12",
         "typescript": "5.9.3"
     },
