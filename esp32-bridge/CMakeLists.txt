@@ -2,6 +2,14 @@ cmake_minimum_required(VERSION 3.16)
 
 # Standard ESP-IDF project: the IDF build system owns the toolchain, the
 # component discovery and the flash image layout.
+# Credentials of the network the bridge joins before falling back to its own
+# access point. They belong to whoever builds, not to the repository, so they
+# live in an untracked local.cmake next to this file:
+#     set(BRIDGE_STA_SSID "my-network")
+#     set(BRIDGE_STA_PASSWORD "my-password")
+# Without the file, the bridge is an access point and nothing else.
+include(local.cmake OPTIONAL)
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 project(esp32_bridge C)

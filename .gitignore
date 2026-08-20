@@ -8,6 +8,9 @@ compile_commands.json
 logs/*
 !logs/.gitkeep
 
+# Wifi credentials of whoever builds the bridge, never the repository's
+esp32-bridge/local.cmake
+
 # Python
 __pycache__/
 *.pyc

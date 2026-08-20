@@ -5,9 +5,24 @@ the ground tools, in place of the USB serial dongle. It is a cable, not a peer:
 it carries bytes and never looks at them, so nothing here has to follow the
 wire format of `protocol/`.
 
-The board raises its own access point, `mark4-bridge` (WPA2, see
-`bridge_main.c`), and binds UDP port 47830 on the ESP-IDF default address
-192.168.4.1. It sends the downlink to whoever last sent it a datagram, so the
+The board joins the network its build named, and raises its own access point,
+`mark4-bridge` (WPA2, see `bridge_main.c`), when there is no such network or it
+does not answer within ten seconds. Either way it binds UDP port 47830: on the
+address the network handed out, or on 192.168.4.1, the ESP-IDF default for an
+access point. Which one it is comes out on the console at boot. It stays in the
+mode it picked until the next reset; a station that loses its network keeps
+asking to join it back.
+
+The network to join is named in `esp32-bridge/local.cmake`, which is untracked
+because credentials belong to whoever builds:
+
+```cmake
+set(BRIDGE_STA_SSID "my-network")
+set(BRIDGE_STA_PASSWORD "my-password")
+```
+
+Without that file the bridge is an access point and nothing else, and boots
+straight into it. It sends the downlink to whoever last sent it a datagram, so the
 ground tool speaks first; the hub does that on its own, every second, from
 `SerialTransport`. One ground tool at a time, then: two of them keepaliving
 the same bridge steal the stream from each other every second, and each sees
