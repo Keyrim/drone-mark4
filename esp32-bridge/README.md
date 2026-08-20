@@ -36,10 +36,14 @@ the PATH and needs no `source export.sh`. From the repository root:
 ```sh
 idf.py -C esp32-bridge build                       # -> build/esp32_bridge.bin
 idf.py -C esp32-bridge -p /dev/ttyACM0 flash monitor
-idf.py -C esp32-bridge fullclean                   # wipe build/ and sdkconfig
+idf.py -C esp32-bridge fullclean                   # wipe build/
 ```
 
-`sdkconfig.defaults` pins the `esp32c3` target and the console, and is the only
+`fullclean` keeps `sdkconfig`, so a change to `sdkconfig.defaults` only lands
+after `rm esp32-bridge/sdkconfig` (or `idf.py -C esp32-bridge set-target ...`
+for the target itself).
+
+`sdkconfig.defaults` pins the `esp32c3` target, the console and the tick rate, and is the only
 tracked configuration; `sdkconfig` and `build/` are generated. The port is
 whatever the board enumerates as once attached to WSL with `usbipd`
 (`/dev/ttyACM*` for the native USB serial of the C3, `/dev/ttyUSB*` behind a

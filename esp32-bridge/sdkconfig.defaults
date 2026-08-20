@@ -4,3 +4,8 @@ CONFIG_IDF_TARGET="esp32c3"
 # The module exposes the USB Serial/JTAG peripheral on its USB-C port and
 # nothing on the default console pins, which the UART link needs anyway.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# The loop paces itself on a 2 ms UART read timeout, which the default 100 Hz
+# tick rounds down to no wait at all: the loop then never blocks, the idle task
+# never runs and the task watchdog fires. A 1 ms tick makes the wait real.
+CONFIG_FREERTOS_HZ=1000
