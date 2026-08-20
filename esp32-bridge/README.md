@@ -19,8 +19,8 @@ the board skips whatever is not a frame.
 
 | ESP32-C3 | Flight controller  |
 | -------- | ------------------ |
-| GPIO20   | UART TX (board out)|
-| GPIO21   | UART RX (board in) |
+| GPIO3    | UART TX (board out)|
+| GPIO4    | UART RX (board in) |
 | GND      | GND                |
 | 5V       | UART connector +5  |
 

@@ -41,8 +41,8 @@ static const char *TAG = "bridge";
 /// UART wired to the flight controller, in place of the USB serial dongle.
 #define BRIDGE_UART_PORT UART_NUM_1
 #define BRIDGE_UART_BAUD 921600
-#define BRIDGE_UART_RX_PIN 20
-#define BRIDGE_UART_TX_PIN 21
+#define BRIDGE_UART_RX_PIN 3
+#define BRIDGE_UART_TX_PIN 4
 
 /// Bytes the UART driver buffers on the downlink, about 44 ms of a full line.
 /// A WiFi stall longer than that drops bytes and the frame parser on the
