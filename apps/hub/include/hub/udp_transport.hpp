@@ -28,8 +28,18 @@ namespace mark4
         /// cannot starve the others or the housekeeping.
         static constexpr unsigned MAX_DRAIN_PER_SOCKET = 256U;
 
-        /// Called once per received datagram, with the local port it landed on.
-        using Handler = std::function<void(std::uint16_t, const std::uint8_t *, std::size_t)>;
+        /// Where one datagram came from. The address is a dotted quad valid
+        /// for the duration of the handler call only.
+        struct Source
+        {
+            const char *address = nullptr; ///< sender address, dotted quad
+            std::uint16_t port = 0U;       ///< sender port
+        };
+
+        /// Called once per received datagram, with the local port it landed
+        /// on and the address it came from.
+        using Handler =
+            std::function<void(std::uint16_t, const Source &, const std::uint8_t *, std::size_t)>;
 
         UdpTransport() = default;
         UdpTransport(const UdpTransport &) = delete;

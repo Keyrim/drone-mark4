@@ -5,6 +5,7 @@
 #include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <cstring>
+#include <string>
 
 #include "hub/discovery.hpp"
 #include "protocol/announce.hpp"
@@ -154,4 +155,79 @@ TEST_CASE("an announce on the wrong wire version is counted and dropped")
     // A truncated datagram is just as invalid, and just as worth counting.
     CHECK(!(registry.onAnnounce(bytes.data(), bytes.size() - 1U, 1000U).has_value()));
     CHECK(registry.rejectedAnnounces() == 2U);
+}
+
+namespace
+{
+    /// @brief Feeds one announce text to a directory.
+    /// @param directory directory under test
+    /// @param text announce payload
+    /// @param address address it comes from
+    /// @param nowUs current time [us]
+    /// @return true when a bridge nobody had seen yet was added
+    bool announceBridge(mark4::BridgeDirectory &directory,
+                        const std::string &text,
+                        const char *address,
+                        std::uint64_t nowUs)
+    {
+        return directory.onAnnounce(address,
+                                    47830U,
+                                    reinterpret_cast<const std::uint8_t *>(text.data()),
+                                    text.size(),
+                                    nowUs);
+    }
+} // namespace
+
+TEST_CASE("a bridge announce is kept once per address and refreshed after that")
+{
+    mark4::BridgeDirectory directory;
+
+    CHECK(announceBridge(directory, "mark4-bridge c19f6c", "192.168.1.31", 1000U));
+    REQUIRE(directory.bridges().size() == 1U);
+    CHECK(directory.bridges()[0].address == "192.168.1.31");
+    CHECK(directory.bridges()[0].port == 47830U);
+    CHECK(directory.bridges()[0].name == "c19f6c");
+
+    // The same bridge announcing again is a refresh, not a second entry.
+    CHECK(!announceBridge(directory, "mark4-bridge c19f6c", "192.168.1.31", 2000U));
+    REQUIRE(directory.bridges().size() == 1U);
+    CHECK(directory.bridges()[0].lastSeenUs == 2000U);
+
+    // A second bridge on the same network is a second entry.
+    CHECK(announceBridge(directory, "mark4-bridge aabbcc", "192.168.1.32", 2000U));
+    CHECK(directory.bridges().size() == 2U);
+}
+
+TEST_CASE("a bridge announce that says anything else is ignored")
+{
+    mark4::BridgeDirectory directory;
+
+    CHECK(!announceBridge(directory, "", "192.168.1.31", 1000U));
+    CHECK(!announceBridge(directory, "hello", "192.168.1.31", 1000U));
+    CHECK(!announceBridge(directory, "mark4-bridg", "192.168.1.31", 1000U));
+    CHECK(directory.bridges().empty());
+}
+
+TEST_CASE("a bridge name is cut down to what a page can display")
+{
+    mark4::BridgeDirectory directory;
+
+    // The name crosses a trust boundary: it comes from the network and ends
+    // up in a web page.
+    CHECK(announceBridge(directory, "mark4-bridge <b>x</b> ../\n y", "192.168.1.31", 1000U));
+    CHECK(directory.bridges()[0].name == "bxby");
+
+    CHECK(announceBridge(directory, "mark4-bridge 0123456789abcdefghij", "192.168.1.32", 1000U));
+    CHECK(directory.bridges()[1].name.size() == mark4::BridgeDirectory::MAX_NAME);
+}
+
+TEST_CASE("a bridge that stops announcing is dropped")
+{
+    mark4::BridgeDirectory directory;
+    CHECK(announceBridge(directory, "mark4-bridge c19f6c", "192.168.1.31", 1000U));
+
+    CHECK(directory.expire(2000U, 3000U) == 0U);
+    CHECK(directory.bridges().size() == 1U);
+    CHECK(directory.expire(4000U, 3000U) == 1U);
+    CHECK(directory.bridges().empty());
 }

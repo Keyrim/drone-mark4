@@ -36,6 +36,12 @@ namespace mark4
         /// processes speaking the binary wire, and this is neither.
         static constexpr std::uint16_t WS_PORT = 47810U;
 
+        /// UDP port the WiFi bridges announce themselves to. Deliberately
+        /// not in protocol/ports.hpp for the same reason as WS_PORT above:
+        /// that file describes the boundaries between processes speaking the
+        /// binary wire, and a bridge speaks no wire at all.
+        static constexpr std::uint16_t BRIDGE_ANNOUNCE_PORT = 47831U;
+
         /// How long the poll loop sleeps when nothing is happening [ms].
         static constexpr int POLL_TIMEOUT_MS = 20;
 
@@ -62,22 +68,23 @@ namespace mark4
         /// Everything main() decides before the hub starts.
         struct Config
         {
-            std::uint16_t wsPort = WS_PORT;                 ///< websocket endpoint port
-            std::uint16_t announcePort = ANNOUNCE_PORT;     ///< announce listen port
-            std::uint16_t telemetryPort = TELEMETRY_PORT;   ///< telemetry port watched by default
-            std::uint16_t simRawPort = SIM_RAW_PORT;        ///< sim raw port watched by default
-            std::string serialDevice;                       ///< board UART, empty = none
-            std::uint32_t serialBaud = DEFAULT_SERIAL_BAUD; ///< board UART speed [baud]
-            std::string logDirectory = "logs";              ///< where recordings are written
-            bool recordOnStart = true;                      ///< open a CSV session at startup
-            bool udpRebroadcast = true;                     ///< re-emit serial telemetry on UDP
-            std::string profilesDir = "profiles";           ///< directory the profiles live in
-            std::string pushProfileName;                    ///< profile pushed to every process
-                                                            ///< that appears, empty = none
-            std::string pagesDir;                           ///< directory the static pages are
-                                                            ///< read from, empty = the built-in
-                                                            ///< default resolved at init
-            std::string bindAddress = "127.0.0.1";          ///< address the endpoint binds to
+            std::uint16_t wsPort = WS_PORT;                  ///< websocket endpoint port
+            std::uint16_t announcePort = ANNOUNCE_PORT;      ///< announce listen port
+            std::uint16_t bridgePort = BRIDGE_ANNOUNCE_PORT; ///< bridge announce listen port
+            std::uint16_t telemetryPort = TELEMETRY_PORT;    ///< telemetry port watched by default
+            std::uint16_t simRawPort = SIM_RAW_PORT;         ///< sim raw port watched by default
+            std::string serialDevice;                        ///< board UART, empty = none
+            std::uint32_t serialBaud = DEFAULT_SERIAL_BAUD;  ///< board UART speed [baud]
+            std::string logDirectory = "logs";               ///< where recordings are written
+            bool recordOnStart = true;                       ///< open a CSV session at startup
+            bool udpRebroadcast = true;                      ///< re-emit serial telemetry on UDP
+            std::string profilesDir = "profiles";            ///< directory the profiles live in
+            std::string pushProfileName;                     ///< profile pushed to every process
+                                                             ///< that appears, empty = none
+            std::string pagesDir;                            ///< directory the static pages are
+                                                             ///< read from, empty = the built-in
+                                                             ///< default resolved at init
+            std::string bindAddress = "127.0.0.1";           ///< address the endpoint binds to
         };
 
         /// Directory the pages are read from when nothing else is asked for,
@@ -120,9 +127,13 @@ namespace mark4
       private:
         /// @brief Handles one datagram read from a listening socket.
         /// @param localPort port the datagram landed on
+        /// @param from where the datagram came from
         /// @param data datagram bytes
         /// @param size datagram size
-        void onDatagram(std::uint16_t localPort, const std::uint8_t *data, std::size_t size);
+        void onDatagram(std::uint16_t localPort,
+                        const UdpTransport::Source &from,
+                        const std::uint8_t *data,
+                        std::size_t size);
 
         /// @brief Handles one CRC-valid frame read from the serial link.
         /// @param payload frame payload
@@ -235,6 +246,7 @@ namespace mark4
         StreamRecorder m_recorder;               ///< CSV pair and blackbox file
         TuningProfiles m_profiles;               ///< stored tuning profiles
         DiscoveryRegistry m_registry;            ///< live processes
+        BridgeDirectory m_bridges;               ///< WiFi bridges heard on the network
         UdpTransport m_udp;                      ///< every UDP socket
         SerialTransport m_serial;                ///< board UART, when one is configured
         WsBridge m_ws;                           ///< websocket endpoint

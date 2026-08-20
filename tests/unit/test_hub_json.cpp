@@ -177,7 +177,10 @@ TEST_CASE("discovery json describes every live process")
     processes.push_back({mark4::StreamSource::DRONE_SIM, 7U, 47801U, 47804U, 1'000'000U, false});
     processes.push_back({mark4::StreamSource::FIRMWARE, 0U, 0U, 0U, 1'500'000U, true});
 
-    const nlohmann::json message = parsed(mark4::discoveryToJson(processes, 2'000'000U));
+    std::vector<mark4::DiscoveredBridge> bridges;
+    bridges.push_back({"192.168.1.31", 47830U, "c19f6c", 1'800'000U});
+
+    const nlohmann::json message = parsed(mark4::discoveryToJson(processes, bridges, 2'000'000U));
     CHECK(message["type"] == "discovery");
     REQUIRE(message["processes"].size() == 2U);
     CHECK(message["processes"][0]["kind"] == 2U);
@@ -190,13 +193,21 @@ TEST_CASE("discovery json describes every live process")
     CHECK(message["processes"][1]["kindName"] == "firmware");
     CHECK(message["processes"][1]["viaSerial"] == true);
     CHECK(message["processes"][1]["ageMs"] == 500U);
+    REQUIRE(message["bridges"].size() == 1U);
+    CHECK(message["bridges"][0]["address"] == "192.168.1.31");
+    CHECK(message["bridges"][0]["port"] == 47830U);
+    CHECK(message["bridges"][0]["name"] == "c19f6c");
+    // The page opens a link with it as it stands, without knowing the shape.
+    CHECK(message["bridges"][0]["device"] == "udp:192.168.1.31:47830");
+    CHECK(message["bridges"][0]["ageMs"] == 200U);
 }
 
 TEST_CASE("status json carries the counters")
 {
     mark4::HubStatus status;
     status.recording = true;
-    status.serialOpen = false;
+    status.serialOpen = true;
+    status.serialLink = "udp:192.168.1.31:47830";
     status.telemetryRows = 10U;
     status.simRawRows = 20U;
     status.blackboxRecords = 30U;
@@ -219,7 +230,8 @@ TEST_CASE("status json carries the counters")
     const nlohmann::json message = parsed(mark4::statusToJson(status));
     CHECK(message["type"] == "status");
     CHECK(message["recording"] == true);
-    CHECK(message["serialOpen"] == false);
+    CHECK(message["serialOpen"] == true);
+    CHECK(message["serialLink"] == "udp:192.168.1.31:47830");
     CHECK(message["counts"]["telemetryRows"] == 10U);
     CHECK(message["counts"]["simRawRows"] == 20U);
     CHECK(message["counts"]["blackboxRecords"] == 30U);

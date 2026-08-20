@@ -18,8 +18,10 @@
 
 namespace
 {
-    /// Port the fake bridge binds on the loopback.
-    constexpr std::uint16_t BRIDGE_PORT = 47831U;
+    /// Port the fake bridge binds on the loopback. Not the port of a real
+    /// bridge, and not the announce port either: a hub running next to the
+    /// test listens on that one, and the test would fail against it.
+    constexpr std::uint16_t BRIDGE_PORT = 47839U;
 
     /// A socket bound to BRIDGE_PORT, standing in for the ESP32 bridge.
     class FakeBridge
@@ -150,7 +152,7 @@ TEST_CASE("a malformed udp device is refused")
 {
     mark4::SerialTransport transport;
     REQUIRE(!transport.open("udp:127.0.0.1", 921600U));
-    REQUIRE(!transport.open("udp:not-an-address:47831", 921600U));
+    REQUIRE(!transport.open("udp:not-an-address:47839", 921600U));
     REQUIRE(!transport.open("udp:127.0.0.1:0", 921600U));
     REQUIRE(!transport.isOpen());
 }

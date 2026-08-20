@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include "hub/packed_field.hpp"
+#include "hub/serial_transport.hpp"
 
 namespace mark4
 {
@@ -662,6 +663,7 @@ namespace mark4
     }
 
     std::string discoveryToJson(const std::vector<DiscoveredProcess> &processes,
+                                const std::vector<DiscoveredBridge> &bridges,
                                 std::uint64_t nowUs)
     {
         static constexpr std::uint64_t US_PER_MS = 1000U;
@@ -679,9 +681,23 @@ namespace mark4
                 (nowUs > process.lastSeenUs ? nowUs - process.lastSeenUs : 0U) / US_PER_MS;
             entries.push_back(entry);
         }
+        Json found = Json::array();
+        for (const DiscoveredBridge &bridge : bridges)
+        {
+            Json entry;
+            entry["address"] = bridge.address;
+            entry["port"] = bridge.port;
+            entry["name"] = bridge.name;
+            entry["device"] = std::string(SerialTransport::UDP_PREFIX) + bridge.address + ":" +
+                              std::to_string(bridge.port);
+            entry["ageMs"] =
+                (nowUs > bridge.lastSeenUs ? nowUs - bridge.lastSeenUs : 0U) / US_PER_MS;
+            found.push_back(entry);
+        }
         Json message;
         message["type"] = "discovery";
         message["processes"] = entries;
+        message["bridges"] = found;
         return message.dump();
     }
 
@@ -728,6 +744,7 @@ namespace mark4
         message["type"] = "status";
         message["recording"] = status.recording;
         message["serialOpen"] = status.serialOpen;
+        message["serialLink"] = status.serialLink;
         message["counts"] = counts;
         message["clients"] = status.clients;
         message["rcClients"] = status.rcClients;

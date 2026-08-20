@@ -75,6 +75,8 @@ socket.on("discovery", (message: HubMessage) => {
     }
     empty.hidden = widgets.size > 0;
     attitude.setActive(alive);
+    bridges = (message["bridges"] as DiscoveredBridge[]) ?? [];
+    renderBridges();
 });
 
 socket.on("telemetry", (message: HubMessage) => {
@@ -96,10 +98,14 @@ addBar.appendChild(addTitle);
 const uartTab = document.createElement("button");
 uartTab.className = "btn add-tab";
 uartTab.textContent = "Real board (UART)";
+const networkTab = document.createElement("button");
+networkTab.className = "btn add-tab";
+networkTab.textContent = "Real board (WiFi)";
 const replayTab = document.createElement("button");
 replayTab.className = "btn add-tab";
 replayTab.textContent = "Blackbox replay";
 addBar.appendChild(uartTab);
+addBar.appendChild(networkTab);
 addBar.appendChild(replayTab);
 const addHint = document.createElement("span");
 addHint.className = "panel-note";
@@ -138,22 +144,31 @@ uartRow.appendChild(uartBaud);
 uartRow.appendChild(uartButton);
 addBlock.appendChild(uartRow);
 
+// Nobody chooses the address of a bridge, so nothing is typed here: the
+// bridges say where they are, once a second, and this lists what was heard.
+const networkRow = document.createElement("div");
+networkRow.hidden = true;
+addBlock.appendChild(networkRow);
+
 const replayRow = document.createElement("div");
 replayRow.className = "panel-body";
 replayRow.hidden = true;
-uartTab.addEventListener("click", () => {
-    uartRow.hidden = false;
-    replayRow.hidden = true;
-    uartTab.classList.add("active");
-    replayTab.classList.remove("active");
-});
-replayTab.addEventListener("click", () => {
-    replayRow.hidden = false;
-    uartRow.hidden = true;
-    replayTab.classList.add("active");
-    uartTab.classList.remove("active");
-    void refreshRecordings();
-});
+
+const doors: Array<[HTMLButtonElement, HTMLElement, (() => void) | undefined]> = [
+    [uartTab, uartRow, undefined],
+    [networkTab, networkRow, undefined],
+    [replayTab, replayRow, () => void refreshRecordings()],
+];
+for (const [tab, , onPicked] of doors) {
+    tab.addEventListener("click", () => {
+        for (const [other, otherRow] of doors) {
+            const picked = other === tab;
+            otherRow.hidden = !picked;
+            other.classList.toggle("active", picked);
+        }
+        onPicked?.();
+    });
+}
 const recordingSelect = document.createElement("select");
 recordingSelect.className = "config-select";
 const speedSelect = document.createElement("select");
@@ -189,6 +204,64 @@ replayRow.appendChild(startReplay);
 replayRow.appendChild(refresh);
 addBlock.appendChild(replayRow);
 
+interface DiscoveredBridge {
+    address: string;
+    port: number;
+    name: string;
+    device: string;
+}
+
+let bridges: DiscoveredBridge[] = [];
+let serialLink = "";
+
+function renderBridges(): void {
+    networkRow.replaceChildren();
+    if (bridges.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "panel-body";
+        const note = document.createElement("span");
+        note.className = "panel-note";
+        note.textContent = "no bridge on the network: power one on, it announces itself";
+        empty.appendChild(note);
+        networkRow.appendChild(empty);
+        return;
+    }
+    for (const bridge of bridges) {
+        const row = document.createElement("div");
+        row.className = "panel-body";
+        const name = document.createElement("b");
+        name.textContent = bridge.name === "" ? "bridge" : bridge.name;
+        const where = document.createElement("span");
+        where.className = "panel-note";
+        where.textContent = `${bridge.address}:${bridge.port}`;
+        const connected = serialLink === bridge.device;
+        const button = document.createElement("button");
+        button.className = connected ? "btn active" : "btn";
+        button.textContent = connected ? "Disconnect" : "Connect";
+        // A link is a link: the same door the UART tab opens, on an address
+        // nobody had to know.
+        button.addEventListener("click", () => {
+            shell.ask(
+                connected
+                    ? { type: "serial", action: "close" }
+                    : {
+                          type: "serial",
+                          action: "open",
+                          device: bridge.device,
+                          baud: Number(uartBaud.value),
+                      },
+                connected ? "bridge close" : `bridge open ${bridge.address}`
+            );
+        });
+        row.appendChild(name);
+        row.appendChild(where);
+        row.appendChild(button);
+        networkRow.appendChild(row);
+    }
+}
+
+renderBridges();
+
 async function refreshRecordings(): Promise<void> {
     let entries: RecordingEntry[] = [];
     try {
@@ -213,6 +286,11 @@ async function refreshRecordings(): Promise<void> {
 
 socket.on("status", (message: HubMessage) => {
     serialOpen = message["serialOpen"] === true;
+    const link = String(message["serialLink"] ?? "");
+    if (link !== serialLink) {
+        serialLink = link;
+        renderBridges();
+    }
     uartButton.textContent = serialOpen ? "Close UART" : "Open UART";
     uartButton.classList.toggle("active", serialOpen);
     uartDevice.disabled = serialOpen;

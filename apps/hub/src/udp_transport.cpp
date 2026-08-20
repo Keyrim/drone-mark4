@@ -150,12 +150,24 @@ namespace mark4
             const std::uint16_t port = m_listeners[index].port;
             for (unsigned read = 0U; read < MAX_DRAIN_PER_SOCKET; ++read)
             {
-                const ssize_t size = ::recv(fd, datagram.data(), datagram.size(), MSG_DONTWAIT);
+                sockaddr_in from{};
+                socklen_t fromSize = sizeof(from);
+                const ssize_t size = ::recvfrom(fd,
+                                                datagram.data(),
+                                                datagram.size(),
+                                                MSG_DONTWAIT,
+                                                reinterpret_cast<sockaddr *>(&from),
+                                                &fromSize);
                 if (size <= 0)
                 {
                     break;
                 }
-                handler(port, datagram.data(), static_cast<std::size_t>(size));
+                std::array<char, INET_ADDRSTRLEN> address{};
+                Source source;
+                source.address =
+                    ::inet_ntop(AF_INET, &from.sin_addr, address.data(), address.size());
+                source.port = ntohs(from.sin_port);
+                handler(port, source, datagram.data(), static_cast<std::size_t>(size));
             }
         }
     }

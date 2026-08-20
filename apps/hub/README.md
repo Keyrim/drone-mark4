@@ -145,9 +145,13 @@ structs in `protocol/`.
 
 {"type":"discovery","processes":[
   {"kind":2,"kindName":"drone_sim","sessionId":12345,"telemetryPort":47801,
-   "commandPort":47805,"viaSerial":false,"ageMs":120}]}
+   "commandPort":47805,"viaSerial":false,"ageMs":120}],
+ "bridges":[
+  {"address":"192.168.1.31","port":47830,"name":"c19f6c",
+   "device":"udp:192.168.1.31:47830","ageMs":220}]}
 
 {"type":"status","recording":false,"serialOpen":true,
+ "serialLink":"udp:192.168.1.31:47830",
  "counts":{"telemetryRows":0,"simRawRows":0,"blackboxRecords":0,
            "badFrames":0,"rejectedAnnounces":0},"clients":1,"rcClients":0,
  "links":[{"stream":"telemetry","sourceId":2,"sourceName":"drone_sim",
@@ -196,7 +200,16 @@ share the telemetry stream and carry no source byte of their own.
 A client that connects gets a `discovery` and a `status` message
 immediately; `status` is then republished once per second and whenever the
 recording is toggled, `discovery` whenever a process appears, restarts or
-disappears.
+disappears, and whenever the set of bridges changes.
+
+`bridges` are the WiFi bridges heard on udp/47831, which they announce
+themselves to once a second (see `esp32-bridge/`). They are not processes and
+carry no telemetry of their own: a bridge is an address a `serial` link can be
+opened on, which is why the entry hands back the exact `device` string to open.
+Nobody chooses that address - a router does - so this is what spares the
+operator from having to know it. A bridge silent for three seconds is dropped.
+`serialLink` in `status` is the device the link is open on, so a page can tell
+which of the bridges it is talking to.
 
 ### Sent by a client
 

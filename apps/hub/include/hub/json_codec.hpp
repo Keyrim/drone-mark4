@@ -77,6 +77,7 @@ namespace mark4
     {
         bool recording = false;               ///< a CSV session is open
         bool serialOpen = false;              ///< the serial link is usable
+        std::string serialLink;               ///< device the link is open on, empty = none
         std::uint64_t telemetryRows = 0U;     ///< telemetry rows written
         std::uint64_t simRawRows = 0U;        ///< sim raw rows written
         std::uint64_t blackboxRecords = 0U;   ///< blackbox records written
@@ -136,11 +137,14 @@ namespace mark4
     /// @return one line of JSON
     std::string profileToJson(const std::string &name, const TuningValues &values);
 
-    /// @brief Renders the whole discovery table as a JSON object.
+    /// @brief Renders the whole discovery table as a JSON object: the live
+    ///        processes, and the WiFi bridges a serial link can be opened on.
     /// @param processes live entries
+    /// @param bridges bridges heard announcing themselves
     /// @param nowUs current time [us], turned into an age per entry
     /// @return one line of JSON
     std::string discoveryToJson(const std::vector<DiscoveredProcess> &processes,
+                                const std::vector<DiscoveredBridge> &bridges,
                                 std::uint64_t nowUs);
 
     /// @brief Renders one aligned pair as a JSON object.

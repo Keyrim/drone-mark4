@@ -34,6 +34,14 @@ coming the other way are written on the UART as they arrive, keepalives
 included: the bridge cannot tell one from a command, and the frame parser on
 the board skips whatever is not a frame.
 
+Every second the bridge says it is there, in one broadcast datagram on
+udp/47831: the fixed word `mark4-bridge` then a name taken from its MAC
+address, sent from the port the board stream travels on. A ground tool listens
+there and finds the bridges of the network without being told where they are;
+the hub lists them in the "Real board (WiFi)" tab of its control page, and
+opening one needs a click and nothing typed. Nothing else ever travels on that
+port, and the announce says nothing about the board: it is about the bridge.
+
 ## Wiring
 
 | ESP32-C3 | Flight controller  |

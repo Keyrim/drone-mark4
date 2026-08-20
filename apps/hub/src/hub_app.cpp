@@ -50,6 +50,13 @@ namespace mark4
         {
             return false;
         }
+        // A bridge announces itself whether or not anyone listens, so the
+        // port is bound for the whole run: the network tab of the pages then
+        // has its list ready instead of building it after a click.
+        if (!m_udp.subscribe(m_config.bridgePort))
+        {
+            return false;
+        }
         if (m_config.pagesDir.empty())
         {
             m_config.pagesDir = defaultProjectPath(DEFAULT_PAGES_DIR);
@@ -119,9 +126,10 @@ namespace mark4
             }
             static_cast<void>(::poll(fds.data(), fds.size(), POLL_TIMEOUT_MS));
 
-            m_udp.drain([this](std::uint16_t port, const std::uint8_t *data, std::size_t size) {
-                onDatagram(port, data, size);
-            });
+            m_udp.drain([this](std::uint16_t port,
+                               const UdpTransport::Source &from,
+                               const std::uint8_t *data,
+                               std::size_t size) { onDatagram(port, from, data, size); });
             m_serial.drain([this](const std::uint8_t *payload, std::size_t size) {
                 onSerialPayload(payload, size);
             });
@@ -131,9 +139,20 @@ namespace mark4
         return 0;
     }
 
-    void HubApp::onDatagram(std::uint16_t localPort, const std::uint8_t *data, std::size_t size)
+    void HubApp::onDatagram(std::uint16_t localPort,
+                            const UdpTransport::Source &from,
+                            const std::uint8_t *data,
+                            std::size_t size)
     {
         const std::uint64_t nowUs = monotonicUs();
+        if (localPort == m_config.bridgePort)
+        {
+            if (m_bridges.onAnnounce(from.address, from.port, data, size, nowUs))
+            {
+                broadcastDiscovery();
+            }
+            return;
+        }
         if (localPort == m_config.announcePort)
         {
             const auto change = m_registry.onAnnounce(data, size, nowUs);
@@ -603,7 +622,8 @@ namespace mark4
 
     void HubApp::broadcastDiscovery()
     {
-        m_ws.broadcastText(discoveryToJson(m_registry.processes(), monotonicUs()));
+        m_ws.broadcastText(
+            discoveryToJson(m_registry.processes(), m_bridges.bridges(), monotonicUs()));
     }
 
     void HubApp::broadcastStatus()
@@ -616,6 +636,10 @@ namespace mark4
         for (const DiscoveryChange &change : m_registry.expire(nowUs, DISCOVERY_EXPIRY_US))
         {
             onDiscoveryChange(change);
+        }
+        if (m_bridges.expire(nowUs, DISCOVERY_EXPIRY_US) > 0U)
+        {
+            broadcastDiscovery();
         }
         m_serial.maintain(nowUs / US_PER_MS);
         std::erase_if(m_rcSeenUs, [nowUs](const auto &entry) {
@@ -647,6 +671,7 @@ namespace mark4
         HubStatus snapshot;
         snapshot.recording = m_recorder.csvSessionOpen();
         snapshot.serialOpen = m_serial.isOpen();
+        snapshot.serialLink = m_serial.isOpen() ? m_serial.device() : std::string{};
         snapshot.telemetryRows = stats.telemetryRows;
         snapshot.simRawRows = stats.simRawRows;
         snapshot.blackboxRecords = stats.blackboxRecords;
