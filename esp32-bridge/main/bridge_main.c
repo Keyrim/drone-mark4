@@ -56,9 +56,13 @@ static const char *TAG = "bridge";
 
 /// Bytes gathered into one datagram, and how long the bridge waits for them.
 /// Whichever comes first: the wait bounds the added latency, the size bounds
-/// the datagram.
-#define BRIDGE_CHUNK_BYTES 512
-#define BRIDGE_CHUNK_WAIT_MS 2U
+/// the datagram. What a client loses grows with the number of datagrams far
+/// more than with their size: a sleeping WiFi client only gets what the access
+/// point could hold for it, so one datagram per 10 ms beats five hundred per
+/// second. The wait also bounds how long a command waits before reaching the
+/// board, the loop having a single wait point.
+#define BRIDGE_CHUNK_BYTES 1024
+#define BRIDGE_CHUNK_WAIT_MS 10U
 
 /// Bytes read from one uplink datagram. One frame of the ground tool fits
 /// well inside this, and a larger datagram would be truncated rather than
