@@ -9,7 +9,9 @@ The board raises its own access point, `mark4-bridge` (WPA2, see
 `bridge_main.c`), and binds UDP port 47830 on the ESP-IDF default address
 192.168.4.1. It sends the downlink to whoever last sent it a datagram, so the
 ground tool speaks first; the hub does that on its own, every second, from
-`SerialTransport`. Bytes read on UART1 are gathered until 1024 of them are in or
+`SerialTransport`. One ground tool at a time, then: two of them keepaliving
+the same bridge steal the stream from each other every second, and each sees
+what looks exactly like a lossy radio link. Bytes read on UART1 are gathered until 1024 of them are in or
 10 ms have passed, whichever comes first, then leave as one datagram: a client
 that lets its radio sleep only receives what the access point could hold for
 it, which is a number of datagrams, not a number of bytes. Datagrams
