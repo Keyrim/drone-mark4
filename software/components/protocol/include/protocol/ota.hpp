@@ -235,6 +235,7 @@ namespace mark4
 
     /// The chunk packet must fit the one-byte length field of the serial
     /// framing with margin for its overhead.
+    // NOLINTNEXTLINE(readability-magic-numbers): the framing's own length limit
     static_assert(OTA_CHUNK_PACKET_SIZE <= 255U, "chunk must fit the serial framing payload");
 
     // The offsets ARE the named facts here: each assert freezes one
@@ -282,6 +283,10 @@ namespace mark4
     /// verified on every boot.
     inline constexpr std::uint32_t OTA_IMAGE_UNSTAMPED = 0xFFFFFFFFU;
 
+    /// Bytes of the header left unused, which is what makes OtaImageHeader
+    /// exactly OTA_IMAGE_HEADER_SIZE long: room for a signature later.
+    inline constexpr std::size_t OTA_IMAGE_RESERVED_SIZE = 480U;
+
 #pragma pack(push, 1)
     /// The first OTA_IMAGE_HEADER_SIZE bytes of every firmware slot. The
     /// constant fields (magic through slotId, version numbers) are filled
@@ -302,7 +307,8 @@ namespace mark4
         std::uint8_t versionPatch;   ///< firmware version
         std::uint8_t reserved0;      ///< 0xFF
         std::array<char, OTA_GIT_HASH_SIZE> gitHash; ///< short hash, stamped at packaging
-        std::array<std::uint8_t, 480U> reserved;     ///< 0xFF, room to grow (signing)
+        std::array<std::uint8_t, OTA_IMAGE_RESERVED_SIZE>
+            reserved;            ///< 0xFF, room to grow (signing)
         std::uint32_t headerCrc; ///< CRC-32/MPEG-2 of the 508 bytes above, stamped at packaging
     };
 #pragma pack(pop)

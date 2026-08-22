@@ -30,9 +30,9 @@ namespace mark4
         {
             for (std::size_t i = 0U; i < size; ++i)
             {
-                m_word |= static_cast<std::uint32_t>(data[i]) << (8U * m_pending);
+                m_word |= static_cast<std::uint32_t>(data[i]) << (BITS_PER_BYTE * m_pending);
                 ++m_pending;
-                if (m_pending == 4U)
+                if (m_pending == BYTES_PER_WORD)
                 {
                     consumeWord();
                 }
@@ -52,16 +52,22 @@ namespace mark4
         }
 
       private:
+        static constexpr std::uint32_t POLYNOMIAL = 0x04C11DB7U; ///< CRC-32/MPEG-2
+        static constexpr std::uint32_t TOP_BIT = 0x80000000U;    ///< bit shifted out each round
+        static constexpr std::size_t BITS_PER_BYTE = 8U;         ///< byte to word packing shift
+        static constexpr std::size_t BITS_PER_WORD = 32U;        ///< rounds per consumed word
+        static constexpr std::size_t BYTES_PER_WORD = 4U;        ///< bytes gathered per word
+
         void consumeWord()
         {
             m_crc ^= m_word;
-            for (std::size_t bit = 0U; bit < 32U; ++bit)
+            for (std::size_t bit = 0U; bit < BITS_PER_WORD; ++bit)
             {
-                const bool top = (m_crc & 0x80000000U) != 0U;
+                const bool top = (m_crc & TOP_BIT) != 0U;
                 m_crc <<= 1U;
                 if (top)
                 {
-                    m_crc ^= 0x04C11DB7U;
+                    m_crc ^= POLYNOMIAL;
                 }
             }
             m_word = 0U;
