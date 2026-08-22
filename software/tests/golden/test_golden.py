@@ -223,6 +223,174 @@ class GoldenBlackbox(unittest.TestCase):
         self.assertEqual(r[16:20], (0.125, 0.25, 0.5, 0.75))  # motors
 
 
+#: The session nonce every OTA fixture of the one session echoes.
+OTA_SESSION = 0x1A2B3C4D
+#: Offset and payload of the fixture chunk (fewer bytes than the maximum).
+OTA_CHUNK_OFFSET = 275040
+OTA_CHUNK_DATA = bytes([0xDE, 0xAD, 0xBE, 0xEF, 0x2A])
+#: Image size announced by the begin and stamped in the image header.
+OTA_IMAGE_SIZE = 0x00021308
+
+
+class GoldenCrc32Mpeg2(unittest.TestCase):
+    """The one checksum of the update system, against known vectors.
+
+    These come from the CRC-32/MPEG-2 the F405 hardware unit computes over
+    the same words; the odd-length vector exercises the 0xFF tail padding
+    the image convention mandates.
+    """
+
+    def test_known_vectors(self):
+        self.assertEqual(tw.crc32_mpeg2(bytes(4)), 0xC704DD7B)
+        self.assertEqual(tw.crc32_mpeg2(bytes([1, 2, 3, 4, 5, 6, 7, 8])), 0xA3141BDA)
+        self.assertEqual(tw.crc32_mpeg2(bytes([1, 2, 3, 4, 5])), 0xCCD0E62C)
+
+    def test_padding_is_not_zero_padding(self):
+        # 0xFF, not 0x00: a zero-padded tail would give another answer.
+        self.assertEqual(
+            tw.crc32_mpeg2(bytes([1, 2, 3, 4, 5])),
+            tw.crc32_mpeg2(bytes([1, 2, 3, 4, 5, 0xFF, 0xFF, 0xFF])),
+        )
+
+
+class GoldenOta(unittest.TestCase):
+    """The update packets: hub to board and back, never near Godot."""
+
+    def test_status_request(self):
+        data = read("ota_status_request.bin")
+        self.assertEqual(len(data), tw.OTA_STATUS_REQUEST_PACKET_SIZE)
+        self.assertTrue(tw.has_header(data, tw.TYPE_OTA_STATUS_REQUEST))
+        self.assertEqual(tw.encode_ota_status_request(), data)
+
+    def test_status(self):
+        data = read("ota_status.bin")
+        self.assertEqual(len(data), tw.OTA_STATUS_PACKET_SIZE)
+        status = tw.decode_ota_status(data)
+        self.assertIsNotNone(status)
+        self.assertEqual(status.mcu_id, tw.OTA_MCU_STM32F405)
+        self.assertEqual(status.running_slot, tw.OTA_SLOT_B)
+        self.assertEqual(status.slot_state, (tw.OTA_SLOT_VALID, tw.OTA_SLOT_TESTING))
+        self.assertEqual(status.updater_busy, 0)
+        self.assertEqual(status.version, (1, 2, 3))
+        self.assertEqual(status.git_hash, b"deadbeef")
+        self.assertEqual(status.slot_size, 0x00060102)
+        self.assertEqual(status.max_chunk_data, tw.OTA_CHUNK_DATA_SIZE)
+        self.assertEqual(tw.encode_ota_status(status), data)
+
+    def test_begin(self):
+        data = read("ota_begin.bin")
+        self.assertEqual(len(data), tw.OTA_BEGIN_PACKET_SIZE)
+        fields = tw.OTA_BEGIN_STRUCT.unpack(data)
+        self.assertEqual(
+            fields,
+            (tw.PROTOCOL_VERSION, tw.TYPE_OTA_BEGIN, OTA_SESSION, OTA_IMAGE_SIZE, 0x89ABCDEF),
+        )
+        self.assertEqual(
+            tw.encode_ota_begin(OTA_SESSION, OTA_IMAGE_SIZE, 0x89ABCDEF), data)
+
+    def test_chunk(self):
+        data = read("ota_chunk.bin")
+        self.assertEqual(len(data), tw.OTA_CHUNK_PACKET_SIZE)
+        chunk = tw.decode_ota_chunk(data)
+        self.assertIsNotNone(chunk)
+        self.assertEqual(chunk.session, OTA_SESSION)
+        self.assertEqual(chunk.offset, OTA_CHUNK_OFFSET)
+        # Short on purpose: the length byte, not the packet size, says how
+        # many bytes are image bytes.
+        self.assertEqual(chunk.data, OTA_CHUNK_DATA)
+        self.assertLess(len(chunk.data), tw.OTA_CHUNK_DATA_SIZE)
+        self.assertEqual(
+            tw.OTA_CHUNK_STRUCT.unpack(data)[5],
+            OTA_CHUNK_DATA + bytes(tw.OTA_CHUNK_DATA_SIZE - len(OTA_CHUNK_DATA)),
+        )
+        self.assertEqual(
+            tw.encode_ota_chunk(OTA_SESSION, OTA_CHUNK_OFFSET, OTA_CHUNK_DATA), data)
+
+    def test_chunk_ack(self):
+        data = read("ota_chunk_ack.bin")
+        self.assertEqual(len(data), tw.OTA_CHUNK_ACK_PACKET_SIZE)
+        ack = tw.decode_ota_chunk_ack(data)
+        self.assertIsNotNone(ack)
+        self.assertEqual(ack.session, OTA_SESSION)
+        # Cumulative: the fixture chunk landed, its last byte included.
+        self.assertEqual(ack.next_offset, OTA_CHUNK_OFFSET + len(OTA_CHUNK_DATA))
+        self.assertEqual(
+            tw.encode_ota_chunk_ack(ack.session, ack.next_offset), data)
+
+    def test_finish(self):
+        data = read("ota_finish.bin")
+        self.assertEqual(len(data), tw.OTA_FINISH_PACKET_SIZE)
+        self.assertEqual(
+            tw.OTA_FINISH_STRUCT.unpack(data),
+            (tw.PROTOCOL_VERSION, tw.TYPE_OTA_FINISH, OTA_SESSION),
+        )
+        self.assertEqual(tw.encode_ota_finish(OTA_SESSION), data)
+
+    def test_confirm(self):
+        data = read("ota_confirm.bin")
+        self.assertEqual(len(data), tw.OTA_CONFIRM_PACKET_SIZE)
+        self.assertTrue(tw.has_header(data, tw.TYPE_OTA_CONFIRM))
+        self.assertEqual(tw.encode_ota_confirm(), data)
+
+    def test_revert(self):
+        data = read("ota_revert.bin")
+        self.assertEqual(len(data), tw.OTA_REVERT_PACKET_SIZE)
+        self.assertTrue(tw.has_header(data, tw.TYPE_OTA_REVERT))
+        self.assertEqual(tw.encode_ota_revert(), data)
+
+    def test_abort(self):
+        data = read("ota_abort.bin")
+        self.assertEqual(len(data), tw.OTA_ABORT_PACKET_SIZE)
+        self.assertEqual(
+            tw.OTA_ABORT_STRUCT.unpack(data),
+            (tw.PROTOCOL_VERSION, tw.TYPE_OTA_ABORT, OTA_SESSION),
+        )
+        self.assertEqual(tw.encode_ota_abort(OTA_SESSION), data)
+
+    def test_ack(self):
+        data = read("ota_ack.bin")
+        self.assertEqual(len(data), tw.OTA_ACK_PACKET_SIZE)
+        ack = tw.decode_ota_ack(data)
+        self.assertIsNotNone(ack)
+        self.assertEqual(ack.session, OTA_SESSION)
+        self.assertEqual(ack.acked_type, tw.TYPE_OTA_FINISH)
+        self.assertEqual(ack.result, tw.OTA_RESULT_CRC_MISMATCH)
+        self.assertFalse(ack.ok)
+        self.assertEqual(
+            tw.encode_ota_ack(ack.session, ack.acked_type, ack.result), data)
+
+    def test_image_header(self):
+        data = read("ota_image_header.bin")
+        self.assertEqual(len(data), tw.OTA_IMAGE_HEADER_SIZE)
+        header = tw.decode_ota_image_header(data)
+        self.assertIsNotNone(header)
+        self.assertEqual(header.magic, tw.OTA_IMAGE_MAGIC)
+        self.assertEqual(data[:4], b"M4FW")
+        self.assertEqual(header.header_version, tw.OTA_IMAGE_HEADER_VERSION)
+        self.assertEqual(header.mcu_id, tw.OTA_MCU_STM32F722)
+        self.assertEqual(header.slot_id, tw.OTA_SLOT_A)
+        self.assertEqual(header.image_size, OTA_IMAGE_SIZE)
+        self.assertEqual(header.image_crc, 0x76543210)
+        self.assertEqual(header.version, (4, 5, 6))
+        self.assertEqual(header.git_hash, b"0badc0de")
+        # The C++ side stamped this crc: reproducing it is the check that
+        # the python packaging script and the bootloader agree bit for bit.
+        self.assertEqual(header.header_crc, tw.crc32_mpeg2(data[:508]))
+        self.assertEqual(
+            tw.encode_ota_image_header(
+                tw.OTA_MCU_STM32F722, tw.OTA_SLOT_A, OTA_IMAGE_SIZE, 0x76543210,
+                version=(4, 5, 6), git_hash=b"0badc0de",
+            ),
+            data,
+        )
+
+    def test_image_header_rejects_a_broken_crc(self):
+        data = bytearray(read("ota_image_header.bin"))
+        data[16] ^= 0x01  # one flipped bit in the firmware version
+        self.assertFalse(tw.valid_ota_image_header(bytes(data)))
+        self.assertIsNone(tw.decode_ota_image_header(bytes(data)))
+
+
 class GoldenSerialFrame(unittest.TestCase):
     def test_encode(self):
         self.assertEqual(

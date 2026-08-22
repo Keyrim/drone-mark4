@@ -1,6 +1,8 @@
 /// @file
 /// @brief Golden packet generator and checker. Emits reference bytes with
-///        asymmetric field values for every packet type of the protocol;
+///        asymmetric field values for every packet type of the protocol
+///        (plus the stored formats that cross a process boundary: the
+///        blackbox record and the OTA image header);
 ///        the fixtures are committed, a ctest re-generates and compares
 ///        them (C++ drift guard), and the python and GDScript decode
 ///        tests read the same files, so every hand-written parser is
@@ -17,10 +19,12 @@
 #include <string>
 #include <vector>
 
+#include "platform_common/crc32_mpeg2.hpp"
 #include "protocol/announce.hpp"
 #include "protocol/blackbox.hpp"
 #include "protocol/commands.hpp"
 #include "protocol/header.hpp"
+#include "protocol/ota.hpp"
 #include "protocol/ports.hpp"
 #include "protocol/serial_framing.hpp"
 #include "protocol/sim_link.hpp"
@@ -291,6 +295,157 @@ namespace
         return toBytes(packet);
     }
 
+    /// The session nonce every packet of one update session echoes; its
+    /// four bytes differ so a byte-order slip cannot go unnoticed.
+    constexpr std::uint32_t OTA_FIXTURE_SESSION = 0x1A2B3C4DU;
+
+    /// Offset of the fixture chunk: chunk 1146 of a transfer, so it is a
+    /// whole number of full chunks into the image.
+    constexpr std::uint32_t OTA_FIXTURE_CHUNK_OFFSET = 275040U;
+
+    /// Valid data bytes of the fixture chunk: deliberately fewer than
+    /// OTA_CHUNK_DATA_SIZE, so a decoder that ignores length is caught.
+    constexpr std::uint8_t OTA_FIXTURE_CHUNK_LENGTH = 5U;
+
+    /// Total image bytes announced by the begin and stamped in the header.
+    constexpr std::uint32_t OTA_FIXTURE_IMAGE_SIZE = 0x00021308U;
+
+    std::vector<std::uint8_t> makeOtaStatusRequest()
+    {
+        mark4::OtaStatusRequestPacket packet{};
+        packet.version = mark4::PROTOCOL_VERSION;
+        packet.type = static_cast<std::uint8_t>(mark4::PacketType::OTA_STATUS_REQUEST);
+        return toBytes(packet);
+    }
+
+    std::vector<std::uint8_t> makeOtaStatus()
+    {
+        mark4::OtaStatusPacket packet{};
+        packet.version = mark4::PROTOCOL_VERSION;
+        packet.type = static_cast<std::uint8_t>(mark4::PacketType::OTA_STATUS);
+        packet.mcuId = mark4::OTA_MCU_STM32F405;
+        // A trial boot of slot B, the previous image still valid in A.
+        packet.runningSlot = mark4::OTA_SLOT_B;
+        packet.slotState = {mark4::OTA_SLOT_VALID, mark4::OTA_SLOT_TESTING};
+        packet.updaterBusy = 0U;
+        packet.versionMajor = 1U;
+        packet.versionMinor = 2U;
+        packet.versionPatch = 3U;
+        std::memcpy(packet.gitHash.data(), "deadbeef", packet.gitHash.size());
+        packet.slotSize = 0x00060102U;
+        packet.maxChunkData = static_cast<std::uint16_t>(mark4::OTA_CHUNK_DATA_SIZE);
+        return toBytes(packet);
+    }
+
+    std::vector<std::uint8_t> makeOtaBegin()
+    {
+        mark4::OtaBeginPacket packet{};
+        packet.version = mark4::PROTOCOL_VERSION;
+        packet.type = static_cast<std::uint8_t>(mark4::PacketType::OTA_BEGIN);
+        packet.session = OTA_FIXTURE_SESSION;
+        packet.imageSize = OTA_FIXTURE_IMAGE_SIZE;
+        packet.imageCrc = 0x89ABCDEFU;
+        return toBytes(packet);
+    }
+
+    std::vector<std::uint8_t> makeOtaChunk()
+    {
+        mark4::OtaChunkPacket packet{};
+        packet.version = mark4::PROTOCOL_VERSION;
+        packet.type = static_cast<std::uint8_t>(mark4::PacketType::OTA_CHUNK);
+        packet.session = OTA_FIXTURE_SESSION;
+        packet.offset = OTA_FIXTURE_CHUNK_OFFSET;
+        packet.length = OTA_FIXTURE_CHUNK_LENGTH;
+        packet.data = {};
+        packet.data[0] = 0xDEU;
+        packet.data[1] = 0xADU;
+        packet.data[2] = 0xBEU;
+        packet.data[3] = 0xEFU;
+        packet.data[4] = 0x2AU;
+        return toBytes(packet);
+    }
+
+    std::vector<std::uint8_t> makeOtaChunkAck()
+    {
+        mark4::OtaChunkAckPacket packet{};
+        packet.version = mark4::PROTOCOL_VERSION;
+        packet.type = static_cast<std::uint8_t>(mark4::PacketType::OTA_CHUNK_ACK);
+        packet.session = OTA_FIXTURE_SESSION;
+        // Cumulative: the chunk above landed, the next byte is expected.
+        packet.nextOffset = OTA_FIXTURE_CHUNK_OFFSET + OTA_FIXTURE_CHUNK_LENGTH;
+        return toBytes(packet);
+    }
+
+    std::vector<std::uint8_t> makeOtaFinish()
+    {
+        mark4::OtaFinishPacket packet{};
+        packet.version = mark4::PROTOCOL_VERSION;
+        packet.type = static_cast<std::uint8_t>(mark4::PacketType::OTA_FINISH);
+        packet.session = OTA_FIXTURE_SESSION;
+        return toBytes(packet);
+    }
+
+    std::vector<std::uint8_t> makeOtaConfirm()
+    {
+        mark4::OtaConfirmPacket packet{};
+        packet.version = mark4::PROTOCOL_VERSION;
+        packet.type = static_cast<std::uint8_t>(mark4::PacketType::OTA_CONFIRM);
+        return toBytes(packet);
+    }
+
+    std::vector<std::uint8_t> makeOtaRevert()
+    {
+        mark4::OtaRevertPacket packet{};
+        packet.version = mark4::PROTOCOL_VERSION;
+        packet.type = static_cast<std::uint8_t>(mark4::PacketType::OTA_REVERT);
+        return toBytes(packet);
+    }
+
+    std::vector<std::uint8_t> makeOtaAbort()
+    {
+        mark4::OtaAbortPacket packet{};
+        packet.version = mark4::PROTOCOL_VERSION;
+        packet.type = static_cast<std::uint8_t>(mark4::PacketType::OTA_ABORT);
+        packet.session = OTA_FIXTURE_SESSION;
+        return toBytes(packet);
+    }
+
+    std::vector<std::uint8_t> makeOtaAck()
+    {
+        mark4::OtaAckPacket packet{};
+        packet.version = mark4::PROTOCOL_VERSION;
+        packet.type = static_cast<std::uint8_t>(mark4::PacketType::OTA_ACK);
+        packet.session = OTA_FIXTURE_SESSION;
+        // A refusal, so both bytes after the session are distinctive.
+        packet.ackedType = static_cast<std::uint8_t>(mark4::PacketType::OTA_FINISH);
+        packet.result = mark4::OTA_RESULT_CRC_MISMATCH;
+        return toBytes(packet);
+    }
+
+    std::vector<std::uint8_t> makeOtaImageHeader()
+    {
+        mark4::OtaImageHeader header{};
+        header.magic = mark4::OTA_IMAGE_MAGIC;
+        header.headerVersion = mark4::OTA_IMAGE_HEADER_VERSION;
+        header.mcuId = mark4::OTA_MCU_STM32F722;
+        header.slotId = mark4::OTA_SLOT_A;
+        header.imageSize = OTA_FIXTURE_IMAGE_SIZE;
+        header.imageCrc = 0x76543210U;
+        header.versionMajor = 4U;
+        header.versionMinor = 5U;
+        header.versionPatch = 6U;
+        header.reserved0 = 0xFFU;
+        std::memcpy(header.gitHash.data(), "0badc0de", header.gitHash.size());
+        header.reserved.fill(0xFFU);
+        auto bytes = toBytes(header);
+        // Stamped last, over everything above it, exactly as the packaging
+        // script does: the python side recomputes it from these bytes.
+        const std::uint32_t crc =
+            mark4::crc32Mpeg2(bytes.data(), offsetof(mark4::OtaImageHeader, headerCrc));
+        std::memcpy(bytes.data() + offsetof(mark4::OtaImageHeader, headerCrc), &crc, sizeof(crc));
+        return bytes;
+    }
+
     std::vector<std::uint8_t> makeBlackboxRecord()
     {
         mark4::BlackboxRecord record{};
@@ -348,6 +503,17 @@ namespace
             {"tuning_list.bin", makeTuningList()},
             {"tuning_ack.bin", makeTuningAck()},
             {"tuning_info.bin", makeTuningInfo()},
+            {"ota_status_request.bin", makeOtaStatusRequest()},
+            {"ota_status.bin", makeOtaStatus()},
+            {"ota_begin.bin", makeOtaBegin()},
+            {"ota_chunk.bin", makeOtaChunk()},
+            {"ota_chunk_ack.bin", makeOtaChunkAck()},
+            {"ota_finish.bin", makeOtaFinish()},
+            {"ota_confirm.bin", makeOtaConfirm()},
+            {"ota_revert.bin", makeOtaRevert()},
+            {"ota_abort.bin", makeOtaAbort()},
+            {"ota_ack.bin", makeOtaAck()},
+            {"ota_image_header.bin", makeOtaImageHeader()},
             {"blackbox_record.bin", makeBlackboxRecord()},
             {"serial_frame.bin", makeSerialFrame()},
         };

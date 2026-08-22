@@ -9,6 +9,12 @@ extends SceneTree
 ## and the C++ layout fails here instead of becoming a silent 100%
 ## packet drop in the simulator.
 ##
+## Every fixture read here is named one by one, never enumerated from the
+## directory: this check owns the packets Godot actually speaks and
+## ignores the rest. The OTA fixtures are the deliberate example - those
+## packets only ever travel between the hub and the board, protocol.gd
+## knows nothing of them, and nothing here should.
+##
 ## Run from the repo root:
 ##   godot --path sim-godot --headless --script res://tests/golden_check.gd \
 ##     -- <absolute path of software/tests/golden/fixtures>
