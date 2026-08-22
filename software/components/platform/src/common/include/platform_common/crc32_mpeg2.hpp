@@ -4,7 +4,8 @@
 /// @brief Software CRC-32/MPEG-2, the one image and metadata checksum of
 ///        the update system (see protocol/ota.hpp): polynomial
 ///        0x04C11DB7, init 0xFFFFFFFF, no reflection, no final xor,
-///        consumed as big-endian 32-bit words. It reproduces bit for bit
+///        consumed as 32-bit words packed in memory order (byte 0 is the
+///        word's least significant byte). It reproduces bit for bit
 ///        what the F405 hardware CRC unit computes over the same words;
 ///        the stm32 store may use either, everything else uses this.
 
