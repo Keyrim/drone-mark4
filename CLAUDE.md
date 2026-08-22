@@ -83,7 +83,7 @@ godot --path sim-godot --headless --script res://tests/golden_check.gd -- "$(pwd
 
 # Lint (all must be clean before committing; CI runs exactly these)
 git ls-files '*.cpp' '*.hpp' '*.c' '*.h' | xargs clang-format --dry-run --Werror
-run-clang-tidy -p software/build/desktop -quiet "$(pwd)/software/"
+run-clang-tidy -p software/build/desktop -quiet "$(pwd)/software/(components|drone_sim|drone_replay|drone_firmware|hub|tests)/"
 ./scripts/tidy_stm32.sh    # clang-tidy over the stm32 compile database
 ./scripts/check_ascii.sh   # ASCII-only hard rule
 ```
