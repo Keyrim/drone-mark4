@@ -6,15 +6,18 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 #include "flight_core/flight_core.hpp"
 #include "platform_common/announce_publisher.hpp"
 #include "platform_common/blackbox.hpp"
+#include "platform_common/ota_updater.hpp"
 #include "platform_common/rc_tracker.hpp"
 #include "platform_common/telemetry_publisher.hpp"
 #include "platform_common/tuning_service.hpp"
 #include "platform_sim/clock_sim.hpp"
 #include "platform_sim/command_receiver_sim.hpp"
+#include "platform_sim/firmware_store_sim.hpp"
 #include "platform_sim/log_sink_file.hpp"
 #include "platform_sim/motor_sink_sim.hpp"
 #include "platform_sim/sensor_source_sim.hpp"
@@ -44,6 +47,16 @@ namespace mark4
         /// Size of the buffer holding the timestamped blackbox file path.
         static constexpr std::size_t LOG_PATH_SIZE = 64U;
 
+        /// Size of the buffer holding the emulated-flash directory. The
+        /// store builds its own file paths inside it, so this only has to
+        /// hold the directory itself.
+        static constexpr std::size_t OTA_DIRECTORY_SIZE = 192U;
+
+        /// Poll period of the parked update loop [us]. Short enough that the
+        /// sender's chunk pacing is never the thing waiting, long enough that
+        /// a transfer does not spin a core flat out.
+        static constexpr std::uint32_t UPDATE_POLL_US = 500U;
+
         /// @param maxFrames number of frames to process before stopping,
         ///        0 = no limit (the run ends with the operator or the link)
         /// @param simPort UDP port the sim link listens on
@@ -52,14 +65,18 @@ namespace mark4
         ///        stream the pilot keeps up
         /// @param sessionId identity of this process start, announced so the
         ///        ground side tells a restart from a refresh
+        /// @param otaDirectory directory holding the emulated flash slots and
+        ///        boot metadata; copied, so the caller keeps its buffer
         explicit DroneSimApp(std::uint32_t maxFrames,
                              std::uint16_t simPort,
                              std::uint16_t telemetryPort,
                              std::uint16_t rcPort,
-                             std::uint32_t sessionId);
+                             std::uint32_t sessionId,
+                             const char *otaDirectory);
 
         /// @brief Initializes services in declaration order: binds the sim link,
-        ///        opens the telemetry socket and the blackbox file. The first
+        ///        opens the telemetry socket and the blackbox file, then runs
+        ///        the fake bootloader that picks the firmware slot. The first
         ///        failure is logged by the service and returns false immediately.
         /// @return true when every service is ready
         bool init();
@@ -112,6 +129,60 @@ namespace mark4
         }
 
       private:
+        /// @brief The fake bootloader: runs the slot decision shared with
+        ///        drone_boot (platform_common/ota_boot_policy.hpp) over the
+        ///        file-backed metadata, validates the slot it picked the way
+        ///        the bootloader validates an image, then binds the store and
+        ///        the updater to the slot that won. Called at init and on
+        ///        every reboot command, which is what makes a hub-driven
+        ///        update against this process exercise the trial boot and the
+        ///        rollback with no hardware at all.
+        /// @return true when a slot is running and the updater is ready
+        bool bootFirmware();
+
+        /// @brief Re-runs the boot decision in place, the way a reset does:
+        ///        the store and the updater are reconstructed and the flight
+        ///        core starts from scratch, tuned values included, exactly
+        ///        like the flash-less hardware this stands in for.
+        void rebootFirmware();
+
+        /// @brief Checks a slot's image against its own header, mirroring
+        ///        drone_boot. One difference, and it is the whole point of a
+        ///        process pretending to be a board: a slot that holds no
+        ///        image header at all is this build itself, so it validates
+        ///        instead of being marked bad.
+        /// @param slot slot to validate
+        /// @return true when the slot may be run
+        [[nodiscard]] bool imageValidates(std::uint8_t slot) const;
+
+        /// @brief Hands one received packet to the update session and
+        ///        broadcasts whatever answer comes back, over the same
+        ///        telemetry socket the tuning answers use.
+        /// @param packet received bytes
+        /// @param size received byte count
+        /// @param nowUs monotonic time [us]
+        /// @return true when the updater claimed the packet, whatever the
+        ///         outcome: the rest of this composition must then ignore it
+        bool serveOta(const std::uint8_t *packet, std::size_t size, std::uint64_t nowUs);
+
+        /// @brief Parks the lockstep loop and serves the open update session,
+        ///        symmetrically with the firmware: no sensor wait, no core
+        ///        step, no actuator frame back to the plant, so the motors
+        ///        are silent for the whole of it. Returns once the session
+        ///        ends on a finish, an abort or a timeout.
+        void runUpdateMode();
+
+        /// @brief Refreshes the cached arming interlock from the boot
+        ///        metadata. Reading it means scanning both metadata areas, so
+        ///        it happens once per boot and after every packet the updater
+        ///        consumed rather than once per frame.
+        void refreshArmInterlock();
+
+        /// @param data datagram bytes
+        /// @param size datagram size
+        /// @return true when this is the ground side's reboot command
+        [[nodiscard]] static bool IsRebootCommand(const std::uint8_t *data, std::size_t size);
+
         /// @brief Routes one datagram drained from the command uplink. A
         ///        scenario packet is latched onto the motor sink, which
         ///        carries it to the plant on the next lockstep reply, and
@@ -154,6 +225,22 @@ namespace mark4
         mark4::TuningService m_tuningService{m_core, m_telemetrySender};
         mark4::Blackbox m_blackbox;
         mark4::SimRunTracker m_runTracker{m_telemetrySender, StreamSource::DRONE_SIM};
+
+        /// Emulated flash directory, declared before the store because the
+        /// store keeps the pointer rather than a copy of the path.
+        std::array<char, OTA_DIRECTORY_SIZE> m_otaDirectory{};
+
+        /// The store and the updater are optional because a reboot command
+        /// rebuilds both in place: which slot runs is a boot-time decision
+        /// here, not a link-time one, so it cannot be a constructor argument
+        /// settled once. std::optional keeps them value members all the same,
+        /// with no allocation.
+        std::optional<mark4::FirmwareStoreSim> m_firmwareStore;
+        std::optional<mark4::OtaUpdater> m_otaUpdater;
+
+        /// True while the running slot is on trial: arming is refused until
+        /// the ground side confirms it (docs/ota-design.md section 3.2).
+        bool m_armInhibited = false;
 
         /// Hash window asked for by the last scenario, applied to the run
         /// that scenario opens [us]; 0 means the tracker default.
