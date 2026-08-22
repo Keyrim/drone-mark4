@@ -1,6 +1,9 @@
 # OTA firmware update - design proposal
 
-Status: proposal, not current state. Nothing here exists in the code yet.
+Status: implemented (protocol/ota.hpp, platform firmware stores, OtaUpdater,
+drone_boot, scripts/make_ota.py, hub OtaClient and the update panel; the
+desktop end-to-end test drives a full update and a rollback against
+drone_sim). This document remains the reference for the design decisions.
 Companions: `docs/target-architecture.md` (system picture this plugs into),
 `docs/bring-up.md` (mark1 board), `docs/aio-board-spec.md` (F722 AIO board).
 
