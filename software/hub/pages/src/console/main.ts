@@ -19,6 +19,7 @@ import { HubSocket, type HubMessage } from "../shared/hub_socket";
 import { Shell } from "../shared/shell";
 import { AttitudePanel } from "./attitude_panel";
 import { DroneWidget, type WidgetHooks } from "./drone_widget";
+import { OtaPanel } from "./ota_panel";
 
 const socket = new HubSocket();
 const shell = new Shell(socket);
@@ -299,12 +300,21 @@ socket.on("status", (message: HubMessage) => {
 
 void refreshRecordings();
 
+/* -------------------- firmware update -------------------- */
+
+// Reflashing the board is an operation on the drone that is already there,
+// not a way to add one, so it sits below the drone list rather than inside a
+// widget: it has to stay readable while the board is rebooting and its
+// widget has momentarily disappeared.
+const update = new OtaPanel(socket, (text, ok) => shell.notify(text, ok));
+
 /* -------------------- layout -------------------- */
 
 shell.content.className = "content console";
 const left = document.createElement("div");
 left.className = "console-col";
 left.appendChild(droneList);
+left.appendChild(update.root);
 left.appendChild(addBlock);
 const right = document.createElement("div");
 right.className = "console-col observe";

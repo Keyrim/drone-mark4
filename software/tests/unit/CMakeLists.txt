@@ -19,6 +19,7 @@ add_executable(unit_tests
     test_hub_health.cpp
     test_hub_http.cpp
     test_hub_json.cpp
+    test_hub_ota.cpp
     test_hub_recorder.cpp
     test_hub_recordings.cpp
     test_hub_serial_udp.cpp

@@ -30,6 +30,8 @@ add_library(hub_core STATIC
     src/discovery.cpp
     src/http_api.cpp
     src/json_codec.cpp
+    src/ota_bundle.cpp
+    src/ota_client.cpp
     src/recordings.cpp
     src/stream_align.cpp
     src/stream_health.cpp

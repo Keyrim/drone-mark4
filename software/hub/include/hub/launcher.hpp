@@ -40,8 +40,11 @@ namespace mark4
     /// @brief Default path of a directory of the source tree, resolved from
     ///        the running executable, falling back to the current directory.
     /// @param relative path relative to the source tree root
+    /// @param mustExist true to only accept a resolved path that exists,
+    ///        which is what a directory of assets wants; false for a build
+    ///        artifact that is legitimately absent until it is built
     /// @return the path
-    std::string defaultProjectPath(const char *relative);
+    std::string defaultProjectPath(const char *relative, bool mustExist = true);
 
     /// The children of one scenario, alive together and dying together.
     class ProcessGroup
