@@ -23,6 +23,15 @@ namespace mark4
     class Crc32Mpeg2
     {
       public:
+        /// Generator polynomial of CRC-32/MPEG-2, the one the F405 hardware
+        /// unit implements.
+        static constexpr std::uint32_t POLYNOMIAL = 0x04C11DB7U;
+
+        /// Bits per byte and per consumed word: the register is shifted one
+        /// word at a time, most significant bit first.
+        static constexpr std::size_t BYTE_BITS = 8U;
+        static constexpr std::size_t WORD_BITS = 32U;
+
         /// @brief Feeds bytes; callable any number of times.
         /// @param data bytes to consume
         /// @param size byte count
@@ -30,7 +39,7 @@ namespace mark4
         {
             for (std::size_t i = 0U; i < size; ++i)
             {
-                m_word |= static_cast<std::uint32_t>(data[i]) << (8U * m_pending);
+                m_word |= static_cast<std::uint32_t>(data[i]) << (BYTE_BITS * m_pending);
                 ++m_pending;
                 if (m_pending == 4U)
                 {
@@ -55,13 +64,13 @@ namespace mark4
         void consumeWord()
         {
             m_crc ^= m_word;
-            for (std::size_t bit = 0U; bit < 32U; ++bit)
+            for (std::size_t bit = 0U; bit < WORD_BITS; ++bit)
             {
                 const bool top = (m_crc & 0x80000000U) != 0U;
                 m_crc <<= 1U;
                 if (top)
                 {
-                    m_crc ^= 0x04C11DB7U;
+                    m_crc ^= POLYNOMIAL;
                 }
             }
             m_word = 0U;

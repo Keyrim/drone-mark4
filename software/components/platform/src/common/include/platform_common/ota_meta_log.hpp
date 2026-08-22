@@ -31,6 +31,14 @@ namespace mark4
     template <typename Backend> class OtaMetaLog
     {
       public:
+        /// Erased byte of the backing store: a record slot full of these is
+        /// blank, and blank is how a free slot is recognized.
+        static constexpr std::uint8_t BLANK_BYTE = 0xFFU;
+
+        /// Filler of the reserved field, kept erased so a later layout can
+        /// use it without touching the records already written.
+        static constexpr std::uint32_t RESERVED_FILL = 0xFFFFFFFFU;
+
         explicit OtaMetaLog(Backend &backend)
             : m_backend(backend)
         {
@@ -99,7 +107,7 @@ namespace mark4
             record.activeSlot = state.activeSlot;
             record.slotState = state.slotState;
             record.flags = state.trialAttempted ? OTA_META_FLAG_TRIAL_ATTEMPTED : 0U;
-            record.reserved = 0xFFFFFFFFU;
+            record.reserved = RESERVED_FILL;
             std::uint8_t bytes[OTA_META_RECORD_SIZE];
             std::memcpy(bytes, &record, OTA_META_RECORD_SIZE);
             record.crc = crc32Mpeg2(bytes, offsetof(OtaMetaRecord, crc));
@@ -131,7 +139,7 @@ namespace mark4
                     {
                         return false;
                     }
-                    if (isBlank(bytes))
+                    if (IsBlank(bytes))
                     {
                         continue;
                     }
@@ -163,7 +171,7 @@ namespace mark4
                 {
                     return false;
                 }
-                if (isBlank(bytes))
+                if (IsBlank(bytes))
                 {
                     offsetOut = slot * OTA_META_RECORD_SIZE;
                     return true;
@@ -172,11 +180,11 @@ namespace mark4
             return false;
         }
 
-        static bool isBlank(const std::uint8_t *bytes)
+        static bool IsBlank(const std::uint8_t *bytes)
         {
             for (std::uint32_t i = 0U; i < OTA_META_RECORD_SIZE; ++i)
             {
-                if (bytes[i] != 0xFFU)
+                if (bytes[i] != BLANK_BYTE)
                 {
                     return false;
                 }
