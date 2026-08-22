@@ -14,5 +14,5 @@ namespace mark4
 {
     inline constexpr std::uint8_t FIRMWARE_VERSION_MAJOR = 0U;
     inline constexpr std::uint8_t FIRMWARE_VERSION_MINOR = 1U;
-    inline constexpr std::uint8_t FIRMWARE_VERSION_PATCH = 1U;
+    inline constexpr std::uint8_t FIRMWARE_VERSION_PATCH = 2U;
 } // namespace mark4
