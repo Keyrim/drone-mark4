@@ -670,6 +670,41 @@ input.config-title {
     border-style: dashed;
 }
 
+/* ===== Firmware update ===== */
+
+.ota-panel {
+    display: flex;
+    flex-direction: column;
+}
+
+.ota-identities {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    padding: 4px 10px;
+}
+
+.ota-path {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--mono);
+    font-size: 11px;
+}
+
+.ota-bar {
+    flex: 1;
+}
+
+.ota-bytes {
+    font-variant-numeric: tabular-nums;
+    min-width: 150px;
+    text-align: right;
+}
+
+.ota-verdict {
+    min-height: 18px;
+}
+
 .add-tab {
     color: var(--fg-dim);
 }

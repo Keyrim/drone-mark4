@@ -30,7 +30,8 @@ pnpm test
   the folded scenario and tuning blocks. The "Add drone" block holds the
   two manual doors (board UART, blackbox); UDP drones appear on their
   own. All drones draw superimposed in the 3D view, one color each. `rc.ts` is the piloting state machine,
-  pure and unit tested.
+  pure and unit tested. `ota_panel.ts` is the firmware update panel, over
+  the pure `ota.ts`.
 - `src/<page>/main.ts` - one page. Every directory holding a `main.ts`
   becomes its own bundle, so adding a page is adding a directory and an
   `.html` file next to `esbuild.js`.
@@ -99,6 +100,29 @@ streamed RC recently and the top bar warns when there is more than one.
 
 `rc.ts` keeps the pure part (safe state, clamping, the exact payload) under
 `test/rc.test.ts`.
+
+## Firmware update
+
+The update panel sits under the drone list on the control page, below the
+widgets and above "Add drone": reflashing is an operation on the drone that is
+already there, and the panel has to stay readable while the board reboots and
+its widget momentarily disappears.
+
+It shows the two identities side by side (what the board runs, from which
+slot, against what the bundle holds), the bundle path prefilled with the
+build output the hub defaults to, the phase in plain words, a progress bar
+following the bytes the board acknowledged writing, and the verdict sentence
+the hub wrote. The auto-confirm switch, the abort, the manual confirm and the
+revert are the four gestures; each is offered only where it would do
+something, and none is offered without a board link.
+
+The hub owns the whole state machine and publishes it as one `ota` message on
+every change, so the panel derives nothing: it paints the last message. While
+nothing is running it asks for a fresh board status every three seconds, since
+the version of a board that was just plugged in is a question, not an event.
+
+`ota.ts` keeps the pure part (decoding the message, the phase words, and the
+rule that says which buttons make sense) under `test/ota.test.ts`.
 
 ## View configs
 
