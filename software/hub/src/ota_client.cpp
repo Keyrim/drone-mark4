@@ -435,7 +435,7 @@ namespace mark4
             case OtaPhase::TRANSFER:
                 if (nowUs >= m_chunkDeadlineUs)
                 {
-                    if (m_progress.retries >= m_config.maxRetries)
+                    if (m_stalledRounds >= m_config.maxRetries)
                     {
                         fail("the board stopped acknowledging chunks at " +
                              std::to_string(m_progress.ackedBytes) + " of " +
@@ -445,6 +445,7 @@ namespace mark4
                     // Go-back-N: everything above the last cumulative
                     // acknowledgement is unknown, so it all goes again.
                     ++m_progress.retries;
+                    ++m_stalledRounds;
                     m_progress.sentBytes = m_progress.ackedBytes;
                     m_nextChunkUs = nowUs;
                     m_chunkDeadlineUs = nowUs + m_config.chunkAckTimeoutMs * US_PER_MS;
@@ -678,6 +679,9 @@ namespace mark4
         m_session = drawSession();
         m_progress = OtaProgress{};
         m_progress.totalBytes = image->size;
+        m_stalledRounds = 0U;
+        m_resendOffset = 0U;
+        m_resendGuardUs = 0U;
         OtaBeginPacket packet{};
         packet.version = PROTOCOL_VERSION;
         packet.type = static_cast<std::uint8_t>(PacketType::OTA_BEGIN);
@@ -930,14 +934,25 @@ namespace mark4
         {
             // A repeated offset is the board saying it dropped an
             // out-of-order chunk: resend from there without waiting out the
-            // silence timeout.
-            if (m_progress.retries >= m_config.maxRetries)
+            // silence timeout. One lost chunk makes every later chunk of
+            // the window repeat the same offset, so a resend answers the
+            // whole burst once and the echoes of that window are ignored -
+            // counting each echo as a refusal turned a single radio loss
+            // into an instant failure on the bench.
+            if (nextOffset == m_resendOffset && nowUs < m_resendGuardUs)
+            {
+                return;
+            }
+            if (m_stalledRounds >= m_config.maxRetries)
             {
                 fail("the board kept refusing chunks at " + std::to_string(m_progress.ackedBytes) +
                      " of " + std::to_string(m_progress.totalBytes) + " bytes");
                 return;
             }
             ++m_progress.retries;
+            ++m_stalledRounds;
+            m_resendOffset = nextOffset;
+            m_resendGuardUs = nowUs + (m_config.chunkAckTimeoutMs * US_PER_MS);
             m_progress.sentBytes = m_progress.ackedBytes;
             m_nextChunkUs = nowUs;
             m_chunkDeadlineUs = nowUs + m_config.chunkAckTimeoutMs * US_PER_MS;
@@ -946,6 +961,10 @@ namespace mark4
             return;
         }
 
+        // Forward progress: only a genuine stall may fail the transfer, so
+        // the round counter starts over (retries stays, it is the tally the
+        // page shows).
+        m_stalledRounds = 0U;
         m_progress.ackedBytes = nextOffset;
         m_progress.sentBytes = std::max(m_progress.sentBytes, nextOffset);
         m_chunkDeadlineUs = nowUs + m_config.chunkAckTimeoutMs * US_PER_MS;

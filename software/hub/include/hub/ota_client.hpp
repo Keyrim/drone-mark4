@@ -425,6 +425,9 @@ namespace mark4
         std::uint64_t m_nextStatusUs = 0U;          ///< next status request instant [us]
         std::uint64_t m_nextChunkUs = 0U;           ///< earliest next chunk send [us]
         std::uint64_t m_chunkDeadlineUs = 0U;       ///< chunk-ack silence deadline [us]
+        std::uint32_t m_stalledRounds = 0U;         ///< resend rounds with no progress
+        std::uint32_t m_resendOffset = 0U;          ///< offset the last resend answered
+        std::uint64_t m_resendGuardUs = 0U;         ///< ignore repeats of it until then [us]
         std::uint64_t m_settleUntilUs = 0U;         ///< status answers ignored until [us]
         std::uint64_t m_healthySinceUs = 0U;        ///< first trial status instant [us]
         std::uint32_t m_healthyCount = 0U;          ///< trial status answers seen

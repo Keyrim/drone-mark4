@@ -672,6 +672,45 @@ TEST_CASE("a repeated acknowledgement offset resends without waiting out the sil
     CHECK(offsets.front() == 3U * chunk);
 }
 
+TEST_CASE("one lost chunk echoes a whole window of repeats and costs one retry")
+{
+    // The board acknowledges every out-of-order chunk immediately, so one
+    // radio loss makes every later chunk of the window repeat the same
+    // offset. The bench proved that counting each echo as a refusal turns
+    // a single loss into an instant failure: the echoes of an already
+    // answered window must be ignored, and real progress must start the
+    // stall budget over.
+    const ScratchDirectory directory;
+    Bench bench;
+    static_cast<void>(startHappySession(bench, directory));
+    const std::uint32_t session = bench.session();
+    bench.feed(ackPacket(session, PacketType::OTA_BEGIN, OTA_RESULT_OK));
+
+    const auto chunk = static_cast<std::uint32_t>(OTA_CHUNK_DATA_SIZE);
+    bench.feed(chunkAckPacket(session, 3U * chunk));
+    bench.clearSent();
+
+    // A storm of repeats at one offset: one resend, one retry, not a fail.
+    for (std::uint32_t echo = 0U; echo < 2U * OTA_CHUNK_ACK_WINDOW; ++echo)
+    {
+        bench.feed(chunkAckPacket(session, 3U * chunk));
+    }
+    CHECK(bench.client().progress().retries == 1U);
+    CHECK(bench.client().phase() == OtaPhase::TRANSFER);
+
+    // Progress re-arms the budget: storms after each of many losses never
+    // add up to a failure as long as bytes keep landing in between.
+    for (std::uint32_t round = 4U; round < 24U; ++round)
+    {
+        bench.feed(chunkAckPacket(session, round * chunk));
+        for (std::uint32_t echo = 0U; echo < OTA_CHUNK_ACK_WINDOW; ++echo)
+        {
+            bench.feed(chunkAckPacket(session, round * chunk));
+        }
+        REQUIRE(bench.client().phase() == OtaPhase::TRANSFER);
+    }
+}
+
 TEST_CASE("an erase that never finishes fails the session and names the slot")
 {
     const ScratchDirectory directory;
