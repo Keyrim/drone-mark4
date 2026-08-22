@@ -160,7 +160,22 @@ namespace mark4
         /// @param nowUs monotonic time [us]
         void tick(std::uint64_t nowUs)
         {
-            if (!m_sessionActive || nowUs < m_lastPacketUs)
+            if (!m_sessionActive)
+            {
+                return;
+            }
+            if (m_sessionFresh)
+            {
+                // The begin was stamped before its own erase, and a slot
+                // erase freezes a flash-resident core for seconds: judging
+                // the fresh session against that stale stamp killed it on
+                // the first bench transfer. The first sweep after the open
+                // re-arms the clock instead of comparing.
+                m_sessionFresh = false;
+                m_lastPacketUs = nowUs;
+                return;
+            }
+            if (nowUs < m_lastPacketUs)
             {
                 return;
             }
@@ -381,6 +396,7 @@ namespace mark4
             }
 
             m_sessionActive = true;
+            m_sessionFresh = true;
             m_session = request.session;
             m_targetSlot = target;
             m_imageSize = request.imageSize;
@@ -632,6 +648,7 @@ namespace mark4
 
         AbsFirmwareStore &m_store;           ///< slot and metadata storage, not owned
         bool m_sessionActive = false;        ///< a transfer session is open
+        bool m_sessionFresh = false;         ///< opened, but no timeout sweep ran yet
         std::uint32_t m_session = 0U;        ///< nonce of the open session
         std::uint8_t m_targetSlot = 0U;      ///< slot being written, never the running one
         std::uint32_t m_imageSize = 0U;      ///< image bytes announced at begin

@@ -193,7 +193,8 @@ namespace mark4
             // core needs a power cycle rather than costing the trial attempt.
         }
 
-        rttWrite("ota: session closed, resuming the flight loop\n");
+        rttPrintf("ota: session closed, resuming the flight loop (rx drops %u)\n",
+                  static_cast<unsigned>(uart1RxDrops()));
     }
 
     void FirmwareApp::run()

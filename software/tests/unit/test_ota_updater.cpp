@@ -986,6 +986,36 @@ TEST_CASE("a session whose sender goes silent is dropped")
             mark4::OTA_RESULT_BAD_SESSION);
 }
 
+TEST_CASE("a session opened before its own erase survives the frozen clock")
+{
+    // On the board the begin's timestamp is sampled before handle() spends
+    // seconds erasing the slot with the core frozen: the first timeout
+    // sweep then runs long past the stamp. It must re-arm the deadline,
+    // not judge the fresh session against time the erase itself consumed
+    // (the first bench transfer died exactly this way).
+    FakeStore store(mark4::OTA_SLOT_A, TEST_SLOT_SIZE);
+    mark4::OtaUpdater updater(store);
+    mark4::OtaUpdater::Inputs in;
+    in.nowUs = 1000U;
+    const std::vector<std::uint8_t> image = buildImage(ImageSpec{});
+
+    const auto begin = beginPacket(TEST_SESSION, TEST_IMAGE_SIZE, imageCrc(image));
+    REQUIRE(decodeAck(feed(updater, begin.data(), begin.size(), in)).result ==
+            mark4::OTA_RESULT_OK);
+
+    // First sweep far beyond the timeout: the erase ate that time.
+    const std::uint64_t afterErase = in.nowUs + (2U * mark4::OtaUpdater::SESSION_TIMEOUT_US);
+    updater.tick(afterErase);
+    REQUIRE(updater.sessionActive());
+
+    // The re-armed deadline counts from that sweep, and real silence
+    // still closes the session.
+    updater.tick(afterErase + mark4::OtaUpdater::SESSION_TIMEOUT_US - 1U);
+    REQUIRE(updater.sessionActive());
+    updater.tick(afterErase + mark4::OtaUpdater::SESSION_TIMEOUT_US);
+    REQUIRE(!updater.sessionActive());
+}
+
 TEST_CASE("a store that dies mid-transfer takes the session down with it")
 {
     FakeStore store(mark4::OTA_SLOT_A, TEST_SLOT_SIZE);

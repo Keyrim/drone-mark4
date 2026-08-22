@@ -63,6 +63,9 @@ namespace mark4
         /// Written by uart1RxPop() only; read by the interrupt handler.
         volatile std::uint32_t g_rxTail = 0U;
 
+        /// Bytes the receive interrupt dropped on a full ring.
+        volatile std::uint32_t g_rxDrops = 0U;
+
         bool g_initialized = false;
     } // namespace
 
@@ -130,6 +133,11 @@ namespace mark4
         g_rxTail = g_rxTail + 1U;
         return true;
     }
+
+    std::uint32_t uart1RxDrops()
+    {
+        return g_rxDrops;
+    }
 } // namespace mark4
 
 /// USART1 interrupt: stores the received byte (a full ring drops it, the
@@ -148,6 +156,10 @@ extern "C" void USART1_IRQHandler(void)
         {
             mark4::g_rxRing[mark4::g_rxHead & mark4::RX_RING_MASK] = byte;
             mark4::g_rxHead = mark4::g_rxHead + 1U;
+        }
+        else
+        {
+            mark4::g_rxDrops = mark4::g_rxDrops + 1U;
         }
     }
 

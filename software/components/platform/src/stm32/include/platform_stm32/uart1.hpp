@@ -31,4 +31,7 @@ namespace mark4
     /// @param[out] byteOut received byte, valid only when returning true
     /// @return true when a byte was pending
     bool uart1RxPop(std::uint8_t &byteOut);
+
+    /// @return bytes the receive interrupt dropped on a full ring
+    std::uint32_t uart1RxDrops();
 } // namespace mark4
