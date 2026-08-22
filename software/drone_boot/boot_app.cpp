@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include "platform_common/crc32_mpeg2.hpp"
+#include "platform_common/ota_boot_policy.hpp"
 #include "platform_stm32/board.hpp"
 #include "platform_stm32/internal_flash.hpp"
 #include "platform_stm32/ota_slots.hpp"
@@ -52,23 +53,6 @@ namespace mark4
             return crc.finish();
         }
 
-        /// @brief Finds a slot in one of the given states.
-        /// @param state metadata to search
-        /// @param wanted OTA_SLOT_* state to look for
-        /// @param[out] slotOut slot found, untouched when none matches
-        /// @return true when a slot is in that state
-        bool findSlotInState(const OtaMetaState &state, std::uint8_t wanted, std::uint8_t &slotOut)
-        {
-            for (std::uint8_t slot = 0U; slot < OTA_SLOT_COUNT; ++slot)
-            {
-                if (state.slotState[slot] == wanted)
-                {
-                    slotOut = slot;
-                    return true;
-                }
-            }
-            return false;
-        }
     } // namespace
 
     bool BootApp::Validates(std::uint8_t slot)
@@ -140,34 +124,16 @@ namespace mark4
             state = OtaMetaState{};
         }
 
-        std::uint8_t slot = 0U;
-        if (findSlotInState(state, OTA_SLOT_STAGED, slot))
+        // The decision itself is shared with the desktop flight process
+        // (platform_common/ota_boot_policy.hpp): the sim's fake trial boot
+        // must be the same state machine, not an imitation of it. Only the
+        // storage and the image validation below are this executable's.
+        const OtaBootDecision decision = otaDecideBoot(state);
+        if (decision.persist)
         {
-            // The one-shot trial: mark it attempted before booting it, so a
-            // firmware that never comes back cannot get a second chance.
-            state.slotState[slot] = OTA_SLOT_TESTING;
-            state.trialAttempted = true;
             (void)m_metaLog.append(state);
-            return slot;
         }
-
-        if (findSlotInState(state, OTA_SLOT_TESTING, slot))
-        {
-            if (state.trialAttempted)
-            {
-                // It was booted once and never confirmed: roll back.
-                markBad(state, slot);
-                return state.activeSlot;
-            }
-            // TESTING without the attempted flag can only be a sequence torn
-            // by a power cut between the two records. The image is staged and
-            // untried: treat it as STAGED and spend the trial now.
-            state.trialAttempted = true;
-            (void)m_metaLog.append(state);
-            return slot;
-        }
-
-        return state.activeSlot;
+        return decision.slot;
     }
 
     void BootApp::run()
