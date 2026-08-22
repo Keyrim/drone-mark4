@@ -3,11 +3,13 @@
 #include <cstdint>
 
 #include "flight_core/types.hpp"
+#include "platform_common/ota_boot_policy.hpp"
 #include "platform_stm32/board.hpp"
 #include "platform_stm32/rtt.hpp"
 #include "platform_stm32/uart1.hpp"
 #include "protocol/commands.hpp"
 #include "protocol/header.hpp"
+#include "protocol/ota.hpp"
 #include "protocol/serial_framing.hpp"
 #include "status_leds.hpp"
 
@@ -31,6 +33,19 @@ namespace
 
     /// Scale from a unit quantity to its milli multiple.
     constexpr float MILLI_PER_UNIT = 1000.0f;
+
+    /// Room for the largest answer the updater emits, which is the status
+    /// packet; the chunk acknowledgement and the single ack packet are both
+    /// shorter.
+    constexpr std::size_t OTA_REPLY_SIZE = mark4::OTA_STATUS_PACKET_SIZE;
+    static_assert(OTA_REPLY_SIZE >= mark4::OTA_CHUNK_ACK_PACKET_SIZE &&
+                      OTA_REPLY_SIZE >= mark4::OTA_ACK_PACKET_SIZE,
+                  "every updater answer must fit the reply buffer");
+
+    /// The whole chunk packet must fit one serial frame payload, which is
+    /// what the command receiver hands out at most.
+    static_assert(mark4::OTA_CHUNK_PACKET_SIZE <= mark4::SERIAL_MAX_PAYLOAD,
+                  "a chunk must survive the framing on the way in");
 
     /// @brief Millis of a float for integer-only printf: "%d.%03d".
     /// @param value converted value
@@ -88,7 +103,97 @@ namespace mark4
                   static_cast<unsigned long>(UART1_BAUD_RATE),
                   static_cast<unsigned long>(TelemetryPublisher::DECIMATION),
                   static_cast<unsigned long>(RcTracker::RC_TIMEOUT_US / US_PER_MS));
+
+        refreshArmInterlock();
+        rttPrintf("ota: running slot %c, %lu byte slots%s\n",
+                  m_firmwareStore.runningSlot() == OTA_SLOT_B ? 'B' : 'A',
+                  static_cast<unsigned long>(m_firmwareStore.slotSize()),
+                  m_armInhibited ? ", ON TRIAL: arming refused until confirmed" : "");
         return true;
+    }
+
+    void FirmwareApp::refreshArmInterlock()
+    {
+        OtaMetaState meta;
+        // An unreadable metadata area says nothing about the running image,
+        // and refusing to arm on a storage glitch would ground the drone for
+        // a reason that has nothing to do with the firmware it runs.
+        m_armInhibited = m_firmwareStore.readMeta(meta) &&
+                         otaTrialUnconfirmed(meta, m_firmwareStore.runningSlot());
+    }
+
+    bool FirmwareApp::IsRebootCommand(const std::uint8_t *packet, std::size_t size)
+    {
+        return size == REBOOT_COMMAND_PACKET_SIZE &&
+               hasHeader(packet, size, PacketType::REBOOT_COMMAND) &&
+               packet[2] == BOARD_REBOOT_MAGIC;
+    }
+
+    bool FirmwareApp::serveOta(const std::uint8_t *packet, std::size_t size, std::uint64_t nowUs)
+    {
+        OtaUpdater::Inputs inputs;
+        inputs.armed = m_core.armed();
+        // TODO(tmagne): read the real pack voltage here. mark1 has no battery
+        // sense at all, so the voltage floor of docs/ota-design.md section 3.2
+        // cannot be enforced yet; the AIO board brings the divider that makes
+        // it measurable.
+        inputs.voltageOk = true;
+        inputs.nowUs = nowUs;
+
+        std::uint8_t reply[OTA_REPLY_SIZE];
+        bool consumed = false;
+        const std::size_t replySize =
+            m_otaUpdater.handle(packet, size, inputs, reply, sizeof(reply), consumed);
+        if (replySize != 0U)
+        {
+            // The same UART telemetry and the tuning answers go out by: OTA
+            // is one more packet type on the one link this board has.
+            m_telemetrySender.send(reply, replySize);
+        }
+        if (consumed)
+        {
+            // A confirm or a staging record may just have moved the running
+            // slot's state, which is what the arming interlock reads.
+            refreshArmInterlock();
+        }
+        return consumed;
+    }
+
+    void FirmwareApp::runUpdateMode()
+    {
+        rttWrite("ota: session open, flight loop parked, no motor output\n");
+
+        // Nothing pushes the motor sink for as long as this loop runs, so the
+        // ESCs observe silence and disarm: update mode does not modify the
+        // kill-switch semantics of normal operation, it suspends normal
+        // operation entirely. RC is deliberately ignored too - the fail-safe
+        // is already the safe state, and it will have engaged by the time the
+        // flight loop resumes.
+        std::uint8_t packet[SERIAL_MAX_PAYLOAD];
+        while (m_otaUpdater.sessionActive())
+        {
+            const std::uint64_t nowUs = m_clock.nowUs();
+            for (;;)
+            {
+                const std::size_t size = m_commandReceiver.poll(packet, sizeof(packet));
+                if (size == 0U)
+                {
+                    break;
+                }
+                if (!serveOta(packet, size, nowUs) && IsRebootCommand(packet, size))
+                {
+                    rttWrite("ota: reboot command during a session, resetting\n");
+                    systemReset();
+                }
+            }
+            m_otaUpdater.tick(m_clock.nowUs());
+            // TODO(tmagne): refresh the independent watchdog here, and before
+            // each sector erase inside the store, once the firmware starts one
+            // at all. There is no watchdog today, so an update that wedges the
+            // core needs a power cycle rather than costing the trial attempt.
+        }
+
+        rttWrite("ota: session closed, resuming the flight loop\n");
     }
 
     void FirmwareApp::run()
@@ -119,9 +224,11 @@ namespace mark4
                 {
                     break;
                 }
-                if (size == REBOOT_COMMAND_PACKET_SIZE &&
-                    hasHeader(packet, size, PacketType::REBOOT_COMMAND) &&
-                    packet[2] == BOARD_REBOOT_MAGIC)
+                if (serveOta(packet, size, frame.timestampUs))
+                {
+                    continue; // the updater claimed it, whatever it answered
+                }
+                if (IsRebootCommand(packet, size))
                 {
                     rttWrite("rc: reboot command, resetting\n");
                     systemReset();
@@ -134,7 +241,24 @@ namespace mark4
                     static_cast<void>(m_tuningService.handle(packet, size));
                 }
             }
+            // An accepted OTA_BEGIN parks everything below until the session
+            // ends: this frame is dropped on the floor, which is exactly what
+            // suspending normal operation means.
+            if (m_otaUpdater.sessionActive())
+            {
+                runUpdateMode();
+                continue;
+            }
             m_rcTracker.graft(frame);
+            if (m_armInhibited)
+            {
+                // The running image has not proven its link yet, so it may
+                // not take the drone into the air. Clearing the arm switch is
+                // the whole interlock: the flight core's single arming gate
+                // is that field, and it stays the one place arming is
+                // decided (docs/ota-design.md section 3.2).
+                frame.rc.armSwitch = false;
+            }
 
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);

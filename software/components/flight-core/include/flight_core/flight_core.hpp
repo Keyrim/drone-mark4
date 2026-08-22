@@ -277,6 +277,15 @@ namespace mark4
             return m_lockedMode;
         }
 
+        /// @return true in every phase where the motors may run, ARMED
+        ///         included: the drone is one detection away from flying
+        ///         there. CUTOFF is not armed - it is latched motors off on
+        ///         the ground, which is precisely where retuning belongs.
+        [[nodiscard]] bool armed() const
+        {
+            return m_phase != FlightPhase::IDLE && m_phase != FlightPhase::CUTOFF;
+        }
+
         /// @brief Maps a stick position to the vertical velocity it commands,
         ///        deadband included.
         /// @param throttle normalized stick position [0, 1]
@@ -309,14 +318,6 @@ namespace mark4
         [[nodiscard]] float estimatedUpZ() const;
         [[nodiscard]] std::array<float, 3> brakeUpWorld() const;
         void applyParam(std::uint16_t id, float value);
-        /// @return true in every phase where the motors may run, ARMED
-        ///         included: the drone is one detection away from flying
-        ///         there. CUTOFF is not armed - it is latched motors off on
-        ///         the ground, which is precisely where retuning belongs.
-        [[nodiscard]] bool armed() const
-        {
-            return m_phase != FlightPhase::IDLE && m_phase != FlightPhase::CUTOFF;
-        }
         /// @return true when the entry cutoffs trip on this frame
         [[nodiscard]] bool cutoffTripped(const SensorFrame &sensors);
 
