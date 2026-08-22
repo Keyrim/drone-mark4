@@ -24,6 +24,7 @@ add_executable(unit_tests
     test_hub_serial_udp.cpp
     test_hub_tuning_profiles.cpp
     test_ota_meta_log.cpp
+    test_ota_store_sim.cpp
     test_pilot_modes.cpp
     test_platform_sim_udp.cpp
     test_rc_tracker.cpp
