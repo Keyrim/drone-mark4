@@ -9,8 +9,8 @@ import { asQuat, errorAngleDeg, eulerDeg, type Quat } from "../src/shared/quat";
  *
  *   python3 -c "import sys; sys.path.insert(0, 'tools');
  *   import telemetry_wire as tw;
- *   t = tw.decode_telemetry(open('tests/golden/fixtures/telemetry.bin','rb').read());
- *   r = tw.decode_sim_raw(open('tests/golden/fixtures/sim_raw.bin','rb').read());
+ *   t = tw.decode_telemetry(open('software/tests/golden/fixtures/telemetry.bin','rb').read());
+ *   r = tw.decode_sim_raw(open('software/tests/golden/fixtures/sim_raw.bin','rb').read());
  *   print(tw.euler_deg(t.attitude_quat), tw.euler_deg(r.attitude_quat),
  *         tw.error_angle_deg(t.attitude_quat, r.attitude_quat))"
  *

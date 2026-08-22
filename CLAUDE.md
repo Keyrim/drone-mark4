@@ -34,39 +34,40 @@ live in `docs/plan-dev.md`; read it before starting any new milestone.
 ## Commands
 
 ```sh
-# Configure + build + test (desktop, gcc)
-cmake --preset desktop && cmake --build --preset desktop && ctest --preset desktop
+# Configure + build + test (desktop, gcc). The CMake project root is
+# software/: every cmake/ctest --preset command runs from there.
+(cd software && cmake --preset desktop && cmake --build --preset desktop && ctest --preset desktop)
 
-# Build one app by name (an app = a (cmake preset, target) pair in apps.json;
+# Build one app by name (an app = a (cmake preset, target) pair in software/apps.json;
 # also the "build app" VS Code task)
 python3 scripts/build_app.py drone_sim
 
 # Same under ASan/UBSan
-cmake --preset desktop-san && cmake --build --preset desktop-san && ctest --preset desktop-san
+(cd software && cmake --preset desktop-san && cmake --build --preset desktop-san && ctest --preset desktop-san)
 
-# Cross-compile for STM32F405 (produces build/stm32/apps/firmware/firmware.elf)
-cmake --preset stm32 && cmake --build --preset stm32
+# Cross-compile for STM32F405 (produces software/build/stm32/drone_firmware/drone_firmware.elf)
+(cd software && cmake --preset stm32 && cmake --build --preset stm32)
 
 # Run one test (Catch2, by test name or ctest regex)
-./build/desktop/tests/unit/unit_tests "kill switch forces all motors to zero"
-ctest --preset desktop -R "kill switch"
+./software/build/desktop/tests/unit/unit_tests "kill switch forces all motors to zero"
+(cd software && ctest --preset desktop -R "kill switch")
 
 # Run the flight process (no frame limit by default; a finite budget is the
 # DRONE_SIM_FRAME_LIMIT cmake cache variable, never a runtime argument)
-./build/desktop/apps/drone_sim/drone_sim [--sim-port N] [--telemetry-port N]
+./software/build/desktop/drone_sim/drone_sim [--sim-port N] [--telemetry-port N]
 
 # Start a bench session: the hub takes no arguments, serves the pages and
 # websocket on http://127.0.0.1:47810 and stays up; everything operational
 # (board UART, recording, replay, profiles) is driven from the pages.
 # Godot (own terminal or the "godot sim" VS Code task) and drone_sim are
 # started and restarted by hand, discovery picks them up.
-./build/desktop/apps/hub/hub
+./software/build/desktop/hub/hub
 godot --path sim-godot
-./build/desktop/apps/drone_sim/drone_sim
+./software/build/desktop/drone_sim/drone_sim
 
 # Web pages (TypeScript, pnpm via corepack; the hub serves
-# apps/hub/pages/dist). Also: watch / typecheck / test
-cd apps/hub/pages && pnpm install --frozen-lockfile && pnpm build
+# software/hub/pages/dist). Also: watch / typecheck / test
+cd software/hub/pages && pnpm install --frozen-lockfile && pnpm build
 
 # Editor extension (Mark4 sidebar + hub pages as webviews; local .vsix, no
 # marketplace, no CI job). Install: "Extensions: Install from VSIX".
@@ -77,23 +78,25 @@ python3 tools/batch/run_batch.py --runs 100 --parallel 4 [--godot /path/to/godot
 
 # Golden packet decode tests (the ctest suite already checks the C++ side;
 # CI runs all three in the desktop job)
-python3 tests/golden/test_golden.py
-godot --path sim-godot --headless --script res://tests/golden_check.gd -- "$(pwd)/tests/golden/fixtures"
+python3 software/tests/golden/test_golden.py
+godot --path sim-godot --headless --script res://tests/golden_check.gd -- "$(pwd)/software/tests/golden/fixtures"
 
 # Lint (all must be clean before committing; CI runs exactly these)
 git ls-files '*.cpp' '*.hpp' '*.c' '*.h' | xargs clang-format --dry-run --Werror
-run-clang-tidy -p build/desktop -quiet "$(pwd)/(apps|flight-core|platform|protocol|tests)/"
+run-clang-tidy -p software/build/desktop -quiet "$(pwd)/software/"
 ./scripts/tidy_stm32.sh    # clang-tidy over the stm32 compile database
 ./scripts/check_ascii.sh   # ASCII-only hard rule
 ```
 
 clang-format and clang-tidy are pinned to LLVM 21 (devcontainer). Fix
-formatting with `clang-format -i`. `tests/.clang-tidy` inherits the root
+formatting with `clang-format -i`. `software/tests/.clang-tidy` inherits the root
 config and only relaxes magic numbers.
 
 ## Architecture
 
-Three libraries, one rule of dependency flow:
+Everything C++ lives under `software/`: the executables at its top level
+(`drone_sim`, `drone_replay`, `drone_firmware`, `hub`), the libraries in
+`software/components/`. Three libraries, one rule of dependency flow:
 
 - `flight-core/` - pure static lib. Single entry point
   `FlightCore::step(const SensorFrame&, ActuatorFrame&)`: synchronous,
@@ -105,19 +108,19 @@ Three libraries, one rule of dependency flow:
   flight_core links flight_core_types alone: no platform, no protocol/
   (the telemetry packer and the Blackbox recorder are IO adapters and
   live in `platform_common`).
-- `platform/` - 6 abstract services in `platform/include/platform/`
+- `platform/` - 6 abstract services in `software/components/platform/include/platform/`
   (AbsSensorSource, AbsMotorSink, AbsCommandReceiver, AbsTelemetrySender,
   AbsLogSink, AbsClock). `AbsSensorSource::waitFrame()` is the single wait
   point of the whole system; AbsClock is internal to platform and never
-  passed to FlightCore. Implementations live in `platform/src/<variant>/`
+  passed to FlightCore. Implementations live in `software/components/platform/src/<variant>/`
   (sim, stm32, replay later); each variant's headers stay under its own
   `src/<variant>/include/`. The `platform` INTERFACE target (headers only)
   carries the interfaces; `platform_common` (header-only) holds the
   composed helpers shared by every variant (TelemetryPublisher,
   packTelemetry, Blackbox); impl libs (`platform_sim`, `platform_stm32`)
   are declared only in the presets where they make sense (the
-  DRONE_PLATFORM switch in `platform/CMakeLists.txt` and
-  `apps/CMakeLists.txt`) and are linked by the apps.
+  DRONE_PLATFORM switch in `software/components/platform/CMakeLists.txt` and
+  `software/CMakeLists.txt`) and are linked by the apps.
 - `protocol/` - header-only packed wire structs. Every packet opens with
   a version byte then a type byte (nothing is demuxed by size); streams
   (telemetry, sim raw) add sourceId + u16 sequence; sizes, field offsets
@@ -125,14 +128,14 @@ Three libraries, one rule of dependency flow:
   copy per language: the C++ headers (source of truth),
   `tools/telemetry_wire.py` (all python tools import it)
   and `sim-godot/scripts/protocol.gd` (all Godot scripts read it), both
-  guarded by the golden fixtures in `tests/golden/fixtures/` that CI
+  guarded by the golden fixtures in `software/tests/golden/fixtures/` that CI
   decodes in all three languages. External processes (Godot sim, hub,
   ESP32 bridge) speak ONLY protocol/ over UDP and never link
-  flight-core; the web pages (`apps/hub/pages/`) speak only the hub's
+  flight-core; the web pages (`software/hub/pages/`) speak only the hub's
   JSON over WebSocket/HTTP and never the wire.
 
 Each executable is flight-core plus one composition of platform services,
-assembled in an App class (see `apps/drone_sim/drone_sim_app.hpp`): services
+assembled in an App class (see `software/drone_sim/drone_sim_app.hpp`): services
 as value members, declaration order = construction/init order (destruction
 is automatically the reverse), dependencies injected by reference, reference
 accessors named `accessXxx()`, `bool init()` where the first failure logs
@@ -141,8 +144,8 @@ Replicate this pattern for firmware and drone_replay when they grow real
 services.
 
 STM32 specifics: generic Cortex-M4F build via
-`cmake/toolchain-arm-none-eabi.cmake` (`-nostartfiles`, newlib-nano, nosys).
-`platform/src/stm32/startup.c` owns the vector table, FPU enable and
+`software/cmake/toolchain-arm-none-eabi.cmake` (`-nostartfiles`, newlib-nano, nosys).
+`software/components/platform/src/stm32/startup.c` owns the vector table, FPU enable and
 `_init`/`_fini` stubs; `stm32f405.ld` propagates to executables through
 INTERFACE link options on `platform_stm32`. The CCM RAM is not DMA-capable:
 future DMA buffers (DShot, SPI) must be placed outside CCM.

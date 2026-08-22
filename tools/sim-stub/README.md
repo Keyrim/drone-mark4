@@ -32,7 +32,7 @@ ignored and streaming continues.
 
 ## Packet formats
 
-Source of truth: `protocol/include/protocol/sim_link.hpp`, mirrored by the
+Source of truth: `software/components/protocol/include/protocol/sim_link.hpp`, mirrored by the
 shared `tools/telemetry_wire.py` module the stub imports.
 Both packets are little-endian and packed, version byte then type byte:
 sensor packet 45 bytes, actuator packet 84 bytes. Datagrams with the

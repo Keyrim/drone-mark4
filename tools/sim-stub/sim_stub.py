@@ -8,7 +8,7 @@ comes from the frame counter and the requested rate, so the stream content is
 deterministic regardless of how the host schedules the process.
 
 The wire layout comes from the shared telemetry_wire module, the single
-Python copy of protocol/include/protocol/.
+Python copy of software/components/protocol/include/protocol/.
 
 Python 3 standard library only.
 """

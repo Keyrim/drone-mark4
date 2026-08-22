@@ -33,8 +33,10 @@ Documentation:
 
 ### Inside the devcontainer (recommended)
 
-Open the folder in VS Code -> "Reopen in Container". Both toolchains
-(native gcc + arm-none-eabi) and the pinned tooling live in the image.
+Open `drone-mark4.code-workspace` in VS Code -> "Reopen in Container". The
+workspace exposes the repo root and `software/` (the CMake project root) as
+folders and carries the debug configurations. Both toolchains (native gcc +
+arm-none-eabi) and the pinned tooling live in the image.
 
 ```sh
 # Desktop: build + tests
@@ -47,7 +49,7 @@ cmake --preset desktop-san && cmake --build --preset desktop-san && ctest --pres
 cmake --preset stm32 && cmake --build --preset stm32
 
 # Sign of life (waits for UDP sensor packets, exits after 2 s of silence)
-./build/desktop/apps/drone_sim/drone_sim        # 500 frames max by default
+./software/build/desktop/drone_sim/drone_sim        # 500 frames max by default
 ```
 
 ### Manual build (outside the container)
@@ -59,7 +61,7 @@ Prerequisites: CMake >= 3.25, Ninja, gcc, arm-none-eabi-gcc (ARM tarball
 
 ```sh
 git ls-files '*.cpp' '*.hpp' '*.c' '*.h' | xargs clang-format --dry-run --Werror
-run-clang-tidy -p build/desktop "$(pwd)/(apps|flight-core|platform|protocol|tests)/"
+run-clang-tidy -p software/build/desktop "$(pwd)/(apps|flight-core|platform|protocol|tests)/"
 ```
 
 ## Simulation chain
@@ -70,13 +72,13 @@ telemetry to any listener.
 
 ```sh
 # Terminal 1 - flight process (listens on udp/47800)
-./build/desktop/apps/drone_sim/drone_sim 100000
+./software/build/desktop/drone_sim/drone_sim 100000
 
 # Terminal 2 - sinusoidal sensor stream (standard library only)
 python3 tools/sim-stub/sim_stub.py --duration 0
 
 # Terminal 3 - decoding endpoint and web pages on http://127.0.0.1:47810
-./build/desktop/apps/hub/hub
+./software/build/desktop/hub/hub
 ```
 
 Every python tool in the repository runs on the standard library alone, so
@@ -84,7 +86,7 @@ there is nothing to install first.
 
 ## Debugging from VS Code
 
-`.vscode/launch.json` provides:
+`drone-mark4.code-workspace` provides:
 
 - `drone_sim (gdb)` - debugs the CMake launch target: pick the `desktop`
   preset and the `drone_sim` target in the CMake Tools status bar, the

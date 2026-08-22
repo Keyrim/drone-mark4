@@ -46,7 +46,7 @@ learning project.
 - Off-the-shelf reflashable FC (DFU bootloader, SWD pads), no custom PCB.
   Candidates: SpeedyBee F405 V4 (stack ~80 EUR), Matek H743-Mini V3. Starting
   on **STM32F405**; the code must not assume the exact model (the stack
-  choice is a detail of `platform/src/stm32/`).
+  choice is a detail of `software/components/platform/src/stm32/`).
 - Modern SPI IMU (ICM-42688-P: +/-4000 deg/s - the MPU6050 is excluded, its
   +/-2000 deg/s range is insufficient for a spinning throw), barometer
   (DPS310/SPL06), SPI flash or microSD for the blackbox, 4-in-1 DShot ESC.
@@ -80,14 +80,14 @@ learning project.
 
 ### 3.2 platform - services behind virtual interfaces
 
-- Public interfaces live in `platform/include/platform/*.hpp`: abstract
-  classes, one per service. Implementations live in `platform/src/<variant>/`
+- Public interfaces live in `software/components/platform/include/platform/*.hpp`: abstract
+  classes, one per service. Implementations live in `software/components/platform/src/<variant>/`
   and inherit from them (ArduPilot's AP_HAL model).
 - Include pattern: `target_include_directories` on `include/` ->
   `#include "platform/xxx.hpp"`.
 - Base classes stay **pure** (no template method); shared code goes into
   composed helpers. A variant's private services (e.g. the sim's com service)
-  keep their headers under `platform/src/<variant>/include/`, never exposed.
+  keep their headers under `software/components/platform/src/<variant>/include/`, never exposed.
 - No singletons: an explicit composition root per application (an App/Board
   object built in the main, services as members, initialization in a written
   order, injection by reference into FlightCore). Static instantiation on
@@ -155,7 +155,7 @@ External processes (do NOT link flight-core, speak only protocol/):
   noise/bias/quantization/real rates. Parameterizable "throw" command.
   "Viewer" mode: physics off, pose slaved to received telemetry (replay of
   real flights).
-- **Hub + web pages** (`apps/hub/`, `apps/hub/pages/`): session launcher,
+- **Hub + web pages** (`software/hub/`, `software/hub/pages/`): session launcher,
   discovery, recording; real-time plots, 3D attitude view and command
   console served as web pages over one HTTP/WebSocket port.
 - **ESP32 bridge** (`esp32-bridge/`).
@@ -168,31 +168,34 @@ drone_sim or drone_replay.
 
 ```
 drone-mark4/
-|-- CMakeLists.txt
-|-- CMakePresets.json              # desktop, desktop-san, stm32
-|-- cmake/toolchain-arm-none-eabi.cmake
-|-- protocol/                      # INTERFACE lib
-|   `-- include/protocol/{version,telemetry,commands,sim_link}.hpp
-|-- flight-core/
-|   |-- include/flight_core/{flight_core,types}.hpp
-|   `-- src/                       # flight_core.cpp, state_machine.cpp,
-|                                  # estimator/{attitude,vertical}.cpp,
-|                                  # control/{rate_pid,attitude_ctrl,mixer}.cpp,
-|                                  # throw_launch/{detector,apogee}.cpp,
-|                                  # telemetry.cpp, blackbox.cpp
-|-- platform/
-|   |-- include/platform/          # abstract interfaces (the 6 services)
-|   `-- src/
-|       |-- common/                # composed helpers, if any
-|       |-- stm32/                 # stm32 preset only (+ private include/)
-|       |-- sim/                   # both presets (+ private include/, udp/uart transports)
-|       `-- replay/                # desktop preset
-|-- apps/{firmware,drone_sim,drone_replay}/
+|-- software/
+|   |-- CMakeLists.txt
+|   |-- CMakePresets.json          # desktop, desktop-san, stm32
+|   |-- apps.json
+|   |-- cmake/toolchain-arm-none-eabi.cmake
+|   |-- components/
+|   |   |-- protocol/              # INTERFACE lib
+|   |   |   `-- include/protocol/{version,telemetry,commands,sim_link}.hpp
+|   |   |-- flight-core/
+|   |   |   |-- include/flight_core/{flight_core,types}.hpp
+|   |   |   `-- src/               # flight_core.cpp, state_machine.cpp,
+|   |   |                          # estimator/{attitude,vertical}.cpp,
+|   |   |                          # control/{rate_pid,attitude_ctrl,mixer}.cpp,
+|   |   |                          # throw_launch/{detector,apogee}.cpp,
+|   |   |                          # telemetry.cpp, blackbox.cpp
+|   |   `-- platform/
+|   |       |-- include/platform/  # abstract interfaces (the 6 services)
+|   |       `-- src/
+|   |           |-- common/        # composed helpers, if any
+|   |           |-- stm32/         # stm32 preset only (+ private include/)
+|   |           |-- sim/           # both presets (+ private include/, udp/uart transports)
+|   |           `-- replay/        # desktop preset
+|   |-- {drone_firmware,drone_sim,drone_replay,hub}/
+|   `-- tests/{unit,golden,scenarios}/
 |-- tools/
 |-- sim-godot/
 |-- esp32-bridge/
-|-- tests/{unit,scenarios}/
-`-- logs/                          # gitignored
+`-- logs/{blackbox,streams,batch}/ # gitignored
 ```
 
 CMake logic: `platform` publishes an INTERFACE target (headers) that
@@ -315,24 +318,24 @@ more.
      `platform.hpp` does NOT exist (interfaces belong to platform),
      `flight_core.hpp/.cpp` with a `FlightCore` class whose `step()` does
      something trivial but observable (counter, copy).
-   - `platform/include/platform/`: the 6 abstract interfaces of section 3.2
+   - `software/components/platform/include/platform/`: the 6 abstract interfaces of section 3.2
      (pure virtual methods, virtual destructors, no logic).
-   - `platform/src/sim/`: stub implementation of
+   - `software/components/platform/src/sim/`: stub implementation of
      SensorSource/MotorSink/TelemetrySender/Clock running a loop without
      network for now (frames generated internally at a fixed rate) - just
      enough to prove the composition.
-   - `apps/drone_sim/`: a main with an explicit composition root (services
+   - `software/drone_sim/`: a main with an explicit composition root (services
      built, injected into FlightCore, waitFrame -> step -> push loop) that
      runs, prints a sign of life and exits cleanly (iteration count as an
      argument, reasonable default).
-   - `apps/firmware/`: a minimal stm32 main that compiles and links (empty
+   - `software/drone_firmware/`: a minimal stm32 main that compiles and links (empty
      loop + a platform_stm32 stub reduced to the strict minimum needed to
      link; NO real drivers).
-   - `tests/unit/`: one real test (framework: Catch2 or GoogleTest via
+   - `software/tests/unit/`: one real test (framework: Catch2 or GoogleTest via
      FetchContent) testing something real even if trivial (e.g.
      FlightCore::step increments its counter).
 2. Root `CMakeLists.txt` + one per module, `CMakePresets.json` (desktop,
-   desktop-san, stm32), `cmake/toolchain-arm-none-eabi.cmake`. The per-preset
+   desktop-san, stm32), `software/cmake/toolchain-arm-none-eabi.cmake`. The per-preset
    visibility logic of section 4. For the stm32 preset at milestone 0:
    generic Cortex-M4F compilation
    (`-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard`), a minimal F405
@@ -355,7 +358,7 @@ more.
 - Same for `desktop-san` (tests pass under sanitizers).
 - `cmake --preset stm32 && cmake --build --preset stm32`: produces a
   firmware.elf.
-- `./build/desktop/apps/drone_sim/drone_sim` runs, prints its sign of life,
+- `./software/build/desktop/drone_sim/drone_sim` runs, prints its sign of life,
   exit code 0.
 - clang-format and clang-tidy pass on all delivered code.
 - The CI workflows are syntactically valid and reproduce exactly these

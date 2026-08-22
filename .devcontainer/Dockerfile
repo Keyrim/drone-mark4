@@ -134,7 +134,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
-# Layer 6 - Node.js + pnpm for the hub web pages (apps/hub/pages)
+# Layer 6 - Node.js + pnpm for the hub web pages (software/hub/pages)
 #   Official tarball into /usr/local, pnpm pinned through corepack. The
 #   corepack store lives in a world-readable location so the same install
 #   serves both the dev user and the root user CI jobs run as.

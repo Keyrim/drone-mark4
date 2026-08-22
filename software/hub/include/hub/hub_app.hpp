@@ -89,7 +89,7 @@ namespace mark4
 
         /// Directory the pages are read from when nothing else is asked for,
         /// relative to the source tree root.
-        static constexpr const char *DEFAULT_PAGES_DIR = "apps/hub/pages/dist";
+        static constexpr const char *DEFAULT_PAGES_DIR = "software/hub/pages/dist";
 
         /// @param config settings of this run
         explicit HubApp(Config config);

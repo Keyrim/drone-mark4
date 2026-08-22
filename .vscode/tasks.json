@@ -97,7 +97,7 @@
             "command": "python3",
             "args": [
                 "${workspaceFolder}/scripts/build_app.py",
-                "firmware"
+                "drone_firmware"
             ],
             "problemMatcher": [
                 "$gcc"
@@ -138,7 +138,7 @@
                 "drone_sim",
                 "hub",
                 "drone_replay",
-                "firmware",
+                "drone_firmware",
                 "tests",
                 "tests_san"
             ],

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build one or more apps by name.
 
-An app is a (cmake preset, cmake target) pair declared in apps.json at the
-repo root: naming the app is enough, the preset comes with it. The preset is
+An app is a (cmake preset, cmake target) pair declared in software/apps.json:
+naming the app is enough, the preset comes with it. The preset is
 configured first when its build directory does not exist yet, then the
 target is built. Several names build sequentially, first failure stops.
 
@@ -17,21 +17,22 @@ import subprocess
 import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SOFTWARE_DIR = os.path.join(REPO_ROOT, "software")
 
 
 def load_apps() -> dict:
-    with open(os.path.join(REPO_ROOT, "apps.json"), encoding="utf-8") as file:
+    with open(os.path.join(SOFTWARE_DIR, "apps.json"), encoding="utf-8") as file:
         return {app["name"]: app for app in json.load(file)["apps"]}
 
 
 def build(app: dict) -> int:
     preset = app["cmakePreset"]
-    if not os.path.isfile(os.path.join(REPO_ROOT, "build", preset, "CMakeCache.txt")):
-        code = subprocess.call(["cmake", "--preset", preset], cwd=REPO_ROOT)
+    if not os.path.isfile(os.path.join(SOFTWARE_DIR, "build", preset, "CMakeCache.txt")):
+        code = subprocess.call(["cmake", "--preset", preset], cwd=SOFTWARE_DIR)
         if code != 0:
             return code
     return subprocess.call(
-        ["cmake", "--build", "--preset", preset, "--target", app["target"]], cwd=REPO_ROOT
+        ["cmake", "--build", "--preset", preset, "--target", app["target"]], cwd=SOFTWARE_DIR
     )
 
 

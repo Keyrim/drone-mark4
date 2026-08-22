@@ -8,7 +8,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-build_dir="${1:-${repo_root}/build/stm32}"
+build_dir="${1:-${repo_root}/software/build/stm32}"
 
 if [[ ! -f "${build_dir}/compile_commands.json" ]]; then
     echo "tidy_stm32: no compile database in ${build_dir} (configure the stm32 preset first)" >&2
@@ -23,4 +23,4 @@ done < <(arm-none-eabi-g++ -E -x c++ - -v </dev/null 2>&1 |
     sed '1d;$d;s/^ //')
 
 run-clang-tidy -p "${build_dir}" -quiet "${extra_args[@]}" \
-    "${repo_root}/(apps|flight-core|platform|protocol)/"
+    "${repo_root}/software/"

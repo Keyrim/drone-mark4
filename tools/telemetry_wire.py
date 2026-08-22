@@ -1,7 +1,7 @@
 """Single Python source of the wire protocol: constants and codecs.
 
 This module is pure Python and has no GUI dependency, so it can be imported
-and tested headless. It mirrors protocol/include/protocol/ (version.hpp,
+and tested headless. It mirrors software/components/protocol/include/protocol/ (version.hpp,
 header.hpp, ports.hpp and the packet headers), which are the source of
 truth; every Python tool imports the constants from here and nowhere else.
 The golden packet fixtures in CI catch any drift against the C++ layout.
@@ -190,7 +190,7 @@ for _wire_struct, _wire_size, _name in (
     (TUNING_INFO_STRUCT, TUNING_INFO_PACKET_SIZE, "tuning info"),
 ):
     assert _wire_struct.size == _wire_size, (
-        f"{_name} wire layout out of sync with protocol/include/protocol/"
+        f"{_name} wire layout out of sync with software/components/protocol/include/protocol/"
     )
 
 

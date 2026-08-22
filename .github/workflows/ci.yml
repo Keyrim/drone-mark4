@@ -37,14 +37,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: cmake --preset desktop
+        working-directory: software
       - run: cmake --build --preset desktop
+        working-directory: software
       - run: ctest --preset desktop
+        working-directory: software
       # Golden packets: every hand-written parser must decode the exact
       # bytes the C++ structs produce (the ctest above already regenerates
       # and compares the fixtures on the C++ side).
-      - run: python3 tests/golden/test_golden.py
+      - run: python3 software/tests/golden/test_golden.py
       - run: godot --path sim-godot --headless --import
-      - run: godot --path sim-godot --headless --script res://tests/golden_check.gd -- "$GITHUB_WORKSPACE/tests/golden/fixtures"
+      - run: godot --path sim-godot --headless --script res://tests/golden_check.gd -- "$GITHUB_WORKSPACE/software/tests/golden/fixtures"
       # Cross-language end-to-end: the only check that runs the real physics,
       # the real flight core and the real wire against each other. A golden
       # fixture proves three parsers agree on bytes; this proves a throw
@@ -68,7 +71,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: cmake --preset stm32
+        working-directory: software
       - run: cmake --build --preset stm32
+        working-directory: software
 
   esp32:
     name: esp32 (bridge firmware)
@@ -98,8 +103,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: cmake --preset desktop-san
+        working-directory: software
       - run: cmake --build --preset desktop-san
+        working-directory: software
       - run: ctest --preset desktop-san
+        working-directory: software
 
   pages:
     name: pages (typecheck + build + tests)
@@ -113,7 +121,7 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     defaults:
       run:
-        working-directory: apps/hub/pages
+        working-directory: software/hub/pages
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: pnpm install --frozen-lockfile
@@ -150,6 +158,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: cmake --preset desktop
-      - run: run-clang-tidy -p build/desktop -quiet "$(pwd)/(apps|flight-core|platform|protocol|tests)/"
+        working-directory: software
+      - run: run-clang-tidy -p software/build/desktop -quiet "$(pwd)/software/"
       - run: cmake --preset stm32
+        working-directory: software
       - run: ./scripts/tidy_stm32.sh

@@ -1,4 +1,4 @@
-# platform/src/replay
+# software/components/platform/src/replay
 
 Replay variant of the platform services, desktop preset only. Provides
 `SensorSourceReplay`: reads the records of a `.m4bb` blackbox file and

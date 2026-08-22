@@ -79,7 +79,7 @@ one or two commits with its tests.
   promise; document or fix the WFI race, the clock wrap call-rate
   constraint and the single-instance coupling of `g_ticks` (3.8).
 - Deduplicate `sendTelemetry` between drone_sim and drone_replay into
-  `platform/src/common/` (3.6; the full telemetry publisher move happens
+  `software/components/platform/src/common/` (3.6; the full telemetry publisher move happens
   in phase 1 with 2.6).
 
 ### 0.3 Bench-safety interim guard
@@ -155,7 +155,7 @@ flight-core builds without protocol/.
   sim lockstep, real board, replay); `run_batch.py` becomes a consumer
   of the launcher instead of spawning processes itself.
 - **RC path unification** (3.5, 3.6): an `RcTracker` helper in
-  `platform/src/common/` (decode, timeout fail-safe, frame grafting),
+  `software/components/platform/src/common/` (decode, timeout fail-safe, frame grafting),
   testable on desktop, used by firmware and by a new sim
   `AbsCommandReceiver`. Interactive RC flows hub -> command receiver in
   every composition; the fail-safe path runs in every simulated flight.

@@ -26,13 +26,13 @@ must be edited in lockstep everywhere it appears:
   languages (C++ headers, GDScript parsers, python struct strings). See 4.1.
 - `PROTOCOL_VERSION = 9` is hardcoded in 9 files. See 4.1.
 - The telemetry mirror port is defined as a named constant
-  (`protocol/include/protocol/telemetry.hpp:20`) but recomputed as `+2`
-  arithmetic in `platform/src/sim/telemetry_sender_sim.cpp:88` and in the
+  (`software/components/protocol/include/protocol/telemetry.hpp:20`) but recomputed as `+2`
+  arithmetic in `software/components/platform/src/sim/telemetry_sender_sim.cpp:88` and in the
   port-stride layout of `tools/batch/run_batch.py:50`.
 - The telemetry decimation factor 10 exists in all three apps
-  (`apps/drone_sim/drone_sim_app.cpp:18`,
-  `apps/drone_replay/drone_replay_app.cpp:8`,
-  `apps/firmware/firmware_app.hpp:34`).
+  (`software/drone_sim/drone_sim_app.cpp:18`,
+  `software/drone_replay/drone_replay_app.cpp:8`,
+  `software/drone_firmware/firmware_app.hpp:34`).
 - The dt/gap policy (max step 0.05 s, non-monotonic timestamp handling) is
   implemented three times with three diverging behaviors. See 2.2 and 2.5.
 - The serial framing parser exists once in C++ and twice more in python
@@ -81,10 +81,10 @@ throughout. The problems are in robustness and ownership, not hygiene.
 
 ### 2.1 HIGH: one bad baro frame injects a massive error; the tests mask it
 
-`flight-core/src/estimator/vertical_estimator.cpp:23` clamps pressure to
+`software/components/flight-core/src/estimator/vertical_estimator.cpp:23` clamps pressure to
 `MIN_PRESSURE_PA = 1000.0f` instead of rejecting it. A frame with
 `baroPa = 0.0f` (the default of `SensorFrame`,
-`flight-core/include/flight_core/types.hpp:42`) yields a baro altitude
+`software/components/flight-core/include/flight_core/types.hpp:42`) yields a baro altitude
 near 26 km. With the correction gains at
 `vertical_estimator.cpp:85` (altitude 2.8, velocity 4.0), a single 2 ms
 glitch frame moves the altitude estimate by roughly 145 m and the velocity
@@ -93,7 +93,7 @@ detector release check (`throw_detector.cpp:66`) consumes the same
 poisoned velocity. Every other input has a plausibility gate; the baro has
 none, and an MS5611 over I2C will produce garbage frames eventually.
 
-The test suite hides this: `feed()` in `tests/unit/test_flight_core.cpp:24`
+The test suite hides this: `feed()` in `software/tests/unit/test_flight_core.cpp:24`
 never sets `baroPa`, so every FlightCore integration test flies with a
 permanent 0 Pa baro, self-consistently zeroed at the clamp floor. The most
 likely real sensor fault is not only untested, the suite runs inside it.
@@ -158,8 +158,8 @@ rate means reconciling all three.
 
 ### 2.6 MEDIUM: telemetry packing and Blackbox are composition-layer code
 
-`flight-core/include/flight_core/telemetry.hpp:12` includes
-`protocol/telemetry.hpp` and `flight-core/CMakeLists.txt:21` links
+`software/components/flight-core/include/flight_core/telemetry.hpp:12` includes
+`protocol/telemetry.hpp` and `software/components/flight-core/CMakeLists.txt:21` links
 protocol PUBLIC. The "pure" algorithm library now rebuilds on every wire
 layout change, and the "external processes speak ONLY protocol/" boundary
 has an internal consumer. `packTelemetry` reads only public accessors and
@@ -227,7 +227,7 @@ timestamp handling.
 
 ### 3.1 HIGH: `waitFrame` false means three different things
 
-`platform/include/platform/sensor_source.hpp:18` defines false as
+`software/components/platform/include/platform/sensor_source.hpp:18` defines false as
 "exhausted". The sim implementation returns false on a transient 2 s idle
 (`sensor_source_sim.cpp:27`), and EINTR is folded into "0 bytes" in
 `udp_link.cpp:94`. `drone_sim` treats false as end-of-run
@@ -236,7 +236,7 @@ timestamp handling.
 Same return value, opposite semantics: the interface does not specify
 behavior. Concrete failure: if the simulator never sends a packet,
 drone_sim exits after 2 s with 0 steps and exit code 0
-(`apps/drone_sim/main.cpp` returns 0 unconditionally), while CLAUDE.md
+(`software/drone_sim/main.cpp` returns 0 unconditionally), while CLAUDE.md
 documents exit code 0 as the health signal; a batch run that never
 connected is indistinguishable from success. Needs a tri-state result (or
 timeout policy moved out of the source), and main() should fail on zero
@@ -244,7 +244,7 @@ frames.
 
 ### 3.2 HIGH: I2C bus has no runtime error escalation
 
-`platform/src/stm32/i2c_bus.cpp:75` (`waitEvent`) checks only AF (NACK);
+`software/components/platform/src/stm32/i2c_bus.cpp:75` (`waitEvent`) checks only AF (NACK);
 BERR and ARLO are never tested nor cleared, and `abortTransfer`
 (`i2c_bus.cpp:96`) leaves them latched, so after a line glitch every flag
 wait spins its full timeout. Timeouts are raw loop counts
@@ -259,7 +259,7 @@ with a degraded loop rate and no escalation policy.
 
 ### 3.3 HIGH: no watchdog, no fault handling on target
 
-`platform/src/stm32/startup.c:30`: every exception including HardFault
+`software/components/platform/src/stm32/startup.c:30`: every exception including HardFault
 traps in a bare infinite loop; no IWDG/WWDG anywhere. Any fault or hang
 leaves the board dead until power cycle, and with a future DShot sink the
 motors would hold their last command. Tempered today by `MotorSinkNull`,
@@ -277,17 +277,17 @@ of a validated sensor packet.
 
 ### 3.5 MEDIUM: the RC fail-safe path is never exercised in simulation
 
-`apps/firmware/firmware_app.cpp:110`: packet dispatch, RcCommandPacket
+`software/drone_firmware/firmware_app.cpp:110`: packet dispatch, RcCommandPacket
 decode, timeout fail-safe and frame grafting are app-inline code that
 runs on target only. The sim delivers RC inside SimSensorPacket, so
 AbsCommandReceiver has no sim implementation and the code path that
 guards real flight is bypassed in every simulated flight. Strongest
-candidate for the (currently empty) `platform/src/common/`: an RcTracker
+candidate for the (currently empty) `software/components/platform/src/common/`: an RcTracker
 helper testable on desktop and shared by both compositions. Dispatch is
 also by (size, version) with no type byte (`firmware_app.cpp:118`), one
 packet away from ambiguity.
 
-### 3.6 MEDIUM: `platform/src/common/` is empty while the apps triplicate glue
+### 3.6 MEDIUM: `software/components/platform/src/common/` is empty while the apps triplicate glue
 
 `sendTelemetry()` is byte-identical in `drone_sim_app.cpp:186` and
 `drone_replay_app.cpp:44`; the waitFrame/step/push/telemetry loop skeleton
@@ -329,7 +329,7 @@ Related, system-wide: TelemetryPacket has no source identity (see 4.5).
 
 ### 4.1 HIGH: the wire format is hand-duplicated everywhere, demuxed by size
 
-- TelemetryPacket layout: `protocol/include/protocol/telemetry.hpp`, the
+- TelemetryPacket layout: `software/components/protocol/include/protocol/telemetry.hpp`, the
   flight-core packer, `tools/ground-station/telemetry_wire.py:29` and
   `:35`, a second independent copy in `tools/telemetry/read_serial.py:16`,
   `tools/telemetry/serial_bridge.py:30`, and a hand-computed
@@ -471,9 +471,9 @@ it.
 
 ### 5.2 HIGH: clang-tidy and desktop warnings never see stm32 or firmware
 
-The tidy job configures only the desktop preset; `platform/src/stm32` and
-`apps/firmware` exist only when crosscompiling
-(`platform/CMakeLists.txt:8`, `apps/CMakeLists.txt:1`), so none of the
+The tidy job configures only the desktop preset; `software/components/platform/src/stm32` and
+`software/drone_firmware` exist only when crosscompiling
+(`software/components/platform/CMakeLists.txt:8`, `software/CMakeLists.txt:1`), so none of the
 ~17 register-level driver sources appear in the compile database and
 run-clang-tidy silently skips them. The code most in need of bugprone-*
 checks has zero static analysis; the stm32 CI job only proves it
@@ -489,7 +489,7 @@ silently stop being reproducible. Pin jobs to the sha tag or a digest.
 
 ### 5.4 MEDIUM: Catch2 fetched from the network every run, tag not pinned
 
-`tests/unit/CMakeLists.txt:3` uses FetchContent with GIT_TAG v3.8.1, a
+`software/tests/unit/CMakeLists.txt:3` uses FetchContent with GIT_TAG v3.8.1, a
 movable tag rather than a commit SHA, cloned at configure time in three
 jobs with no cache; a network hiccup fails three unrelated jobs, and a
 force-pushed tag changes what CI builds with no diff in the repo.
@@ -512,8 +512,8 @@ project addendum saying which sections do not apply.
 
 ### 5.7 MEDIUM: CMAKE_CROSSCOMPILING conflates "cross" with "STM32F405"
 
-Mirrored switches in `platform/CMakeLists.txt:8` and
-`apps/CMakeLists.txt:1` must be edited in lockstep, and any second cross
+Mirrored switches in `software/components/platform/CMakeLists.txt:8` and
+`software/CMakeLists.txt:1` must be edited in lockstep, and any second cross
 toolchain (the ESP32 bridge is the obvious candidate) would silently
 build platform_stm32. A DRONE_PLATFORM cache variable set per preset
 names the variant explicitly.
@@ -526,7 +526,7 @@ names the variant explicitly.
   (`toolchain-arm-none-eabi.cmake:19`); a preset setting CMAKE_CXX_FLAGS
   as a cache variable (the desktop-san pattern) would silently drop the
   float ABI.
-- `firmware` does not link drone_strict (`apps/firmware/CMakeLists.txt:6`);
+- `firmware` does not link drone_strict (`software/drone_firmware/CMakeLists.txt:6`);
   it works only because the toolchain duplicates -fno-exceptions, so the
   invariant is encoded in two unrelated places.
 - desktop-san sanitizes C++ only; the first desktop .c file joins the
@@ -588,7 +588,7 @@ Worth saying explicitly, because these are the load-bearing decisions:
    RC port isolation in batch (4.3), a packet type byte plus source ID
    (4.1, 4.5), seed reproducibility (4.2).
 3. Contract cleanups that stop the drift: waitFrame tri-state and nonzero
-   exit on zero frames (3.1), RcTracker in platform/src/common shared by
+   exit on zero frames (3.1), RcTracker in software/components/platform/src/common shared by
    sim and firmware (3.5, 3.6), blackbox record into protocol/ (4.4),
    telemetry packer out of flight-core (2.6).
 4. CI honesty: HeaderFilterRegex (5.1), tidy over the stm32 compile

@@ -31,10 +31,19 @@ add_library(drone_strict INTERFACE)
 target_compile_options(drone_strict INTERFACE
     $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti>)
 
-add_subdirectory(protocol)
-add_subdirectory(flight-core)
-add_subdirectory(platform)
-add_subdirectory(apps)
+add_subdirectory(components/protocol)
+add_subdirectory(components/flight-core)
+add_subdirectory(components/platform)
+
+if(DRONE_PLATFORM STREQUAL "stm32")
+    add_subdirectory(drone_firmware)
+elseif(DRONE_PLATFORM STREQUAL "desktop")
+    add_subdirectory(drone_sim)
+    add_subdirectory(drone_replay)
+    add_subdirectory(hub)
+else()
+    message(FATAL_ERROR "unknown DRONE_PLATFORM '${DRONE_PLATFORM}'")
+endif()
 
 if(DRONE_BUILD_TESTS)
     enable_testing()

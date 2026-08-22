@@ -119,7 +119,7 @@ namespace mark4
                 return candidate;
             }
         }
-        return std::string("build/desktop/apps/") + appName + "/" + appName;
+        return std::string("software/build/desktop/") + appName + "/" + appName;
     }
 
     std::string defaultProjectPath(const char *relative)
@@ -127,7 +127,7 @@ namespace mark4
         const std::string directory = executableDirectory();
         if (!directory.empty())
         {
-            // build/<preset>/apps/hub is four levels below the source root.
+            // software/build/<preset>/hub is four levels below the repo root.
             const std::string candidate = directory + "/../../../../" + relative;
             std::error_code failure;
             if (std::filesystem::exists(candidate, failure))

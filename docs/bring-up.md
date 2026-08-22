@@ -17,7 +17,7 @@ see `Flight_Controller/Board/Docs/Flight_Controller_Schematic.md`).
 - LDO 5V -> 3V3 (MCP1826). Status LEDs: LED1 = PC13, LED2 = PC14.
   **LED2 is dead on this unit** (PC14 measures 3.3 V on IDR when driven,
   the LED never lights: dead, reversed or never fitted): all the LED
-  signalling goes through LED1 (see `apps/firmware/status_leds.hpp`).
+  signalling goes through LED1 (see `software/drone_firmware/status_leds.hpp`).
 - `Prog` header, 6 pins: `3V3, SWCLK, GND, SWDIO, NRST, SWO` - the same
   pinout as the CN2 connector of ST Discovery boards, so the probe cable
   is 1:1.
@@ -106,11 +106,11 @@ cmake --preset stm32 && cmake --build --preset stm32
 
 # Flash (J-Link commander)
 JLinkExe -device STM32F405RG -if SWD -speed 4000 -autoconnect 1
-# then: loadfile build/stm32/apps/firmware/firmware.elf, r, g
+# then: loadfile software/build/stm32/drone_firmware/drone_firmware.elf, r, g
 
 # Or: gdb server + gdb
 JLinkGDBServer -device STM32F405RG -if SWD -speed 4000 &
-gdb-multiarch build/stm32/apps/firmware/firmware.elf \
+gdb-multiarch software/build/stm32/drone_firmware/drone_firmware.elf \
     -ex "target extended-remote localhost:2331"
 
 # RTT console (printf-style logs, no UART needed)

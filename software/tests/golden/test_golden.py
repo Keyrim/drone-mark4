@@ -7,7 +7,7 @@ exact field values the C++ side wrote. A drift between the python struct
 strings and the C++ layout fails here instead of becoming a silent 100%
 packet drop.
 
-Run from anywhere: python3 tests/golden/test_golden.py
+Run from anywhere: python3 software/tests/golden/test_golden.py
 """
 
 import os
@@ -15,7 +15,7 @@ import struct
 import sys
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "tools"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "tools"))
 import telemetry_wire as tw
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")

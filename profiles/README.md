@@ -23,7 +23,7 @@ file name, so the accepted set is deliberately narrow).
 ```
 
 `values` maps a parameter id to its value. The ids are the ones in
-`flight-core/include/flight_core/tuning_table.hpp`, written as decimal
+`software/components/flight-core/include/flight_core/tuning_table.hpp`, written as decimal
 strings because JSON object keys are strings. An id that no longer exists is
 answered with `unknownId` when pushed, and costs nothing else.
 
@@ -40,7 +40,7 @@ cat profiles/bench.json          # one profile, as JSON
 ```
 
 Over the websocket: `profileList`, `profileSave`, `profileLoad` and
-`profilePush`. See `apps/hub/README.md`.
+`profilePush`. See `software/hub/README.md`.
 
 No profile ships with the repo: what belongs here is what a real bench
 session measured, and a made-up example would only invite someone to fly it.

@@ -18,7 +18,7 @@ Nothing else crosses the boundary.
 2. Start the flight process in the container, listening on UDP 47800:
 
    ```sh
-   ./build/desktop/apps/drone_sim/drone_sim 2000000
+   ./software/build/desktop/drone_sim/drone_sim 2000000
    ```
 
 3. On a fresh clone, import the project once so Godot generates its cache
@@ -133,7 +133,7 @@ once at startup, so the same seed replays the same sensor stream.
 
 ## UDP contract
 
-The layout is defined by `protocol/include/protocol/sim_link.hpp`, which is
+The layout is defined by `software/components/protocol/include/protocol/sim_link.hpp`, which is
 the source of truth; `scripts/protocol.gd` is the single GDScript copy of
 its constants and `scripts/sim_link.gd` packs with them. Both packets are
 packed, little endian, version byte then type byte:
@@ -181,13 +181,13 @@ In the container:
 
 ```sh
 cmake --build --preset desktop
-./build/desktop/apps/drone_sim/drone_sim 2000000
+./software/build/desktop/drone_sim/drone_sim 2000000
 ```
 
 In another terminal, the telemetry viewer:
 
 ```sh
-./build/desktop/apps/hub/hub
+./software/build/desktop/hub/hub
 ```
 
 then open `http://127.0.0.1:47810` for the plots.

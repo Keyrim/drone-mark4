@@ -11,7 +11,7 @@ extends SceneTree
 ##
 ## Run from the repo root:
 ##   godot --path sim-godot --headless --script res://tests/golden_check.gd \
-##     -- <absolute path of tests/golden/fixtures>
+##     -- <absolute path of software/tests/golden/fixtures>
 
 var failures: int = 0
 

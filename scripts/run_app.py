@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Build one app by name, then run it.
 
-The app and its run command line come from apps.json at the repo root; the
+The app and its run command line come from software/apps.json; the
 build goes through build_app.py so run and build agree on the (preset,
 target) pair. The run command replaces this process, so Ctrl-C reaches the
-app directly. An app with no "run" field (firmware, drone_replay) is
+app directly. An app with no "run" field (drone_firmware, drone_replay) is
 launched from its debug configuration instead.
 
     scripts/run_app.py hub
@@ -24,7 +24,7 @@ def main() -> int:
     name = sys.argv[1]
     apps = load_apps()
     if name not in apps:
-        print(f"run_app: no app named '{name}' in apps.json", file=sys.stderr)
+        print(f"run_app: no app named '{name}' in software/apps.json", file=sys.stderr)
         return 1
     app = apps[name]
     if "run" not in app:
