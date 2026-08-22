@@ -57,6 +57,14 @@ void Reset_Handler(void)
     __asm volatile("dsb" ::: "memory");
     __asm volatile("isb" ::: "memory");
 
+    /* PRIMASK next: a cold reset arrives with interrupts enabled, but the
+     * bootloader masks them (cpsid i) for its own jump sequence and a
+     * handed-over image must not inherit that. Without this, every
+     * interrupt pends forever, WFI wakes and nothing runs the handlers -
+     * the flight loop spins on a tick counter no one increments. Safe this
+     * early: the NVIC has nothing enabled until the services init. */
+    __asm volatile("cpsie i" ::: "memory");
+
     /* FPU: enable CP10/CP11 before the first float instruction
      * (-mfloat-abi=hard). */
     volatile uint32_t *const cpacr = (volatile uint32_t *)0xE000ED88u;

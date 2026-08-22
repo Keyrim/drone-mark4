@@ -116,8 +116,17 @@ require_file() {
 # Builds the J-Link command file for the chosen subcommand and runs it. The
 # script is printed before it runs: on a board this is the last chance to
 # notice that an address is wrong.
-script_file="$(mktemp -t flash_stm32.XXXXXX.jlink)"
-trap 'rm -f "${script_file}"' EXIT
+stage_dir="$(mktemp -d -t flash_stm32.XXXXXX)"
+script_file="${stage_dir}/commands.jlink"
+trap 'rm -rf "${stage_dir}"' EXIT
+
+# JLinkExe decides the file format from the extension and rejects ".img",
+# so slot images are staged as ".bin" copies before loadbin sees them.
+stage_bin() {
+    local staged="${stage_dir}/$(basename "${1%.img}").bin"
+    cp "$1" "${staged}"
+    echo "${staged}"
+}
 
 {
     echo "si ${INTERFACE}"
@@ -136,7 +145,7 @@ trap 'rm -f "${script_file}"' EXIT
             # stale slot B is harmless because the metadata says slot A.
             echo "erase ${BOOT_ADDRESS} ${META_END}"
             echo "loadbin ${boot_bin} ${BOOT_ADDRESS}"
-            echo "loadbin ${slot_a_img} ${SLOT_A_ADDRESS}"
+            echo "loadbin $(stage_bin "${slot_a_img}") ${SLOT_A_ADDRESS}"
             ;;
         boot)
             require_file "${boot_bin}"
@@ -144,11 +153,11 @@ trap 'rm -f "${script_file}"' EXIT
             ;;
         slot-a)
             require_file "${slot_a_img}"
-            echo "loadbin ${slot_a_img} ${SLOT_A_ADDRESS}"
+            echo "loadbin $(stage_bin "${slot_a_img}") ${SLOT_A_ADDRESS}"
             ;;
         slot-b)
             require_file "${slot_b_img}"
-            echo "loadbin ${slot_b_img} ${SLOT_B_ADDRESS}"
+            echo "loadbin $(stage_bin "${slot_b_img}") ${SLOT_B_ADDRESS}"
             ;;
         meta-wipe)
             echo "erase ${META_START} ${META_END}"
