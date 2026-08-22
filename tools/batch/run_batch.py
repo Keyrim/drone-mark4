@@ -615,7 +615,7 @@ def main() -> int:
     parser.add_argument("--godot", default="godot", help="godot 4 binary")
     parser.add_argument(
         "--drone-sim",
-        default=os.path.join(REPO_ROOT, "build", "desktop", "apps", "drone_sim", "drone_sim"),
+        default=os.path.join(REPO_ROOT, "software", "build", "desktop", "drone_sim", "drone_sim"),
         help="drone_sim binary",
     )
     parser.add_argument("--time-scale", type=float, default=20.0, help="sim speed factor")
