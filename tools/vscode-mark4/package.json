@@ -3,7 +3,7 @@
     "displayName": "Mark4",
     "description": "Bench tooling: build and run the apps, drive the bench, dock the hub pages in the editor.",
     "publisher": "tmagne",
-    "version": "0.1.6",
+    "version": "0.1.7",
     "private": true,
     "type": "module",
     "packageManager": "pnpm@11.21.0",

@@ -1,6 +1,6 @@
 // One tree item per apps.json entry. Build is always offered, run only when
-// the entry declares a run command, debug only when launch.json has a
-// configuration named "<app> ..." (the repo convention).
+// the entry declares a run command, debug only when the workspace has a
+// launch configuration named "<app> ..." (the repo convention).
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -60,7 +60,7 @@ export class AppsProvider implements vscode.TreeDataProvider<AppItem> {
         }
         let apps: AppEntry[];
         try {
-            apps = JSON.parse(fs.readFileSync(path.join(root, "apps.json"), "utf-8")).apps;
+            apps = JSON.parse(fs.readFileSync(path.join(root, "software", "apps.json"), "utf-8")).apps;
         } catch {
             return [];
         }

@@ -5,7 +5,7 @@ with two views and opens the hub pages inside the editor:
 
 - Apps: one line per apps.json entry, with inline build / run / debug. Build
   and run shell out to `scripts/build_app.py` / `scripts/run_app.py` (the
-  single build implementation); debug starts the launch.json configuration
+  single build implementation); debug starts the workspace launch configuration
   named after the app.
 - Bench: hub state (an HTTP ping on its URL), godot sim state, and the two
   pages. `Mark4: Bench Session` (rocket icon) builds and starts the hub,
