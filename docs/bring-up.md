@@ -12,7 +12,7 @@ Custom board (schematics and docs: https://github.com/Keyrim/drone-stm32f4-mark1
 see `Flight_Controller/Board/Docs/Flight_Controller_Schematic.md`).
 
 - **STM32F405RGT6**, 8 MHz HSE crystal - the exact chip the `stm32`
-  preset, `startup.c` and `stm32f405.ld` already target.
+  preset, `startup.c` and `stm32f405_image.ld.in` already target.
 - **BOOT0 tied to GND**: no USB, no DFU. Flashing goes through SWD only.
 - LDO 5V -> 3V3 (MCP1826). Status LEDs: LED1 = PC13, LED2 = PC14.
   **LED2 is dead on this unit** (PC14 measures 3.3 V on IDR when driven,

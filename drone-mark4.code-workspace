@@ -78,7 +78,7 @@
                 "servertype": "jlink",
                 "device": "STM32F405RG",
                 "interface": "swd",
-                "executable": "${workspaceFolder:software}/build/stm32/drone_firmware/drone_firmware.elf",
+                "executable": "${workspaceFolder:software}/build/stm32/drone_firmware/drone_firmware_a.elf",
                 "cwd": "${workspaceFolder:drone-mark4}",
                 "preLaunchTask": "build firmware",
                 "runToEntryPoint": "main"
@@ -90,7 +90,7 @@
                 "servertype": "jlink",
                 "device": "STM32F405RG",
                 "interface": "swd",
-                "executable": "${workspaceFolder:software}/build/stm32/drone_firmware/drone_firmware.elf",
+                "executable": "${workspaceFolder:software}/build/stm32/drone_firmware/drone_firmware_a.elf",
                 "cwd": "${workspaceFolder:drone-mark4}"
             },
             {
