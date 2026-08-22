@@ -324,8 +324,10 @@ namespace
         packet.version = mark4::PROTOCOL_VERSION;
         packet.type = static_cast<std::uint8_t>(mark4::PacketType::OTA_STATUS);
         packet.mcuId = mark4::OTA_MCU_STM32F405;
-        // A trial boot of slot B, the previous image still valid in A.
+        // A trial boot of slot B, the previous image still valid in A and
+        // still the active one until the trial confirms.
         packet.runningSlot = mark4::OTA_SLOT_B;
+        packet.activeSlot = mark4::OTA_SLOT_A;
         packet.slotState = {mark4::OTA_SLOT_VALID, mark4::OTA_SLOT_TESTING};
         packet.updaterBusy = 0U;
         packet.versionMajor = 1U;

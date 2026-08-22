@@ -233,7 +233,11 @@ def build_bundle(name: str, images: list, git_hash: str) -> bytes:
         "gitHash": git_hash,
         "protocolVersion": read_cpp_constant(VERSION_HPP, "PROTOCOL_VERSION"),
         "images": [
-            {"slot": slot, "size": len(image), "crc32": u32(image, OFF_IMAGE_CRC)}
+            # The manifest crc32 covers the WHOLE image, header included:
+            # it is the value OtaBeginPacket announces and the value the
+            # board checks the full slot against. The header's own
+            # imageCrc field covers only the bytes after the header.
+            {"slot": slot, "size": len(image), "crc32": crc32_mpeg2(image)}
             for slot, image in enumerate(images)
         ],
     }
@@ -278,7 +282,7 @@ def verify_bundle(path: str) -> int:
     for slot, image in enumerate(images):
         ok = verify_image(image, slot) and ok
         declared = manifest["images"][slot]
-        if declared["size"] != len(image) or declared["crc32"] != u32(image, OFF_IMAGE_CRC):
+        if declared["size"] != len(image) or declared["crc32"] != crc32_mpeg2(image):
             print(f"make_ota: manifest disagrees with the slot {SLOT_NAMES[slot]} image",
                   file=sys.stderr)
             ok = False

@@ -269,6 +269,7 @@ class GoldenOta(unittest.TestCase):
         self.assertIsNotNone(status)
         self.assertEqual(status.mcu_id, tw.OTA_MCU_STM32F405)
         self.assertEqual(status.running_slot, tw.OTA_SLOT_B)
+        self.assertEqual(status.active_slot, tw.OTA_SLOT_A)
         self.assertEqual(status.slot_state, (tw.OTA_SLOT_VALID, tw.OTA_SLOT_TESTING))
         self.assertEqual(status.updater_busy, 0)
         self.assertEqual(status.version, (1, 2, 3))

@@ -64,6 +64,7 @@ namespace mark4
         std::uint64_t seenAtUs = 0U;           ///< when the last one arrived [us]
         std::uint8_t mcuId = 0U;               ///< OTA_MCU_* of the board
         std::uint8_t runningSlot = OTA_SLOT_A; ///< slot the running firmware executes from
+        std::uint8_t activeSlot = OTA_SLOT_A;  ///< slot the boot metadata prefers
         std::array<std::uint8_t, OTA_SLOT_COUNT> slotState = {OTA_SLOT_EMPTY,
                                                               OTA_SLOT_EMPTY}; ///< OTA_SLOT_*
         bool updaterBusy = false;        ///< a transfer session is open on the board

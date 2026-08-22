@@ -298,6 +298,10 @@ namespace mark4
             std::memcpy(&packet.slotState,
                         metaRead ? meta.slotState.data() : unknown.data(),
                         OTA_SLOT_COUNT);
+            // The active slot differs from the running one during a trial
+            // boot and after a revert; an unreadable store falls back to
+            // the one fact that needs no metadata.
+            packet.activeSlot = metaRead ? meta.activeSlot : packet.runningSlot;
 
             // The version fields are compile-time facts of the running
             // image, so they are reported whether or not the packaging step

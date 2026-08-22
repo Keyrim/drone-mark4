@@ -86,10 +86,12 @@ namespace mark4
     /// runningSlot and drives auto-confirm from the version fields.
     struct OtaStatusPacket
     {
-        std::uint8_t version;                               ///< = PROTOCOL_VERSION
-        std::uint8_t type;                                  ///< = PacketType::OTA_STATUS
-        std::uint8_t mcuId;                                 ///< OTA_MCU_* of this board
-        std::uint8_t runningSlot;                           ///< slot this firmware executes from
+        std::uint8_t version;     ///< = PROTOCOL_VERSION
+        std::uint8_t type;        ///< = PacketType::OTA_STATUS
+        std::uint8_t mcuId;       ///< OTA_MCU_* of this board
+        std::uint8_t runningSlot; ///< slot this firmware executes from
+        std::uint8_t activeSlot;  ///< slot the boot metadata prefers; differs from
+                                  ///< runningSlot during a trial boot and after a revert
         std::array<std::uint8_t, OTA_SLOT_COUNT> slotState; ///< OTA_SLOT_* per slot
         std::uint8_t updaterBusy;                           ///< 1 while a transfer session is open
         std::uint8_t versionMajor;                          ///< running firmware version
@@ -187,10 +189,10 @@ namespace mark4
     /// version (1) + type (1).
     inline constexpr std::size_t OTA_STATUS_REQUEST_PACKET_SIZE = 2U;
 
-    /// version (1) + type (1) + mcu (1) + running slot (1) + slot states
-    /// (2) + busy (1) + version (3) + git hash (8) + slot size (4) + max
-    /// chunk (2).
-    inline constexpr std::size_t OTA_STATUS_PACKET_SIZE = 24U;
+    /// version (1) + type (1) + mcu (1) + running slot (1) + active slot
+    /// (1) + slot states (2) + busy (1) + version (3) + git hash (8) +
+    /// slot size (4) + max chunk (2).
+    inline constexpr std::size_t OTA_STATUS_PACKET_SIZE = 25U;
 
     /// version (1) + type (1) + session (4) + image size (4) + crc (4).
     inline constexpr std::size_t OTA_BEGIN_PACKET_SIZE = 14U;
@@ -243,12 +245,13 @@ namespace mark4
     // NOLINTBEGIN(readability-magic-numbers)
     static_assert(offsetof(OtaStatusPacket, mcuId) == 2U);
     static_assert(offsetof(OtaStatusPacket, runningSlot) == 3U);
-    static_assert(offsetof(OtaStatusPacket, slotState) == 4U);
-    static_assert(offsetof(OtaStatusPacket, updaterBusy) == 6U);
-    static_assert(offsetof(OtaStatusPacket, versionMajor) == 7U);
-    static_assert(offsetof(OtaStatusPacket, gitHash) == 10U);
-    static_assert(offsetof(OtaStatusPacket, slotSize) == 18U);
-    static_assert(offsetof(OtaStatusPacket, maxChunkData) == 22U);
+    static_assert(offsetof(OtaStatusPacket, activeSlot) == 4U);
+    static_assert(offsetof(OtaStatusPacket, slotState) == 5U);
+    static_assert(offsetof(OtaStatusPacket, updaterBusy) == 7U);
+    static_assert(offsetof(OtaStatusPacket, versionMajor) == 8U);
+    static_assert(offsetof(OtaStatusPacket, gitHash) == 11U);
+    static_assert(offsetof(OtaStatusPacket, slotSize) == 19U);
+    static_assert(offsetof(OtaStatusPacket, maxChunkData) == 23U);
     static_assert(offsetof(OtaBeginPacket, session) == 2U);
     static_assert(offsetof(OtaBeginPacket, imageSize) == 6U);
     static_assert(offsetof(OtaBeginPacket, imageCrc) == 10U);

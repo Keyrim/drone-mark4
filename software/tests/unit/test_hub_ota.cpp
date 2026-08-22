@@ -239,6 +239,11 @@ namespace
         packet.type = static_cast<std::uint8_t>(PacketType::OTA_STATUS);
         packet.mcuId = OTA_MCU_STM32F405;
         packet.runningSlot = runningSlot;
+        // During a trial boot the metadata still prefers the other slot;
+        // everywhere else active and running coincide.
+        packet.activeSlot = (runningState == OTA_SLOT_TESTING)
+                                ? static_cast<std::uint8_t>(1U - runningSlot)
+                                : runningSlot;
         std::array<std::uint8_t, OTA_SLOT_COUNT> states = {OTA_SLOT_EMPTY, OTA_SLOT_EMPTY};
         states[runningSlot] = runningState;
         std::memcpy(&packet.slotState, states.data(), states.size());
@@ -400,7 +405,10 @@ namespace
                 {
                     OtaChunkPacket packet{};
                     std::memcpy(&packet, entry.data(), sizeof(packet));
-                    offsets.push_back(packet.offset);
+                    // Copy the packed field out before push_back binds a
+                    // reference to it; the member itself is misaligned.
+                    const std::uint32_t offset = packet.offset;
+                    offsets.push_back(offset);
                 }
             }
             return offsets;

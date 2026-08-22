@@ -707,6 +707,7 @@ namespace mark4
         m_board.seenAtUs = nowUs;
         m_board.mcuId = packet.mcuId;
         m_board.runningSlot = packet.runningSlot;
+        m_board.activeSlot = packet.activeSlot;
         m_board.slotState = readPackedField(&packet.slotState);
         m_board.updaterBusy = packet.updaterBusy != 0U;
         m_board.versionMajor = packet.versionMajor;

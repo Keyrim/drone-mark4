@@ -226,10 +226,11 @@ OTA_GIT_HASH_SIZE = 8
 
 OTA_STATUS_REQUEST_STRUCT = struct.Struct("<BB")
 OTA_STATUS_REQUEST_PACKET_SIZE = 2
-# version, type, mcu id, running slot, slot state[2], updater busy,
-# version major/minor/patch, git hash, slot size, max chunk data.
-OTA_STATUS_STRUCT = struct.Struct("<BBBB2BBBBB8sIH")
-OTA_STATUS_PACKET_SIZE = 24
+# version, type, mcu id, running slot, active slot, slot state[2],
+# updater busy, version major/minor/patch, git hash, slot size, max chunk
+# data.
+OTA_STATUS_STRUCT = struct.Struct("<BBBBB2BBBBB8sIH")
+OTA_STATUS_PACKET_SIZE = 25
 # version, type, session, image size, image crc.
 OTA_BEGIN_STRUCT = struct.Struct("<BBIII")
 OTA_BEGIN_PACKET_SIZE = 14
@@ -471,6 +472,7 @@ class OtaStatus:
 
     mcu_id: int
     running_slot: int
+    active_slot: int
     slot_state: Tuple[int, int]
     updater_busy: int
     version: Tuple[int, int, int]
@@ -762,7 +764,7 @@ def encode_ota_status(status: OtaStatus) -> bytes:
     """Pack one OtaStatusPacket; the board side of the wire, for fake boards."""
     return OTA_STATUS_STRUCT.pack(
         PROTOCOL_VERSION, TYPE_OTA_STATUS,
-        status.mcu_id, status.running_slot, *status.slot_state,
+        status.mcu_id, status.running_slot, status.active_slot, *status.slot_state,
         status.updater_busy, *status.version,
         status.git_hash.ljust(OTA_GIT_HASH_SIZE, b"\x00"),
         status.slot_size, status.max_chunk_data,
@@ -830,12 +832,13 @@ def decode_ota_status(datagram: bytes) -> Optional[OtaStatus]:
     return OtaStatus(
         mcu_id=fields[2],
         running_slot=fields[3],
-        slot_state=fields[4:6],
-        updater_busy=fields[6],
-        version=fields[7:10],
-        git_hash=fields[10],
-        slot_size=fields[11],
-        max_chunk_data=fields[12],
+        active_slot=fields[4],
+        slot_state=fields[5:7],
+        updater_busy=fields[7],
+        version=fields[8:11],
+        git_hash=fields[11],
+        slot_size=fields[12],
+        max_chunk_data=fields[13],
     )
 
 

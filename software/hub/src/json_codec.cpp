@@ -841,6 +841,7 @@ namespace mark4
         boardJson["seen"] = board.seen;
         boardJson["mcuId"] = board.mcuId;
         boardJson["runningSlot"] = board.runningSlot;
+        boardJson["activeSlot"] = board.activeSlot;
         Json slotStates = Json::array();
         Json slotStateNames = Json::array();
         for (const std::uint8_t state : board.slotState)
