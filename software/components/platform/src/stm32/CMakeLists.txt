@@ -1,5 +1,6 @@
 # Target variant: startup + vector table, board clock/timebase/LEDs, RTT
-# debug console and the I2C master the sensor drivers will sit on.
+# debug console, the I2C master the sensor drivers sit on, and the internal
+# flash driver the update system stores firmware slots in.
 add_library(platform_stm32 STATIC
     startup.c
     board.cpp
@@ -11,11 +12,16 @@ add_library(platform_stm32 STATIC
     telemetry_sender_stm32.cpp
     command_receiver_stm32.cpp
     clock_stm32.cpp
-    sensor_source_stm32.cpp)
+    sensor_source_stm32.cpp
+    internal_flash.cpp
+    ota_meta_flash.cpp
+    firmware_store_stm32.cpp)
 target_include_directories(platform_stm32 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # protocol is public: command_receiver_stm32.hpp exposes the framing parser.
+# platform_common is public too: the firmware store is an OtaMetaLog over a
+# flash backend, and drone_boot reuses the same log.
 target_link_libraries(platform_stm32
-    PUBLIC platform protocol
+    PUBLIC platform platform_common protocol
     PRIVATE drone_warnings drone_strict)
 
 # The linker script describes the chip: it belongs to the stm32 variant and

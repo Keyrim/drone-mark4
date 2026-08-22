@@ -154,6 +154,15 @@ namespace mark4
         GPIOC->BSRR = on ? (1U << LED2_PIN) : (1U << (LED2_PIN + 16U));
     }
 
+    void setVectorTable(std::uint32_t address)
+    {
+        *SCB_VTOR = address;
+        // The core may already have prefetched past this point; the barriers
+        // make the new table current before any exception can be taken.
+        __asm volatile("dsb" ::: "memory");
+        __asm volatile("isb" ::: "memory");
+    }
+
     void systemReset()
     {
         constexpr std::uint32_t AIRCR_VECTKEY = 0x05FAU << 16U;
