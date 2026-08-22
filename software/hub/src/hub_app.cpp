@@ -100,6 +100,21 @@ namespace mark4
             static_cast<void>(m_serial.open(m_config.serialDevice, m_config.serialBaud));
         }
 
+        if (m_config.otaBundlePath.empty())
+        {
+            // The bundle is a build artifact: resolving its path must not
+            // depend on the build having happened yet.
+            m_config.otaBundlePath = defaultProjectPath(DEFAULT_OTA_BUNDLE, false);
+        }
+        m_ota.setDefaultBundlePath(m_config.otaBundlePath);
+        // The update client owns no socket: it sends through the same routing
+        // as every other command, so an OTA packet reaches the board exactly
+        // like an RC frame does, framed on the serial link.
+        m_ota.setSink([this](const std::uint8_t *data, std::size_t size, std::string &errorOut) {
+            return sendToTarget(m_otaTarget, data, size, errorOut);
+        });
+        m_ota.setOnChange([this]() { broadcastOta(); });
+
         if (m_config.recordOnStart && !m_recorder.startCsvSession())
         {
             static_cast<void>(std::fprintf(
@@ -124,7 +139,10 @@ namespace mark4
                 entry.events = POLLIN;
                 fds.push_back(entry);
             }
-            static_cast<void>(::poll(fds.data(), fds.size(), POLL_TIMEOUT_MS));
+            // A transfer is paced from this loop, so the loop has to come
+            // round on the pacing scale rather than on the idle one.
+            static_cast<void>(::poll(
+                fds.data(), fds.size(), m_ota.busy() ? OTA_POLL_TIMEOUT_MS : POLL_TIMEOUT_MS));
 
             m_udp.drain([this](std::uint16_t port,
                                const UdpTransport::Source &from,
@@ -180,13 +198,19 @@ namespace mark4
         {
             onSimRawPacket(data);
         }
-        else
+        else if (onTuningAnswer(data, size, StreamSource::DRONE_SIM))
         {
             // Tuning answers ride the telemetry stream: they carry no source
             // byte of their own, so the arrival path is what names them. A
             // datagram landing on a UDP telemetry port came from the
             // simulator side, never from the board.
-            static_cast<void>(onTuningAnswer(data, size, StreamSource::DRONE_SIM));
+        }
+        else
+        {
+            // Updater answers are one more packet type on whatever link the
+            // process being updated is reachable on: a desktop flight process
+            // answers over UDP, the board over the framed serial link.
+            static_cast<void>(m_ota.onPacket(data, size, nowUs));
         }
     }
 
@@ -213,6 +237,12 @@ namespace mark4
             return;
         }
         if (onTuningAnswer(payload, size, StreamSource::FIRMWARE))
+        {
+            return;
+        }
+        // OTA packets share this link with telemetry and commands: telemetry
+        // keeps flowing between them, and the updater only ever sees its own.
+        if (m_ota.onPacket(payload, size, monotonicUs()))
         {
             return;
         }
@@ -597,9 +627,46 @@ namespace mark4
                 broadcastStatus();
                 return true;
             }
+            case ClientMessageType::OTA_STATUS:
+            case ClientMessageType::OTA_START:
+            case ClientMessageType::OTA_ABORT:
+            case ClientMessageType::OTA_CONFIRM:
+            case ClientMessageType::OTA_REVERT:
+            case ClientMessageType::OTA_CONFIG: {
+                return applyOtaMessage(message, errorOut);
+            }
         }
         errorOut = "unsupported request";
         return false;
+    }
+
+    bool HubApp::applyOtaMessage(const ClientMessage &message, std::string &errorOut)
+    {
+        const std::uint64_t nowUs = monotonicUs();
+        switch (message.type)
+        {
+            case ClientMessageType::OTA_STATUS:
+                m_otaTarget = message.target;
+                return m_ota.requestBoardStatus(nowUs, errorOut);
+            case ClientMessageType::OTA_START:
+                // The route is fixed for the whole session: an update that
+                // started on the board must not have half of it delivered to
+                // a simulator because a later message named another target.
+                m_otaTarget = message.target;
+                return m_ota.start(message.otaBundlePath, nowUs, errorOut);
+            case ClientMessageType::OTA_ABORT:
+                return m_ota.abortSession(nowUs, errorOut);
+            case ClientMessageType::OTA_CONFIRM:
+                return m_ota.confirm(nowUs, errorOut);
+            case ClientMessageType::OTA_REVERT:
+                return m_ota.revert(nowUs, errorOut);
+            case ClientMessageType::OTA_CONFIG:
+                m_ota.setAutoConfirm(message.otaAutoConfirm);
+                return true;
+            default:
+                errorOut = "unsupported update request";
+                return false;
+        }
     }
 
     void HubApp::answer(int id, bool ok, const std::string &error)
@@ -632,6 +699,11 @@ namespace mark4
         m_ws.broadcastText(statusToJson(status()));
     }
 
+    void HubApp::broadcastOta()
+    {
+        m_ws.broadcastText(otaToJson(m_ota));
+    }
+
     void HubApp::housekeeping(std::uint64_t nowUs)
     {
         for (const DiscoveryChange &change : m_registry.expire(nowUs, DISCOVERY_EXPIRY_US))
@@ -649,6 +721,7 @@ namespace mark4
         // A replay that reached the end of its file must be reaped, or it
         // stays a zombie for as long as the hub runs.
         static_cast<void>(m_replays.anyExited());
+        m_ota.tick(nowUs);
         emitCompare();
 
         // A client that just connected knows nothing yet: it gets the table
@@ -657,6 +730,7 @@ namespace mark4
         {
             broadcastDiscovery();
             broadcastStatus();
+            broadcastOta();
         }
 
         if (nowUs >= m_nextStatusUs)

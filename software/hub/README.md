@@ -173,6 +173,19 @@ structs in `protocol/`.
 {"type":"profiles","names":["bench","field-2"]}
 
 {"type":"profile","name":"bench","values":{"101":0.028}}
+
+{"type":"ota","phase":"transfer","verdict":"none","verdictText":"",
+ "lastError":"","autoConfirm":true,"confirmReady":false,"targetSlot":1,
+ "bundle":{"loaded":true,
+   "path":"software/build/stm32/drone_firmware/drone_firmware.ota",
+   "name":"drone_firmware","mcuId":1,"version":"1.3.0","gitHash":"bbbbbbbb",
+   "protocolVersion":12,"images":[{"slot":0,"size":8512,"crc32":111},
+                                  {"slot":1,"size":8512,"crc32":222}]},
+ "board":{"seen":true,"mcuId":1,"runningSlot":0,"slotState":[3,255],
+   "slotStateNames":["valid","empty"],"updaterBusy":false,"version":"1.2.0",
+   "gitHash":"aaaaaaaa","slotSize":393216,"maxChunkData":240},
+ "progress":{"sentBytes":3840,"ackedBytes":1920,"totalBytes":8512,
+             "retries":0,"percent":22.5}}
 ```
 
 A `compare` message is published whenever a telemetry sample and the exact
@@ -233,6 +246,12 @@ which of the bridges it is talking to.
 {"type":"replay","id":18,"name":"board_20260807_150143.m4bb","speed":"max"}
 {"type":"serial","id":19,"action":"open","device":"/dev/ttyUSB0","baud":921600}
 {"type":"serial","id":20,"action":"close"}
+{"type":"otaStatus","id":21}
+{"type":"otaStart","id":22,"bundle":"software/build/stm32/drone_firmware/drone_firmware.ota"}
+{"type":"otaAbort","id":23}
+{"type":"otaConfirm","id":24}
+{"type":"otaRevert","id":25}
+{"type":"otaConfig","id":26,"autoConfirm":false}
 ```
 
 The parameter id key is `paramId`, never `id`: `id` is the correlation id
@@ -269,6 +288,63 @@ the plant - no port is hardwired. A reboot needs the board.
 
 A message carrying an `id` is answered with an `ack`, including when it
 failed to decode. Streams are never acknowledged.
+
+## Firmware update
+
+An `otaStart` sends one `.ota` bundle to the board over the link that is
+already open: the updater packets of `protocol/ota.hpp` are one more packet
+type on the framed serial stream, so telemetry keeps flowing between them and
+the ESP32 bridge needs to know nothing about any of it.
+
+The `bundle` field is optional and defaults to
+`software/build/stm32/drone_firmware/drone_firmware.ota`, resolved from the
+hub binary: the common case is one click after a build. Loading validates the
+bundle against itself (magic, protocol version, announced sizes and CRC-32,
+and each image header against the manifest entry describing it) and then
+against the board (right chip, an image for the inactive slot, an image that
+fits a slot). Only then does a byte go out.
+
+The session then walks one phase at a time, and every change is published as
+one `ota` message, which is what makes a progress bar move without anybody
+polling:
+
+```
+idle -> query -> erasing -> transfer -> verifying -> rebooting
+     -> waitingBoard -> testing -> confirmed
+```
+
+The transfer is go-back-N: chunks of at most 240 bytes at strictly increasing
+offsets, at most 16 in flight, one cumulative `nextOffset` acknowledgement per
+window. A 500 ms acknowledgement silence resends from the last acknowledged
+offset; a bounded number of those and the session fails with the offset it
+died at. Chunks are paced 2 ms apart, because the hub reaches the board over
+WiFi and the board over a 921600 baud UART, and the poll loop tightens to 1 ms
+for the duration so that pacing is the throttle rather than the sleep.
+
+`progress.ackedBytes` is what the board has written and is what a bar must
+show; `sentBytes` runs up to one window ahead of it and goes backwards on a
+resend.
+
+After the reboot the hub polls `OTA_STATUS_REQUEST` once a second until the
+board answers again, ignoring answers for the first 1.5 s (the old image can
+still answer one request between the command and the reset). What comes back
+decides the verdict, and the verdict is a sentence in `verdictText`:
+
+- the bundle's git hash, on a slot reported `testing`: the trial boot worked.
+  With `autoConfirm` on, the hub sends `OTA_CONFIRM` once the new image has
+  answered at least three status requests over at least three seconds; with it
+  off, the operator's `otaConfirm` does. Either way the answer moves the phase
+  to `confirmed`.
+- the git hash it ran before: the bootloader rolled back. Phase `rolledBack`,
+  and nothing is confirmed.
+- neither: phase `failed`, saying what it found.
+
+`otaRevert` asks the board to activate its other slot and reboots it; it is
+legal while a trial image runs, which is exactly when it is wanted.
+`otaAbort` drops the session and tells the board so its half-written slot is
+released now rather than at its own timeout. Every refusal the board sends
+(`DENIED_ARMED`, `CRC_MISMATCH`, ...) comes back as the sentence behind the
+code, never as the code.
 
 ## Recording
 

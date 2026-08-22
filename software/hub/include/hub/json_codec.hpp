@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "hub/discovery.hpp"
+#include "hub/ota_client.hpp"
 #include "hub/stream_align.hpp"
 #include "hub/stream_health.hpp"
 #include "hub/tuning_profiles.hpp"
@@ -44,7 +45,13 @@ namespace mark4
         PROFILE_LOAD, ///< read one named set of values back
         PROFILE_PUSH, ///< send one named set to a flight process
         REPLAY,       ///< replay one stored blackbox recording
-        SERIAL        ///< open or close the board UART
+        SERIAL,       ///< open or close the board UART
+        OTA_STATUS,   ///< ask the board what firmware it runs
+        OTA_START,    ///< send one .ota bundle to the board
+        OTA_ABORT,    ///< drop the running update
+        OTA_CONFIRM,  ///< confirm the running trial image by hand
+        OTA_REVERT,   ///< activate the other firmware slot
+        OTA_CONFIG    ///< change the auto-confirm policy
     };
 
     /// One decoded client request. The wire packets are already built: the
@@ -70,6 +77,10 @@ namespace mark4
         bool serialConnect = false;                     ///< SERIAL: true = open, false = close
         std::string serialDevice;                       ///< SERIAL: device to open
         std::uint32_t serialBaud = 0U;                  ///< SERIAL: line speed [baud]
+        std::string otaBundlePath;                      ///< OTA_START: bundle to send, empty
+                                                        ///< for the standard build output
+        bool otaAutoConfirm = true;                     ///< OTA_CONFIG: confirm without an
+                                                        ///< operator gesture
     };
 
     /// Counters and flags the hub publishes once per second.
@@ -151,6 +162,15 @@ namespace mark4
     /// @param pair pair to render
     /// @return one line of JSON
     std::string compareToJson(const AlignedPair &pair);
+
+    /// @brief Renders the whole state of the update client as a JSON object:
+    ///        what the board runs, what the bundle holds, where the session
+    ///        stands, how far the transfer got and what it concluded. One
+    ///        message carries all of it, so a page that just connected and a
+    ///        page that has been watching read the same shape.
+    /// @param client update client to render
+    /// @return one line of JSON
+    std::string otaToJson(const OtaClient &client);
 
     /// @brief Renders the hub counters as a JSON object.
     /// @param status counters and flags to render

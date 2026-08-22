@@ -14,6 +14,7 @@
 #include "hub/discovery.hpp"
 #include "hub/json_codec.hpp"
 #include "hub/launcher.hpp"
+#include "hub/ota_client.hpp"
 #include "hub/serial_transport.hpp"
 #include "hub/stream_health.hpp"
 #include "hub/stream_recorder.hpp"
@@ -44,6 +45,11 @@ namespace mark4
 
         /// How long the poll loop sleeps when nothing is happening [ms].
         static constexpr int POLL_TIMEOUT_MS = 20;
+
+        /// How long it sleeps while a firmware update runs [ms]. The chunk
+        /// sender is paced from the loop, so the loop has to come round often
+        /// enough for that pacing to be the throttle rather than the sleep.
+        static constexpr int OTA_POLL_TIMEOUT_MS = 1;
 
         /// Silence after which an announced process is declared gone [us].
         /// The announce cadence contract is one per second, first one
@@ -85,11 +91,20 @@ namespace mark4
                                                              ///< read from, empty = the built-in
                                                              ///< default resolved at init
             std::string bindAddress = "127.0.0.1";           ///< address the endpoint binds to
+            std::string otaBundlePath;                       ///< bundle an update with no path of
+                                                             ///< its own sends, empty = the
+                                                             ///< built-in default resolved at init
         };
 
         /// Directory the pages are read from when nothing else is asked for,
         /// relative to the source tree root.
         static constexpr const char *DEFAULT_PAGES_DIR = "software/hub/pages/dist";
+
+        /// Bundle an update starts from when the client names none: the
+        /// standard output of the firmware build, relative to the source tree
+        /// root. The file need not exist; nothing reads it before a start.
+        static constexpr const char *DEFAULT_OTA_BUNDLE =
+            "software/build/stm32/drone_firmware/drone_firmware.ota";
 
         /// @param config settings of this run
         explicit HubApp(Config config);
@@ -227,6 +242,17 @@ namespace mark4
         /// @brief Sends the current counters to the clients.
         void broadcastStatus();
 
+        /// @brief Sends the state of the update client to the clients. Called
+        ///        on every observable change of that client, which is what
+        ///        makes a progress bar move without anybody polling.
+        void broadcastOta();
+
+        /// @brief Carries out one update request.
+        /// @param message request to carry out
+        /// @param errorOut receives the refusal reason when it cannot be
+        /// @return true when the request was carried out
+        bool applyOtaMessage(const ClientMessage &message, std::string &errorOut);
+
         /// @brief Expiry, status message and serial reopen.
         /// @param nowUs current time [us]
         void housekeeping(std::uint64_t nowUs);
@@ -257,6 +283,8 @@ namespace mark4
         std::uint8_t m_scenarioSequence = 0U;    ///< rolling number stamped on a
                                                  ///< scenario the client left at 0
         ProcessGroup m_replays;                  ///< drone_replay children a client asked for
-        std::map<std::string, std::uint64_t> m_rcSeenUs; ///< last RC instant per client
+        std::map<std::string, std::uint64_t> m_rcSeenUs;   ///< last RC instant per client
+        OtaClient m_ota;                                   ///< firmware update session
+        StreamSource m_otaTarget = StreamSource::FIRMWARE; ///< process the update packets go to
     };
 } // namespace mark4
