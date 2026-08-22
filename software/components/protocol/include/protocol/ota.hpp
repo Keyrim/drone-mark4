@@ -234,7 +234,9 @@ namespace mark4
     static_assert(std::is_trivially_copyable_v<OtaChunkPacket>);
 
     /// The chunk packet must fit the one-byte length field of the serial
-    /// framing with margin for its overhead.
+    /// framing with margin for its overhead. The 255 IS the named fact: it is
+    /// what one length byte can say.
+    // NOLINTNEXTLINE(readability-magic-numbers)
     static_assert(OTA_CHUNK_PACKET_SIZE <= 255U, "chunk must fit the serial framing payload");
 
     // The offsets ARE the named facts here: each assert freezes one
@@ -302,7 +304,11 @@ namespace mark4
         std::uint8_t versionPatch;   ///< firmware version
         std::uint8_t reserved0;      ///< 0xFF
         std::array<char, OTA_GIT_HASH_SIZE> gitHash; ///< short hash, stamped at packaging
-        std::array<std::uint8_t, 480U> reserved;     ///< 0xFF, room to grow (signing)
+        // The size IS the named fact: it is whatever the fields above and
+        // the trailing CRC leave of OTA_IMAGE_HEADER_SIZE, and the
+        // static_assert on that size is what freezes it.
+        // NOLINTNEXTLINE(readability-magic-numbers)
+        std::array<std::uint8_t, 480U> reserved; ///< 0xFF, room to grow (signing)
         std::uint32_t headerCrc; ///< CRC-32/MPEG-2 of the 508 bytes above, stamped at packaging
     };
 #pragma pack(pop)
