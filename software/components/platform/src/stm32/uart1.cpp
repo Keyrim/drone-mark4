@@ -35,10 +35,16 @@ namespace mark4
         constexpr std::uint32_t TX_RING_MASK = TX_RING_SIZE - 1U;
         static_assert((TX_RING_SIZE & TX_RING_MASK) == 0U);
 
-        /// Receive ring capacity; must be a power of two. The uplink is a
-        /// handful of small command frames per second, drained every
-        /// flight loop tick: 256 bytes is already a large margin.
-        constexpr std::uint32_t RX_RING_SIZE = 256U;
+        /// Receive ring capacity; must be a power of two. The uplink
+        /// carries full OTA chunk frames of 256 bytes back to back during
+        /// an update, and a ring stores one byte less than its size: 256
+        /// could never hold one whole chunk frame, which the first bench
+        /// transfer proved by never acknowledging a single chunk. 2048
+        /// holds several frames plus the bytes that pile up while a flash
+        /// word program stalls the receive interrupt. TODO(tmagne): move
+        /// RX to a circular DMA (docs/ota-design.md section 2) so flash
+        /// stalls cannot lose bytes at all.
+        constexpr std::uint32_t RX_RING_SIZE = 2048U;
         constexpr std::uint32_t RX_RING_MASK = RX_RING_SIZE - 1U;
         static_assert((RX_RING_SIZE & RX_RING_MASK) == 0U);
 
