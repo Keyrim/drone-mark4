@@ -103,8 +103,14 @@ namespace mark4
         if (m_config.otaBundlePath.empty())
         {
             // The bundle is a build artifact: resolving its path must not
-            // depend on the build having happened yet.
-            m_config.otaBundlePath = defaultProjectPath(DEFAULT_OTA_BUNDLE, false);
+            // depend on the build having happened yet. It is also shown to an
+            // operator in the update panel, so the ".." the resolution walks
+            // through is folded away rather than displayed.
+            const std::filesystem::path candidate = defaultProjectPath(DEFAULT_OTA_BUNDLE, false);
+            std::error_code unresolved;
+            const std::filesystem::path folded =
+                std::filesystem::weakly_canonical(candidate, unresolved);
+            m_config.otaBundlePath = unresolved ? candidate.string() : folded.string();
         }
         m_ota.setDefaultBundlePath(m_config.otaBundlePath);
         // The update client owns no socket: it sends through the same routing
