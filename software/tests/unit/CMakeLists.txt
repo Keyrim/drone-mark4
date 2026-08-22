@@ -25,6 +25,7 @@ add_executable(unit_tests
     test_hub_serial_udp.cpp
     test_hub_tuning_profiles.cpp
     test_ota_boot_policy.cpp
+    test_ota_e2e.cpp
     test_ota_meta_log.cpp
     test_ota_store_sim.cpp
     test_ota_updater.cpp
@@ -56,6 +57,13 @@ target_compile_options(unit_tests PRIVATE -fno-sanitize=vptr)
 # and their exact values are the point.
 target_compile_definitions(unit_tests
     PRIVATE MARK4_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+
+# The OTA end-to-end test spawns the real flight process and talks to it over
+# real UDP, so it needs the binary itself, not a library: the path comes from
+# the build tree and the dependency makes ctest impossible to run against a
+# stale one.
+target_compile_definitions(unit_tests PRIVATE DRONE_SIM_BINARY="$<TARGET_FILE:drone_sim>")
+add_dependencies(unit_tests drone_sim)
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
