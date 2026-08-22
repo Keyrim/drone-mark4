@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "hub/recordings.hpp"
@@ -65,6 +66,8 @@ namespace
     /// @param garbage bytes of junk to slip between the first two
     void writeBlackbox(const std::string &path, std::size_t records, std::size_t garbage)
     {
+        std::error_code failure;
+        std::filesystem::create_directories(std::filesystem::path(path).parent_path(), failure);
         std::ofstream file(path, std::ios::binary);
         for (std::size_t index = 0U; index < records; ++index)
         {
@@ -111,8 +114,8 @@ TEST_CASE("the listing names a recorded pair by the prefix its two files share")
 {
     const std::string logDir = scratchDirectory("hub_recordings_pair");
     recordPair(logDir, 3U);
-    // A batch log lives in the same directory and is nobody's recording.
-    std::ofstream(logDir + "/batch_20260806_134028_i0.log") << "not a recording\n";
+    // A stray file in the streams directory is nobody's recording.
+    std::ofstream(logDir + "/streams/batch_20260806_134028_i0.log") << "not a recording\n";
 
     const std::vector<mark4::Recording> recordings = mark4::listRecordings(logDir);
     REQUIRE(recordings.size() == 1U);
@@ -132,7 +135,8 @@ TEST_CASE("the listing names a recorded pair by the prefix its two files share")
 TEST_CASE("a telemetry csv with no sim raw beside it is still a recording")
 {
     const std::string logDir = scratchDirectory("hub_recordings_lonely");
-    std::ofstream(logDir + "/streams_20260101_000000_telemetry.csv")
+    std::filesystem::create_directories(logDir + "/streams");
+    std::ofstream(logDir + "/streams/streams_20260101_000000_telemetry.csv")
         << mark4::StreamRecorder::TELEMETRY_CSV_HEADER << "\r\n1,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0"
         << "\r\n";
 
@@ -148,7 +152,7 @@ TEST_CASE("a telemetry csv with no sim raw beside it is still a recording")
 TEST_CASE("a blackbox file is listed with an estimate of what it holds")
 {
     const std::string logDir = scratchDirectory("hub_recordings_blackbox");
-    writeBlackbox(logDir + "/board_20260101_000000.m4bb", 4U, 0U);
+    writeBlackbox(logDir + "/blackbox/board_20260101_000000.m4bb", 4U, 0U);
 
     const std::vector<mark4::Recording> recordings = mark4::listRecordings(logDir);
     REQUIRE(recordings.size() == 1U);
@@ -226,7 +230,7 @@ TEST_CASE("a decimated decode keeps the first and the last point")
 TEST_CASE("a blackbox decode carries the columns of every recorded field")
 {
     const std::string logDir = scratchDirectory("hub_recordings_bbdecode");
-    writeBlackbox(logDir + "/board_20260101_000000.m4bb", 3U, 0U);
+    writeBlackbox(logDir + "/blackbox/board_20260101_000000.m4bb", 3U, 0U);
     const std::vector<mark4::Recording> recordings = mark4::listRecordings(logDir);
 
     const mark4::HubJson decoded =
@@ -248,7 +252,7 @@ TEST_CASE("a blackbox decode carries the columns of every recorded field")
 TEST_CASE("a torn blackbox file costs the bytes it tore and nothing more")
 {
     const std::string logDir = scratchDirectory("hub_recordings_torn");
-    writeBlackbox(logDir + "/board_20260101_000000.m4bb", 3U, 17U);
+    writeBlackbox(logDir + "/blackbox/board_20260101_000000.m4bb", 3U, 17U);
     const std::vector<mark4::Recording> recordings = mark4::listRecordings(logDir);
 
     const mark4::HubJson decoded =
@@ -289,7 +293,7 @@ TEST_CASE("a recorded pair is scored by the same rule the live comparison uses")
 TEST_CASE("a blackbox summary says how long the run was and how torn")
 {
     const std::string logDir = scratchDirectory("hub_recordings_summary");
-    writeBlackbox(logDir + "/board_20260101_000000.m4bb", 5U, 3U);
+    writeBlackbox(logDir + "/blackbox/board_20260101_000000.m4bb", 5U, 3U);
     const std::vector<mark4::Recording> recordings = mark4::listRecordings(logDir);
 
     const mark4::HubJson summary = mark4::summarizeBlackbox(logDir, recordings[0]);
@@ -306,9 +310,9 @@ TEST_CASE("a blackbox summary says how long the run was and how torn")
 TEST_CASE("a blackbox file renders to the csv the old dump printed")
 {
     const std::string logDir = scratchDirectory("hub_recordings_csv");
-    writeBlackbox(logDir + "/board_20260101_000000.m4bb", 2U, 0U);
+    writeBlackbox(logDir + "/blackbox/board_20260101_000000.m4bb", 2U, 0U);
 
-    const std::string csv = mark4::blackboxToCsv(logDir + "/board_20260101_000000.m4bb");
+    const std::string csv = mark4::blackboxToCsv(logDir + "/blackbox/board_20260101_000000.m4bb");
     std::vector<std::string> lines;
     std::size_t start = 0U;
     while (start < csv.size())
@@ -328,7 +332,7 @@ TEST_CASE("a blackbox file renders to the csv the old dump printed")
 TEST_CASE("a recording is addressed by the exact name the listing gave it")
 {
     const std::string logDir = scratchDirectory("hub_recordings_address");
-    writeBlackbox(logDir + "/board_20260101_000000.m4bb", 1U, 0U);
+    writeBlackbox(logDir + "/blackbox/board_20260101_000000.m4bb", 1U, 0U);
     const std::vector<mark4::Recording> recordings = mark4::listRecordings(logDir);
 
     mark4::Recording found;

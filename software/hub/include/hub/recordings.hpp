@@ -32,6 +32,12 @@ namespace mark4
     /// this the answer stops being a curve and becomes a download.
     inline constexpr std::size_t POINT_LIMIT = 20000U;
 
+    /// Subdirectory of the log directory the blackbox files live in.
+    inline constexpr const char *BLACKBOX_SUBDIR = "blackbox";
+
+    /// Subdirectory of the log directory the stream CSV pairs live in.
+    inline constexpr const char *STREAMS_SUBDIR = "streams";
+
     /// One recording found in the log directory.
     struct Recording
     {
@@ -52,9 +58,17 @@ namespace mark4
         std::size_t maxPoints = DEFAULT_MAX_POINTS; ///< points to answer with at most
     };
 
-    /// @brief Lists what the log directory holds, most recent first. A
-    ///        telemetry CSV and the sim raw CSV recorded beside it are one
-    ///        recording, named by the prefix they share.
+    /// @brief Directory the files of one recording live in: the log
+    ///        directory subdirectory its kind names.
+    /// @param logDir root log directory
+    /// @param recording recording to locate
+    /// @return logDir/blackbox or logDir/streams
+    std::string recordingDirectory(const std::string &logDir, const Recording &recording);
+
+    /// @brief Lists what the log directory holds, most recent first. The
+    ///        blackbox files live in blackbox/, the stream CSV pairs in
+    ///        streams/; a telemetry CSV and the sim raw CSV recorded beside
+    ///        it are one recording, named by the prefix they share.
     /// @param logDir directory to list
     /// @return the recordings
     std::vector<Recording> listRecordings(const std::string &logDir);

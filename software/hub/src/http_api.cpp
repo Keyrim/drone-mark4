@@ -428,7 +428,9 @@ namespace mark4
                     HttpResult result;
                     result.contentType = "text/csv; charset=utf-8";
                     result.body = blackboxToCsv(
-                        (std::filesystem::path(config.logDir) / recording.name).string());
+                        (std::filesystem::path(recordingDirectory(config.logDir, recording)) /
+                         recording.name)
+                            .string());
                     result.attachmentName = recording.name + ".csv";
                     if (result.body.empty())
                     {
@@ -460,8 +462,10 @@ namespace mark4
             // a body and not a stream. A recording large enough to matter
             // wants a chunked response instead.
             if (fileName.empty() ||
-                !readWholeFile((std::filesystem::path(config.logDir) / fileName).string(),
-                               result.body))
+                !readWholeFile(
+                    (std::filesystem::path(recordingDirectory(config.logDir, recording)) / fileName)
+                        .string(),
+                    result.body))
             {
                 return jsonError(HTTP_NOT_FOUND, "cannot read " + part + " of " + recording.name);
             }

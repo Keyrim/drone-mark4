@@ -5,9 +5,9 @@ re-broadcasts telemetry over UDP, so the usual listeners (the hub and its
 web pages) can watch a past run. Desktop preset only.
 
 ```sh
-./build/desktop/apps/drone_replay/drone_replay logs/<file>.m4bb              # real time
-./build/desktop/apps/drone_replay/drone_replay logs/<file>.m4bb --speed 0.1  # slow motion
-./build/desktop/apps/drone_replay/drone_replay logs/<file>.m4bb --speed max  # as fast as possible
+./software/build/desktop/drone_replay/drone_replay logs/blackbox/<file>.m4bb              # real time
+./software/build/desktop/drone_replay/drone_replay logs/blackbox/<file>.m4bb --speed 0.1  # slow motion
+./software/build/desktop/drone_replay/drone_replay logs/blackbox/<file>.m4bb --speed max  # as fast as possible
 ```
 
 It announces itself once per second of real time, like every other flight

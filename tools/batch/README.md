@@ -66,7 +66,7 @@ python3 tools/batch/run_batch.py --runs 100 --parallel 4
 
 # Full campaign with a CSV report and a pass/fail threshold
 python3 tools/batch/run_batch.py --runs 1000 --parallel 8 \
-    --csv logs/campaign.csv --min-recovery 0.9
+    --csv logs/batch/campaign.csv --min-recovery 0.9
 
 # Replay one failure exactly as it was drawn
 python3 tools/batch/run_batch.py --only-seed 1234567
@@ -83,12 +83,12 @@ python3 tools/batch/run_batch.py --runs 40 --parallel 4 --held-only
 # Sweep a gain: the same 200 throws at three hover collectives
 for value in 0.50 0.55 0.60; do
     python3 tools/batch/run_batch.py --runs 200 --parallel 8 \
-        --set 303=$value --csv logs/hover_$value.csv
+        --set 303=$value --csv logs/batch/hover_$value.csv
 done
 ```
 
 `--set ID=VALUE` writes one tuning parameter, repeatable, ids from
-`flight-core/include/flight_core/tuning_table.hpp`. The values are applied
+`software/components/flight-core/include/flight_core/tuning_table.hpp`. The values are applied
 per run, after the world reset and before the throw: the reset rebuilds the
 flight core from scratch and restores the defaults with it, so a push done
 once at startup would only ever reach the first run. Every write is verified against its acknowledgement,

@@ -403,7 +403,8 @@ namespace mark4
 
         ChildSpec child;
         child.program = defaultBinaryPath("drone_replay");
-        child.arguments.push_back(m_config.logDirectory + "/" + recording.name);
+        child.arguments.push_back(recordingDirectory(m_config.logDirectory, recording) + "/" +
+                                  recording.name);
         if (!speed.empty())
         {
             child.arguments.emplace_back("--speed");

@@ -420,61 +420,71 @@ namespace mark4
         }
     } // namespace
 
+    std::string recordingDirectory(const std::string &logDir, const Recording &recording)
+    {
+        const char *subdir = (recording.kind == "blackbox") ? BLACKBOX_SUBDIR : STREAMS_SUBDIR;
+        return logDir + "/" + subdir;
+    }
+
     std::vector<Recording> listRecordings(const std::string &logDir)
     {
         std::vector<Recording> recordings;
-        std::error_code failure;
-        std::filesystem::directory_iterator entries(logDir, failure);
-        if (failure)
+        for (const char *subdir : {BLACKBOX_SUBDIR, STREAMS_SUBDIR})
         {
-            return recordings;
-        }
-
-        for (const std::filesystem::directory_entry &entry : entries)
-        {
-            if (!entry.is_regular_file(failure))
+            std::error_code failure;
+            std::filesystem::directory_iterator entries(std::filesystem::path(logDir) / subdir,
+                                                        failure);
+            if (failure)
             {
                 continue;
             }
-            const std::string name = entry.path().filename().string();
-            if (entry.path().extension() == BLACKBOX_EXTENSION)
+
+            for (const std::filesystem::directory_entry &entry : entries)
             {
+                if (!entry.is_regular_file(failure))
+                {
+                    continue;
+                }
+                const std::string name = entry.path().filename().string();
+                if (entry.path().extension() == BLACKBOX_EXTENSION)
+                {
+                    Recording recording;
+                    recording.name = name;
+                    recording.kind = "blackbox";
+                    recording.sizeBytes = sizeOf(entry.path());
+                    recording.modifiedUnixS = modifiedUnixS(entry.path());
+                    // An estimate, not a count: counting means decoding the whole
+                    // file, and a listing must stay cheap however long the run.
+                    recording.estimatedRecords = recording.sizeBytes / BLACKBOX_RECORD_SIZE;
+                    recordings.push_back(recording);
+                    continue;
+                }
+                const std::size_t suffix = name.rfind(TELEMETRY_SUFFIX);
+                if (suffix == std::string::npos ||
+                    suffix + std::strlen(TELEMETRY_SUFFIX) != name.size())
+                {
+                    // Everything else in the directory belongs to somebody else:
+                    // the sim raw half is found from its telemetry half.
+                    continue;
+                }
                 Recording recording;
-                recording.name = name;
-                recording.kind = "blackbox";
+                recording.name = name.substr(0U, suffix);
+                recording.kind = "streams";
+                recording.telemetryFile = name;
                 recording.sizeBytes = sizeOf(entry.path());
                 recording.modifiedUnixS = modifiedUnixS(entry.path());
-                // An estimate, not a count: counting means decoding the whole
-                // file, and a listing must stay cheap however long the run.
-                recording.estimatedRecords = recording.sizeBytes / BLACKBOX_RECORD_SIZE;
-                recordings.push_back(recording);
-                continue;
-            }
-            const std::size_t suffix = name.rfind(TELEMETRY_SUFFIX);
-            if (suffix == std::string::npos ||
-                suffix + std::strlen(TELEMETRY_SUFFIX) != name.size())
-            {
-                // Everything else in the directory belongs to somebody else:
-                // the sim raw half is found from its telemetry half, and a
-                // batch log is not a recording.
-                continue;
-            }
-            Recording recording;
-            recording.name = name.substr(0U, suffix);
-            recording.kind = "streams";
-            recording.telemetryFile = name;
-            recording.sizeBytes = sizeOf(entry.path());
-            recording.modifiedUnixS = modifiedUnixS(entry.path());
 
-            const std::filesystem::path simRaw =
-                entry.path().parent_path() / (recording.name + SIM_RAW_SUFFIX);
-            if (std::filesystem::is_regular_file(simRaw, failure))
-            {
-                recording.simRawFile = simRaw.filename().string();
-                recording.sizeBytes += sizeOf(simRaw);
-                recording.modifiedUnixS = std::max(recording.modifiedUnixS, modifiedUnixS(simRaw));
+                const std::filesystem::path simRaw =
+                    entry.path().parent_path() / (recording.name + SIM_RAW_SUFFIX);
+                if (std::filesystem::is_regular_file(simRaw, failure))
+                {
+                    recording.simRawFile = simRaw.filename().string();
+                    recording.sizeBytes += sizeOf(simRaw);
+                    recording.modifiedUnixS =
+                        std::max(recording.modifiedUnixS, modifiedUnixS(simRaw));
+                }
+                recordings.push_back(recording);
             }
-            recordings.push_back(recording);
         }
 
         std::sort(recordings.begin(),
@@ -537,7 +547,7 @@ namespace mark4
                             const Recording &recording,
                             const SampleWindow &window)
     {
-        const std::filesystem::path directory(logDir);
+        const std::filesystem::path directory(recordingDirectory(logDir, recording));
         HubJson answer;
         answer["name"] = recording.name;
         answer["kind"] = recording.kind;
@@ -572,7 +582,7 @@ namespace mark4
                              const Recording &recording,
                              const SampleWindow &window)
     {
-        const std::filesystem::path directory(logDir);
+        const std::filesystem::path directory(recordingDirectory(logDir, recording));
         std::vector<AlignSample> telemetry;
         std::vector<AlignSample> simRaw;
         if (!loadStreamSamples(
@@ -642,7 +652,9 @@ namespace mark4
 
     HubJson summarizeBlackbox(const std::string &logDir, const Recording &recording)
     {
-        BlackboxReader reader((std::filesystem::path(logDir) / recording.name).string());
+        BlackboxReader reader(
+            (std::filesystem::path(recordingDirectory(logDir, recording)) / recording.name)
+                .string());
         if (!reader.isOpen())
         {
             return {};

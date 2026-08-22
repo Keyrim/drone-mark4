@@ -134,7 +134,7 @@ class Instance:
         self.raw_port = base + 5
         self.rc_port = base + 9
 
-        log_dir = os.path.join(REPO_ROOT, "logs")
+        log_dir = os.path.join(REPO_ROOT, "logs", "batch")
         os.makedirs(log_dir, exist_ok=True)
         stamp = time.strftime("%Y%m%d_%H%M%S")
         self._log = open(

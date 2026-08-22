@@ -21,13 +21,13 @@ It links `protocol/` headers and nothing else: never `flight-core`, never
 
 ```sh
 cmake --preset desktop && cmake --build --preset desktop
-./build/desktop/apps/hub/hub
+./software/build/desktop/hub/hub
 ```
 
 The hub takes **no arguments**. It decodes, records and serves with its
 built-in defaults (endpoint on 127.0.0.1:47810, announce 47806, telemetry
-47801, sim raw 47802, recordings in `logs/`, profiles in `profiles/`, pages
-in `apps/hub/pages/dist` resolved from the binary location); it watches the
+47801, sim raw 47802, recordings in `logs/` (blackbox files in `logs/blackbox/`, stream CSV pairs in `logs/streams/`), profiles in `profiles/`, pages
+in `software/hub/pages/dist` resolved from the binary location); it watches the
 default ports from the start and follows any extra telemetry port a process
 announces for as long as that process lives. Everything operational is
 driven at runtime through the websocket by the pages: opening the board
@@ -48,7 +48,7 @@ the re-execute feature.
 ## Pages
 
 `GET /` serves `index.html` from the pages directory, `GET /<path>` the file
-at that path below it. The hub resolves `apps/hub/pages/dist` from its own
+at that path below it. The hub resolves `software/hub/pages/dist` from its own
 location, falling back to that relative path. A missing directory is one log
 line at startup and a 404 per request, never a startup failure.
 

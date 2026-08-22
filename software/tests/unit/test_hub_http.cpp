@@ -7,6 +7,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <system_error>
 
 #include "hub/http_api.hpp"
 #include "hub/stream_recorder.hpp"
@@ -30,6 +31,8 @@ namespace
     /// @param content what to put in it
     void writeFile(const std::string &path, const std::string &content)
     {
+        std::error_code failure;
+        std::filesystem::create_directories(std::filesystem::path(path).parent_path(), failure);
         std::ofstream file(path, std::ios::binary);
         file << content;
     }
@@ -240,7 +243,7 @@ TEST_CASE("a summary is a blackbox thing and a comparison a streams thing")
     CHECK(nlohmann::json::parse(summary.body)["error"] == name + " is not a blackbox recording");
 
     // And the other way round: a blackbox file has no exact state beside it.
-    writeFile(config.logDir + "/board_20260101_000000.m4bb", std::string());
+    writeFile(config.logDir + "/blackbox/board_20260101_000000.m4bb", std::string());
     const mark4::HttpResult compare =
         mark4::routeHttp(config, "GET", "/api/compare?name=board_20260101_000000.m4bb");
     CHECK(compare.status == mark4::HTTP_BAD_REQUEST);

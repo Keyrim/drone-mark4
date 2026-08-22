@@ -125,10 +125,12 @@ namespace mark4
         }
 
       private:
-        /// @brief Builds a timestamped path inside the log directory.
+        /// @brief Builds a timestamped path inside one subdirectory of the
+        ///        log directory.
+        /// @param subdir subdirectory the file goes in
         /// @param pattern strftime pattern of the file name
         /// @return the full path
-        [[nodiscard]] std::string stampedPath(const char *pattern) const;
+        [[nodiscard]] std::string stampedPath(const char *subdir, const char *pattern) const;
 
         std::string m_logDirectory;     ///< directory every file is created in
         std::string m_telemetryCsvPath; ///< path of the telemetry CSV

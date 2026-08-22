@@ -2,6 +2,7 @@
 /// @brief Stream recorder implementation.
 
 #include "hub/stream_recorder.hpp"
+#include "hub/recordings.hpp"
 
 #include <array>
 #include <charconv>
@@ -144,14 +145,14 @@ namespace mark4
     {
     }
 
-    std::string StreamRecorder::stampedPath(const char *pattern) const
+    std::string StreamRecorder::stampedPath(const char *subdir, const char *pattern) const
     {
         const std::time_t now = std::time(nullptr);
         std::tm local{};
         static_cast<void>(localtime_r(&now, &local));
         std::array<char, PATH_SIZE> name{};
         const std::size_t written = std::strftime(name.data(), name.size(), pattern, &local);
-        return m_logDirectory + "/" + std::string(name.data(), written);
+        return m_logDirectory + "/" + subdir + "/" + std::string(name.data(), written);
     }
 
     bool StreamRecorder::startCsvSession()
@@ -159,10 +160,10 @@ namespace mark4
         stopCsvSession();
 
         std::error_code failure;
-        std::filesystem::create_directories(m_logDirectory, failure);
+        std::filesystem::create_directories(m_logDirectory + "/" + STREAMS_SUBDIR, failure);
 
-        m_telemetryCsvPath = stampedPath("streams_%Y%m%d_%H%M%S_telemetry.csv");
-        m_simRawCsvPath = stampedPath("streams_%Y%m%d_%H%M%S_simraw.csv");
+        m_telemetryCsvPath = stampedPath(STREAMS_SUBDIR, "streams_%Y%m%d_%H%M%S_telemetry.csv");
+        m_simRawCsvPath = stampedPath(STREAMS_SUBDIR, "streams_%Y%m%d_%H%M%S_simraw.csv");
         // Binary mode: the CRLF terminator is written explicitly, it must not
         // be translated a second time by a text-mode stream.
         m_telemetryCsv.open(m_telemetryCsvPath, std::ios::binary | std::ios::trunc);
@@ -227,8 +228,8 @@ namespace mark4
         if (!m_blackbox.is_open())
         {
             std::error_code failure;
-            std::filesystem::create_directories(m_logDirectory, failure);
-            m_blackboxPath = stampedPath("board_%Y%m%d_%H%M%S.m4bb");
+            std::filesystem::create_directories(m_logDirectory + "/" + BLACKBOX_SUBDIR, failure);
+            m_blackboxPath = stampedPath(BLACKBOX_SUBDIR, "board_%Y%m%d_%H%M%S.m4bb");
             m_blackbox.open(m_blackboxPath, std::ios::binary | std::ios::trunc);
             if (!m_blackbox.is_open())
             {

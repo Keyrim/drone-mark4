@@ -70,17 +70,19 @@ namespace
     /// @brief Builds a per-run blackbox path from the wall clock, so a run
     ///        never overwrites the previous one. The format string embeds
     ///        DroneSimApp::LOG_DIRECTORY (strftime cannot interpolate it).
-    /// @return "logs/drone_sim_YYYYMMDD_HHMMSS.m4bb"
+    /// @return "logs/blackbox/drone_sim_YYYYMMDD_HHMMSS.m4bb"
     std::array<char, mark4::DroneSimApp::LOG_PATH_SIZE> makeLogFilePath()
     {
         std::array<char, mark4::DroneSimApp::LOG_PATH_SIZE> path{};
         const std::time_t now = std::time(nullptr);
         std::tm local{};
         static_cast<void>(::localtime_r(&now, &local));
-        if (std::strftime(path.data(), path.size(), "logs/drone_sim_%Y%m%d_%H%M%S.m4bb", &local) ==
+        if (std::strftime(
+                path.data(), path.size(), "logs/blackbox/drone_sim_%Y%m%d_%H%M%S.m4bb", &local) ==
             0U)
         {
-            static_cast<void>(std::snprintf(path.data(), path.size(), "logs/drone_sim.m4bb"));
+            static_cast<void>(
+                std::snprintf(path.data(), path.size(), "logs/blackbox/drone_sim.m4bb"));
         }
         return path;
     }
@@ -126,7 +128,8 @@ namespace mark4
         {
             return false;
         }
-        if (!ensureDirectory(LOG_DIRECTORY))
+        // mkdir(2) creates one level at a time: the parent goes first.
+        if (!ensureDirectory("logs") || !ensureDirectory(LOG_DIRECTORY))
         {
             return false;
         }

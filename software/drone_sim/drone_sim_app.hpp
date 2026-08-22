@@ -39,7 +39,7 @@ namespace mark4
         static constexpr std::uint32_t IDLE_TIMEOUT_MS = 500U;
 
         /// Directory the blackbox file is created in, relative to the cwd.
-        static constexpr const char *LOG_DIRECTORY = "logs";
+        static constexpr const char *LOG_DIRECTORY = "logs/blackbox";
 
         /// Size of the buffer holding the timestamped blackbox file path.
         static constexpr std::size_t LOG_PATH_SIZE = 64U;
