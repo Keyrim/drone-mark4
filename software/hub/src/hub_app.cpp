@@ -643,16 +643,18 @@ namespace mark4
     bool HubApp::applyOtaMessage(const ClientMessage &message, std::string &errorOut)
     {
         const std::uint64_t nowUs = monotonicUs();
+        // The route is fixed for the whole session: an update that started on
+        // the board must not have half of it delivered to a simulator because
+        // a later message named another target.
+        if (!m_ota.busy())
+        {
+            m_otaTarget = message.target;
+        }
         switch (message.type)
         {
             case ClientMessageType::OTA_STATUS:
-                m_otaTarget = message.target;
                 return m_ota.requestBoardStatus(nowUs, errorOut);
             case ClientMessageType::OTA_START:
-                // The route is fixed for the whole session: an update that
-                // started on the board must not have half of it delivered to
-                // a simulator because a later message named another target.
-                m_otaTarget = message.target;
                 return m_ota.start(message.otaBundlePath, nowUs, errorOut);
             case ClientMessageType::OTA_ABORT:
                 return m_ota.abortSession(nowUs, errorOut);
