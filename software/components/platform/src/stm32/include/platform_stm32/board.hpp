@@ -50,6 +50,13 @@ namespace mark4
     /// @param on true lights the LED
     void setLed2(bool on);
 
+    /// @brief Points the core at a vector table (SCB VTOR) and orders the
+    ///        write ahead of everything that follows. Each image does this
+    ///        for itself in startup.c; the bootloader does it once more for
+    ///        the image it is about to jump into.
+    /// @param address base of the table, aligned to at least 512 bytes
+    void setVectorTable(std::uint32_t address);
+
     /// @brief Requests an NVIC system reset and never returns: the whole
     ///        chip restarts through the reset vector, peripherals included.
     [[noreturn]] void systemReset();

@@ -34,10 +34,16 @@ namespace mark4
         volatile std::uint32_t APB2ENR;  ///< APB2 peripheral clock enable
     };
 
-    /// Embedded flash interface (RM0090 section 3).
+    /// Embedded flash interface (RM0090 section 3): access control, then
+    /// the program/erase controller the OTA store drives.
     struct FlashRegisters
     {
-        volatile std::uint32_t ACR; ///< access control (latency, caches)
+        volatile std::uint32_t ACR;     ///< access control (latency, caches)
+        volatile std::uint32_t KEYR;    ///< unlock key register
+        volatile std::uint32_t OPTKEYR; ///< option byte unlock key register
+        volatile std::uint32_t SR;      ///< status (BSY, EOP, error flags)
+        volatile std::uint32_t CR;      ///< control (PG, SER, SNB, PSIZE, STRT, LOCK)
+        volatile std::uint32_t OPTCR;   ///< option byte control
     };
 
     /// General-purpose I/O port (RM0090 section 8).
@@ -123,6 +129,12 @@ namespace mark4
     /// NVIC interrupt set-enable registers, one bit per IRQ number.
     inline volatile std::uint32_t *const NVIC_ISER =
         reinterpret_cast<volatile std::uint32_t *>(0xE000E100U);
+
+    /// Vector table offset register (SCB): the base address the core reads
+    /// every exception vector from. Each image points it at its own table,
+    /// which is what lets the same firmware run from either OTA slot.
+    inline volatile std::uint32_t *const SCB_VTOR =
+        reinterpret_cast<volatile std::uint32_t *>(0xE000ED08U);
 
     /// Application interrupt and reset control register (SCB): VECTKEY in
     /// the high half, SYSRESETREQ requests a system reset.

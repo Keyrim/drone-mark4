@@ -67,13 +67,13 @@ namespace mark4
         virtual ~AbsFirmwareStore() = default;
 
         /// @brief Slot this firmware executes from (link-time fact).
-        virtual std::uint8_t runningSlot() const = 0;
+        [[nodiscard]] virtual std::uint8_t runningSlot() const = 0;
 
         /// @brief Bytes available in each slot on this chip.
-        virtual std::uint32_t slotSize() const = 0;
+        [[nodiscard]] virtual std::uint32_t slotSize() const = 0;
 
         /// @brief OTA_MCU_* identity of this board.
-        virtual std::uint8_t mcuId() const = 0;
+        [[nodiscard]] virtual std::uint8_t mcuId() const = 0;
 
         /// @brief Erases one whole slot. Blocking, and seconds long on
         ///        real flash; the caller owns the watchdog around it.
@@ -108,9 +108,9 @@ namespace mark4
         /// @param slot OTA_SLOT_A or OTA_SLOT_B
         /// @param offset byte offset from the slot base
         /// @param size byte count before padding
-        virtual std::uint32_t crc32(std::uint8_t slot,
-                                    std::uint32_t offset,
-                                    std::uint32_t size) const = 0;
+        [[nodiscard]] virtual std::uint32_t crc32(std::uint8_t slot,
+                                                  std::uint32_t offset,
+                                                  std::uint32_t size) const = 0;
 
         /// @brief Reads the newest valid metadata record.
         /// @param[out] stateOut filled from the record, or left at its

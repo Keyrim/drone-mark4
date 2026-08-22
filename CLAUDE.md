@@ -45,8 +45,13 @@ python3 scripts/build_app.py drone_sim
 # Same under ASan/UBSan
 (cd software && cmake --preset desktop-san && cmake --build --preset desktop-san && ctest --preset desktop-san)
 
-# Cross-compile for STM32F405 (produces software/build/stm32/drone_firmware/drone_firmware.elf)
+# Cross-compile for STM32F405: the bootloader plus one firmware image per OTA
+# slot, then the packaged bundle (software/build/stm32/drone_boot/drone_boot.elf,
+# drone_firmware/drone_firmware_{a,b}.elf, slot_{a,b}.img, drone_firmware.ota)
 (cd software && cmake --preset stm32 && cmake --build --preset stm32)
+
+# Flash the board over SWD with a J-Link (never run by an agent, board required)
+./scripts/flash_stm32.sh install   # also: boot | slot-a | slot-b | meta-wipe | erase
 
 # Run one test (Catch2, by test name or ctest regex)
 ./software/build/desktop/tests/unit/unit_tests "kill switch forces all motors to zero"
@@ -145,10 +150,16 @@ services.
 
 STM32 specifics: generic Cortex-M4F build via
 `software/cmake/toolchain-arm-none-eabi.cmake` (`-nostartfiles`, newlib-nano, nosys).
-`software/components/platform/src/stm32/startup.c` owns the vector table, FPU enable and
-`_init`/`_fini` stubs; `stm32f405.ld` propagates to executables through
-INTERFACE link options on `platform_stm32`. The CCM RAM is not DMA-capable:
-future DMA buffers (DShot, SPI) must be placed outside CCM.
+`software/components/platform/src/stm32/startup.c` owns the vector table, the VTOR
+setup and FPU enable, and the `_init`/`_fini` stubs. Flash is dual bank: the
+bootloader (`software/drone_boot/`) lives at 0x08000000 and the firmware is
+linked once per OTA slot, so there is no image at the reset vector other than
+the bootloader. Each executable gets its own linker script, generated from
+`stm32f405_image.ld.in` by `drone_stm32_image_layout()` (the stm32 variant's
+CMakeLists.txt) out of three numbers: flash origin, flash length, image header
+size. `scripts/make_ota.py` stamps the image headers and emits the `.ota`
+bundle. The CCM RAM is not DMA-capable: future DMA buffers (DShot, SPI) must be
+placed outside CCM.
 
 Warnings come from the `drone_warnings` INTERFACE target (linked PRIVATE by
 every project target, not by FetchContent deps such as Catch2).

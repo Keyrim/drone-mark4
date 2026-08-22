@@ -99,7 +99,7 @@ namespace mark4
             record.activeSlot = state.activeSlot;
             record.slotState = state.slotState;
             record.flags = state.trialAttempted ? OTA_META_FLAG_TRIAL_ATTEMPTED : 0U;
-            record.reserved = 0xFFFFFFFFU;
+            record.reserved = BLANK_WORD;
             std::uint8_t bytes[OTA_META_RECORD_SIZE];
             std::memcpy(bytes, &record, OTA_META_RECORD_SIZE);
             record.crc = crc32Mpeg2(bytes, offsetof(OtaMetaRecord, crc));
@@ -119,6 +119,11 @@ namespace mark4
         static constexpr std::uint32_t SLOT_COUNT_PER_AREA =
             Backend::AREA_SIZE / OTA_META_RECORD_SIZE;
 
+        /// The byte an erased cell reads as, hence what a never-written
+        /// record slot is full of and what the reserved field is set to.
+        static constexpr std::uint8_t BLANK_BYTE = 0xFFU;
+        static constexpr std::uint32_t BLANK_WORD = 0xFFFFFFFFU;
+
         bool scanAreas(Scan &scanOut)
         {
             for (std::uint8_t area = 0U; area < 2U; ++area)
@@ -131,7 +136,7 @@ namespace mark4
                     {
                         return false;
                     }
-                    if (isBlank(bytes))
+                    if (IsBlank(bytes))
                     {
                         continue;
                     }
@@ -163,7 +168,7 @@ namespace mark4
                 {
                     return false;
                 }
-                if (isBlank(bytes))
+                if (IsBlank(bytes))
                 {
                     offsetOut = slot * OTA_META_RECORD_SIZE;
                     return true;
@@ -172,11 +177,11 @@ namespace mark4
             return false;
         }
 
-        static bool isBlank(const std::uint8_t *bytes)
+        static bool IsBlank(const std::uint8_t *bytes)
         {
             for (std::uint32_t i = 0U; i < OTA_META_RECORD_SIZE; ++i)
             {
-                if (bytes[i] != 0xFFU)
+                if (bytes[i] != BLANK_BYTE)
                 {
                     return false;
                 }
