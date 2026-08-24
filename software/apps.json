@@ -23,6 +23,11 @@
             "target": "drone_firmware"
         },
         {
+            "name": "drone_boot",
+            "cmakePreset": "stm32",
+            "target": "drone_boot"
+        },
+        {
             "name": "tests",
             "cmakePreset": "desktop",
             "target": "unit_tests",

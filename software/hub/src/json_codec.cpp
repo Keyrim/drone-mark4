@@ -615,6 +615,47 @@ namespace mark4
             message.serialBaud = static_cast<std::uint32_t>(baud->get<std::uint64_t>());
             return true;
         }
+
+        /// @brief Fills the update-start part of a client request. The bundle
+        ///        path is optional: the hub defaults it to the standard build
+        ///        output, which is what the common case wants. Nothing is
+        ///        checked here beyond the shape - the reader of the file says
+        ///        whether it is a bundle, and says so in the operator's words.
+        /// @param object message object
+        /// @param message message being decoded
+        /// @param errorOut receives the reason on failure
+        /// @return true when the field is absent or a non-empty string
+        bool parseOtaStart(const Json &object, ClientMessage &message, std::string &errorOut)
+        {
+            const auto found = object.find("bundle");
+            if (found == object.end() || found->is_null())
+            {
+                return true;
+            }
+            if (!found->is_string() || found->get<std::string>().empty())
+            {
+                errorOut = "field 'bundle' must be the path of an .ota bundle";
+                return false;
+            }
+            message.otaBundlePath = found->get<std::string>();
+            return true;
+        }
+
+        /// @brief Reads the optional process kind an update is aimed at. The
+        ///        board is the default: it is the only thing that has flash.
+        /// @param object object to read from
+        /// @param message message being decoded
+        /// @param errorOut receives the reason on failure
+        /// @return true when the field is absent or names a known kind
+        bool readOtaTarget(const Json &object, ClientMessage &message, std::string &errorOut)
+        {
+            message.target = StreamSource::FIRMWARE;
+            if (object.find("target") == object.end())
+            {
+                return true;
+            }
+            return readTarget(object, message.target, errorOut);
+        }
     } // namespace
 
     std::string telemetryToJson(const TelemetryPacket &packet)
@@ -749,6 +790,80 @@ namespace mark4
         message["clients"] = status.clients;
         message["rcClients"] = status.rcClients;
         message["links"] = links;
+        return message.dump();
+    }
+
+    std::string otaToJson(const OtaClient &client)
+    {
+        static constexpr double PERCENT = 100.0;
+        const OtaBundle &bundle = client.bundle();
+        const OtaBoardStatus &board = client.board();
+        const OtaProgress &progress = client.progress();
+
+        Json bundleJson;
+        bundleJson["loaded"] = bundle.loaded();
+        bundleJson["path"] = client.bundlePath();
+        bundleJson["name"] = bundle.name;
+        bundleJson["mcuId"] = bundle.mcuId;
+        bundleJson["buildEpoch"] = bundle.buildEpoch;
+        bundleJson["gitHash"] = bundle.gitHash;
+        bundleJson["protocolVersion"] = bundle.protocolVersion;
+        Json images = Json::array();
+        for (const OtaBundleImage &image : bundle.images)
+        {
+            Json entry;
+            entry["slot"] = image.slot;
+            entry["size"] = image.size;
+            entry["crc32"] = image.crc32;
+            images.push_back(entry);
+        }
+        bundleJson["images"] = images;
+
+        Json boardJson;
+        boardJson["seen"] = board.seen;
+        boardJson["mcuId"] = board.mcuId;
+        boardJson["runningSlot"] = board.runningSlot;
+        boardJson["activeSlot"] = board.activeSlot;
+        Json slots = Json::array();
+        for (const OtaSlotInfo &slot : board.slots)
+        {
+            Json entry;
+            entry["state"] = slot.state;
+            entry["stateName"] = otaSlotStateName(slot.state);
+            entry["buildEpoch"] = slot.buildEpoch;
+            entry["gitHash"] = slot.gitHash;
+            slots.push_back(entry);
+        }
+        boardJson["slots"] = slots;
+        boardJson["updaterBusy"] = board.updaterBusy;
+        boardJson["buildEpoch"] = board.buildEpoch;
+        boardJson["gitHash"] = board.gitHash;
+        boardJson["slotSize"] = board.slotSize;
+        boardJson["maxChunkData"] = board.maxChunkData;
+
+        Json progressJson;
+        progressJson["sentBytes"] = progress.sentBytes;
+        progressJson["ackedBytes"] = progress.ackedBytes;
+        progressJson["totalBytes"] = progress.totalBytes;
+        progressJson["retries"] = progress.retries;
+        // The percentage follows what the board has written, not what went
+        // out: a bar that runs ahead of the flash would lie on every resend.
+        progressJson["percent"] = progress.totalBytes == 0U
+                                      ? 0.0
+                                      : PERCENT * static_cast<double>(progress.ackedBytes) /
+                                            static_cast<double>(progress.totalBytes);
+
+        Json message;
+        message["type"] = "ota";
+        message["phase"] = otaPhaseName(client.phase());
+        message["verdict"] = otaVerdictName(client.verdict());
+        message["verdictText"] = client.verdictText();
+        message["lastError"] = client.lastError();
+        message["targetSlot"] =
+            client.targetSlot() < OTA_SLOT_COUNT ? static_cast<int>(client.targetSlot()) : -1;
+        message["bundle"] = bundleJson;
+        message["board"] = boardJson;
+        message["progress"] = progressJson;
         return message.dump();
     }
 
@@ -954,6 +1069,30 @@ namespace mark4
             {
                 return error;
             }
+        }
+        else if (typeName == "otaStatus")
+        {
+            message.type = ClientMessageType::OTA_STATUS;
+            if (!readOtaTarget(root, message, error))
+            {
+                return error;
+            }
+        }
+        else if (typeName == "otaStart")
+        {
+            message.type = ClientMessageType::OTA_START;
+            if (!readOtaTarget(root, message, error) || !parseOtaStart(root, message, error))
+            {
+                return error;
+            }
+        }
+        else if (typeName == "otaAbort")
+        {
+            message.type = ClientMessageType::OTA_ABORT;
+        }
+        else if (typeName == "otaRevert")
+        {
+            message.type = ClientMessageType::OTA_REVERT;
         }
         else
         {

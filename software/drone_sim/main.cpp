@@ -1,6 +1,8 @@
 /// @file
 /// @brief drone_sim entry point: parses arguments, builds the app, runs it.
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -25,18 +27,45 @@ namespace
     constexpr std::uint64_t US_PER_MS = 1000U;
     constexpr long MAX_PORT = 65535L;
 
+    /// Name of the emulated-flash directory when the caller does not pick
+    /// one. It sits next to the binary rather than under the working
+    /// directory: the slots and the boot metadata are this build's flash, so
+    /// they must not change with the terminal a run was started from.
+    constexpr const char *OTA_DIRECTORY_NAME = "ota_flash";
+
     void printUsage(const char *program)
     {
         static_cast<void>(std::fprintf(
             stderr,
-            "usage: %s [--sim-port N] [--telemetry-port N] [--rc-port N]\n"
+            "usage: %s [--sim-port N] [--telemetry-port N] [--rc-port N] [--ota-dir DIR]\n"
             "  --sim-port        UDP port the sim link listens on (default %u)\n"
             "  --telemetry-port  UDP telemetry broadcast port (default %u)\n"
-            "  --rc-port         UDP port the RC command receiver binds (default %u)\n",
+            "  --rc-port         UDP port the RC command receiver binds (default %u)\n"
+            "  --ota-dir         directory holding the emulated firmware slots and boot\n"
+            "                    metadata (default '%s' next to this binary)\n",
             program,
             static_cast<unsigned>(mark4::SIM_LINK_PORT),
             static_cast<unsigned>(mark4::TELEMETRY_PORT),
-            static_cast<unsigned>(mark4::RC_COMMAND_PORT)));
+            static_cast<unsigned>(mark4::RC_COMMAND_PORT),
+            OTA_DIRECTORY_NAME));
+    }
+
+    /// @brief Builds the default emulated-flash path: OTA_DIRECTORY_NAME next
+    ///        to the running binary.
+    /// @param program argv[0]
+    /// @param[out] pathOut buffer the path is written into
+    /// @param capacity bytes available in pathOut
+    void makeDefaultOtaDirectory(const char *program, char *pathOut, std::size_t capacity)
+    {
+        const char *lastSlash = std::strrchr(program, '/');
+        if (lastSlash == nullptr)
+        {
+            static_cast<void>(std::snprintf(pathOut, capacity, "%s", OTA_DIRECTORY_NAME));
+            return;
+        }
+        const auto directoryLength = static_cast<int>(lastSlash - program);
+        static_cast<void>(std::snprintf(
+            pathOut, capacity, "%.*s/%s", directoryLength, program, OTA_DIRECTORY_NAME));
     }
 
     /// @brief Parses a strictly positive integer bounded by maxValue.
@@ -59,6 +88,8 @@ int main(int argc, char **argv)
     std::uint16_t simPort = mark4::SIM_LINK_PORT;
     std::uint16_t telemetryPort = mark4::TELEMETRY_PORT;
     std::uint16_t rcPort = mark4::RC_COMMAND_PORT;
+    std::array<char, mark4::DroneSimApp::OTA_DIRECTORY_SIZE> otaDirectory{};
+    makeDefaultOtaDirectory(argv[0], otaDirectory.data(), otaDirectory.size());
 
     for (int i = 1; i < argc; ++i)
     {
@@ -90,6 +121,17 @@ int main(int argc, char **argv)
             }
             rcPort = static_cast<std::uint16_t>(value);
         }
+        else if (std::strcmp(argv[i], "--ota-dir") == 0 && i + 1 < argc)
+        {
+            ++i;
+            if (std::snprintf(otaDirectory.data(), otaDirectory.size(), "%s", argv[i]) < 0 ||
+                std::strlen(argv[i]) >= otaDirectory.size())
+            {
+                static_cast<void>(
+                    std::fprintf(stderr, "drone_sim: --ota-dir path is too long: %s\n", argv[i]));
+                return 1;
+            }
+        }
         else
         {
             printUsage(argv[0]);
@@ -98,7 +140,8 @@ int main(int argc, char **argv)
     }
 
     const std::uint32_t sessionId = mark4::makeSessionId();
-    mark4::DroneSimApp app(MAX_FRAMES, simPort, telemetryPort, rcPort, sessionId);
+    mark4::DroneSimApp app(
+        MAX_FRAMES, simPort, telemetryPort, rcPort, sessionId, otaDirectory.data());
     if (!app.init())
     {
         static_cast<void>(std::fprintf(stderr, "drone_sim: initialization failed\n"));

@@ -28,21 +28,31 @@ namespace mark4
     /// Packet type, the second byte of every packet.
     enum class PacketType : std::uint8_t
     {
-        SIM_SENSOR = 1U,      ///< SimSensorPacket
-        SIM_ACTUATOR = 2U,    ///< SimActuatorPacket
-        TELEMETRY = 3U,       ///< TelemetryPacket
-        SIM_RAW = 4U,         ///< SimRawPacket
-        SIM_SCENARIO = 5U,    ///< SimScenarioPacket
-        RC_COMMAND = 6U,      ///< RcCommandPacket
-        REBOOT_COMMAND = 7U,  ///< RebootCommandPacket
-        BLACKBOX_RECORD = 8U, ///< BlackboxRecord
-        ANNOUNCE = 9U,        ///< AnnouncePacket
-        TUNING_SET = 10U,     ///< TuningSetPacket
-        TUNING_GET = 11U,     ///< TuningGetPacket
-        TUNING_LIST = 12U,    ///< TuningListPacket
-        TUNING_ACK = 13U,     ///< TuningAckPacket
-        TUNING_INFO = 14U,    ///< TuningInfoPacket
-        SIM_RUN_STATS = 15U,  ///< SimRunStatsPacket
+        SIM_SENSOR = 1U,          ///< SimSensorPacket
+        SIM_ACTUATOR = 2U,        ///< SimActuatorPacket
+        TELEMETRY = 3U,           ///< TelemetryPacket
+        SIM_RAW = 4U,             ///< SimRawPacket
+        SIM_SCENARIO = 5U,        ///< SimScenarioPacket
+        RC_COMMAND = 6U,          ///< RcCommandPacket
+        REBOOT_COMMAND = 7U,      ///< RebootCommandPacket
+        BLACKBOX_RECORD = 8U,     ///< BlackboxRecord
+        ANNOUNCE = 9U,            ///< AnnouncePacket
+        TUNING_SET = 10U,         ///< TuningSetPacket
+        TUNING_GET = 11U,         ///< TuningGetPacket
+        TUNING_LIST = 12U,        ///< TuningListPacket
+        TUNING_ACK = 13U,         ///< TuningAckPacket
+        TUNING_INFO = 14U,        ///< TuningInfoPacket
+        SIM_RUN_STATS = 15U,      ///< SimRunStatsPacket
+        OTA_STATUS_REQUEST = 16U, ///< OtaStatusRequestPacket
+        OTA_STATUS = 17U,         ///< OtaStatusPacket
+        OTA_BEGIN = 18U,          ///< OtaBeginPacket
+        OTA_CHUNK = 19U,          ///< OtaChunkPacket
+        OTA_CHUNK_ACK = 20U,      ///< OtaChunkAckPacket
+        OTA_FINISH = 21U,         ///< OtaFinishPacket
+        OTA_CONFIRM = 22U,        ///< OtaConfirmPacket
+        OTA_REVERT = 23U,         ///< OtaRevertPacket
+        OTA_ABORT = 24U,          ///< OtaAbortPacket
+        OTA_ACK = 25U,            ///< OtaAckPacket
     };
 
     /// Identity of a stream sender, carried by every stream packet

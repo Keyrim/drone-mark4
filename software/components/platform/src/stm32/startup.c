@@ -40,8 +40,31 @@ void Default_Handler(void)
 void TIM3_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
 void USART1_IRQHandler(void) __attribute__((weak, alias("Default_Handler")));
 
+/* Defined at the bottom of this file; Reset_Handler needs its address to
+ * point VTOR at it. */
+extern void *const g_vector_table[];
+
 void Reset_Handler(void)
 {
+    /* VTOR first, before anything can fault or interrupt: the linker placed
+     * this image's table wherever its flash window starts (0x08000000 for
+     * drone_boot, slot base + 512 for a firmware slot), so every image
+     * points the core at its own vectors and none of them depends on being
+     * the image the reset vector fetched. The bootloader sets VTOR again
+     * before it jumps; belt and suspenders, and either one alone is enough. */
+    volatile uint32_t *const vtor = (volatile uint32_t *)0xE000ED08u;
+    *vtor = (uint32_t)&g_vector_table[0];
+    __asm volatile("dsb" ::: "memory");
+    __asm volatile("isb" ::: "memory");
+
+    /* PRIMASK next: a cold reset arrives with interrupts enabled, but the
+     * bootloader masks them (cpsid i) for its own jump sequence and a
+     * handed-over image must not inherit that. Without this, every
+     * interrupt pends forever, WFI wakes and nothing runs the handlers -
+     * the flight loop spins on a tick counter no one increments. Safe this
+     * early: the NVIC has nothing enabled until the services init. */
+    __asm volatile("cpsie i" ::: "memory");
+
     /* FPU: enable CP10/CP11 before the first float instruction
      * (-mfloat-abi=hard). */
     volatile uint32_t *const cpacr = (volatile uint32_t *)0xE000ED88u;

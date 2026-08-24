@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 #: First byte of every packet, must match mark4::PROTOCOL_VERSION.
-PROTOCOL_VERSION = 12
+PROTOCOL_VERSION = 14
 
 # Packet types, the second byte of every packet (mark4::PacketType).
 TYPE_SIM_SENSOR = 1
@@ -35,6 +35,16 @@ TYPE_TUNING_LIST = 12
 TYPE_TUNING_ACK = 13
 TYPE_TUNING_INFO = 14
 TYPE_SIM_RUN_STATS = 15
+TYPE_OTA_STATUS_REQUEST = 16
+TYPE_OTA_STATUS = 17
+TYPE_OTA_BEGIN = 18
+TYPE_OTA_CHUNK = 19
+TYPE_OTA_CHUNK_ACK = 20
+TYPE_OTA_FINISH = 21
+TYPE_OTA_CONFIRM = 22
+TYPE_OTA_REVERT = 23
+TYPE_OTA_ABORT = 24
+TYPE_OTA_ACK = 25
 
 # Stream source identities (mark4::StreamSource).
 SOURCE_FIRMWARE = 1
@@ -173,6 +183,90 @@ TUNING_ACK_PACKET_SIZE = 9
 TUNING_INFO_STRUCT = struct.Struct("<BBHHH16sfffB")
 TUNING_INFO_PACKET_SIZE = 37
 
+# Firmware update packets (ota.hpp). They travel between the hub and the
+# board only: the simulator never sees one. Every packet of a transfer
+# session echoes the 32-bit session nonce the sender chose at begin, so a
+# straggler from an abandoned session cannot corrupt the next one.
+
+# Firmware slot indices; a board carries exactly two.
+OTA_SLOT_A = 0
+OTA_SLOT_B = 1
+OTA_SLOT_COUNT = 2
+
+# Slot lifecycle states, reported by OtaStatusPacket. EMPTY is the erased
+# flash byte on purpose: an erased slot needs no metadata write.
+OTA_SLOT_STAGED = 1
+OTA_SLOT_TESTING = 2
+OTA_SLOT_VALID = 3
+OTA_SLOT_BAD = 4
+OTA_SLOT_EMPTY = 0xFF
+
+# Result byte of OtaAckPacket.
+OTA_RESULT_OK = 0
+OTA_RESULT_DENIED_ARMED = 1
+OTA_RESULT_DENIED_VOLTAGE = 2
+OTA_RESULT_DENIED_BUSY = 3
+OTA_RESULT_BAD_SESSION = 4
+OTA_RESULT_BAD_STATE = 5
+OTA_RESULT_BAD_IMAGE = 6
+OTA_RESULT_CRC_MISMATCH = 7
+OTA_RESULT_STORE_FAILURE = 8
+
+# Target chip of an image; a board refuses an image built for another one.
+OTA_MCU_STM32F405 = 1
+OTA_MCU_STM32F722 = 2
+OTA_MCU_SIM = 200
+
+#: Data bytes of one OtaChunkPacket, sized to fit the serial framing.
+OTA_CHUNK_DATA_SIZE = 240
+#: In-order chunks the board acknowledges at a time (flow control).
+OTA_CHUNK_ACK_WINDOW = 16
+#: Characters of the git hash carried by images and status.
+OTA_GIT_HASH_SIZE = 8
+
+OTA_STATUS_REQUEST_STRUCT = struct.Struct("<BB")
+OTA_STATUS_REQUEST_PACKET_SIZE = 2
+# version, type, mcu id, running slot, active slot, updater busy, then per
+# slot (state, build epoch, git hash), then slot size, max chunk data.
+OTA_STATUS_STRUCT = struct.Struct("<BBBBBBBI8sBI8sIH")
+OTA_STATUS_PACKET_SIZE = 38
+# version, type, session, image size, image crc.
+OTA_BEGIN_STRUCT = struct.Struct("<BBIII")
+OTA_BEGIN_PACKET_SIZE = 14
+# version, type, session, offset, length, data[240].
+OTA_CHUNK_STRUCT = struct.Struct("<BBIIB240s")
+OTA_CHUNK_PACKET_SIZE = 251
+# version, type, session, next expected offset.
+OTA_CHUNK_ACK_STRUCT = struct.Struct("<BBII")
+OTA_CHUNK_ACK_PACKET_SIZE = 10
+OTA_FINISH_STRUCT = struct.Struct("<BBI")
+OTA_FINISH_PACKET_SIZE = 6
+OTA_CONFIRM_STRUCT = struct.Struct("<BB")
+OTA_CONFIRM_PACKET_SIZE = 2
+OTA_REVERT_STRUCT = struct.Struct("<BB")
+OTA_REVERT_PACKET_SIZE = 2
+OTA_ABORT_STRUCT = struct.Struct("<BBI")
+OTA_ABORT_PACKET_SIZE = 6
+# version, type, session, acknowledged type, result.
+OTA_ACK_STRUCT = struct.Struct("<BBIBB")
+OTA_ACK_PACKET_SIZE = 8
+
+# The on-flash image header (ota.hpp): the first bytes of every firmware
+# slot, written by the packaging script, read by the bootloader, the
+# updater and the hub. magic, header version, mcu id, slot id, image size,
+# image crc, build epoch, git hash, reserved, header crc.
+OTA_IMAGE_HEADER_STRUCT = struct.Struct("<IHBBIII8s480sI")
+#: Bytes reserved for the header at the base of a slot (vector table after).
+OTA_IMAGE_HEADER_SIZE = 512
+#: "M4FW" read as a little-endian word, the first bytes of an image.
+OTA_IMAGE_MAGIC = 0x5746344D
+#: Layout revision of the image header itself.
+OTA_IMAGE_HEADER_VERSION = 1
+#: Placeholder of an image linked but never packaged (erased-flash bytes).
+OTA_IMAGE_UNSTAMPED = 0xFFFFFFFF
+#: Offset the header crc sits at, so it covers everything before it.
+OTA_IMAGE_HEADER_CRC_OFFSET = 508
+
 for _wire_struct, _wire_size, _name in (
     (TELEMETRY_STRUCT, TELEMETRY_PACKET_SIZE, "telemetry"),
     (SIM_RAW_STRUCT, SIM_RAW_PACKET_SIZE, "sim raw"),
@@ -188,6 +282,17 @@ for _wire_struct, _wire_size, _name in (
     (TUNING_LIST_STRUCT, TUNING_LIST_PACKET_SIZE, "tuning list"),
     (TUNING_ACK_STRUCT, TUNING_ACK_PACKET_SIZE, "tuning ack"),
     (TUNING_INFO_STRUCT, TUNING_INFO_PACKET_SIZE, "tuning info"),
+    (OTA_STATUS_REQUEST_STRUCT, OTA_STATUS_REQUEST_PACKET_SIZE, "ota status request"),
+    (OTA_STATUS_STRUCT, OTA_STATUS_PACKET_SIZE, "ota status"),
+    (OTA_BEGIN_STRUCT, OTA_BEGIN_PACKET_SIZE, "ota begin"),
+    (OTA_CHUNK_STRUCT, OTA_CHUNK_PACKET_SIZE, "ota chunk"),
+    (OTA_CHUNK_ACK_STRUCT, OTA_CHUNK_ACK_PACKET_SIZE, "ota chunk ack"),
+    (OTA_FINISH_STRUCT, OTA_FINISH_PACKET_SIZE, "ota finish"),
+    (OTA_CONFIRM_STRUCT, OTA_CONFIRM_PACKET_SIZE, "ota confirm"),
+    (OTA_REVERT_STRUCT, OTA_REVERT_PACKET_SIZE, "ota revert"),
+    (OTA_ABORT_STRUCT, OTA_ABORT_PACKET_SIZE, "ota abort"),
+    (OTA_ACK_STRUCT, OTA_ACK_PACKET_SIZE, "ota ack"),
+    (OTA_IMAGE_HEADER_STRUCT, OTA_IMAGE_HEADER_SIZE, "ota image header"),
 ):
     assert _wire_struct.size == _wire_size, (
         f"{_name} wire layout out of sync with software/components/protocol/include/protocol/"
@@ -219,6 +324,24 @@ def crc16(crc: int, data: bytes) -> int:
         crc ^= byte << 8
         for _ in range(8):
             crc = ((crc << 1) ^ 0x1021 if crc & 0x8000 else crc << 1) & 0xFFFF
+    return crc
+
+
+# The one checksum of the update system, mark4::crc32Mpeg2 (polynomial
+# 0x04C11DB7, init 0xFFFFFFFF, no reflection, no final xor): bytes are
+# gathered into 32-bit words in memory order, which is what the F405
+# hardware CRC unit sees when fed words read from flash, so the packaging
+# script here and the board agree bit for bit. The word packing and the
+# 0xFF tail padding are part of the wire contract, not an implementation
+# detail.
+def crc32_mpeg2(data: bytes) -> int:
+    """CRC-32/MPEG-2 over little-endian 32-bit words, tail padded with 0xFF."""
+    data = data + b"\xff" * (-len(data) % 4)
+    crc = 0xFFFFFFFF
+    for i in range(0, len(data), 4):
+        crc ^= int.from_bytes(data[i:i + 4], "little")
+        for _ in range(32):
+            crc = ((crc << 1) ^ 0x04C11DB7 if crc & 0x80000000 else crc << 1) & 0xFFFFFFFF
     return crc
 
 
@@ -339,6 +462,74 @@ class SimRunStatsSample:
     def degraded(self) -> bool:
         """True when the link lost a tick during the run."""
         return bool(self.flags & SIM_RUN_FLAG_LOCKSTEP_DEGRADED)
+
+
+@dataclass(frozen=True)
+class OtaSlotStatus:
+    """One firmware slot: its lifecycle state and the image identity in it."""
+
+    state: int
+    build_epoch: int
+    git_hash: bytes
+
+
+@dataclass(frozen=True)
+class OtaStatus:
+    """One decoded update status: what runs, from where, what each slot holds."""
+
+    mcu_id: int
+    running_slot: int
+    active_slot: int
+    updater_busy: int
+    slots: Tuple[OtaSlotStatus, OtaSlotStatus]
+    slot_size: int
+    max_chunk_data: int
+
+
+@dataclass(frozen=True)
+class OtaChunk:
+    """One decoded image chunk, data already trimmed to the length byte."""
+
+    session: int
+    offset: int
+    data: bytes
+
+
+@dataclass(frozen=True)
+class OtaChunkAck:
+    """One cumulative chunk acknowledgement: everything below next_offset landed."""
+
+    session: int
+    next_offset: int
+
+
+@dataclass(frozen=True)
+class OtaAck:
+    """One answer to a begin, finish, confirm, revert or abort."""
+
+    session: int
+    acked_type: int
+    result: int
+
+    @property
+    def ok(self) -> bool:
+        """True when the board accepted the request."""
+        return self.result == OTA_RESULT_OK
+
+
+@dataclass(frozen=True)
+class OtaImageHeader:
+    """One decoded image header, the first bytes of a firmware slot."""
+
+    magic: int
+    header_version: int
+    mcu_id: int
+    slot_id: int
+    image_size: int
+    image_crc: int
+    build_epoch: int
+    git_hash: bytes
+    header_crc: int
 
 
 def has_header(datagram: bytes, packet_type: int) -> bool:
@@ -567,3 +758,189 @@ def decode_sim_run_stats(datagram: bytes) -> Optional[SimRunStatsSample]:
         duplicate_frames=fields[8],
         lockstep_timeouts=fields[9],
     )
+
+
+def encode_ota_status_request() -> bytes:
+    """Pack one OtaStatusRequestPacket; legal at any time, session or not."""
+    return OTA_STATUS_REQUEST_STRUCT.pack(PROTOCOL_VERSION, TYPE_OTA_STATUS_REQUEST)
+
+
+def encode_ota_status(status: OtaStatus) -> bytes:
+    """Pack one OtaStatusPacket; the board side of the wire, for fake boards."""
+    fields = [PROTOCOL_VERSION, TYPE_OTA_STATUS,
+              status.mcu_id, status.running_slot, status.active_slot,
+              status.updater_busy]
+    for slot in status.slots:
+        fields += [slot.state, slot.build_epoch,
+                   slot.git_hash.ljust(OTA_GIT_HASH_SIZE, b"\x00")]
+    fields += [status.slot_size, status.max_chunk_data]
+    return OTA_STATUS_STRUCT.pack(*fields)
+
+
+def encode_ota_begin(session: int, image_size: int, image_crc: int) -> bytes:
+    """Pack one OtaBeginPacket; the board erases before it answers, so the
+    acknowledgement deserves a timeout counted in seconds."""
+    return OTA_BEGIN_STRUCT.pack(
+        PROTOCOL_VERSION, TYPE_OTA_BEGIN, session, image_size, image_crc,
+    )
+
+
+def encode_ota_chunk(session: int, offset: int, data: bytes) -> bytes:
+    """Pack one OtaChunkPacket; the padding past the length byte is ignored."""
+    assert 0 < len(data) <= OTA_CHUNK_DATA_SIZE
+    return OTA_CHUNK_STRUCT.pack(
+        PROTOCOL_VERSION, TYPE_OTA_CHUNK, session, offset, len(data), data,
+    )
+
+
+def encode_ota_chunk_ack(session: int, next_offset: int) -> bytes:
+    """Pack one OtaChunkAckPacket, the cumulative acknowledgement."""
+    return OTA_CHUNK_ACK_STRUCT.pack(
+        PROTOCOL_VERSION, TYPE_OTA_CHUNK_ACK, session, next_offset,
+    )
+
+
+def encode_ota_finish(session: int) -> bytes:
+    """Pack one OtaFinishPacket; the board CRC-checks the slot and stages it."""
+    return OTA_FINISH_STRUCT.pack(PROTOCOL_VERSION, TYPE_OTA_FINISH, session)
+
+
+def encode_ota_confirm() -> bytes:
+    """Pack one OtaConfirmPacket; marks the running trial image valid."""
+    return OTA_CONFIRM_STRUCT.pack(PROTOCOL_VERSION, TYPE_OTA_CONFIRM)
+
+
+def encode_ota_revert() -> bytes:
+    """Pack one OtaRevertPacket; the reboot command follows separately."""
+    return OTA_REVERT_STRUCT.pack(PROTOCOL_VERSION, TYPE_OTA_REVERT)
+
+
+def encode_ota_abort(session: int) -> bytes:
+    """Pack one OtaAbortPacket; drops the session, back to normal mode."""
+    return OTA_ABORT_STRUCT.pack(PROTOCOL_VERSION, TYPE_OTA_ABORT, session)
+
+
+def encode_ota_ack(session: int, acked_type: int, result: int) -> bytes:
+    """Pack one OtaAckPacket; session is 0 for the sessionless requests."""
+    return OTA_ACK_STRUCT.pack(
+        PROTOCOL_VERSION, TYPE_OTA_ACK, session, acked_type, result,
+    )
+
+
+def decode_ota_status(datagram: bytes) -> Optional[OtaStatus]:
+    """Decode one update status datagram, None when not one."""
+    if len(datagram) != OTA_STATUS_PACKET_SIZE:
+        return None
+    if not has_header(datagram, TYPE_OTA_STATUS):
+        return None
+
+    fields = OTA_STATUS_STRUCT.unpack(datagram)
+    return OtaStatus(
+        mcu_id=fields[2],
+        running_slot=fields[3],
+        active_slot=fields[4],
+        updater_busy=fields[5],
+        slots=(OtaSlotStatus(state=fields[6], build_epoch=fields[7], git_hash=fields[8]),
+               OtaSlotStatus(state=fields[9], build_epoch=fields[10], git_hash=fields[11])),
+        slot_size=fields[12],
+        max_chunk_data=fields[13],
+    )
+
+
+def decode_ota_chunk(datagram: bytes) -> Optional[OtaChunk]:
+    """Decode one image chunk datagram, None when not one or length is out
+    of range. The returned data is trimmed to the length byte: the bytes
+    past it are padding and mean nothing."""
+    if len(datagram) != OTA_CHUNK_PACKET_SIZE:
+        return None
+    if not has_header(datagram, TYPE_OTA_CHUNK):
+        return None
+
+    fields = OTA_CHUNK_STRUCT.unpack(datagram)
+    length = fields[4]
+    if not 0 < length <= OTA_CHUNK_DATA_SIZE:
+        return None
+    return OtaChunk(session=fields[2], offset=fields[3], data=fields[5][:length])
+
+
+def decode_ota_chunk_ack(datagram: bytes) -> Optional[OtaChunkAck]:
+    """Decode one cumulative chunk acknowledgement, None when not one."""
+    if len(datagram) != OTA_CHUNK_ACK_PACKET_SIZE:
+        return None
+    if not has_header(datagram, TYPE_OTA_CHUNK_ACK):
+        return None
+    fields = OTA_CHUNK_ACK_STRUCT.unpack(datagram)
+    return OtaChunkAck(session=fields[2], next_offset=fields[3])
+
+
+def decode_ota_ack(datagram: bytes) -> Optional[OtaAck]:
+    """Decode one updater acknowledgement datagram, None when not one."""
+    if len(datagram) != OTA_ACK_PACKET_SIZE:
+        return None
+    if not has_header(datagram, TYPE_OTA_ACK):
+        return None
+    fields = OTA_ACK_STRUCT.unpack(datagram)
+    return OtaAck(session=fields[2], acked_type=fields[3], result=fields[4])
+
+
+def ota_image_header_crc(header: bytes) -> int:
+    """CRC-32/MPEG-2 of everything a header carries before its own crc."""
+    return crc32_mpeg2(header[:OTA_IMAGE_HEADER_CRC_OFFSET])
+
+
+def valid_ota_image_header(header: bytes) -> bool:
+    """True when a slot's first bytes are a header this layout understands."""
+    if len(header) < OTA_IMAGE_HEADER_SIZE:
+        return False
+    fields = OTA_IMAGE_HEADER_STRUCT.unpack(header[:OTA_IMAGE_HEADER_SIZE])
+    if fields[0] != OTA_IMAGE_MAGIC or fields[1] != OTA_IMAGE_HEADER_VERSION:
+        return False
+    return fields[9] == ota_image_header_crc(header)
+
+
+def decode_ota_image_header(header: bytes) -> Optional[OtaImageHeader]:
+    """Decode the first bytes of a firmware slot, None when not a header.
+
+    The header crc is checked: an image whose header does not hold together
+    is not one this layout may reason about.
+    """
+    if not valid_ota_image_header(header):
+        return None
+
+    fields = OTA_IMAGE_HEADER_STRUCT.unpack(header[:OTA_IMAGE_HEADER_SIZE])
+    return OtaImageHeader(
+        magic=fields[0],
+        header_version=fields[1],
+        mcu_id=fields[2],
+        slot_id=fields[3],
+        image_size=fields[4],
+        image_crc=fields[5],
+        build_epoch=fields[6],
+        git_hash=fields[7],
+        header_crc=fields[9],
+    )
+
+
+def encode_ota_image_header(
+    mcu_id: int,
+    slot_id: int,
+    image_size: int,
+    image_crc: int,
+    build_epoch: int = 0,
+    git_hash: bytes = b"",
+) -> bytes:
+    """Stamp one image header, its own crc computed last.
+
+    What the packaging script writes at the base of a slot: the constant
+    fields, then the values only packaging knows (size, image crc, build
+    epoch, git hash), then the crc over all of them. Unused room is
+    erased-flash 0xFF, so a future field costs no layout change.
+    """
+    body = OTA_IMAGE_HEADER_STRUCT.pack(
+        OTA_IMAGE_MAGIC, OTA_IMAGE_HEADER_VERSION, mcu_id, slot_id,
+        image_size, image_crc, build_epoch,
+        git_hash.ljust(OTA_GIT_HASH_SIZE, b"\xff"),
+        b"\xff" * 480, 0,
+    )
+    crc = ota_image_header_crc(body)
+    return body[:OTA_IMAGE_HEADER_CRC_OFFSET] + struct.pack("<I", crc)

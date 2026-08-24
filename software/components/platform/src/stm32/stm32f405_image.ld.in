@@ -1,0 +1,120 @@
+/* STM32F405RG image layout - TEMPLATE, not a linker script.
+ *
+ * CMake turns this into one script per flash image (see the
+ * drone_stm32_image_layout() function in this directory's CMakeLists.txt).
+ * Every image on this chip - the bootloader and both firmware slots - obeys
+ * the same rules and differs only by the three numbers substituted below,
+ * so a change to the section layout can never apply to one image and not
+ * the others.
+ *
+ * Generated for : @DRONE_IMAGE_NAME@
+ *   flash window: ORIGIN @DRONE_FLASH_ORIGIN@, LENGTH @DRONE_FLASH_LENGTH@
+ *   image header: @DRONE_IMAGE_HEADER_SIZE@ bytes at the window base
+ *
+ * A firmware slot image opens with the OtaImageHeader of protocol/ota.hpp
+ * (OTA_IMAGE_HEADER_SIZE bytes, KEEP so linker garbage collection and the
+ * packaging script both always find it) and carries its vector table right
+ * after it. That keeps the table 512-byte aligned, hence legal for VTOR,
+ * and makes the slot content byte-for-byte the image the hub sends.
+ * drone_boot carries no header: its header size is 0, .image_header holds
+ * nothing and collapses away, and the vector table sits at the reset
+ * address the hardware fetches.
+ *
+ * WARNING: the CCM RAM is NOT DMA-capable - DMA buffers (DShot, SPI) must be
+ * placed explicitly outside CCM. */
+
+ENTRY(Reset_Handler)
+
+MEMORY
+{
+  FLASH  (rx)  : ORIGIN = @DRONE_FLASH_ORIGIN@, LENGTH = @DRONE_FLASH_LENGTH@
+  RAM    (rwx) : ORIGIN = 0x20000000, LENGTH = 128K
+  CCMRAM (rw)  : ORIGIN = 0x10000000, LENGTH = 64K
+}
+
+_estack = ORIGIN(RAM) + LENGTH(RAM);
+
+SECTIONS
+{
+  /* The location counter assignment is also the size check: a header struct
+   * that outgrew its reserved bytes moves the counter backwards and fails
+   * the link, instead of silently pushing the vector table out of alignment. */
+  .image_header :
+  {
+    KEEP(*(.image_header))
+    . = ORIGIN(FLASH) + @DRONE_IMAGE_HEADER_SIZE@;
+  } > FLASH
+
+  .isr_vector :
+  {
+    KEEP(*(.isr_vector))
+  } > FLASH
+
+  .text :
+  {
+    *(.text*)
+    *(.rodata*)
+    . = ALIGN(4);
+  } > FLASH
+
+  /* C++ init arrays (walked by __libc_init_array). */
+  .preinit_array :
+  {
+    PROVIDE_HIDDEN(__preinit_array_start = .);
+    KEEP(*(.preinit_array*))
+    PROVIDE_HIDDEN(__preinit_array_end = .);
+  } > FLASH
+
+  .init_array :
+  {
+    PROVIDE_HIDDEN(__init_array_start = .);
+    KEEP(*(SORT(.init_array.*)))
+    KEEP(*(.init_array*))
+    PROVIDE_HIDDEN(__init_array_end = .);
+  } > FLASH
+
+  .fini_array :
+  {
+    PROVIDE_HIDDEN(__fini_array_start = .);
+    KEEP(*(SORT(.fini_array.*)))
+    KEEP(*(.fini_array*))
+    PROVIDE_HIDDEN(__fini_array_end = .);
+  } > FLASH
+
+  .ARM.exidx :
+  {
+    __exidx_start = .;
+    *(.ARM.exidx* .gnu.linkonce.armexidx.*)
+    __exidx_end = .;
+  } > FLASH
+
+  _sidata = LOADADDR(.data);
+
+  .data :
+  {
+    . = ALIGN(4);
+    _sdata = .;
+    *(.data*)
+    . = ALIGN(4);
+    _edata = .;
+  } > RAM AT> FLASH
+
+  .bss :
+  {
+    . = ALIGN(4);
+    _sbss = .;
+    *(.bss*)
+    *(COMMON)
+    . = ALIGN(4);
+    _ebss = .;
+  } > RAM
+
+  /* Heap for _sbrk (newlib nosys). */
+  PROVIDE(end = .);
+  PROVIDE(_end = .);
+}
+
+/* VTOR only accepts a vector table aligned to the next power of two at or
+ * above the table size; 512 covers this 54-entry table with room to grow. */
+ASSERT((ADDR(.isr_vector) & 0x1FF) == 0,
+       "the vector table must be 512-byte aligned for VTOR")

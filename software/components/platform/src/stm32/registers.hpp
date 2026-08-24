@@ -34,10 +34,16 @@ namespace mark4
         volatile std::uint32_t APB2ENR;  ///< APB2 peripheral clock enable
     };
 
-    /// Embedded flash interface (RM0090 section 3).
+    /// Embedded flash interface (RM0090 section 3): access control, then
+    /// the program/erase controller the OTA store drives.
     struct FlashRegisters
     {
-        volatile std::uint32_t ACR; ///< access control (latency, caches)
+        volatile std::uint32_t ACR;     ///< access control (latency, caches)
+        volatile std::uint32_t KEYR;    ///< unlock key register
+        volatile std::uint32_t OPTKEYR; ///< option byte unlock key register
+        volatile std::uint32_t SR;      ///< status (BSY, EOP, error flags)
+        volatile std::uint32_t CR;      ///< control (PG, SER, SNB, PSIZE, STRT, LOCK)
+        volatile std::uint32_t OPTCR;   ///< option byte control
     };
 
     /// General-purpose I/O port (RM0090 section 8).
@@ -106,6 +112,26 @@ namespace mark4
         volatile std::uint32_t CYCCNT; ///< free-running core cycle counter
     };
 
+    /// One stream of a DMA controller (RM0090 section 10).
+    struct DmaStreamRegisters
+    {
+        volatile std::uint32_t CR;   ///< configuration (EN, CHSEL, CIRC, MINC)
+        volatile std::uint32_t NDTR; ///< number of data items left
+        volatile std::uint32_t PAR;  ///< peripheral address
+        volatile std::uint32_t M0AR; ///< memory 0 address
+        volatile std::uint32_t M1AR; ///< memory 1 address (double buffer)
+        volatile std::uint32_t FCR;  ///< FIFO control
+    };
+
+    /// Interrupt status and clear block of a DMA controller.
+    struct DmaRegisters
+    {
+        volatile std::uint32_t LISR;  ///< status, streams 0-3
+        volatile std::uint32_t HISR;  ///< status, streams 4-7
+        volatile std::uint32_t LIFCR; ///< clear, streams 0-3
+        volatile std::uint32_t HIFCR; ///< clear, streams 4-7
+    };
+
     inline RccRegisters *const RCC = reinterpret_cast<RccRegisters *>(0x40023800U);
     inline FlashRegisters *const FLASH = reinterpret_cast<FlashRegisters *>(0x40023C00U);
     inline GpioRegisters *const GPIOB = reinterpret_cast<GpioRegisters *>(0x40020400U);
@@ -114,6 +140,11 @@ namespace mark4
     inline TimRegisters *const TIM2 = reinterpret_cast<TimRegisters *>(0x40000000U);
     inline TimRegisters *const TIM3 = reinterpret_cast<TimRegisters *>(0x40000400U);
     inline UsartRegisters *const USART1 = reinterpret_cast<UsartRegisters *>(0x40011000U);
+    inline DmaRegisters *const DMA2 = reinterpret_cast<DmaRegisters *>(0x40026400U);
+
+    /// USART1_RX lives on DMA2 stream 2, channel 4 (RM0090 table 43).
+    inline DmaStreamRegisters *const DMA2_STREAM2 =
+        reinterpret_cast<DmaStreamRegisters *>(0x40026400U + 0x10U + (2U * 0x18U));
     inline DwtRegisters *const DWT = reinterpret_cast<DwtRegisters *>(0xE0001000U);
 
     /// Debug exception and monitor control register: TRCENA gates the DWT.
@@ -123,6 +154,12 @@ namespace mark4
     /// NVIC interrupt set-enable registers, one bit per IRQ number.
     inline volatile std::uint32_t *const NVIC_ISER =
         reinterpret_cast<volatile std::uint32_t *>(0xE000E100U);
+
+    /// Vector table offset register (SCB): the base address the core reads
+    /// every exception vector from. Each image points it at its own table,
+    /// which is what lets the same firmware run from either OTA slot.
+    inline volatile std::uint32_t *const SCB_VTOR =
+        reinterpret_cast<volatile std::uint32_t *>(0xE000ED08U);
 
     /// Application interrupt and reset control register (SCB): VECTKEY in
     /// the high half, SYSRESETREQ requests a system reset.

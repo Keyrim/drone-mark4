@@ -16,6 +16,22 @@
             }
         },
         {
+            "label": "start hub",
+            "detail": "On folder open: rebuild the pages, then build and start the hub unless one already answers on its port.",
+            "type": "shell",
+            "command": "${workspaceFolder}/scripts/start_hub.sh",
+            "runOptions": {
+                "runOn": "folderOpen"
+            },
+            "isBackground": true,
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated",
+                "group": "session"
+            }
+        },
+        {
             "label": "godot sim",
             "detail": "The plant, windowed, in its own terminal. It idles and resends until a flight process answers on the sim port.",
             "type": "shell",
