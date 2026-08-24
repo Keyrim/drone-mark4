@@ -7,7 +7,10 @@
 #include "hub/ota_client.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
+#include <ctime>
+#include <filesystem>
 #include <random>
 #include <utility>
 
@@ -45,6 +48,29 @@ namespace mark4
                 return "B";
             }
             return "?";
+        }
+
+        /// @brief Names one build the way an operator reads it in a verdict.
+        /// @param epoch build epoch of an image header, 0 when there is none
+        /// @return "the build of <UTC time>", or the two headerless cases
+        std::string buildText(std::uint32_t epoch)
+        {
+            if (epoch == 0U)
+            {
+                return "an image with no header";
+            }
+            if (epoch == OTA_IMAGE_UNSTAMPED)
+            {
+                return "an unpackaged build";
+            }
+            const auto seconds = static_cast<std::time_t>(epoch);
+            std::tm utc{};
+            static_cast<void>(gmtime_r(&seconds, &utc));
+            // "YYYY-mm-dd HH:MM:SS" is 19 characters plus the terminator.
+            constexpr std::size_t TEXT_CAPACITY = 20U;
+            std::array<char, TEXT_CAPACITY> text{};
+            static_cast<void>(std::strftime(text.data(), text.size(), "%Y-%m-%d %H:%M:%S", &utc));
+            return std::string("the build of ") + text.data() + " UTC";
         }
     } // namespace
 
@@ -168,16 +194,6 @@ namespace mark4
         }
     }
 
-    void OtaClient::setAutoConfirm(bool on)
-    {
-        if (m_config.autoConfirm == on)
-        {
-            return;
-        }
-        m_config.autoConfirm = on;
-        notifyChange();
-    }
-
     bool OtaClient::busy() const
     {
         switch (m_phase)
@@ -200,19 +216,11 @@ namespace mark4
         return false;
     }
 
-    bool OtaClient::confirmReady() const
-    {
-        return m_phase == OtaPhase::TESTING && !m_confirmSent && m_healthySinceUs != 0U &&
-               m_healthyCount >= m_config.healthyStatuses;
-    }
-
     std::string OtaClient::verdictText() const
     {
         const std::string board =
             m_board.seen
-                ? "v" +
-                      otaVersionText(
-                          m_board.versionMajor, m_board.versionMinor, m_board.versionPatch) +
+                ? buildText(m_board.buildEpoch) +
                       (m_board.gitHash.empty() ? std::string{} : " (" + m_board.gitHash + ")") +
                       " from slot " + slotLetter(m_board.runningSlot)
                 : std::string("an unknown firmware");
@@ -259,17 +267,17 @@ namespace mark4
             return false;
         }
         m_bundle = std::move(bundle);
+        std::error_code ignored;
+        m_bundleFileTime = std::filesystem::last_write_time(path, ignored);
+        m_bundleFileSize = std::filesystem::file_size(path, ignored);
         m_lastError.clear();
         m_verdict = OtaVerdict::NONE;
         m_progress = OtaProgress{};
         m_targetSlot = OTA_SLOT_COUNT;
         m_session = 0U;
         m_chunkData = 0U;
-        m_confirmSent = false;
         m_previousKnown = false;
-        m_previousGitHash.clear();
-        m_healthyCount = 0U;
-        m_healthySinceUs = 0U;
+        m_previousBuildEpoch = 0U;
         m_ackTries = 0U;
         m_statusTries = 1U;
         m_nextStatusUs = nowUs + m_config.statusPeriodMs * US_PER_MS;
@@ -307,31 +315,9 @@ namespace mark4
         m_progress = OtaProgress{};
         m_targetSlot = OTA_SLOT_COUNT;
         m_session = 0U;
-        m_confirmSent = false;
         m_verdict = OtaVerdict::NONE;
         m_lastError = "aborted by the operator";
         enter(OtaPhase::IDLE);
-        return true;
-    }
-
-    bool OtaClient::confirm(std::uint64_t nowUs, std::string &errorOut)
-    {
-        if (m_phase != OtaPhase::TESTING)
-        {
-            errorOut = "the board is not running a trial image";
-            return false;
-        }
-        if (m_confirmSent)
-        {
-            errorOut = "a confirmation is already on its way";
-            return false;
-        }
-        sendConfirm(nowUs);
-        if (m_phase == OtaPhase::FAILED)
-        {
-            errorOut = m_lastError;
-            return false;
-        }
         return true;
     }
 
@@ -353,7 +339,6 @@ namespace mark4
         const auto bytes = wireBytes(packet);
         m_lastError.clear();
         m_verdict = OtaVerdict::NONE;
-        m_confirmSent = false;
         m_ackTries = 1U;
         m_deadlineUs = nowUs + m_config.ackTimeoutMs * US_PER_MS;
         enter(OtaPhase::REVERTING);
@@ -408,8 +393,54 @@ namespace mark4
         return false;
     }
 
+    void OtaClient::refreshBundle(std::uint64_t nowUs)
+    {
+        if (busy() || nowUs < m_nextBundleCheckUs)
+        {
+            return;
+        }
+        m_nextBundleCheckUs = nowUs + BUNDLE_CHECK_MS * US_PER_MS;
+        const std::string &path = m_bundlePath.empty() ? m_defaultBundlePath : m_bundlePath;
+        if (path.empty())
+        {
+            return;
+        }
+        std::error_code failure;
+        const auto written = std::filesystem::last_write_time(path, failure);
+        const auto size = failure ? 0U : std::filesystem::file_size(path, failure);
+        if (failure)
+        {
+            // Not built yet, or deleted: showing a bundle that no start
+            // could send any more would be a lie.
+            if (m_bundle.loaded())
+            {
+                m_bundle = OtaBundle{};
+                notifyChange();
+            }
+            return;
+        }
+        if (m_bundle.loaded() && written == m_bundleFileTime && size == m_bundleFileSize)
+        {
+            return;
+        }
+        // The file is new or changed since the load: a fresh build. A load
+        // that fails keeps the old view and retries on the next check; the
+        // build may still have been writing the file.
+        OtaBundle bundle;
+        std::string error;
+        if (!loadOtaBundle(path, bundle, error))
+        {
+            return;
+        }
+        m_bundle = std::move(bundle);
+        m_bundleFileTime = written;
+        m_bundleFileSize = size;
+        notifyChange();
+    }
+
     void OtaClient::tick(std::uint64_t nowUs)
     {
+        refreshBundle(nowUs);
         switch (m_phase)
         {
             case OtaPhase::QUERY:
@@ -479,32 +510,13 @@ namespace mark4
                 }
                 break;
             case OtaPhase::TESTING:
-                if (m_confirmSent)
-                {
-                    if (nowUs >= m_deadlineUs)
-                    {
-                        if (m_ackTries >= m_config.maxAckTries)
-                        {
-                            fail("the board did not acknowledge the confirmation");
-                            return;
-                        }
-                        m_confirmSent = false;
-                        sendConfirm(nowUs);
-                    }
-                    break;
-                }
-                // The trial image must keep answering: the healthy link IS
-                // the property being tested, so the polling continues.
+                // The trial image vouches for itself on the first request it
+                // serves, so the hub only keeps asking until the metadata
+                // says VALID, or the bootloader brings the old image back.
                 if (nowUs >= m_nextStatusUs)
                 {
                     m_nextStatusUs = nowUs + m_config.statusPeriodMs * US_PER_MS;
                     static_cast<void>(sendStatusRequest());
-                }
-                if (m_config.autoConfirm && m_healthySinceUs != 0U &&
-                    m_healthyCount >= m_config.healthyStatuses &&
-                    nowUs - m_healthySinceUs >= m_config.healthyLinkMs * US_PER_MS)
-                {
-                    sendConfirm(nowUs);
                 }
                 break;
             case OtaPhase::REVERTING:
@@ -671,10 +683,7 @@ namespace mark4
         // The identity the board runs right now is what a rollback will look
         // like when it comes back, so it is captured before anything changes.
         m_previousKnown = true;
-        m_previousMajor = m_board.versionMajor;
-        m_previousMinor = m_board.versionMinor;
-        m_previousPatch = m_board.versionPatch;
-        m_previousGitHash = m_board.gitHash;
+        m_previousBuildEpoch = m_board.buildEpoch;
 
         m_session = drawSession();
         m_progress = OtaProgress{};
@@ -712,12 +721,20 @@ namespace mark4
         m_board.mcuId = packet.mcuId;
         m_board.runningSlot = packet.runningSlot;
         m_board.activeSlot = packet.activeSlot;
-        m_board.slotState = readPackedField(&packet.slotState);
+        for (std::size_t slot = 0U; slot < OTA_SLOT_COUNT; ++slot)
+        {
+            const OtaSlotStatus wire = readPackedField(&packet.slot[slot]);
+            m_board.slots[slot].state = wire.state;
+            m_board.slots[slot].buildEpoch = wire.buildEpoch;
+            m_board.slots[slot].gitHash = otaGitHashText(wire.gitHash);
+        }
         m_board.updaterBusy = packet.updaterBusy != 0U;
-        m_board.versionMajor = packet.versionMajor;
-        m_board.versionMinor = packet.versionMinor;
-        m_board.versionPatch = packet.versionPatch;
-        m_board.gitHash = otaGitHashText(readPackedField(&packet.gitHash));
+        // The running slot's identity doubles as the board's, which is what
+        // every verdict compares.
+        const OtaSlotInfo &running =
+            m_board.slots[packet.runningSlot < OTA_SLOT_COUNT ? packet.runningSlot : 0U];
+        m_board.buildEpoch = running.buildEpoch;
+        m_board.gitHash = running.gitHash;
         m_board.slotSize = packet.slotSize;
         m_board.maxChunkData = packet.maxChunkData;
 
@@ -732,11 +749,16 @@ namespace mark4
             case OtaPhase::TESTING:
                 if (boardRunsBundle())
                 {
-                    if (m_healthySinceUs == 0U)
+                    const std::uint8_t state = m_board.runningSlot < OTA_SLOT_COUNT
+                                                   ? m_board.slots[m_board.runningSlot].state
+                                                   : static_cast<std::uint8_t>(OTA_SLOT_EMPTY);
+                    if (state != OTA_SLOT_TESTING)
                     {
-                        m_healthySinceUs = nowUs;
+                        // The image confirmed itself since the last answer.
+                        m_verdict = OtaVerdict::CONFIRMED;
+                        enter(OtaPhase::CONFIRMED);
+                        return;
                     }
-                    ++m_healthyCount;
                 }
                 else if (boardRunsPrevious())
                 {
@@ -769,13 +791,10 @@ namespace mark4
         if (boardRunsBundle())
         {
             const std::uint8_t state = m_board.runningSlot < OTA_SLOT_COUNT
-                                           ? m_board.slotState[m_board.runningSlot]
+                                           ? m_board.slots[m_board.runningSlot].state
                                            : static_cast<std::uint8_t>(OTA_SLOT_EMPTY);
             if (state == OTA_SLOT_TESTING)
             {
-                m_healthySinceUs = nowUs;
-                m_healthyCount = 1U;
-                m_confirmSent = false;
                 m_nextStatusUs = nowUs + m_config.statusPeriodMs * US_PER_MS;
                 enter(OtaPhase::TESTING);
                 return;
@@ -792,23 +811,9 @@ namespace mark4
             enter(OtaPhase::ROLLED_BACK);
             return;
         }
-        fail("the board came back running v" +
-             otaVersionText(m_board.versionMajor, m_board.versionMinor, m_board.versionPatch) +
+        fail("the board came back running " + buildText(m_board.buildEpoch) +
              (m_board.gitHash.empty() ? std::string{} : " (" + m_board.gitHash + ")") +
              ", which is neither the bundle nor what it ran before");
-    }
-
-    void OtaClient::sendConfirm(std::uint64_t nowUs)
-    {
-        OtaConfirmPacket packet{};
-        packet.version = PROTOCOL_VERSION;
-        packet.type = static_cast<std::uint8_t>(PacketType::OTA_CONFIRM);
-        const auto bytes = wireBytes(packet);
-        m_confirmSent = true;
-        ++m_ackTries;
-        m_deadlineUs = nowUs + m_config.ackTimeoutMs * US_PER_MS;
-        notifyChange();
-        static_cast<void>(emit(bytes.data(), bytes.size()));
     }
 
     void OtaClient::onAck(const std::uint8_t *data, std::uint64_t nowUs)
@@ -854,20 +859,6 @@ namespace mark4
                 m_deadlineUs = nowUs + m_config.boardReturnTimeoutMs * US_PER_MS;
                 enter(OtaPhase::REBOOTING);
                 static_cast<void>(sendReboot());
-                return;
-            case PacketType::OTA_CONFIRM:
-                if (m_phase != OtaPhase::TESTING || !m_confirmSent)
-                {
-                    return;
-                }
-                if (packet.result != OTA_RESULT_OK)
-                {
-                    fail(otaResultText(packet.result));
-                    return;
-                }
-                m_confirmSent = false;
-                m_verdict = OtaVerdict::CONFIRMED;
-                enter(OtaPhase::CONFIRMED);
                 return;
             case PacketType::OTA_REVERT:
                 if (m_phase != OtaPhase::REVERTING)
@@ -1001,15 +992,11 @@ namespace mark4
         {
             return false;
         }
-        if (!m_bundle.gitHash.empty() && !m_board.gitHash.empty())
-        {
-            return m_board.gitHash == m_bundle.gitHash;
-        }
-        // A hash-less image (never packaged, or a board that reports none)
-        // leaves the version triplet as the only identity there is.
-        return m_board.versionMajor == m_bundle.versionMajor &&
-               m_board.versionMinor == m_bundle.versionMinor &&
-               m_board.versionPatch == m_bundle.versionPatch;
+        // The build epoch IS the identity: unlike the git hash it tells two
+        // packagings of the same dirty tree apart. The hash stays display
+        // only. Two headerless or two unpackaged images compare equal here,
+        // which is the best either side can claim about itself.
+        return m_board.buildEpoch == m_bundle.buildEpoch;
     }
 
     bool OtaClient::boardRunsPrevious() const
@@ -1018,19 +1005,13 @@ namespace mark4
         {
             return false;
         }
-        if (!m_previousGitHash.empty() && !m_board.gitHash.empty())
-        {
-            return m_board.gitHash == m_previousGitHash;
-        }
-        return m_board.versionMajor == m_previousMajor && m_board.versionMinor == m_previousMinor &&
-               m_board.versionPatch == m_previousPatch;
+        return m_board.buildEpoch == m_previousBuildEpoch;
     }
 
     void OtaClient::fail(const std::string &reason)
     {
         m_lastError = reason;
         m_verdict = OtaVerdict::FAILED;
-        m_confirmSent = false;
         enter(OtaPhase::FAILED);
     }
 

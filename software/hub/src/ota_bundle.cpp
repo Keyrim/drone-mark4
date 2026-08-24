@@ -176,37 +176,15 @@ namespace mark4
             return true;
         }
 
-        /// @brief Reads the version triplet of the manifest.
+        /// @brief Reads the build epoch of the manifest, the build's identity.
         /// @param manifest manifest object
-        /// @param[out] bundleOut receives the three numbers
+        /// @param[out] bundleOut receives the epoch
         /// @param[out] errorOut receives the reason on failure
-        /// @return true when the triplet is present and in range
-        bool readVersion(const Json &manifest, OtaBundle &bundleOut, std::string &errorOut)
+        /// @return true when the epoch is present and fits 32 bits
+        bool readBuildEpoch(const Json &manifest, OtaBundle &bundleOut, std::string &errorOut)
         {
-            const auto found = manifest.find("version");
-            if (found == manifest.end() || !found->is_object())
-            {
-                errorOut = "the manifest carries no 'version' object";
-                return false;
-            }
-            std::uint32_t major = 0U;
-            std::uint32_t minor = 0U;
-            std::uint32_t patch = 0U;
-            if (!readManifestU32(*found, "major", "version major", major, errorOut) ||
-                !readManifestU32(*found, "minor", "version minor", minor, errorOut) ||
-                !readManifestU32(*found, "patch", "version patch", patch, errorOut))
-            {
-                return false;
-            }
-            if (major > UINT8_MAX || minor > UINT8_MAX || patch > UINT8_MAX)
-            {
-                errorOut = "the manifest version numbers must each fit a byte";
-                return false;
-            }
-            bundleOut.versionMajor = static_cast<std::uint8_t>(major);
-            bundleOut.versionMinor = static_cast<std::uint8_t>(minor);
-            bundleOut.versionPatch = static_cast<std::uint8_t>(patch);
-            return true;
+            return readManifestU32(
+                manifest, "buildEpoch", "build epoch", bundleOut.buildEpoch, errorOut);
         }
 
         /// @brief Reads the manifest image list, without the bytes.
@@ -366,11 +344,6 @@ namespace mark4
         return crc;
     }
 
-    std::string otaVersionText(std::uint8_t major, std::uint8_t minor, std::uint8_t patch)
-    {
-        return std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(patch);
-    }
-
     std::string otaGitHashText(const std::array<char, OTA_GIT_HASH_SIZE> &hash)
     {
         std::size_t length = 0U;
@@ -443,7 +416,7 @@ namespace mark4
         bundle.path = path;
         std::uint32_t protocolVersion = 0U;
         if (!readMcuId(manifest, bundle.mcuId, errorOut) ||
-            !readVersion(manifest, bundle, errorOut) ||
+            !readBuildEpoch(manifest, bundle, errorOut) ||
             !readManifestU32(
                 manifest, "protocolVersion", "protocol version", protocolVersion, errorOut) ||
             !readImageList(manifest, bundle, errorOut))

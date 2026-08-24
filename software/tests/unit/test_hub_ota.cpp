@@ -128,12 +128,12 @@ namespace
     ///        recognizable payload.
     /// @param slot slot the image is linked for
     /// @param mcuId chip the image is built for
-    /// @param version version triplet, all three the same number
+    /// @param buildEpoch build identity to stamp
     /// @param gitHash short hash to stamp
     /// @return the image bytes
     std::vector<std::uint8_t> makeImage(std::uint8_t slot,
                                         std::uint8_t mcuId,
-                                        std::uint8_t version,
+                                        std::uint32_t buildEpoch,
                                         const std::string &gitHash)
     {
         std::vector<std::uint8_t> image(OTA_IMAGE_HEADER_SIZE + TEST_PAYLOAD, 0xFFU);
@@ -145,9 +145,7 @@ namespace
         header.slotId = slot;
         header.imageSize = static_cast<std::uint32_t>(image.size());
         header.imageCrc = otaImageCrc32(image.data() + OTA_IMAGE_HEADER_SIZE, TEST_PAYLOAD);
-        header.versionMajor = version;
-        header.versionMinor = version;
-        header.versionPatch = version;
+        header.buildEpoch = buildEpoch;
         const auto field = hashField(gitHash);
         std::memcpy(&header.gitHash, field.data(), field.size());
         std::memcpy(image.data(), &header, sizeof(header));
@@ -171,14 +169,14 @@ namespace
 
     /// @brief Assembles a bundle file the way scripts/make_ota.py does.
     /// @param mcuId chip the build targets
-    /// @param version version triplet number
+    /// @param buildEpoch build identity of the build
     /// @param gitHash short hash of the build
     /// @param protocolVersion wire version to announce
     /// @param breakCrcOfSlot slot whose announced CRC is deliberately wrong,
     ///        or 2 to keep both honest
     /// @return the file and its facts
     BuiltBundle buildBundle(std::uint8_t mcuId,
-                            std::uint8_t version,
+                            std::uint32_t buildEpoch,
                             const std::string &gitHash,
                             std::uint8_t protocolVersion,
                             std::uint8_t breakCrcOfSlot = 2U)
@@ -186,7 +184,7 @@ namespace
         BuiltBundle built;
         for (std::uint8_t slot = 0U; slot < OTA_SLOT_COUNT; ++slot)
         {
-            built.images[slot] = makeImage(slot, mcuId, version, gitHash);
+            built.images[slot] = makeImage(slot, mcuId, buildEpoch, gitHash);
             built.crc[slot] = otaImageCrc32(built.images[slot].data(), built.images[slot].size());
             if (slot == breakCrcOfSlot)
             {
@@ -195,8 +193,7 @@ namespace
         }
         std::string manifest = R"({"name":"drone_firmware","mcuId":)";
         manifest += std::to_string(mcuId);
-        manifest += R"(,"version":{"major":)" + std::to_string(version) + R"(,"minor":)" +
-                    std::to_string(version) + R"(,"patch":)" + std::to_string(version) + "}";
+        manifest += R"(,"buildEpoch":)" + std::to_string(buildEpoch);
         manifest += R"(,"gitHash":")" + gitHash + R"(","protocolVersion":)" +
                     std::to_string(protocolVersion) + R"(,"images":[)";
         for (std::uint8_t slot = 0U; slot < OTA_SLOT_COUNT; ++slot)
@@ -224,13 +221,13 @@ namespace
     /// @brief Builds one OtaStatusPacket the way a board would send it.
     /// @param runningSlot slot the reported firmware runs from
     /// @param runningState state of that slot
-    /// @param version version triplet number
+    /// @param buildEpoch build identity of the running image
     /// @param gitHash short hash
     /// @param busy true to report an open transfer session
     /// @return the packet bytes
     std::vector<std::uint8_t> statusPacket(std::uint8_t runningSlot,
                                            std::uint8_t runningState,
-                                           std::uint8_t version,
+                                           std::uint32_t buildEpoch,
                                            const std::string &gitHash,
                                            bool busy = false)
     {
@@ -244,15 +241,12 @@ namespace
         packet.activeSlot = (runningState == OTA_SLOT_TESTING)
                                 ? static_cast<std::uint8_t>(1U - runningSlot)
                                 : runningSlot;
-        std::array<std::uint8_t, OTA_SLOT_COUNT> states = {OTA_SLOT_EMPTY, OTA_SLOT_EMPTY};
-        states[runningSlot] = runningState;
-        std::memcpy(&packet.slotState, states.data(), states.size());
         packet.updaterBusy = busy ? 1U : 0U;
-        packet.versionMajor = version;
-        packet.versionMinor = version;
-        packet.versionPatch = version;
+        packet.slot[runningSlot].state = runningState;
+        packet.slot[1U - runningSlot].state = OTA_SLOT_EMPTY;
+        packet.slot[runningSlot].buildEpoch = buildEpoch;
         const auto field = hashField(gitHash);
-        std::memcpy(&packet.gitHash, field.data(), field.size());
+        std::memcpy(&packet.slot[runningSlot].gitHash, field.data(), field.size());
         packet.slotSize = TEST_SLOT_SIZE;
         packet.maxChunkData = static_cast<std::uint16_t>(OTA_CHUNK_DATA_SIZE);
         std::vector<std::uint8_t> bytes(sizeof(packet));
@@ -491,7 +485,7 @@ TEST_CASE("a bundle round trips through the reader")
     CHECK(bundle.name == "drone_firmware");
     CHECK(bundle.mcuId == OTA_MCU_STM32F405);
     CHECK(bundle.gitHash == "deadbeef");
-    CHECK(bundle.versionMajor == 3U);
+    CHECK(bundle.buildEpoch == 3U);
     CHECK(bundle.protocolVersion == PROTOCOL_VERSION);
     REQUIRE(bundle.images.size() == OTA_SLOT_COUNT);
     CHECK(bundle.images[0].slot == OTA_SLOT_A);
@@ -503,6 +497,32 @@ TEST_CASE("a bundle round trips through the reader")
     REQUIRE(slotB != nullptr);
     CHECK(slotB->crc32 == otaImageCrc32(slotB->bytes.data(), slotB->bytes.size()));
     CHECK(findOtaBundleImage(bundle, OTA_SLOT_COUNT) == nullptr);
+}
+
+TEST_CASE("a rebuilt bundle is picked up with no gesture, and a deleted one is forgotten")
+{
+    const ScratchDirectory directory;
+    Bench bench;
+    const std::string path = directory.write(
+        "watched.ota", buildBundle(OTA_MCU_STM32F405, 100U, "aaaaaaaa", PROTOCOL_VERSION).bytes);
+    bench.client().setDefaultBundlePath(path);
+
+    // The first idle tick loads the bundle without any start.
+    bench.advance(OtaClient::BUNDLE_CHECK_MS);
+    REQUIRE(bench.client().bundle().loaded());
+    CHECK(bench.client().bundle().buildEpoch == 100U);
+
+    // A rebuild rewrites the file; the next check sees the new identity.
+    static_cast<void>(directory.write(
+        "watched.ota", buildBundle(OTA_MCU_STM32F405, 200U, "bbbbbbbb", PROTOCOL_VERSION).bytes));
+    bench.advance(OtaClient::BUNDLE_CHECK_MS);
+    CHECK(bench.client().bundle().buildEpoch == 200U);
+    CHECK(bench.client().bundle().gitHash == "bbbbbbbb");
+
+    // The artifact disappears (a clean build tree): so does the display.
+    std::filesystem::remove(path);
+    bench.advance(OtaClient::BUNDLE_CHECK_MS);
+    CHECK(!bench.client().bundle().loaded());
 }
 
 TEST_CASE("the reader refuses everything that is not a consistent bundle")
@@ -590,29 +610,15 @@ TEST_CASE("the happy path stages the image, trial boots it and confirms it")
     CHECK(bench.countSent(PacketType::OTA_FINISH) == 1U);
 
     runTrialBoot(bench);
-    bench.feed(statusPacket(OTA_SLOT_B, OTA_SLOT_TESTING, 2U, NEW_HASH));
-    REQUIRE(bench.client().phase() == OtaPhase::TESTING);
-    CHECK(bench.countSent(PacketType::OTA_CONFIRM) == 0U);
-
-    // Three more answers over three seconds is what the auto-confirm policy
-    // asks for; nothing goes out before both are satisfied.
-    for (int round = 0; round < 3; ++round)
-    {
-        bench.advance(OtaClient::STATUS_PERIOD_MS);
-        if (bench.client().phase() == OtaPhase::TESTING &&
-            bench.countSent(PacketType::OTA_CONFIRM) == 0U)
-        {
-            bench.feed(statusPacket(OTA_SLOT_B, OTA_SLOT_TESTING, 2U, NEW_HASH));
-        }
-    }
-    bench.advance(OtaClient::STATUS_PERIOD_MS);
-    REQUIRE(bench.countSent(PacketType::OTA_CONFIRM) == 1U);
-
-    bench.feed(ackPacket(0U, PacketType::OTA_CONFIRM, OTA_RESULT_OK));
+    // The trial image confirms itself on the first request it serves, so
+    // the very first status the hub sees already reports VALID; the hub
+    // never sends a confirmation of its own.
+    bench.feed(statusPacket(OTA_SLOT_B, OTA_SLOT_VALID, 2U, NEW_HASH));
     CHECK(bench.client().phase() == OtaPhase::CONFIRMED);
     CHECK(bench.client().verdict() == OtaVerdict::CONFIRMED);
     CHECK(bench.client().verdictText().find("confirmed") != std::string::npos);
     CHECK(bench.client().lastError().empty());
+    CHECK(bench.countSent(PacketType::OTA_CONFIRM) == 0U);
 }
 
 TEST_CASE("a chunk acknowledgement that never comes sends the window again")
@@ -804,40 +810,39 @@ TEST_CASE("a board that never comes back after the reboot fails the session")
     CHECK(bench.client().lastError().find("did not come back") != std::string::npos);
 }
 
-TEST_CASE("manual confirm hands the last gesture to the operator")
+TEST_CASE("a trial that has not vouched for itself yet keeps the hub polling")
 {
     const ScratchDirectory directory;
     Bench bench;
-    bench.client().setAutoConfirm(false);
     const std::uint32_t total = startHappySession(bench, directory);
     runTransfer(bench, total);
     runTrialBoot(bench);
+    // A board that answers but still says TESTING has not reached its own
+    // checkpoint (or its metadata write raced this answer): the hub stays
+    // in TESTING and keeps asking, sending nothing.
     bench.feed(statusPacket(OTA_SLOT_B, OTA_SLOT_TESTING, 2U, NEW_HASH));
     REQUIRE(bench.client().phase() == OtaPhase::TESTING);
 
-    for (int round = 0; round < 5; ++round)
+    for (int round = 0; round < 3; ++round)
     {
         bench.advance(OtaClient::STATUS_PERIOD_MS);
         bench.feed(statusPacket(OTA_SLOT_B, OTA_SLOT_TESTING, 2U, NEW_HASH));
+        REQUIRE(bench.client().phase() == OtaPhase::TESTING);
     }
-    // The link is long proven and nothing was sent: that is the whole point
-    // of the manual mode.
     CHECK(bench.countSent(PacketType::OTA_CONFIRM) == 0U);
-    CHECK(bench.client().confirmReady());
 
-    std::string error;
-    REQUIRE(bench.client().confirm(bench.nowUs(), error));
-    CHECK(bench.countSent(PacketType::OTA_CONFIRM) == 1U);
-    bench.feed(ackPacket(0U, PacketType::OTA_CONFIRM, OTA_RESULT_OK));
+    // The image finally vouches for itself; the next answer says so.
+    bench.advance(OtaClient::STATUS_PERIOD_MS);
+    bench.feed(statusPacket(OTA_SLOT_B, OTA_SLOT_VALID, 2U, NEW_HASH));
     CHECK(bench.client().phase() == OtaPhase::CONFIRMED);
+    CHECK(bench.client().verdict() == OtaVerdict::CONFIRMED);
+    CHECK(bench.countSent(PacketType::OTA_CONFIRM) == 0U);
 }
 
-TEST_CASE("a confirmation on a board that runs no trial image is refused")
+TEST_CASE("an abort with no update running is refused")
 {
     Bench bench;
     std::string error;
-    CHECK(!(bench.client().confirm(bench.nowUs(), error)));
-    CHECK(error.find("not running a trial image") != std::string::npos);
     CHECK(!(bench.client().abortSession(bench.nowUs(), error)));
     CHECK(error == "no update to abort");
 }
@@ -945,8 +950,8 @@ TEST_CASE("the ota message carries the phase, the progress and the two identitie
     CHECK(text.find(R"("totalBytes":)" + std::to_string(total)) != std::string::npos);
     CHECK(text.find(R"("gitHash":")" + std::string(NEW_HASH) + R"(")") != std::string::npos);
     CHECK(text.find(R"("gitHash":")" + std::string(OLD_HASH) + R"(")") != std::string::npos);
-    CHECK(text.find(R"("autoConfirm":true)") != std::string::npos);
-    CHECK(text.find(R"("slotStateNames":["valid","empty"])") != std::string::npos);
+    CHECK(text.find(R"("stateName":"valid")") != std::string::npos);
+    CHECK(text.find(R"("stateName":"empty")") != std::string::npos);
 }
 
 TEST_CASE("the update messages decode into the requests the hub carries out")
@@ -966,22 +971,19 @@ TEST_CASE("the update messages decode into the requests the hub carries out")
     const ClientMessage bare = asMessage(R"({"type":"otaStart"})");
     CHECK(bare.otaBundlePath.empty());
 
-    const ClientMessage config = asMessage(R"({"type":"otaConfig","autoConfirm":false})");
-    CHECK(config.type == ClientMessageType::OTA_CONFIG);
-    CHECK(!(config.otaAutoConfirm));
-
     for (const auto &[text, type] : std::vector<std::pair<std::string, ClientMessageType>>{
              {R"({"type":"otaStatus"})", ClientMessageType::OTA_STATUS},
              {R"({"type":"otaAbort"})", ClientMessageType::OTA_ABORT},
-             {R"({"type":"otaConfirm"})", ClientMessageType::OTA_CONFIRM},
              {R"({"type":"otaRevert"})", ClientMessageType::OTA_REVERT}})
     {
         CHECK(asMessage(text).type == type);
     }
 
-    const auto refused = parseClientMessage(R"({"type":"otaConfig"})");
+    // The board confirms its own trial now: the old ground-side gestures
+    // are gone from the message set.
+    const auto refused = parseClientMessage(R"({"type":"otaConfirm"})");
     REQUIRE(std::holds_alternative<std::string>(refused));
-    CHECK(std::get<std::string>(refused).find("autoConfirm") != std::string::npos);
+    CHECK(std::get<std::string>(refused).find("unknown message type") != std::string::npos);
 
     const auto empty = parseClientMessage(R"({"type":"otaStart","bundle":""})");
     REQUIRE(std::holds_alternative<std::string>(empty));

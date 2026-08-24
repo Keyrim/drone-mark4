@@ -60,8 +60,16 @@ namespace mark4
         };
 
         /// @param store slot and metadata storage, not owned
-        explicit OtaUpdater(AbsFirmwareStore &store)
-            : m_store(store)
+        /// @param selfConfirmOnContact true (the default, and what the real
+        ///        firmware wants) makes a trial image confirm itself on the
+        ///        first valid ground request it serves: by then the image
+        ///        has booted, run its loop and proven the receive side of
+        ///        the radio, which is everything the next update needs.
+        ///        false keeps the trial pending, for a host faking an image
+        ///        that never reaches that point.
+        explicit OtaUpdater(AbsFirmwareStore &store, bool selfConfirmOnContact = true)
+            : m_store(store),
+              m_selfConfirmOnContact(selfConfirmOnContact)
         {
         }
 
@@ -99,6 +107,14 @@ namespace mark4
                         return 0U;
                     }
                     consumedOut = true;
+                    // A trial image confirms itself on its first ground
+                    // contact: serving this request proves boot, loop and
+                    // radio reception, the checkpoint that matters for the
+                    // next update. The reply then already reports VALID.
+                    if (m_selfConfirmOnContact)
+                    {
+                        selfConfirmTrial();
+                    }
                     return sendStatus(replyOut, replyCapacity);
 
                 case PacketType::OTA_BEGIN:
@@ -307,28 +323,26 @@ namespace mark4
             // the sender learns a trial boot is in progress. A store that
             // cannot even be read claims nothing.
             OtaMetaState meta;
-            const std::array<std::uint8_t, OTA_SLOT_COUNT> unknown = {OTA_SLOT_EMPTY,
-                                                                      OTA_SLOT_EMPTY};
             const bool metaRead = m_store.readMeta(meta);
-            std::memcpy(&packet.slotState,
-                        metaRead ? meta.slotState.data() : unknown.data(),
-                        OTA_SLOT_COUNT);
             // The active slot differs from the running one during a trial
             // boot and after a revert; an unreadable store falls back to
             // the one fact that needs no metadata.
             packet.activeSlot = metaRead ? meta.activeSlot : packet.runningSlot;
 
-            // The version fields are compile-time facts of the running
-            // image, so they are reported whether or not the packaging step
-            // ever stamped a CRC over them; an image with no header at all
-            // (or an unreadable slot) reports nothing instead of garbage.
-            OtaImageHeader header{};
-            if (readImageHeader(runningSlot(), header) && header.magic == OTA_IMAGE_MAGIC)
+            for (std::uint8_t slot = 0U; slot < OTA_SLOT_COUNT; ++slot)
             {
-                packet.versionMajor = header.versionMajor;
-                packet.versionMinor = header.versionMinor;
-                packet.versionPatch = header.versionPatch;
-                std::memcpy(&packet.gitHash, header.gitHash.data(), OTA_GIT_HASH_SIZE);
+                OtaSlotStatus &out = packet.slot[slot];
+                out.state = metaRead ? meta.slotState[slot] : OTA_SLOT_EMPTY;
+                // The identity is reported raw out of each slot's image
+                // header, stamped or not (an unstamped image says
+                // OTA_IMAGE_UNSTAMPED); a slot with no header at all (or
+                // an unreadable one) reports nothing instead of garbage.
+                OtaImageHeader header{};
+                if (readImageHeader(slot, header) && header.magic == OTA_IMAGE_MAGIC)
+                {
+                    out.buildEpoch = header.buildEpoch;
+                    std::memcpy(&out.gitHash, header.gitHash.data(), OTA_GIT_HASH_SIZE);
+                }
             }
             return Emit(packet, replyOut, replyCapacity);
         }
@@ -553,6 +567,22 @@ namespace mark4
         /// @param[out] replyOut destination buffer
         /// @param replyCapacity bytes available in replyOut
         /// @return reply size in bytes
+        /// @brief Marks a running trial VALID, the firmware vouching for
+        ///        itself. A failed meta read or write changes nothing: the
+        ///        trial stays pending and the next request tries again.
+        void selfConfirmTrial() const
+        {
+            OtaMetaState meta;
+            if (!m_store.readMeta(meta) || meta.slotState[runningSlot()] != OTA_SLOT_TESTING)
+            {
+                return;
+            }
+            meta.slotState[runningSlot()] = OTA_SLOT_VALID;
+            meta.activeSlot = runningSlot();
+            meta.trialAttempted = false;
+            static_cast<void>(m_store.writeMeta(meta));
+        }
+
         std::size_t handleConfirm(std::uint8_t *replyOut, std::size_t replyCapacity) const
         {
             OtaMetaState meta;
@@ -647,6 +677,7 @@ namespace mark4
         }
 
         AbsFirmwareStore &m_store;           ///< slot and metadata storage, not owned
+        bool m_selfConfirmOnContact = true;  ///< a trial confirms itself on ground contact
         bool m_sessionActive = false;        ///< a transfer session is open
         bool m_sessionFresh = false;         ///< opened, but no timeout sweep ran yet
         std::uint32_t m_session = 0U;        ///< nonce of the open session

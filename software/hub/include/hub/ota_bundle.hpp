@@ -16,8 +16,8 @@
 ///            u32      image byte count
 ///            M bytes  image, starting with the 512-byte OtaImageHeader
 ///
-///        Manifest: {"name", "mcuId", "version":{"major","minor","patch"},
-///        "gitHash", "protocolVersion", "images":[{"slot","size","crc32"}]}.
+///        Manifest: {"name", "mcuId", "buildEpoch", "gitHash",
+///        "protocolVersion", "images":[{"slot","size","crc32"}]}.
 ///        Loading validates every cross-check it can make on its own: the
 ///        magic, the protocol version against PROTOCOL_VERSION, the
 ///        announced sizes against the bytes actually present, the announced
@@ -66,9 +66,7 @@ namespace mark4
         std::string path;                   ///< file it was read from
         std::string name;                   ///< firmware name, for the operator
         std::uint8_t mcuId = 0U;            ///< OTA_MCU_* this build targets
-        std::uint8_t versionMajor = 0U;     ///< firmware version
-        std::uint8_t versionMinor = 0U;     ///< firmware version
-        std::uint8_t versionPatch = 0U;     ///< firmware version
+        std::uint32_t buildEpoch = 0U;      ///< packaging time [unix s], the build's identity
         std::string gitHash;                ///< short hash of the build
         std::uint8_t protocolVersion = 0U;  ///< wire version the build speaks
         std::vector<OtaBundleImage> images; ///< one entry per slot, in slot order
@@ -96,15 +94,6 @@ namespace mark4
     /// @return the image, or nullptr when the bundle holds none for that slot
     [[nodiscard]] const OtaBundleImage *findOtaBundleImage(const OtaBundle &bundle,
                                                            std::uint8_t slot);
-
-    /// @brief Renders a version triplet the way the pages show it.
-    /// @param major major number
-    /// @param minor minor number
-    /// @param patch patch number
-    /// @return "major.minor.patch"
-    [[nodiscard]] std::string otaVersionText(std::uint8_t major,
-                                             std::uint8_t minor,
-                                             std::uint8_t patch);
 
     /// @brief Reads a git hash out of a wire or image field. The field is
     ///        zero-padded and a full-length hash carries no terminator, so

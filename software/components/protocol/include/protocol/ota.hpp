@@ -5,10 +5,9 @@
 ///        docs/ota-design.md. The board holds two execute-in-place
 ///        firmware slots; the hub streams an image into the inactive one
 ///        in acknowledged chunks, the board stages it after a CRC check,
-///        a one-shot trial boot follows and the hub confirms or the
-///        bootloader rolls back. Every updater packet answers through one
-///        OtaAckPacket except the chunk flow, which has its own
-///        cumulative acknowledgement.
+///        a one-shot trial boot follows and the image confirms itself on
+///        first ground contact or the bootloader rolls back. Every updater packet answers through
+///        one OtaAckPacket except the chunk flow, which has its own cumulative acknowledgement.
 ///
 ///        Every CRC in this file is CRC-32/MPEG-2 (polynomial 0x04C11DB7,
 ///        init 0xFFFFFFFF, no reflection, no final xor), computed
@@ -36,7 +35,7 @@ namespace mark4
     /// freshly erased slot needs no metadata write to be in its state.
     inline constexpr std::uint8_t OTA_SLOT_STAGED = 1U;   ///< transfer complete, CRC verified
     inline constexpr std::uint8_t OTA_SLOT_TESTING = 2U;  ///< one-shot trial boot in progress
-    inline constexpr std::uint8_t OTA_SLOT_VALID = 3U;    ///< confirmed by the ground side
+    inline constexpr std::uint8_t OTA_SLOT_VALID = 3U;    ///< confirmed, trusted to boot
     inline constexpr std::uint8_t OTA_SLOT_BAD = 4U;      ///< trial failed or CRC mismatch
     inline constexpr std::uint8_t OTA_SLOT_EMPTY = 0xFFU; ///< erased or never written
 
@@ -81,9 +80,21 @@ namespace mark4
         std::uint8_t type;    ///< = PacketType::OTA_STATUS_REQUEST
     };
 
+    /// One firmware slot as OtaStatusPacket reports it: its lifecycle state
+    /// and the identity of whatever image sits in it.
+    struct OtaSlotStatus
+    {
+        std::uint8_t state;       ///< OTA_SLOT_*
+        std::uint32_t buildEpoch; ///< image build time [unix s], the build's identity;
+                                  ///< 0 when the slot has no image header at all,
+                                  ///< OTA_IMAGE_UNSTAMPED when it was never packaged
+        std::array<char, OTA_GIT_HASH_SIZE> gitHash; ///< image git hash
+    };
+
     /// The board's update-side identity: what runs, from where, and what
-    /// each slot holds. The hub picks the image variant to send from
-    /// runningSlot and drives auto-confirm from the version fields.
+    /// each slot holds, identity included. The hub picks the image variant
+    /// to send from runningSlot and reads the trial verdict off the
+    /// running slot's state and buildEpoch.
     struct OtaStatusPacket
     {
         std::uint8_t version;     ///< = PROTOCOL_VERSION
@@ -92,13 +103,9 @@ namespace mark4
         std::uint8_t runningSlot; ///< slot this firmware executes from
         std::uint8_t activeSlot;  ///< slot the boot metadata prefers; differs from
                                   ///< runningSlot during a trial boot and after a revert
-        std::array<std::uint8_t, OTA_SLOT_COUNT> slotState; ///< OTA_SLOT_* per slot
-        std::uint8_t updaterBusy;                           ///< 1 while a transfer session is open
-        std::uint8_t versionMajor;                          ///< running firmware version
-        std::uint8_t versionMinor;                          ///< running firmware version
-        std::uint8_t versionPatch;                          ///< running firmware version
-        std::array<char, OTA_GIT_HASH_SIZE> gitHash;        ///< running image git hash
-        std::uint32_t slotSize;     ///< bytes available per slot on this chip
+        std::uint8_t updaterBusy; ///< 1 while a transfer session is open
+        std::array<OtaSlotStatus, OTA_SLOT_COUNT> slot; ///< state and identity per slot
+        std::uint32_t slotSize;                         ///< bytes available per slot on this chip
         std::uint16_t maxChunkData; ///< largest chunk data size the board accepts
     };
 
@@ -189,10 +196,12 @@ namespace mark4
     /// version (1) + type (1).
     inline constexpr std::size_t OTA_STATUS_REQUEST_PACKET_SIZE = 2U;
 
+    /// state (1) + build epoch (4) + git hash (8).
+    inline constexpr std::size_t OTA_SLOT_STATUS_SIZE = 13U;
+
     /// version (1) + type (1) + mcu (1) + running slot (1) + active slot
-    /// (1) + slot states (2) + busy (1) + version (3) + git hash (8) +
-    /// slot size (4) + max chunk (2).
-    inline constexpr std::size_t OTA_STATUS_PACKET_SIZE = 25U;
+    /// (1) + busy (1) + two slots (2 x 13) + slot size (4) + max chunk (2).
+    inline constexpr std::size_t OTA_STATUS_PACKET_SIZE = 38U;
 
     /// version (1) + type (1) + session (4) + image size (4) + crc (4).
     inline constexpr std::size_t OTA_BEGIN_PACKET_SIZE = 14U;
@@ -221,6 +230,7 @@ namespace mark4
 
     static_assert(sizeof(OtaStatusRequestPacket) == OTA_STATUS_REQUEST_PACKET_SIZE,
                   "wire layout must be packed");
+    static_assert(sizeof(OtaSlotStatus) == OTA_SLOT_STATUS_SIZE, "wire layout must be packed");
     static_assert(sizeof(OtaStatusPacket) == OTA_STATUS_PACKET_SIZE, "wire layout must be packed");
     static_assert(sizeof(OtaBeginPacket) == OTA_BEGIN_PACKET_SIZE, "wire layout must be packed");
     static_assert(sizeof(OtaChunkPacket) == OTA_CHUNK_PACKET_SIZE, "wire layout must be packed");
@@ -246,12 +256,12 @@ namespace mark4
     static_assert(offsetof(OtaStatusPacket, mcuId) == 2U);
     static_assert(offsetof(OtaStatusPacket, runningSlot) == 3U);
     static_assert(offsetof(OtaStatusPacket, activeSlot) == 4U);
-    static_assert(offsetof(OtaStatusPacket, slotState) == 5U);
-    static_assert(offsetof(OtaStatusPacket, updaterBusy) == 7U);
-    static_assert(offsetof(OtaStatusPacket, versionMajor) == 8U);
-    static_assert(offsetof(OtaStatusPacket, gitHash) == 11U);
-    static_assert(offsetof(OtaStatusPacket, slotSize) == 19U);
-    static_assert(offsetof(OtaStatusPacket, maxChunkData) == 23U);
+    static_assert(offsetof(OtaStatusPacket, updaterBusy) == 5U);
+    static_assert(offsetof(OtaStatusPacket, slot) == 6U);
+    static_assert(offsetof(OtaSlotStatus, buildEpoch) == 1U);
+    static_assert(offsetof(OtaSlotStatus, gitHash) == 5U);
+    static_assert(offsetof(OtaStatusPacket, slotSize) == 32U);
+    static_assert(offsetof(OtaStatusPacket, maxChunkData) == 36U);
     static_assert(offsetof(OtaBeginPacket, session) == 2U);
     static_assert(offsetof(OtaBeginPacket, imageSize) == 6U);
     static_assert(offsetof(OtaBeginPacket, imageCrc) == 10U);
@@ -278,7 +288,7 @@ namespace mark4
     /// vector table follows it, which keeps the table 512-byte aligned.
     inline constexpr std::size_t OTA_IMAGE_HEADER_SIZE = 512U;
 
-    /// The imageCrc / imageSize / gitHash placeholder of an image that
+    /// The imageCrc / imageSize / buildEpoch / gitHash placeholder of an image that
     /// was linked but never packaged (an elf flashed over SWD during
     /// development): erased-flash bytes. The bootloader boots such an
     /// image without a CRC check; the OTA path always stamps real values
@@ -292,8 +302,8 @@ namespace mark4
 
 #pragma pack(push, 1)
     /// The first OTA_IMAGE_HEADER_SIZE bytes of every firmware slot. The
-    /// constant fields (magic through slotId, version numbers) are filled
-    /// at compile time by the firmware itself; imageSize, imageCrc and
+    /// constant fields (magic through slotId) are filled at compile time
+    /// by the firmware itself; imageSize, imageCrc, buildEpoch and
     /// gitHash are stamped into the binary by the packaging script. It
     /// crosses process boundaries like any wire struct: the packaging
     /// script writes it, the bootloader, the updater and the hub read it.
@@ -305,10 +315,9 @@ namespace mark4
         std::uint8_t slotId;         ///< slot this image was linked for
         std::uint32_t imageSize;     ///< total image bytes, header included
         std::uint32_t imageCrc;      ///< CRC-32/MPEG-2 of the bytes after the header
-        std::uint8_t versionMajor;   ///< firmware version
-        std::uint8_t versionMinor;   ///< firmware version
-        std::uint8_t versionPatch;   ///< firmware version
-        std::uint8_t reserved0;      ///< 0xFF
+        std::uint32_t buildEpoch;    ///< packaging time [unix s], the build's identity:
+                                     ///< every packaging run gets its own value, so two
+                                     ///< builds of the same dirty tree stay distinguishable
         std::array<char, OTA_GIT_HASH_SIZE> gitHash; ///< short hash, stamped at packaging
         std::array<std::uint8_t, OTA_IMAGE_RESERVED_SIZE>
             reserved;            ///< 0xFF, room to grow (signing)
@@ -325,7 +334,7 @@ namespace mark4
     static_assert(offsetof(OtaImageHeader, slotId) == 7U);
     static_assert(offsetof(OtaImageHeader, imageSize) == 8U);
     static_assert(offsetof(OtaImageHeader, imageCrc) == 12U);
-    static_assert(offsetof(OtaImageHeader, versionMajor) == 16U);
+    static_assert(offsetof(OtaImageHeader, buildEpoch) == 16U);
     static_assert(offsetof(OtaImageHeader, gitHash) == 20U);
     static_assert(offsetof(OtaImageHeader, headerCrc) == 508U);
     // NOLINTEND(readability-magic-numbers)

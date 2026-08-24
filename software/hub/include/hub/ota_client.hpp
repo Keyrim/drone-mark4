@@ -20,6 +20,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <string>
 
@@ -57,6 +58,16 @@ namespace mark4
         FAILED,      ///< the update did not happen, see lastError()
     };
 
+    /// One firmware slot as the board reports it: state plus the identity
+    /// of whatever image sits in it.
+    struct OtaSlotInfo
+    {
+        std::uint8_t state = OTA_SLOT_EMPTY; ///< OTA_SLOT_*
+        std::uint32_t buildEpoch = 0U;       ///< image build epoch; 0 with no header,
+                                             ///< OTA_IMAGE_UNSTAMPED unpackaged
+        std::string gitHash;                 ///< image git hash, empty when unstamped
+    };
+
     /// Everything the last OtaStatusPacket said about the board.
     struct OtaBoardStatus
     {
@@ -65,12 +76,10 @@ namespace mark4
         std::uint8_t mcuId = 0U;               ///< OTA_MCU_* of the board
         std::uint8_t runningSlot = OTA_SLOT_A; ///< slot the running firmware executes from
         std::uint8_t activeSlot = OTA_SLOT_A;  ///< slot the boot metadata prefers
-        std::array<std::uint8_t, OTA_SLOT_COUNT> slotState = {OTA_SLOT_EMPTY,
-                                                              OTA_SLOT_EMPTY}; ///< OTA_SLOT_*
-        bool updaterBusy = false;        ///< a transfer session is open on the board
-        std::uint8_t versionMajor = 0U;  ///< running firmware version
-        std::uint8_t versionMinor = 0U;  ///< running firmware version
-        std::uint8_t versionPatch = 0U;  ///< running firmware version
+        std::array<OtaSlotInfo, OTA_SLOT_COUNT> slots; ///< state and identity per slot
+        bool updaterBusy = false;                      ///< a transfer session is open on the board
+        std::uint32_t buildEpoch = 0U;   ///< running image build epoch, the build's identity;
+                                         ///< 0 with no header, OTA_IMAGE_UNSTAMPED unpackaged
         std::string gitHash;             ///< running image git hash, empty when unstamped
         std::uint32_t slotSize = 0U;     ///< bytes available per slot
         std::uint16_t maxChunkData = 0U; ///< largest chunk data size the board accepts
@@ -125,7 +134,7 @@ namespace mark4
         /// the last acknowledged offset [ms].
         static constexpr std::uint64_t CHUNK_ACK_TIMEOUT_MS = 500U;
 
-        /// How long a confirm, revert or abort acknowledgement may take [ms].
+        /// How long a revert or abort acknowledgement may take [ms].
         static constexpr std::uint64_t ACK_TIMEOUT_MS = 2000U;
 
         /// Period of the status polling, on the initial query and while
@@ -144,11 +153,10 @@ namespace mark4
         /// How long the board may take to come back after the reboot [ms].
         static constexpr std::uint64_t BOARD_RETURN_TIMEOUT_MS = 30000U;
 
-        /// Healthy link the trial image must show before it is confirmed [ms].
-        static constexpr std::uint64_t HEALTHY_LINK_MS = 3000U;
-
-        /// Status answers the trial image must give over that window.
-        static constexpr std::uint32_t HEALTHY_STATUSES = 3U;
+        /// Period of the bundle freshness check while no session runs [ms]:
+        /// a rebuild writes a new file, and the page must show the new
+        /// build without anyone telling the hub anything.
+        static constexpr std::uint64_t BUNDLE_CHECK_MS = 1000U;
 
         /// Go-back-N resends of one session before it is declared lost.
         static constexpr std::uint32_t MAX_RETRIES = 8U;
@@ -170,17 +178,14 @@ namespace mark4
             std::uint64_t beginTimeoutMs = BEGIN_TIMEOUT_MS;        ///< erase acknowledgement
             std::uint64_t finishTimeoutMs = FINISH_TIMEOUT_MS;      ///< staging acknowledgement
             std::uint64_t chunkAckTimeoutMs = CHUNK_ACK_TIMEOUT_MS; ///< chunk-ack silence
-            std::uint64_t ackTimeoutMs = ACK_TIMEOUT_MS;            ///< confirm, revert, abort
+            std::uint64_t ackTimeoutMs = ACK_TIMEOUT_MS;            ///< revert, abort
             std::uint64_t statusPeriodMs = STATUS_PERIOD_MS;        ///< status polling period
             std::uint64_t rebootSettleMs = REBOOT_SETTLE_MS;        ///< silence after the reset
             std::uint64_t boardReturnTimeoutMs = BOARD_RETURN_TIMEOUT_MS; ///< reappearance budget
-            std::uint64_t healthyLinkMs = HEALTHY_LINK_MS;                ///< trial proof window
             std::uint64_t chunkDelayUs = CHUNK_DELAY_US;                  ///< inter-chunk pacing
-            std::uint32_t statusTries = STATUS_TRIES;         ///< initial query attempts
-            std::uint32_t healthyStatuses = HEALTHY_STATUSES; ///< trial proof answers
-            std::uint32_t maxRetries = MAX_RETRIES;           ///< go-back-N budget
-            std::uint32_t maxAckTries = MAX_ACK_TRIES;        ///< request resend budget
-            bool autoConfirm = true;                          ///< confirm without an operator
+            std::uint32_t statusTries = STATUS_TRIES;  ///< initial query attempts
+            std::uint32_t maxRetries = MAX_RETRIES;    ///< go-back-N budget
+            std::uint32_t maxAckTries = MAX_ACK_TRIES; ///< request resend budget
         };
 
         /// Route one packet to the board. Returns false and fills the reason
@@ -229,13 +234,6 @@ namespace mark4
         /// @return true when the session was dropped
         [[nodiscard]] bool abortSession(std::uint64_t nowUs, std::string &errorOut);
 
-        /// @brief Confirms the running trial image by hand, which is what
-        ///        the manual-confirm mode replaces the automatic send with.
-        /// @param nowUs current time [us]
-        /// @param[out] errorOut receives the reason on refusal
-        /// @return true when the confirmation went out
-        [[nodiscard]] bool confirm(std::uint64_t nowUs, std::string &errorOut);
-
         /// @brief Asks the board to activate its other slot, then reboots it.
         /// @param nowUs current time [us]
         /// @param[out] errorOut receives the reason on refusal
@@ -249,11 +247,6 @@ namespace mark4
         /// @param[out] errorOut receives the reason on refusal
         /// @return true when the request went out
         [[nodiscard]] bool requestBoardStatus(std::uint64_t nowUs, std::string &errorOut);
-
-        /// @brief Switches between confirming on the hub's own judgment and
-        ///        waiting for an operator.
-        /// @param on true to confirm automatically
-        void setAutoConfirm(bool on);
 
         /// @brief Consumes one packet read from the link.
         /// @param data packet bytes
@@ -296,15 +289,7 @@ namespace mark4
         ///         nothing is concluded
         [[nodiscard]] std::string verdictText() const;
 
-        /// @return true when the hub confirms on its own judgment
-        [[nodiscard]] bool autoConfirm() const
-        {
-            return m_config.autoConfirm;
-        }
-
         /// @return true when the trial image has proven its link and only an
-        ///         operator gesture is missing
-        [[nodiscard]] bool confirmReady() const;
 
         /// @return the bundle currently loaded, empty when none is
         [[nodiscard]] const OtaBundle &bundle() const
@@ -337,6 +322,13 @@ namespace mark4
         }
 
       private:
+        /// @brief Reloads the bundle when its file changed on disk (a
+        ///        rebuild), loads it the first time it appears, and forgets
+        ///        it when the file goes away. Never touches a running
+        ///        session: the transfer reads the loaded images.
+        /// @param nowUs monotonic time [us]
+        void refreshBundle(std::uint64_t nowUs);
+
         /// @brief Sends one wire packet through the sink, failing the session
         ///        when the route is gone.
         /// @param data packet bytes
@@ -388,10 +380,6 @@ namespace mark4
         /// @param nowUs current time [us]
         void judgeReturn(std::uint64_t nowUs);
 
-        /// @brief Sends the confirmation and arms its acknowledgement timeout.
-        /// @param nowUs current time [us]
-        void sendConfirm(std::uint64_t nowUs);
-
         /// @brief Ends the session on a reason.
         /// @param reason what went wrong, in plain words
         void fail(const std::string &reason);
@@ -410,37 +398,34 @@ namespace mark4
         ///         the update started
         [[nodiscard]] bool boardRunsPrevious() const;
 
-        Config m_config;                            ///< settings of this client
-        PacketSink m_sink;                          ///< route to the board
-        ChangeHandler m_onChange;                   ///< observable-change callback
-        std::string m_defaultBundlePath;            ///< bundle a pathless start uses
-        std::string m_bundlePath;                   ///< bundle the session is sending
-        OtaBundle m_bundle;                         ///< loaded bundle
-        OtaBoardStatus m_board;                     ///< last status the board sent
-        OtaProgress m_progress;                     ///< transfer progress
-        OtaPhase m_phase = OtaPhase::IDLE;          ///< where the session stands
-        OtaVerdict m_verdict = OtaVerdict::NONE;    ///< outcome of the last session
-        std::string m_lastError;                    ///< reason of the last failure
-        std::uint32_t m_session = 0U;               ///< session nonce of the wire
-        std::uint8_t m_targetSlot = OTA_SLOT_COUNT; ///< slot being filled
-        std::uint32_t m_chunkData = 0U;             ///< data bytes per chunk this session
-        std::uint64_t m_deadlineUs = 0U;            ///< phase timeout instant [us]
-        std::uint64_t m_nextStatusUs = 0U;          ///< next status request instant [us]
-        std::uint64_t m_nextChunkUs = 0U;           ///< earliest next chunk send [us]
-        std::uint64_t m_chunkDeadlineUs = 0U;       ///< chunk-ack silence deadline [us]
-        std::uint32_t m_stalledRounds = 0U;         ///< resend rounds with no progress
-        std::uint32_t m_resendOffset = 0U;          ///< offset the last resend answered
-        std::uint64_t m_resendGuardUs = 0U;         ///< ignore repeats of it until then [us]
-        std::uint64_t m_settleUntilUs = 0U;         ///< status answers ignored until [us]
-        std::uint64_t m_healthySinceUs = 0U;        ///< first trial status instant [us]
-        std::uint32_t m_healthyCount = 0U;          ///< trial status answers seen
-        std::uint32_t m_statusTries = 0U;           ///< status requests of this phase
-        std::uint32_t m_ackTries = 0U;              ///< sends of the current request
-        bool m_confirmSent = false;                 ///< a confirmation is outstanding
-        bool m_previousKnown = false;               ///< the pre-update identity was captured
-        std::uint8_t m_previousMajor = 0U;          ///< version the board ran before
-        std::uint8_t m_previousMinor = 0U;          ///< version the board ran before
-        std::uint8_t m_previousPatch = 0U;          ///< version the board ran before
-        std::string m_previousGitHash;              ///< hash the board ran before
+        Config m_config;                                    ///< settings of this client
+        PacketSink m_sink;                                  ///< route to the board
+        ChangeHandler m_onChange;                           ///< observable-change callback
+        std::string m_defaultBundlePath;                    ///< bundle a pathless start uses
+        std::string m_bundlePath;                           ///< bundle the session is sending
+        OtaBundle m_bundle;                                 ///< loaded bundle
+        std::filesystem::file_time_type m_bundleFileTime{}; ///< mtime of the loaded file
+        std::uintmax_t m_bundleFileSize = 0U;               ///< size of the loaded file
+        std::uint64_t m_nextBundleCheckUs = 0U;             ///< next freshness check [us]
+        OtaBoardStatus m_board;                             ///< last status the board sent
+        OtaProgress m_progress;                             ///< transfer progress
+        OtaPhase m_phase = OtaPhase::IDLE;                  ///< where the session stands
+        OtaVerdict m_verdict = OtaVerdict::NONE;            ///< outcome of the last session
+        std::string m_lastError;                            ///< reason of the last failure
+        std::uint32_t m_session = 0U;                       ///< session nonce of the wire
+        std::uint8_t m_targetSlot = OTA_SLOT_COUNT;         ///< slot being filled
+        std::uint32_t m_chunkData = 0U;                     ///< data bytes per chunk this session
+        std::uint64_t m_deadlineUs = 0U;                    ///< phase timeout instant [us]
+        std::uint64_t m_nextStatusUs = 0U;                  ///< next status request instant [us]
+        std::uint64_t m_nextChunkUs = 0U;                   ///< earliest next chunk send [us]
+        std::uint64_t m_chunkDeadlineUs = 0U;               ///< chunk-ack silence deadline [us]
+        std::uint32_t m_stalledRounds = 0U;                 ///< resend rounds with no progress
+        std::uint32_t m_resendOffset = 0U;                  ///< offset the last resend answered
+        std::uint64_t m_resendGuardUs = 0U;      ///< ignore repeats of it until then [us]
+        std::uint64_t m_settleUntilUs = 0U;      ///< status answers ignored until [us]
+        std::uint32_t m_statusTries = 0U;        ///< status requests of this phase
+        std::uint32_t m_ackTries = 0U;           ///< sends of the current request
+        bool m_previousKnown = false;            ///< the pre-update identity was captured
+        std::uint32_t m_previousBuildEpoch = 0U; ///< build epoch the board ran before
     };
 } // namespace mark4

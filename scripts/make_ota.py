@@ -2,10 +2,14 @@
 """Stamp the OTA image headers and package the update bundle.
 
 The build links drone_firmware twice, once per flash slot; neither image
-knows its own size, its checksum or the commit it came from, so those four
-header fields are left at OTA_IMAGE_UNSTAMPED (0xFF) by the firmware and
-filled in here. Stamping is what turns a linked image into an image the
-bootloader verifies on every boot.
+knows its own size, its checksum, its build time or the commit it came
+from, so those five header fields are left at OTA_IMAGE_UNSTAMPED (0xFF)
+by the firmware and filled in here. Stamping is what turns a linked image
+into an image the bootloader verifies on every boot.
+
+The build epoch is the identity of a build: unlike the git hash it tells
+two packagings of the same (possibly dirty) tree apart, so it is what the
+hub compares to decide whether the board already runs a bundle.
 
 Produced next to the elfs:
 
@@ -20,6 +24,7 @@ Produced next to the elfs:
 """
 
 import argparse
+import datetime
 import json
 import os
 import re
@@ -27,6 +32,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OTA_HPP = os.path.join(
@@ -47,7 +53,7 @@ OFF_MCU_ID = 6
 OFF_SLOT_ID = 7
 OFF_IMAGE_SIZE = 8
 OFF_IMAGE_CRC = 12
-OFF_VERSION_MAJOR = 16
+OFF_BUILD_EPOCH = 16
 OFF_GIT_HASH = 20
 OFF_HEADER_CRC = 508
 GIT_HASH_SIZE = 8
@@ -156,8 +162,8 @@ def check_layout() -> None:
             sys.exit(1)
 
 
-def stamp(image: bytes, slot: int, git_hash: str) -> bytes:
-    """Fills in the four header fields only the packaging step can know.
+def stamp(image: bytes, slot: int, build_epoch: int, git_hash: str) -> bytes:
+    """Fills in the five header fields only the packaging step can know.
 
     Refuses an image whose constant fields do not say what they must: a wrong
     magic means this is not an image at all, a wrong slot id means the build
@@ -189,6 +195,7 @@ def stamp(image: bytes, slot: int, git_hash: str) -> bytes:
     out = bytearray(image)
     struct.pack_into("<I", out, OFF_IMAGE_SIZE, len(out))
     struct.pack_into("<I", out, OFF_IMAGE_CRC, crc32_mpeg2(bytes(out[HEADER_SIZE:])))
+    struct.pack_into("<I", out, OFF_BUILD_EPOCH, build_epoch)
     out[OFF_GIT_HASH:OFF_GIT_HASH + GIT_HASH_SIZE] = git_hash.encode("ascii")
     struct.pack_into("<I", out, OFF_HEADER_CRC, crc32_mpeg2(bytes(out[:OFF_HEADER_CRC])))
     return bytes(out)
@@ -225,11 +232,7 @@ def build_bundle(name: str, images: list, git_hash: str) -> bytes:
     manifest = {
         "name": name,
         "mcuId": first[OFF_MCU_ID],
-        "version": {
-            "major": first[OFF_VERSION_MAJOR],
-            "minor": first[OFF_VERSION_MAJOR + 1],
-            "patch": first[OFF_VERSION_MAJOR + 2],
-        },
+        "buildEpoch": u32(first, OFF_BUILD_EPOCH),
         "gitHash": git_hash,
         "protocolVersion": read_cpp_constant(VERSION_HPP, "PROTOCOL_VERSION"),
         "images": [
@@ -288,9 +291,9 @@ def verify_bundle(path: str) -> int:
             ok = False
     if not ok:
         return 1
-    version = manifest["version"]
+    built = datetime.datetime.fromtimestamp(manifest["buildEpoch"], datetime.timezone.utc)
     print(f"make_ota: {os.path.basename(path)} verified - {manifest['name']} "
-          f"{version['major']}.{version['minor']}.{version['patch']} "
+          f"built {built:%Y-%m-%d %H:%M:%S} UTC "
           f"({manifest['gitHash']}), protocol v{manifest['protocolVersion']}, "
           f"slots {', '.join(str(len(image)) + ' B' for image in images)}")
     return 0
@@ -305,6 +308,8 @@ def main() -> int:
     parser.add_argument("--outdir", help="directory the artifacts are written to")
     parser.add_argument("--name", default="drone_firmware", help="bundle name in the manifest")
     parser.add_argument("--git-hash", help=f"{GIT_HASH_SIZE} hex characters, default: git HEAD")
+    parser.add_argument("--build-epoch", type=int,
+                        help="unix seconds stamped as the build identity, default: now")
     parser.add_argument("--objcopy", default="arm-none-eabi-objcopy",
                         help="objcopy used to turn an elf into flash bytes")
     parser.add_argument("--verify", help="re-read a bundle and re-check every checksum")
@@ -319,10 +324,13 @@ def main() -> int:
     git_hash = args.git_hash or git_short_hash()
     if len(git_hash) != GIT_HASH_SIZE:
         parser.error(f"--git-hash must be {GIT_HASH_SIZE} characters")
+    build_epoch = args.build_epoch if args.build_epoch is not None else int(time.time())
+    if not 0 <= build_epoch < UNSTAMPED:
+        parser.error("--build-epoch must fit an unsigned 32-bit word, below the 0xFF sentinel")
 
     images = [
-        stamp(to_binary(args.slot_a, args.objcopy), 0, git_hash),
-        stamp(to_binary(args.slot_b, args.objcopy), 1, git_hash),
+        stamp(to_binary(args.slot_a, args.objcopy), 0, build_epoch, git_hash),
+        stamp(to_binary(args.slot_b, args.objcopy), 1, build_epoch, git_hash),
     ]
     os.makedirs(args.outdir, exist_ok=True)
     for slot, image in enumerate(images):

@@ -98,30 +98,31 @@ namespace
         }
     }
 
-    /// One firmware version, as an image carries it.
-    struct Version
-    {
-        std::uint8_t major; ///< major number
-        std::uint8_t minor; ///< minor number
-        std::uint8_t patch; ///< patch number
-    };
-
     /// @brief Builds one complete image for a slot: a fully stamped
     ///        OtaImageHeader followed by a payload whose bytes depend on the
-    ///        slot and the version, so no two images of this test are alike.
+    ///        slot and the build epoch, so no two images of this test are alike.
     /// @param slot slot the image is linked for
-    /// @param version version the image announces
+    /// @param buildEpoch build identity the image announces
     /// @param gitHash eight-character build hash
+    /// @param broken true stamps the payload with drone_sim's "notalive"
+    ///        marker: the fake image boots but never reaches the checkpoint
+    ///        where a trial confirms itself
     /// @return the image bytes
     std::vector<std::uint8_t> makeImage(std::uint8_t slot,
-                                        const Version &version,
-                                        const std::string &gitHash)
+                                        std::uint32_t buildEpoch,
+                                        const std::string &gitHash,
+                                        bool broken = false)
     {
         std::vector<std::uint8_t> image(IMAGE_SIZE, 0xFFU);
         for (std::uint32_t i = 0U; i < IMAGE_PAYLOAD_SIZE; ++i)
         {
             image[mark4::OTA_IMAGE_HEADER_SIZE + i] =
-                static_cast<std::uint8_t>(i + slot + version.major + version.minor);
+                static_cast<std::uint8_t>(i + slot + buildEpoch);
+        }
+        if (broken)
+        {
+            static constexpr char MARKER[] = "notalive";
+            std::memcpy(image.data() + mark4::OTA_IMAGE_HEADER_SIZE, MARKER, sizeof(MARKER) - 1U);
         }
 
         mark4::OtaImageHeader header{};
@@ -132,10 +133,7 @@ namespace
         header.imageSize = IMAGE_SIZE;
         header.imageCrc =
             mark4::otaImageCrc32(image.data() + mark4::OTA_IMAGE_HEADER_SIZE, IMAGE_PAYLOAD_SIZE);
-        header.versionMajor = version.major;
-        header.versionMinor = version.minor;
-        header.versionPatch = version.patch;
-        header.reserved0 = 0xFFU;
+        header.buildEpoch = buildEpoch;
         header.gitHash.fill('\0');
         std::memcpy(header.gitHash.data(),
                     gitHash.data(),
@@ -159,19 +157,24 @@ namespace
     ///        the one scripts/make_ota.py writes, minus the F405 assumptions
     ///        that script is built on.
     /// @param path file to write
-    /// @param version version both images announce
+    /// @param buildEpoch build identity both images announce
     /// @param gitHash eight-character build hash
+    /// @param broken true builds images that never confirm their own trial
     /// @return the bundle path, for chaining
     std::string writeBundle(const std::filesystem::path &path,
-                            const Version &version,
-                            const std::string &gitHash)
+                            std::uint32_t buildEpoch,
+                            const std::string &gitHash,
+                            bool broken = false)
     {
-        const std::vector<std::uint8_t> slotA = makeImage(mark4::OTA_SLOT_A, version, gitHash);
-        const std::vector<std::uint8_t> slotB = makeImage(mark4::OTA_SLOT_B, version, gitHash);
+        const std::vector<std::uint8_t> slotA =
+            makeImage(mark4::OTA_SLOT_A, buildEpoch, gitHash, broken);
+        const std::vector<std::uint8_t> slotB =
+            makeImage(mark4::OTA_SLOT_B, buildEpoch, gitHash, broken);
 
         // The manifest reads exactly like the one scripts/make_ota.py writes:
         // compact, keys sorted, every number decimal.
-        std::string manifest = R"({"gitHash":")" + gitHash + R"(","images":[)";
+        std::string manifest = R"({"buildEpoch":)" + std::to_string(buildEpoch) +
+                               R"(,"gitHash":")" + gitHash + R"(","images":[)";
         manifest += R"({"crc32":)" +
                     std::to_string(mark4::otaImageCrc32(slotA.data(), slotA.size())) +
                     R"(,"size":)" + std::to_string(slotA.size()) + R"(,"slot":0},)";
@@ -181,9 +184,7 @@ namespace
         manifest += R"("mcuId":)" + std::to_string(mark4::OTA_MCU_SIM);
         manifest +=
             R"(,"name":"drone_sim","protocolVersion":)" + std::to_string(mark4::PROTOCOL_VERSION);
-        manifest += R"(,"version":{"major":)" + std::to_string(version.major) + R"(,"minor":)" +
-                    std::to_string(version.minor) + R"(,"patch":)" + std::to_string(version.patch) +
-                    "}}";
+        manifest += "}";
 
         std::vector<std::uint8_t> bytes;
         const char *magic = mark4::otaBundleMagic();
@@ -507,22 +508,18 @@ namespace
     /// @brief The settings this test runs the client with: the real state
     ///        machine, its real timeouts shortened to what a loopback link
     ///        and a 500 ms sim wakeup actually need.
-    /// @param autoConfirm true to confirm without an operator
     /// @return the configuration
-    mark4::OtaClient::Config testConfig(bool autoConfirm)
+    mark4::OtaClient::Config testConfig()
     {
         mark4::OtaClient::Config config;
         config.statusPeriodMs = 200U;
         config.statusTries = 60U;
         config.rebootSettleMs = 500U;
         config.boardReturnTimeoutMs = 30000U;
-        config.healthyLinkMs = 400U;
-        config.healthyStatuses = 2U;
         config.chunkAckTimeoutMs = 3000U;
         config.ackTimeoutMs = 4000U;
         // No pacing: the bridge UART this delay protects is not in the path.
         config.chunkDelayUs = 0U;
-        config.autoConfirm = autoConfirm;
         return config;
     }
 
@@ -548,12 +545,14 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     REQUIRE(std::filesystem::create_directories(runDirectory, error));
 
     const std::string otaDirectory = (runDirectory / "flash").string();
-    const Version firstVersion = {1U, 2U, 3U};
-    const Version secondVersion = {4U, 5U, 6U};
-    const std::string firstBundle =
-        writeBundle(runDirectory / "first.ota", firstVersion, "aaaaaaaa");
+    const std::uint32_t firstBuild = 0x66E00001U;
+    const std::uint32_t secondBuild = 0x66E00002U;
+    const std::string firstBundle = writeBundle(runDirectory / "first.ota", firstBuild, "aaaaaaaa");
+    // The second bundle carries the sim's "notalive" marker: an image that
+    // boots and talks but never reaches the checkpoint where it would
+    // confirm itself, which is what makes the rollback observable.
     const std::string secondBundle =
-        writeBundle(runDirectory / "second.ota", secondVersion, "bbbbbbbb");
+        writeBundle(runDirectory / "second.ota", secondBuild, "bbbbbbbb", true);
 
     GroundLink link;
     REQUIRE(link.open());
@@ -564,7 +563,7 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     SimProcess sim;
     REQUIRE(sim.start(runDirectory, otaDirectory, simPort, link.port(), commandPort));
 
-    mark4::OtaClient client(testConfig(true));
+    mark4::OtaClient client(testConfig());
     client.setSink([&link](const std::uint8_t *data, std::size_t size, std::string &errorOut) {
         if (!link.send(data, size))
         {
@@ -582,7 +581,7 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     REQUIRE(client.board().runningSlot == mark4::OTA_SLOT_A);
     REQUIRE(client.board().gitHash.empty());
 
-    // --- The happy path: transfer, trial boot, auto-confirm. ---
+    // --- The happy path: transfer, trial boot, self-confirm. ---
     std::string startError;
     REQUIRE(client.start(firstBundle, nowUs(), startError));
     REQUIRE(driveUntil(
@@ -600,15 +599,14 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     REQUIRE(refreshBoard(client, link));
     REQUIRE(client.board().runningSlot == mark4::OTA_SLOT_B);
     REQUIRE(client.board().activeSlot == mark4::OTA_SLOT_B);
-    REQUIRE(client.board().versionMajor == firstVersion.major);
-    REQUIRE(client.board().versionMinor == firstVersion.minor);
-    REQUIRE(client.board().versionPatch == firstVersion.patch);
+    REQUIRE(client.board().buildEpoch == firstBuild);
     REQUIRE(client.board().gitHash == "aaaaaaaa");
-    REQUIRE(client.board().slotState[mark4::OTA_SLOT_B] == mark4::OTA_SLOT_VALID);
+    REQUIRE(client.board().slots[mark4::OTA_SLOT_B].state == mark4::OTA_SLOT_VALID);
     REQUIRE(sim.alive());
 
-    // --- The rollback path: a trial nobody confirms, then a reset. ---
-    mark4::OtaClient manual(testConfig(false));
+    // --- The rollback path: a trial that never confirms itself, then a
+    // reset. ---
+    mark4::OtaClient manual(testConfig());
     manual.setSink([&link](const std::uint8_t *data, std::size_t size, std::string &errorOut) {
         if (!link.send(data, size))
         {
@@ -619,16 +617,15 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     });
 
     REQUIRE(manual.start(secondBundle, nowUs(), startError));
-    // Manual confirm: the client stops at TESTING and waits for a gesture
-    // that never comes.
-    REQUIRE(driveUntil(manual, link, [&manual] {
-        return manual.phase() == mark4::OtaPhase::TESTING || manual.confirmReady();
-    }));
+    // The broken image answers every request but never vouches for itself:
+    // the hub reaches TESTING and stays there, sending nothing.
+    REQUIRE(
+        driveUntil(manual, link, [&manual] { return manual.phase() == mark4::OtaPhase::TESTING; }));
     REQUIRE(manual.phase() == mark4::OtaPhase::TESTING);
     REQUIRE(manual.board().runningSlot == mark4::OTA_SLOT_A);
-    REQUIRE(manual.board().versionMajor == secondVersion.major);
+    REQUIRE(manual.board().buildEpoch == secondBuild);
     REQUIRE(manual.board().gitHash == "bbbbbbbb");
-    REQUIRE(manual.board().slotState[mark4::OTA_SLOT_A] == mark4::OTA_SLOT_TESTING);
+    REQUIRE(manual.board().slots[mark4::OTA_SLOT_A].state == mark4::OTA_SLOT_TESTING);
     // The metadata still prefers the confirmed image: a trial boot never
     // moves the active slot, which is exactly what makes the rollback free.
     REQUIRE(manual.board().activeSlot == mark4::OTA_SLOT_B);
@@ -651,12 +648,10 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     REQUIRE(refreshBoard(manual, link));
     REQUIRE(manual.board().runningSlot == mark4::OTA_SLOT_B);
     REQUIRE(manual.board().activeSlot == mark4::OTA_SLOT_B);
-    REQUIRE(manual.board().versionMajor == firstVersion.major);
-    REQUIRE(manual.board().versionMinor == firstVersion.minor);
-    REQUIRE(manual.board().versionPatch == firstVersion.patch);
+    REQUIRE(manual.board().buildEpoch == firstBuild);
     REQUIRE(manual.board().gitHash == "aaaaaaaa");
-    REQUIRE(manual.board().slotState[mark4::OTA_SLOT_A] == mark4::OTA_SLOT_BAD);
-    REQUIRE(manual.board().slotState[mark4::OTA_SLOT_B] == mark4::OTA_SLOT_VALID);
+    REQUIRE(manual.board().slots[mark4::OTA_SLOT_A].state == mark4::OTA_SLOT_BAD);
+    REQUIRE(manual.board().slots[mark4::OTA_SLOT_B].state == mark4::OTA_SLOT_VALID);
     REQUIRE(sim.alive());
 
     sim.stop();

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 #: First byte of every packet, must match mark4::PROTOCOL_VERSION.
-PROTOCOL_VERSION = 12
+PROTOCOL_VERSION = 14
 
 # Packet types, the second byte of every packet (mark4::PacketType).
 TYPE_SIM_SENSOR = 1
@@ -226,11 +226,10 @@ OTA_GIT_HASH_SIZE = 8
 
 OTA_STATUS_REQUEST_STRUCT = struct.Struct("<BB")
 OTA_STATUS_REQUEST_PACKET_SIZE = 2
-# version, type, mcu id, running slot, active slot, slot state[2],
-# updater busy, version major/minor/patch, git hash, slot size, max chunk
-# data.
-OTA_STATUS_STRUCT = struct.Struct("<BBBBB2BBBBB8sIH")
-OTA_STATUS_PACKET_SIZE = 25
+# version, type, mcu id, running slot, active slot, updater busy, then per
+# slot (state, build epoch, git hash), then slot size, max chunk data.
+OTA_STATUS_STRUCT = struct.Struct("<BBBBBBBI8sBI8sIH")
+OTA_STATUS_PACKET_SIZE = 38
 # version, type, session, image size, image crc.
 OTA_BEGIN_STRUCT = struct.Struct("<BBIII")
 OTA_BEGIN_PACKET_SIZE = 14
@@ -255,9 +254,8 @@ OTA_ACK_PACKET_SIZE = 8
 # The on-flash image header (ota.hpp): the first bytes of every firmware
 # slot, written by the packaging script, read by the bootloader, the
 # updater and the hub. magic, header version, mcu id, slot id, image size,
-# image crc, version major/minor/patch, reserved0, git hash, reserved,
-# header crc.
-OTA_IMAGE_HEADER_STRUCT = struct.Struct("<IHBBIIBBBB8s480sI")
+# image crc, build epoch, git hash, reserved, header crc.
+OTA_IMAGE_HEADER_STRUCT = struct.Struct("<IHBBIII8s480sI")
 #: Bytes reserved for the header at the base of a slot (vector table after).
 OTA_IMAGE_HEADER_SIZE = 512
 #: "M4FW" read as a little-endian word, the first bytes of an image.
@@ -467,16 +465,23 @@ class SimRunStatsSample:
 
 
 @dataclass(frozen=True)
+class OtaSlotStatus:
+    """One firmware slot: its lifecycle state and the image identity in it."""
+
+    state: int
+    build_epoch: int
+    git_hash: bytes
+
+
+@dataclass(frozen=True)
 class OtaStatus:
     """One decoded update status: what runs, from where, what each slot holds."""
 
     mcu_id: int
     running_slot: int
     active_slot: int
-    slot_state: Tuple[int, int]
     updater_busy: int
-    version: Tuple[int, int, int]
-    git_hash: bytes
+    slots: Tuple[OtaSlotStatus, OtaSlotStatus]
     slot_size: int
     max_chunk_data: int
 
@@ -522,7 +527,7 @@ class OtaImageHeader:
     slot_id: int
     image_size: int
     image_crc: int
-    version: Tuple[int, int, int]
+    build_epoch: int
     git_hash: bytes
     header_crc: int
 
@@ -762,13 +767,14 @@ def encode_ota_status_request() -> bytes:
 
 def encode_ota_status(status: OtaStatus) -> bytes:
     """Pack one OtaStatusPacket; the board side of the wire, for fake boards."""
-    return OTA_STATUS_STRUCT.pack(
-        PROTOCOL_VERSION, TYPE_OTA_STATUS,
-        status.mcu_id, status.running_slot, status.active_slot, *status.slot_state,
-        status.updater_busy, *status.version,
-        status.git_hash.ljust(OTA_GIT_HASH_SIZE, b"\x00"),
-        status.slot_size, status.max_chunk_data,
-    )
+    fields = [PROTOCOL_VERSION, TYPE_OTA_STATUS,
+              status.mcu_id, status.running_slot, status.active_slot,
+              status.updater_busy]
+    for slot in status.slots:
+        fields += [slot.state, slot.build_epoch,
+                   slot.git_hash.ljust(OTA_GIT_HASH_SIZE, b"\x00")]
+    fields += [status.slot_size, status.max_chunk_data]
+    return OTA_STATUS_STRUCT.pack(*fields)
 
 
 def encode_ota_begin(session: int, image_size: int, image_crc: int) -> bytes:
@@ -833,10 +839,9 @@ def decode_ota_status(datagram: bytes) -> Optional[OtaStatus]:
         mcu_id=fields[2],
         running_slot=fields[3],
         active_slot=fields[4],
-        slot_state=fields[5:7],
-        updater_busy=fields[7],
-        version=fields[8:11],
-        git_hash=fields[11],
+        updater_busy=fields[5],
+        slots=(OtaSlotStatus(state=fields[6], build_epoch=fields[7], git_hash=fields[8]),
+               OtaSlotStatus(state=fields[9], build_epoch=fields[10], git_hash=fields[11])),
         slot_size=fields[12],
         max_chunk_data=fields[13],
     )
@@ -890,7 +895,7 @@ def valid_ota_image_header(header: bytes) -> bool:
     fields = OTA_IMAGE_HEADER_STRUCT.unpack(header[:OTA_IMAGE_HEADER_SIZE])
     if fields[0] != OTA_IMAGE_MAGIC or fields[1] != OTA_IMAGE_HEADER_VERSION:
         return False
-    return fields[12] == ota_image_header_crc(header)
+    return fields[9] == ota_image_header_crc(header)
 
 
 def decode_ota_image_header(header: bytes) -> Optional[OtaImageHeader]:
@@ -910,9 +915,9 @@ def decode_ota_image_header(header: bytes) -> Optional[OtaImageHeader]:
         slot_id=fields[3],
         image_size=fields[4],
         image_crc=fields[5],
-        version=fields[6:9],
-        git_hash=fields[10],
-        header_crc=fields[12],
+        build_epoch=fields[6],
+        git_hash=fields[7],
+        header_crc=fields[9],
     )
 
 
@@ -921,19 +926,19 @@ def encode_ota_image_header(
     slot_id: int,
     image_size: int,
     image_crc: int,
-    version: Tuple[int, int, int] = (0, 0, 0),
+    build_epoch: int = 0,
     git_hash: bytes = b"",
 ) -> bytes:
     """Stamp one image header, its own crc computed last.
 
     What the packaging script writes at the base of a slot: the constant
-    fields, then the values only packaging knows (size, image crc, git
-    hash), then the crc over all of them. Unused room is erased-flash
-    0xFF, so a future field costs no layout change.
+    fields, then the values only packaging knows (size, image crc, build
+    epoch, git hash), then the crc over all of them. Unused room is
+    erased-flash 0xFF, so a future field costs no layout change.
     """
     body = OTA_IMAGE_HEADER_STRUCT.pack(
         OTA_IMAGE_MAGIC, OTA_IMAGE_HEADER_VERSION, mcu_id, slot_id,
-        image_size, image_crc, *version, 0xFF,
+        image_size, image_crc, build_epoch,
         git_hash.ljust(OTA_GIT_HASH_SIZE, b"\xff"),
         b"\xff" * 480, 0,
     )

@@ -4,10 +4,10 @@
 ///        collection cannot drop it).
 ///
 ///        What the compiler can know it fills in: the magic, the layout
-///        version, the chip, the slot this variant was linked for and the
-///        firmware version. What only the packaging script can know it
-///        leaves at OTA_IMAGE_UNSTAMPED (erased-flash bytes): the image
-///        size, the image CRC, the git hash and the header CRC. An elf
+///        version, the chip and the slot this variant was linked for.
+///        What only the packaging script can know it leaves at
+///        OTA_IMAGE_UNSTAMPED (erased-flash bytes): the image size, the
+///        image CRC, the build epoch, the git hash and the header CRC. An elf
 ///        flashed straight over SWD therefore boots unverified by design,
 ///        while every image that travelled the wire carries real checksums
 ///        that the bootloader checks on every single boot.
@@ -19,7 +19,6 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "firmware_version.hpp"
 #include "platform_stm32/ota_slots.hpp"
 #include "protocol/ota.hpp"
 
@@ -68,10 +67,7 @@ namespace mark4
         .slotId = OTA_RUNNING_SLOT,
         .imageSize = OTA_IMAGE_UNSTAMPED,
         .imageCrc = OTA_IMAGE_UNSTAMPED,
-        .versionMajor = FIRMWARE_VERSION_MAJOR,
-        .versionMinor = FIRMWARE_VERSION_MINOR,
-        .versionPatch = FIRMWARE_VERSION_PATCH,
-        .reserved0 = ERASED_BYTE,
+        .buildEpoch = OTA_IMAGE_UNSTAMPED,
         .gitHash = erasedChars<OTA_GIT_HASH_SIZE>(),
         .reserved = erasedBytes<sizeof(OtaImageHeader::reserved)>(),
         .headerCrc = OTA_IMAGE_UNSTAMPED,

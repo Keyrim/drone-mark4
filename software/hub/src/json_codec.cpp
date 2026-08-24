@@ -641,23 +641,6 @@ namespace mark4
             return true;
         }
 
-        /// @brief Fills the update-policy part of a client request.
-        /// @param object message object
-        /// @param message message being decoded
-        /// @param errorOut receives the reason on failure
-        /// @return true when the flag is present and a boolean
-        bool parseOtaConfig(const Json &object, ClientMessage &message, std::string &errorOut)
-        {
-            const auto found = object.find("autoConfirm");
-            if (found == object.end() || !found->is_boolean())
-            {
-                errorOut = "field 'autoConfirm' must be true or false";
-                return false;
-            }
-            message.otaAutoConfirm = found->get<bool>();
-            return true;
-        }
-
         /// @brief Reads the optional process kind an update is aimed at. The
         ///        board is the default: it is the only thing that has flash.
         /// @param object object to read from
@@ -822,8 +805,7 @@ namespace mark4
         bundleJson["path"] = client.bundlePath();
         bundleJson["name"] = bundle.name;
         bundleJson["mcuId"] = bundle.mcuId;
-        bundleJson["version"] =
-            otaVersionText(bundle.versionMajor, bundle.versionMinor, bundle.versionPatch);
+        bundleJson["buildEpoch"] = bundle.buildEpoch;
         bundleJson["gitHash"] = bundle.gitHash;
         bundleJson["protocolVersion"] = bundle.protocolVersion;
         Json images = Json::array();
@@ -842,18 +824,19 @@ namespace mark4
         boardJson["mcuId"] = board.mcuId;
         boardJson["runningSlot"] = board.runningSlot;
         boardJson["activeSlot"] = board.activeSlot;
-        Json slotStates = Json::array();
-        Json slotStateNames = Json::array();
-        for (const std::uint8_t state : board.slotState)
+        Json slots = Json::array();
+        for (const OtaSlotInfo &slot : board.slots)
         {
-            slotStates.push_back(state);
-            slotStateNames.push_back(otaSlotStateName(state));
+            Json entry;
+            entry["state"] = slot.state;
+            entry["stateName"] = otaSlotStateName(slot.state);
+            entry["buildEpoch"] = slot.buildEpoch;
+            entry["gitHash"] = slot.gitHash;
+            slots.push_back(entry);
         }
-        boardJson["slotState"] = slotStates;
-        boardJson["slotStateNames"] = slotStateNames;
+        boardJson["slots"] = slots;
         boardJson["updaterBusy"] = board.updaterBusy;
-        boardJson["version"] =
-            otaVersionText(board.versionMajor, board.versionMinor, board.versionPatch);
+        boardJson["buildEpoch"] = board.buildEpoch;
         boardJson["gitHash"] = board.gitHash;
         boardJson["slotSize"] = board.slotSize;
         boardJson["maxChunkData"] = board.maxChunkData;
@@ -876,8 +859,6 @@ namespace mark4
         message["verdict"] = otaVerdictName(client.verdict());
         message["verdictText"] = client.verdictText();
         message["lastError"] = client.lastError();
-        message["autoConfirm"] = client.autoConfirm();
-        message["confirmReady"] = client.confirmReady();
         message["targetSlot"] =
             client.targetSlot() < OTA_SLOT_COUNT ? static_cast<int>(client.targetSlot()) : -1;
         message["bundle"] = bundleJson;
@@ -1109,21 +1090,9 @@ namespace mark4
         {
             message.type = ClientMessageType::OTA_ABORT;
         }
-        else if (typeName == "otaConfirm")
-        {
-            message.type = ClientMessageType::OTA_CONFIRM;
-        }
         else if (typeName == "otaRevert")
         {
             message.type = ClientMessageType::OTA_REVERT;
-        }
-        else if (typeName == "otaConfig")
-        {
-            message.type = ClientMessageType::OTA_CONFIG;
-            if (!parseOtaConfig(root, message, error))
-            {
-                return error;
-            }
         }
         else
         {

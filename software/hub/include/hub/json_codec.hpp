@@ -49,9 +49,7 @@ namespace mark4
         OTA_STATUS,   ///< ask the board what firmware it runs
         OTA_START,    ///< send one .ota bundle to the board
         OTA_ABORT,    ///< drop the running update
-        OTA_CONFIRM,  ///< confirm the running trial image by hand
         OTA_REVERT,   ///< activate the other firmware slot
-        OTA_CONFIG    ///< change the auto-confirm policy
     };
 
     /// One decoded client request. The wire packets are already built: the
@@ -79,8 +77,6 @@ namespace mark4
         std::uint32_t serialBaud = 0U;                  ///< SERIAL: line speed [baud]
         std::string otaBundlePath;                      ///< OTA_START: bundle to send, empty
                                                         ///< for the standard build output
-        bool otaAutoConfirm = true;                     ///< OTA_CONFIG: confirm without an
-                                                        ///< operator gesture
     };
 
     /// Counters and flags the hub publishes once per second.

@@ -270,10 +270,13 @@ class GoldenOta(unittest.TestCase):
         self.assertEqual(status.mcu_id, tw.OTA_MCU_STM32F405)
         self.assertEqual(status.running_slot, tw.OTA_SLOT_B)
         self.assertEqual(status.active_slot, tw.OTA_SLOT_A)
-        self.assertEqual(status.slot_state, (tw.OTA_SLOT_VALID, tw.OTA_SLOT_TESTING))
         self.assertEqual(status.updater_busy, 0)
-        self.assertEqual(status.version, (1, 2, 3))
-        self.assertEqual(status.git_hash, b"deadbeef")
+        self.assertEqual(status.slots[0].state, tw.OTA_SLOT_VALID)
+        self.assertEqual(status.slots[0].build_epoch, 0x66E42F01)
+        self.assertEqual(status.slots[0].git_hash, b"cafe0001")
+        self.assertEqual(status.slots[1].state, tw.OTA_SLOT_TESTING)
+        self.assertEqual(status.slots[1].build_epoch, 0x66E43D95)
+        self.assertEqual(status.slots[1].git_hash, b"deadbeef")
         self.assertEqual(status.slot_size, 0x00060102)
         self.assertEqual(status.max_chunk_data, tw.OTA_CHUNK_DATA_SIZE)
         self.assertEqual(tw.encode_ota_status(status), data)
@@ -372,7 +375,7 @@ class GoldenOta(unittest.TestCase):
         self.assertEqual(header.slot_id, tw.OTA_SLOT_A)
         self.assertEqual(header.image_size, OTA_IMAGE_SIZE)
         self.assertEqual(header.image_crc, 0x76543210)
-        self.assertEqual(header.version, (4, 5, 6))
+        self.assertEqual(header.build_epoch, 0x66E43D95)
         self.assertEqual(header.git_hash, b"0badc0de")
         # The C++ side stamped this crc: reproducing it is the check that
         # the python packaging script and the bootloader agree bit for bit.
@@ -380,14 +383,14 @@ class GoldenOta(unittest.TestCase):
         self.assertEqual(
             tw.encode_ota_image_header(
                 tw.OTA_MCU_STM32F722, tw.OTA_SLOT_A, OTA_IMAGE_SIZE, 0x76543210,
-                version=(4, 5, 6), git_hash=b"0badc0de",
+                build_epoch=0x66E43D95, git_hash=b"0badc0de",
             ),
             data,
         )
 
     def test_image_header_rejects_a_broken_crc(self):
         data = bytearray(read("ota_image_header.bin"))
-        data[16] ^= 0x01  # one flipped bit in the firmware version
+        data[16] ^= 0x01  # one flipped bit in the build epoch
         self.assertFalse(tw.valid_ota_image_header(bytes(data)))
         self.assertIsNone(tw.decode_ota_image_header(bytes(data)))
 

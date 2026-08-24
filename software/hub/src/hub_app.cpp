@@ -636,9 +636,7 @@ namespace mark4
             case ClientMessageType::OTA_STATUS:
             case ClientMessageType::OTA_START:
             case ClientMessageType::OTA_ABORT:
-            case ClientMessageType::OTA_CONFIRM:
-            case ClientMessageType::OTA_REVERT:
-            case ClientMessageType::OTA_CONFIG: {
+            case ClientMessageType::OTA_REVERT: {
                 return applyOtaMessage(message, errorOut);
             }
         }
@@ -664,13 +662,8 @@ namespace mark4
                 return m_ota.start(message.otaBundlePath, nowUs, errorOut);
             case ClientMessageType::OTA_ABORT:
                 return m_ota.abortSession(nowUs, errorOut);
-            case ClientMessageType::OTA_CONFIRM:
-                return m_ota.confirm(nowUs, errorOut);
             case ClientMessageType::OTA_REVERT:
                 return m_ota.revert(nowUs, errorOut);
-            case ClientMessageType::OTA_CONFIG:
-                m_ota.setAutoConfirm(message.otaAutoConfirm);
-                return true;
             default:
                 errorOut = "unsupported update request";
                 return false;

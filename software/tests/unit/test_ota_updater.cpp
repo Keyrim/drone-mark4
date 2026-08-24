@@ -30,6 +30,7 @@ namespace
 {
     constexpr std::uint32_t TEST_SLOT_SIZE = 8192U;
     constexpr std::uint32_t TEST_SESSION = 0xA5A5F00DU;
+    constexpr std::uint32_t TEST_BUILD_EPOCH = 0x66E01234U; ///< stamped into test images
     constexpr std::uint32_t OTHER_SESSION = 0x0BADF00DU;
 
     /// Data bytes of one full chunk.
@@ -401,16 +402,17 @@ namespace
     /// One decoded OtaStatusPacket, in aligned fields.
     struct Status
     {
-        std::uint8_t mcuId = 0U;                                     ///< board identity
-        std::uint8_t runningSlot = 0U;                               ///< slot in use
-        std::array<std::uint8_t, mark4::OTA_SLOT_COUNT> slotState{}; ///< OTA_SLOT_* per slot
-        std::uint8_t updaterBusy = 0U;                               ///< a session is open
-        std::uint8_t versionMajor = 0U;                              ///< running version
-        std::uint8_t versionMinor = 0U;                              ///< running version
-        std::uint8_t versionPatch = 0U;                              ///< running version
-        std::array<char, mark4::OTA_GIT_HASH_SIZE> gitHash{};        ///< running git hash
-        std::uint32_t slotSize = 0U;                                 ///< bytes per slot
-        std::uint16_t maxChunkData = 0U;                             ///< largest chunk accepted
+        std::uint8_t mcuId = 0U;                                      ///< board identity
+        std::uint8_t runningSlot = 0U;                                ///< slot in use
+        std::array<std::uint8_t, mark4::OTA_SLOT_COUNT> slotState{};  ///< OTA_SLOT_* per slot
+        std::array<std::uint32_t, mark4::OTA_SLOT_COUNT> slotEpoch{}; ///< build identity per slot
+        std::array<std::array<char, mark4::OTA_GIT_HASH_SIZE>, mark4::OTA_SLOT_COUNT>
+            slotHash{};                                       ///< git hash per slot
+        std::uint8_t updaterBusy = 0U;                        ///< a session is open
+        std::uint32_t buildEpoch = 0U;                        ///< running build identity
+        std::array<char, mark4::OTA_GIT_HASH_SIZE> gitHash{}; ///< running git hash
+        std::uint32_t slotSize = 0U;                          ///< bytes per slot
+        std::uint16_t maxChunkData = 0U;                      ///< largest chunk accepted
     };
 
     /// @brief Decodes an ack, checking it is one.
@@ -463,12 +465,16 @@ namespace
         Status decoded;
         decoded.mcuId = packet.mcuId;
         decoded.runningSlot = packet.runningSlot;
-        std::memcpy(decoded.slotState.data(), &packet.slotState, mark4::OTA_SLOT_COUNT);
         decoded.updaterBusy = packet.updaterBusy;
-        decoded.versionMajor = packet.versionMajor;
-        decoded.versionMinor = packet.versionMinor;
-        decoded.versionPatch = packet.versionPatch;
-        std::memcpy(decoded.gitHash.data(), &packet.gitHash, mark4::OTA_GIT_HASH_SIZE);
+        for (std::size_t slot = 0U; slot < mark4::OTA_SLOT_COUNT; ++slot)
+        {
+            const mark4::OtaSlotStatus wire = packet.slot[slot];
+            decoded.slotState[slot] = wire.state;
+            decoded.slotEpoch[slot] = wire.buildEpoch;
+            decoded.slotHash[slot] = wire.gitHash;
+        }
+        decoded.buildEpoch = decoded.slotEpoch[packet.runningSlot];
+        decoded.gitHash = decoded.slotHash[packet.runningSlot];
         decoded.slotSize = packet.slotSize;
         decoded.maxChunkData = packet.maxChunkData;
         return decoded;
@@ -504,10 +510,7 @@ namespace
         header.mcuId = spec.mcuId;
         header.slotId = spec.slotId;
         header.imageSize = (spec.declaredSize == 0U) ? spec.totalSize : spec.declaredSize;
-        header.versionMajor = 1U;
-        header.versionMinor = 2U;
-        header.versionPatch = 3U;
-        header.reserved0 = 0xFFU;
+        header.buildEpoch = TEST_BUILD_EPOCH;
         const std::array<char, mark4::OTA_GIT_HASH_SIZE> hash = {
             'd', 'e', 'a', 'd', 'b', 'e', 'e', 'f'};
         std::memcpy(&header.gitHash, hash.data(), hash.size());
@@ -1196,12 +1199,10 @@ TEST_CASE("the status packet says what runs, from where, and what is staged")
         REQUIRE(status.updaterBusy == 0U);
         REQUIRE(status.slotState[mark4::OTA_SLOT_A] == mark4::OTA_SLOT_VALID);
         REQUIRE(status.slotState[mark4::OTA_SLOT_B] == mark4::OTA_SLOT_EMPTY);
-        REQUIRE(status.versionMajor == 0U);
-        REQUIRE(status.versionMinor == 0U);
-        REQUIRE(status.versionPatch == 0U);
+        REQUIRE(status.buildEpoch == 0U);
         REQUIRE(status.gitHash == std::array<char, mark4::OTA_GIT_HASH_SIZE>{});
     }
-    SECTION("an image that was never packaged still reports its version")
+    SECTION("an image that was never packaged still reports its header fields")
     {
         ImageSpec spec;
         spec.slotId = mark4::OTA_SLOT_A;
@@ -1210,14 +1211,28 @@ TEST_CASE("the status packet says what runs, from where, and what is staged")
         store.poke(mark4::OTA_SLOT_A, 0U, image.data(), image.size());
 
         const Status status = decodeStatus(feed(updater, request.data(), request.size(), in));
-        REQUIRE(status.versionMajor == 1U);
-        REQUIRE(status.versionMinor == 2U);
-        REQUIRE(status.versionPatch == 3U);
+        REQUIRE(status.buildEpoch == TEST_BUILD_EPOCH);
         const std::array<char, mark4::OTA_GIT_HASH_SIZE> hash = {
             'd', 'e', 'a', 'd', 'b', 'e', 'e', 'f'};
         REQUIRE(status.gitHash == hash);
     }
-    SECTION("a trial boot in progress is visible in the running slot state")
+    SECTION("a trial that has not reached its checkpoint stays visible as one")
+    {
+        mark4::OtaMetaState meta;
+        meta.activeSlot = mark4::OTA_SLOT_B;
+        meta.slotState = {mark4::OTA_SLOT_TESTING, mark4::OTA_SLOT_VALID};
+        meta.trialAttempted = true;
+        store.forceMeta(meta);
+
+        // An image that never reaches the point where it vouches for itself
+        // keeps answering as TESTING: that is what the ground reads as a
+        // trial still in progress, and what a reboot rolls back.
+        mark4::OtaUpdater pending(store, false);
+        const Status status = decodeStatus(feed(pending, request.data(), request.size(), in));
+        REQUIRE(status.slotState[mark4::OTA_SLOT_A] == mark4::OTA_SLOT_TESTING);
+        REQUIRE(status.slotState[mark4::OTA_SLOT_B] == mark4::OTA_SLOT_VALID);
+    }
+    SECTION("a trial confirms itself on the first request it serves")
     {
         mark4::OtaMetaState meta;
         meta.activeSlot = mark4::OTA_SLOT_B;
@@ -1226,8 +1241,10 @@ TEST_CASE("the status packet says what runs, from where, and what is staged")
         store.forceMeta(meta);
 
         const Status status = decodeStatus(feed(updater, request.data(), request.size(), in));
-        REQUIRE(status.slotState[mark4::OTA_SLOT_A] == mark4::OTA_SLOT_TESTING);
-        REQUIRE(status.slotState[mark4::OTA_SLOT_B] == mark4::OTA_SLOT_VALID);
+        REQUIRE(status.slotState[mark4::OTA_SLOT_A] == mark4::OTA_SLOT_VALID);
+        REQUIRE(store.meta().slotState[mark4::OTA_SLOT_A] == mark4::OTA_SLOT_VALID);
+        REQUIRE(store.meta().activeSlot == mark4::OTA_SLOT_A);
+        REQUIRE(!store.meta().trialAttempted);
     }
     SECTION("an open session shows the updater busy")
     {
@@ -1248,7 +1265,7 @@ TEST_CASE("the status packet says what runs, from where, and what is staged")
         const Status status = decodeStatus(feed(updater, request.data(), request.size(), in));
         REQUIRE(status.slotState[mark4::OTA_SLOT_A] == mark4::OTA_SLOT_EMPTY);
         REQUIRE(status.slotState[mark4::OTA_SLOT_B] == mark4::OTA_SLOT_EMPTY);
-        REQUIRE(status.versionMajor == 0U);
+        REQUIRE(status.buildEpoch == 0U);
     }
 }
 
@@ -1324,15 +1341,13 @@ TEST_CASE("the trial boot round trip: staged, tried, confirmed")
     booted.poke(mark4::OTA_SLOT_B, 0U, image.data(), image.size());
     mark4::OtaUpdater trialUpdater(booted);
 
+    // Serving the first ground request is the image's own checkpoint: the
+    // reply already reports the slot VALID, no ground gesture involved.
     const auto request = barePacket(mark4::PacketType::OTA_STATUS_REQUEST);
     const Status status = decodeStatus(feed(trialUpdater, request.data(), request.size(), in));
     REQUIRE(status.runningSlot == mark4::OTA_SLOT_B);
-    REQUIRE(status.slotState[mark4::OTA_SLOT_B] == mark4::OTA_SLOT_TESTING);
-    REQUIRE(status.versionMajor == 1U);
-
-    const auto confirm = barePacket(mark4::PacketType::OTA_CONFIRM);
-    REQUIRE(decodeAck(feed(trialUpdater, confirm.data(), confirm.size(), in)).result ==
-            mark4::OTA_RESULT_OK);
+    REQUIRE(status.slotState[mark4::OTA_SLOT_B] == mark4::OTA_SLOT_VALID);
+    REQUIRE(status.buildEpoch == TEST_BUILD_EPOCH);
     REQUIRE(booted.meta().slotState[mark4::OTA_SLOT_B] == mark4::OTA_SLOT_VALID);
     REQUIRE(booted.meta().activeSlot == mark4::OTA_SLOT_B);
     REQUIRE(!booted.meta().trialAttempted);
@@ -1382,18 +1397,14 @@ TEST_CASE("the whole flow over the file-backed store, trial boot included")
     REQUIRE(booted.init());
     mark4::OtaUpdater updater(booted);
 
+    // The first request the new process serves is its checkpoint: it
+    // confirms itself and answers VALID in the same breath.
     const auto request = barePacket(mark4::PacketType::OTA_STATUS_REQUEST);
     const Status status = decodeStatus(feed(updater, request.data(), request.size(), in));
     REQUIRE(status.mcuId == mark4::OTA_MCU_SIM);
     REQUIRE(status.runningSlot == mark4::OTA_SLOT_B);
-    REQUIRE(status.slotState[mark4::OTA_SLOT_B] == mark4::OTA_SLOT_TESTING);
-    REQUIRE(status.versionMajor == 1U);
-    REQUIRE(status.versionMinor == 2U);
-    REQUIRE(status.versionPatch == 3U);
-
-    const auto confirm = barePacket(mark4::PacketType::OTA_CONFIRM);
-    REQUIRE(decodeAck(feed(updater, confirm.data(), confirm.size(), in)).result ==
-            mark4::OTA_RESULT_OK);
+    REQUIRE(status.slotState[mark4::OTA_SLOT_B] == mark4::OTA_SLOT_VALID);
+    REQUIRE(status.buildEpoch == TEST_BUILD_EPOCH);
 
     mark4::OtaMetaState meta;
     REQUIRE(booted.readMeta(meta));

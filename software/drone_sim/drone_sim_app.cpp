@@ -35,9 +35,15 @@ namespace
     /// packet; the chunk acknowledgement and the single ack packet are both
     /// shorter.
     constexpr std::size_t OTA_REPLY_SIZE = mark4::OTA_STATUS_PACKET_SIZE;
+
     static_assert(OTA_REPLY_SIZE >= mark4::OTA_CHUNK_ACK_PACKET_SIZE &&
                       OTA_REPLY_SIZE >= mark4::OTA_ACK_PACKET_SIZE,
                   "every updater answer must fit the reply buffer");
+
+    /// Payload prefix of a fake image that boots but never reaches the
+    /// checkpoint where a trial confirms itself (see bootFirmware).
+    constexpr char OTA_BROKEN_MARKER[] = "notalive";
+    constexpr std::size_t OTA_BROKEN_MARKER_SIZE = sizeof(OTA_BROKEN_MARKER) - 1U;
 
     /// Permissions of the log directory when it has to be created: rwxr-xr-x.
     constexpr mode_t LOG_DIRECTORY_MODE = 0755;
@@ -232,7 +238,18 @@ namespace mark4
         {
             return false; // the store logged the reason
         }
-        m_otaUpdater.emplace(*m_firmwareStore);
+        // On the board a trial image confirms itself on its first ground
+        // contact. The one thing this fake bootloader must be able to fake
+        // is an image that never gets that far: an image whose payload
+        // opens with the marker below is treated as one that boots but
+        // never reaches its checkpoint, so the trial stays pending and a
+        // reboot rolls it back. Real builds never carry the marker; the
+        // end-to-end test writes it on purpose.
+        std::array<std::uint8_t, OTA_BROKEN_MARKER_SIZE> probe{};
+        const bool broken =
+            m_firmwareStore->read(slot, mark4::OTA_IMAGE_HEADER_SIZE, probe.data(), probe.size()) &&
+            std::memcmp(probe.data(), OTA_BROKEN_MARKER, probe.size()) == 0;
+        m_otaUpdater.emplace(*m_firmwareStore, !broken);
         refreshArmInterlock();
 
         std::printf("drone_sim: boot: running slot %c, active slot %c, states %02x/%02x, "

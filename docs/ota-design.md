@@ -55,11 +55,12 @@ hub (desktop) --UDP/WiFi--> ESP32 bridge --UART 921600--> flight controller
 
 1. **Build.** `python3 scripts/build_app.py drone_firmware` produces, next
    to the elf, one `drone_firmware.ota` bundle: the image linked for slot
-   A, the image linked for slot B, and a manifest (version, git hash,
-   target MCU).
+   A, the image linked for slot B, and a manifest (build epoch, git
+   hash, target MCU). The build epoch is the identity of a build: unlike
+   the git hash it tells two packagings of the same dirty tree apart.
 2. **Connect.** The drone sits on the bench, disarmed, bridge powered. The
    hub control page already shows the board; it now also shows the running
-   firmware version and which slot it runs from (one status request).
+   build and which slot it runs from (one status request).
 3. **Start.** The operator picks the bundle (the hub offers the most
    recent build by default) and clicks update. The hub checks the manifest
    against the board (right MCU, right protocol version) and shows what is
@@ -72,11 +73,12 @@ hub (desktop) --UDP/WiFi--> ESP32 bridge --UART 921600--> flight controller
    384 KB slot).
 5. **Trial boot.** The hub sends the existing reboot command. The
    bootloader sees a staged image and boots it exactly once.
-6. **Confirm.** The hub watches the board come back and reports the new
-   version and a healthy telemetry stream for a few seconds, then sends
-   the confirmation on its own (a manual-confirm switch exists for
-   cautious days). The new slot becomes the active one; the old image
-   stays in the other slot as the rollback target.
+6. **Confirm.** The trial image confirms itself on the first ground
+   request it serves: by then it has booted, run its loop and proven the
+   receive side of the radio, which is everything the next update needs.
+   The hub polls status anyway, so this takes seconds and no gesture.
+   The new slot becomes the active one; the old image stays in the other
+   slot as the rollback target.
 7. **Verdict.** The page states plainly which firmware the board runs and
    whether the update confirmed or rolled back. Total nominal time: well
    under half a minute.
@@ -171,7 +173,7 @@ wire struct:
 | magic, header version | reject garbage and stale layouts |
 | image size, image CRC-32 | what the bootloader verifies before every jump |
 | target MCU id, target slot | the board refuses an image built for the wrong chip or the wrong slot |
-| firmware version, git hash | what the hub and the announce of section 5 report |
+| build epoch, git hash | what the hub and the announce of section 5 report; the epoch is the identity the hub verdict compares |
 
 CRC-32 is **CRC-32/MPEG-2 computed word-wise** (polynomial 0x04C11DB7,
 init 0xFFFFFFFF, no reflection, no final xor, images padded to 4 bytes):
@@ -199,7 +201,7 @@ one shared metadata module.
 stateDiagram-v2
     EMPTY --> STAGED: transfer complete,\nCRC verified (firmware)
     STAGED --> TESTING: one-shot trial\n(bootloader, marks attempted)
-    TESTING --> VALID: OTA_CONFIRM received\n(firmware)
+    TESTING --> VALID: first ground request served\n(firmware self-confirm)
     TESTING --> BAD: reset without confirm\n(bootloader boots the old slot)
     VALID --> EMPTY: erased as the next\nupdate target
     BAD --> EMPTY: erased as the next\nupdate target
@@ -213,9 +215,13 @@ is treated as BAD on the spot. If nothing bootable remains (flash decay,
 not the update path), the bootloader signals on the status LED and waits
 for SWD.
 
-Confirmation is deliberately the ground side's decision, not a board-side
-timer: the property that matters is "the hub can talk to it", and only
-the hub knows that.
+Confirmation is the firmware vouching for itself, the classic pattern of
+MCUboot and ESP-IDF, but anchored to ground contact rather than a bare
+init checkpoint: serving one valid request proves boot, loop and radio
+reception, so an image whose receive path is broken never confirms and
+rolls back on the next reset. What self-confirmation gives up is the
+transmit-side proof only the ground could observe; the trade buys a
+confirmation that needs no session state anywhere.
 
 ## 5. Wire protocol
 
@@ -227,12 +233,12 @@ new one.
 | Packet | Direction | Content and role |
 | --- | --- | --- |
 | OTA_STATUS_REQUEST | hub to board | ask for the update status |
-| OTA_STATUS | board to hub | running version and git hash, active slot, per-slot states, slot size, max chunk size; the hub uses it to pick the image variant and to drive auto-confirm |
+| OTA_STATUS | board to hub | running and active slot, then per slot the state and the image identity (build epoch, git hash), slot size, max chunk size; the hub uses it to pick the image variant, to read the trial verdict and to paint the slot table |
 | OTA_BEGIN | hub to board | session nonce, image size, image CRC-32; refused while armed or under the voltage floor. The board erases the inactive slot, then acks; the hub allows that ack a generous timeout, erase is seconds long |
 | OTA_CHUNK | hub to board | session, byte offset, up to 240 data bytes (fits the 255-byte framing) |
 | OTA_CHUNK_ACK | board to hub | session, next expected offset; sent every 16 chunks and on any out-of-order chunk |
 | OTA_FINISH | hub to board | session; the board CRC-checks the whole slot and writes the STAGED record |
-| OTA_CONFIRM | hub to board | mark the running trial image VALID |
+| OTA_CONFIRM | hub to board | mark the running trial image VALID by hand; kept as an escape hatch, nothing sends it in normal operation (the firmware confirms itself) |
 | OTA_REVERT | hub to board | activate the other slot if VALID; followed by the existing reboot command |
 | OTA_ABORT | hub to board | drop the session, return to normal mode |
 | OTA_ACK | board to hub | one answer packet for begin, finish, confirm, revert and abort: the acknowledged type, the session, and ok or a refusal reason |
@@ -256,7 +262,7 @@ sequenceDiagram
     participant B as board (firmware)
     participant L as bootloader
     H->>B: OTA_STATUS_REQUEST
-    B->>H: OTA_STATUS (v1.2, slot A active)
+    B->>H: OTA_STATUS (old build, slot A active)
     H->>B: OTA_BEGIN (size, crc, session)
     Note over B: erase slot B (seconds)
     B->>H: OTA_ACK (begin, ok)
@@ -269,11 +275,9 @@ sequenceDiagram
     B->>H: OTA_ACK (finish, ok)
     H->>B: REBOOT_COMMAND
     Note over L: STAGED found, mark TESTING\nattempted, boot slot B
-    B->>H: OTA_STATUS (v1.3, slot B, TESTING)
-    Note over H: telemetry healthy a few seconds
-    H->>B: OTA_CONFIRM
-    Note over B: write VALID record
-    B->>H: OTA_ACK (confirm, ok)
+    H->>B: OTA_STATUS_REQUEST
+    Note over B: first ground contact:\nwrite VALID record (self-confirm)
+    B->>H: OTA_STATUS (new build, slot B, VALID)
 ```
 
 ## 6. Software architecture
@@ -326,14 +330,13 @@ nothing; platform speaks protocol; humans speak to the hub):
   pick it up so one command produces the flashable artifact.
 - **Hub** - an OtaClient service: opens the bundle, matches it against
   OTA_STATUS, runs the windowed transfer with retries and timeouts,
-  drives reboot, watches the board come back, applies the auto-confirm
-  policy (expected git hash seen plus healthy telemetry for a few
-  seconds), exposes the whole thing as JSON over the existing WebSocket:
-  status, start, progress events, confirm, revert. The pages stay
-  protocol-blind as always.
-- **Pages** - an update panel on the control page: running version
-  against bundle version, phase and progress, the confirmed-or-rolled-back
-  verdict, a revert button, a manual-confirm toggle.
+  drives reboot, watches the board come back and reads the verdict off
+  the status (the trial image confirms itself on first contact), exposes
+  the whole thing as JSON over the existing WebSocket: status, start,
+  progress events, revert. The pages stay protocol-blind as always.
+- **Pages** - an update panel on the control page: running build
+  against bundle build, phase and progress, the confirmed-or-rolled-back
+  verdict, a revert button.
 - **ESP32 bridge** - no change, by construction.
 
 Verification, in the spirit of everything else in this repo: unit tests

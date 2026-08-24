@@ -328,12 +328,13 @@ namespace
         // still the active one until the trial confirms.
         packet.runningSlot = mark4::OTA_SLOT_B;
         packet.activeSlot = mark4::OTA_SLOT_A;
-        packet.slotState = {mark4::OTA_SLOT_VALID, mark4::OTA_SLOT_TESTING};
         packet.updaterBusy = 0U;
-        packet.versionMajor = 1U;
-        packet.versionMinor = 2U;
-        packet.versionPatch = 3U;
-        std::memcpy(packet.gitHash.data(), "deadbeef", packet.gitHash.size());
+        packet.slot[0].state = mark4::OTA_SLOT_VALID;
+        packet.slot[0].buildEpoch = 0x66E42F01U;
+        std::memcpy(packet.slot[0].gitHash.data(), "cafe0001", packet.slot[0].gitHash.size());
+        packet.slot[1].state = mark4::OTA_SLOT_TESTING;
+        packet.slot[1].buildEpoch = 0x66E43D95U;
+        std::memcpy(packet.slot[1].gitHash.data(), "deadbeef", packet.slot[1].gitHash.size());
         packet.slotSize = 0x00060102U;
         packet.maxChunkData = static_cast<std::uint16_t>(mark4::OTA_CHUNK_DATA_SIZE);
         return toBytes(packet);
@@ -433,10 +434,7 @@ namespace
         header.slotId = mark4::OTA_SLOT_A;
         header.imageSize = OTA_FIXTURE_IMAGE_SIZE;
         header.imageCrc = 0x76543210U;
-        header.versionMajor = 4U;
-        header.versionMinor = 5U;
-        header.versionPatch = 6U;
-        header.reserved0 = 0xFFU;
+        header.buildEpoch = 0x66E43D95U;
         std::memcpy(header.gitHash.data(), "0badc0de", header.gitHash.size());
         header.reserved.fill(0xFFU);
         auto bytes = toBytes(header);
