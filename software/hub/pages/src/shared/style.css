@@ -705,6 +705,33 @@ input.config-title {
     min-height: 18px;
 }
 
+.ota-slots {
+    border-bottom: 1px solid var(--border);
+}
+
+.ota-slot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ota-slot-run {
+    width: 10px;
+    text-align: center;
+    color: var(--fg);
+}
+
+.ota-slot-id {
+    flex: 1;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+}
+
+.ota-bundle-id {
+    font-family: var(--mono);
+    white-space: nowrap;
+}
+
 .add-tab {
     color: var(--fg-dim);
 }

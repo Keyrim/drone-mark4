@@ -42,10 +42,18 @@ export interface OtaBundleInfo {
     path: string;
     name: string;
     mcuId: number;
-    version: string;
+    buildEpoch: number;
     gitHash: string;
     protocolVersion: number;
     images: OtaImageInfo[];
+}
+
+/** One firmware slot: its lifecycle state and the image identity in it. */
+export interface OtaSlotInfo {
+    state: number;
+    stateName: string;
+    buildEpoch: number;
+    gitHash: string;
 }
 
 /** What the board last said about itself. */
@@ -53,11 +61,9 @@ export interface OtaBoardInfo {
     seen: boolean;
     mcuId: number;
     runningSlot: number;
-    slotState: number[];
-    slotStateNames: string[];
+    activeSlot: number;
     updaterBusy: boolean;
-    version: string;
-    gitHash: string;
+    slots: OtaSlotInfo[];
     slotSize: number;
     maxChunkData: number;
 }
@@ -78,8 +84,6 @@ export interface OtaState {
     verdict: OtaVerdict;
     verdictText: string;
     lastError: string;
-    autoConfirm: boolean;
-    confirmReady: boolean;
     /** Slot being filled, -1 outside a session. */
     targetSlot: number;
     bundle: OtaBundleInfo;
@@ -93,15 +97,13 @@ export const IDLE_OTA: OtaState = {
     verdict: "none",
     verdictText: "",
     lastError: "",
-    autoConfirm: true,
-    confirmReady: false,
     targetSlot: -1,
     bundle: {
         loaded: false,
         path: "",
         name: "",
         mcuId: 0,
-        version: "0.0.0",
+        buildEpoch: 0,
         gitHash: "",
         protocolVersion: 0,
         images: [],
@@ -110,11 +112,9 @@ export const IDLE_OTA: OtaState = {
         seen: false,
         mcuId: 0,
         runningSlot: 0,
-        slotState: [],
-        slotStateNames: [],
+        activeSlot: 0,
         updaterBusy: false,
-        version: "0.0.0",
-        gitHash: "",
+        slots: [],
         slotSize: 0,
         maxChunkData: 0,
     },
@@ -185,16 +185,6 @@ function readObject(source: Record<string, unknown>, key: string): Record<string
     return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 }
 
-function readNumbers(source: Record<string, unknown>, key: string): number[] {
-    const value = source[key];
-    return Array.isArray(value) ? value.map((entry) => Number(entry)) : [];
-}
-
-function readStrings(source: Record<string, unknown>, key: string): string[] {
-    const value = source[key];
-    return Array.isArray(value) ? value.map((entry) => String(entry)) : [];
-}
-
 /**
  * Decodes one `ota` message. A field the hub did not send keeps the idle
  * default: an older page must survive a newer hub and the other way round.
@@ -211,15 +201,13 @@ export function readOtaState(message: Record<string, unknown>): OtaState {
         verdict: (VERDICTS.has(verdict) ? verdict : IDLE_OTA.verdict) as OtaVerdict,
         verdictText: readString(message, "verdictText"),
         lastError: readString(message, "lastError"),
-        autoConfirm: readBool(message, "autoConfirm", true),
-        confirmReady: readBool(message, "confirmReady"),
         targetSlot: readNumber(message, "targetSlot", -1),
         bundle: {
             loaded: readBool(bundle, "loaded"),
             path: readString(bundle, "path"),
             name: readString(bundle, "name"),
             mcuId: readNumber(bundle, "mcuId"),
-            version: readString(bundle, "version", IDLE_OTA.bundle.version),
+            buildEpoch: readNumber(bundle, "buildEpoch"),
             gitHash: readString(bundle, "gitHash"),
             protocolVersion: readNumber(bundle, "protocolVersion"),
             images: Array.isArray(images)
@@ -237,11 +225,19 @@ export function readOtaState(message: Record<string, unknown>): OtaState {
             seen: readBool(board, "seen"),
             mcuId: readNumber(board, "mcuId"),
             runningSlot: readNumber(board, "runningSlot"),
-            slotState: readNumbers(board, "slotState"),
-            slotStateNames: readStrings(board, "slotStateNames"),
+            activeSlot: readNumber(board, "activeSlot"),
             updaterBusy: readBool(board, "updaterBusy"),
-            version: readString(board, "version", IDLE_OTA.board.version),
-            gitHash: readString(board, "gitHash"),
+            slots: Array.isArray(board["slots"])
+                ? (board["slots"] as unknown[]).map((entry) => {
+                      const slot = entry as Record<string, unknown>;
+                      return {
+                          state: readNumber(slot, "state", 0xff),
+                          stateName: readString(slot, "stateName", "empty"),
+                          buildEpoch: readNumber(slot, "buildEpoch"),
+                          gitHash: readString(slot, "gitHash"),
+                      };
+                  })
+                : [],
             slotSize: readNumber(board, "slotSize"),
             maxChunkData: readNumber(board, "maxChunkData"),
         },
@@ -287,21 +283,45 @@ export function slotLetter(slot: number): string {
     return "-";
 }
 
-/** One identity line: "v1.2.3 (deadbeef)", the hash left out when unknown. */
-export function identityText(version: string, gitHash: string): string {
-    return gitHash === "" ? `v${version}` : `v${version} (${gitHash})`;
+/** The 0xFFFFFFFF an image linked but never packaged carries. */
+const UNSTAMPED_EPOCH = 0xffffffff;
+
+/** A build epoch as the operator reads it: local date and time. */
+export function buildText(buildEpoch: number): string {
+    if (buildEpoch === 0) {
+        return "no image header";
+    }
+    if (buildEpoch === UNSTAMPED_EPOCH) {
+        return "unpackaged build";
+    }
+    const stamp = new Date(buildEpoch * 1000);
+    const pad = (value: number): string => String(value).padStart(2, "0");
+    return (
+        `build ${stamp.getFullYear()}-${pad(stamp.getMonth() + 1)}-${pad(stamp.getDate())}` +
+        ` ${pad(stamp.getHours())}:${pad(stamp.getMinutes())}:${pad(stamp.getSeconds())}`
+    );
 }
 
-/** The slot line of the board: which one runs, and what each one holds. */
-export function slotsText(board: OtaBoardInfo): string {
-    if (!board.seen) {
-        return "";
-    }
-    const states = board.slotStateNames.map(
-        (name, slot) => `${slotLetter(slot)} ${name}${slot === board.runningSlot ? " (running)" : ""}`
-    );
-    return states.join(", ");
+/** One identity line: "build 2026-08-24 14:03:05 (deadbeef)", the hash left out when unknown. */
+export function identityText(buildEpoch: number, gitHash: string): string {
+    const build = buildText(buildEpoch);
+    return gitHash === "" ? build : `${build} (${gitHash})`;
 }
+
+/** How a slot state should be colored on its row. */
+export function slotTone(stateName: string): "good" | "bad" | "warn" | "" {
+    if (stateName === "valid") {
+        return "good";
+    }
+    if (stateName === "bad") {
+        return "bad";
+    }
+    if (stateName === "testing" || stateName === "staged") {
+        return "warn";
+    }
+    return "";
+}
+
 
 /** The bar caption: what the board has written, out of what it was promised. */
 export function progressText(state: OtaState): string {
@@ -334,14 +354,10 @@ export interface OtaActions {
     start: boolean;
     /** Drop the running update. */
     abort: boolean;
-    /** Confirm the trial image by hand. */
-    confirm: boolean;
     /** Ask the board to go back to its other slot. */
     revert: boolean;
     /** Let the operator type a bundle path. */
     editBundle: boolean;
-    /** Change the auto-confirm policy. */
-    editPolicy: boolean;
 }
 
 /**
@@ -354,11 +370,7 @@ export function otaActions(state: OtaState, boardLinked: boolean): OtaActions {
     return {
         start: boardLinked && !running,
         abort: running,
-        // Automatic mode sends the confirmation itself; a button next to it
-        // would race the hub for the same gesture.
-        confirm: boardLinked && state.phase === "testing" && !state.autoConfirm,
         revert: boardLinked && (!running || state.phase === "testing"),
         editBundle: !running,
-        editPolicy: !running || state.phase === "testing",
     };
 }
