@@ -30,12 +30,25 @@ built-in defaults (endpoint on 127.0.0.1:47810, announce 47806, telemetry
 in `software/hub/pages/dist` resolved from the binary location); it watches the
 default ports from the start and follows any extra telemetry port a process
 announces for as long as that process lives. Everything operational is
-driven at runtime through the websocket by the pages: opening the board
-UART (`serial` message, Add drone block of the control page), toggling the
+driven at runtime through the websocket by the pages: connecting to a drone
+(`connect` message, Connections panel of the control page), toggling the
 stream recording (`record` message; a CSV session opens at startup),
 replaying a blackbox (`replay` message), and the tuning profiles. A default
 worth changing is a compile-time change in `protocol/ports.hpp` or
 `HubApp::Config`, not a flag.
+
+One drone at a time is THE connected drone. Everything the hub hears is
+still decoded, recorded and published to the clients - being connected
+decides where the commands go (RC, tuning, scenario, reboot, update) and
+which drone the control page pilots; a command aimed anywhere else is
+refused. The connection is held by the hub, so every tab sees the same
+drone, and it survives losing that drone: silence flips `live` to false and
+keeps the target, the same drone coming back flips it true again on its
+own. Only a `disconnect` (or a `connect` elsewhere) lets go. The identity
+the reconnection works on is the route: a UDP process is its kind, a board
+is the door it is reached through - the UART device, or the bridge name for
+a board reached over WiFi (the bridge rides the drone, so its name is the
+drone's; a bridge whose address changes is followed by name).
 
 The hub never starts Godot or a flight process: both are yours to run and
 restart at will (Godot from its own terminal or the "godot sim" VS Code
@@ -152,6 +165,8 @@ structs in `protocol/`.
 
 {"type":"status","recording":false,"serialOpen":true,
  "serialLink":"udp:192.168.1.31:47830",
+ "connection":{"via":"bridge","id":"c19f6c","kind":1,"kindName":"firmware",
+               "live":true},
  "counts":{"telemetryRows":0,"simRawRows":0,"blackboxRecords":0,
            "badFrames":0,"rejectedAnnounces":0},"clients":1,"rcClients":0,
  "links":[{"stream":"telemetry","sourceId":2,"sourceName":"drone_sim",
@@ -211,18 +226,25 @@ means the board, a telemetry port means the simulator side. Tuning answers
 share the telemetry stream and carry no source byte of their own.
 
 A client that connects gets a `discovery` and a `status` message
-immediately; `status` is then republished once per second and whenever the
-recording is toggled, `discovery` whenever a process appears, restarts or
-disappears, and whenever the set of bridges changes.
+immediately; `status` is then republished once per second, whenever the
+recording is toggled and whenever the connection changes (target or
+liveness), `discovery` whenever a process appears, restarts or disappears,
+and whenever the set of bridges changes.
+
+`connection` in `status` is THE connected drone: `via` is `none`, `udp`,
+`uart` or `bridge`, `id` the identity on that route (kind name, UART device
+or bridge name), `kind`/`kindName` where commands route, and `live` whether
+the drone currently shows signs of life. A lost drone keeps its entry with
+`live` false until a `disconnect`.
 
 `bridges` are the WiFi bridges heard on udp/47831, which they announce
-themselves to once a second (see `esp32-bridge/`). They are not processes and
-carry no telemetry of their own: a bridge is an address a `serial` link can be
-opened on, which is why the entry hands back the exact `device` string to open.
-Nobody chooses that address - a router does - so this is what spares the
-operator from having to know it. A bridge silent for three seconds is dropped.
-`serialLink` in `status` is the device the link is open on, so a page can tell
-which of the bridges it is talking to.
+themselves to once a second (see `esp32-bridge/`). They are not processes
+and carry no telemetry of their own: a bridge is a door a board is connected
+through, by name (`connect` with `via":"bridge"`). Nobody chooses its
+address - a router does - so nothing is typed: the hub resolves the name to
+today's address, and follows it if the router hands out another one. A
+bridge silent for three seconds is dropped from `bridges`, which does not
+drop a connection through it.
 
 ### Sent by a client
 
@@ -244,8 +266,10 @@ which of the bridges it is talking to.
 {"type":"profileLoad","id":16,"name":"bench"}
 {"type":"profilePush","id":17,"name":"bench","target":"drone_sim"}
 {"type":"replay","id":18,"name":"board_20260807_150143.m4bb","speed":"max"}
-{"type":"serial","id":19,"action":"open","device":"/dev/ttyUSB0","baud":921600}
-{"type":"serial","id":20,"action":"close"}
+{"type":"connect","id":19,"via":"udp","target":"drone_sim"}
+{"type":"connect","id":19,"via":"uart","device":"/dev/ttyUSB0","baud":921600}
+{"type":"connect","id":19,"via":"bridge","name":"c19f6c"}
+{"type":"disconnect","id":20}
 {"type":"otaStatus","id":21}
 {"type":"otaStart","id":22,"bundle":"software/build/stm32/drone_firmware/drone_firmware.ota"}
 {"type":"otaAbort","id":23}
@@ -281,10 +305,14 @@ number as a string, and nothing else ever reaches the command line. One
 replay at a time: starting a second one ends the first, because both would
 broadcast on the same telemetry port.
 
-Routing: an RC message for `firmware` goes out serial-framed on the UART; an
-RC message for any other kind goes to the command port that process
+Routing: a command only goes out when its `target` is the connected drone
+(the `ack` says `no drone connected` or `connected to X, not to Y`
+otherwise). An RC message for `firmware` then goes out serial-framed on the
+UART; an RC message for any other kind goes to the command port that process
 announced. A scenario is routed the same way, to the flight process driving
-the plant - no port is hardwired. A reboot needs the board.
+the plant - no port is hardwired. A reboot needs the board. `otaAbort` is
+the one exception to the gate: dropping a stuck transfer must work even
+after the drone is gone.
 
 A message carrying an `id` is answered with an `ack`, including when it
 failed to decode. Streams are never acknowledged.

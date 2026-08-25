@@ -45,7 +45,8 @@ namespace mark4
         PROFILE_LOAD, ///< read one named set of values back
         PROFILE_PUSH, ///< send one named set to a flight process
         REPLAY,       ///< replay one stored blackbox recording
-        SERIAL,       ///< open or close the board UART
+        CONNECT,      ///< make one drone THE connected drone
+        DISCONNECT,   ///< drop the connected drone
         OTA_STATUS,   ///< ask the board what firmware it runs
         OTA_START,    ///< send one .ota bundle to the board
         OTA_ABORT,    ///< drop the running update
@@ -72,9 +73,9 @@ namespace mark4
         std::string recordingName;                      ///< REPLAY: recording to play back
         std::string replaySpeed;                        ///< REPLAY: tempo, "max" or a positive
                                                         ///< number, empty = the recorded one
-        bool serialConnect = false;                     ///< SERIAL: true = open, false = close
-        std::string serialDevice;                       ///< SERIAL: device to open
-        std::uint32_t serialBaud = 0U;                  ///< SERIAL: line speed [baud]
+        std::string connectVia;                         ///< CONNECT: "udp", "uart" or "bridge"
+        std::string connectPeer;                        ///< CONNECT: UART device or bridge name
+        std::uint32_t serialBaud = 0U;                  ///< CONNECT: line speed [baud], uart only
         std::string otaBundlePath;                      ///< OTA_START: bundle to send, empty
                                                         ///< for the standard build output
     };
@@ -82,9 +83,13 @@ namespace mark4
     /// Counters and flags the hub publishes once per second.
     struct HubStatus
     {
-        bool recording = false;               ///< a CSV session is open
-        bool serialOpen = false;              ///< the serial link is usable
-        std::string serialLink;               ///< device the link is open on, empty = none
+        bool recording = false;    ///< a CSV session is open
+        bool serialOpen = false;   ///< the serial link is usable
+        std::string serialLink;    ///< device the link is open on, empty = none
+        std::string connectionVia; ///< "udp", "uart" or "bridge", empty = none
+        std::string connectionId;  ///< kind name, UART device or bridge name
+        StreamSource connectionKind = StreamSource::FIRMWARE; ///< kind commands route to
+        bool connectionLive = false;          ///< the connected drone shows signs of life
         std::uint64_t telemetryRows = 0U;     ///< telemetry rows written
         std::uint64_t simRawRows = 0U;        ///< sim raw rows written
         std::uint64_t blackboxRecords = 0U;   ///< blackbox records written

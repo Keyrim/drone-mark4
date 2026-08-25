@@ -1,13 +1,13 @@
 /**
- * Control page: the connected drones, each in its own widget, all of them
- * superimposed in one 3D view.
+ * Control page: one connected drone, its widget, and the 3D view.
  *
- * The left column mirrors what the hub sees: one widget per drone, whatever
- * its nature (real board, simulator, replay), created and removed by
- * discovery alone. UDP drones appear on their own; the "Add drone" block at
- * the bottom holds the two manual doors - opening the board UART, starting
- * a replay on a stored blackbox - which both end with the new drone
- * announcing itself and its widget appearing like any other.
+ * Whatever the route (announced UDP process, WiFi bridge, UART), the
+ * workflow is the same: everything connectable is a row of the Connections
+ * panel, and nothing is wired to the controls until the operator clicks
+ * Connect. The hub holds the connection, so every tab shows the same drone.
+ * A connected drone that goes silent keeps its widget and its row, marked
+ * lost; the hub reconnects on its own when the same drone comes back, and
+ * the transmitter is parked safe in between.
  *
  * Every command is a websocket message with a correlation id; the answer is
  * an ack that comes back to the toast strip. Nothing here reaches a socket
@@ -18,6 +18,13 @@ import { listRecordings, type RecordingEntry } from "../shared/api";
 import { HubSocket, type HubMessage } from "../shared/hub_socket";
 import { Shell } from "../shared/shell";
 import { AttitudePanel } from "./attitude_panel";
+import {
+    NO_CONNECTION,
+    candidateRows,
+    type AnnouncedBridge,
+    type AnnouncedProcess,
+    type Connection,
+} from "./connection";
 import { DroneWidget, type WidgetHooks } from "./drone_widget";
 import { OtaPanel } from "./ota_panel";
 
@@ -33,143 +40,194 @@ const hooks: WidgetHooks = {
     lastReplay: () => lastReplay,
 };
 
-/* -------------------- the drone list -------------------- */
+/* -------------------- the connected drone -------------------- */
 
 const droneList = document.createElement("div");
 droneList.className = "drone-list";
 const empty = document.createElement("span");
 empty.className = "panel-note";
-empty.textContent = "no drone connected: start one, or add one below";
+empty.textContent = "no drone connected: pick one below";
 droneList.appendChild(empty);
-
-const widgets = new Map<number, DroneWidget>();
-
-interface DiscoveredProcess {
-    kind: number;
-    kindName: string;
-    viaSerial: boolean;
-}
 
 const attitude = new AttitudePanel(socket);
 
-socket.on("discovery", (message: HubMessage) => {
-    const processes = (message["processes"] as DiscoveredProcess[]) ?? [];
-    const alive = new Set(processes.map((process) => process.kind));
-    for (const process of processes) {
-        if (!widgets.has(process.kind)) {
-            const widget = new DroneWidget(
-                socket,
-                process.kind,
-                process.kindName,
-                process.viaSerial,
-                hooks
-            );
-            widgets.set(process.kind, widget);
+let connection: Connection = NO_CONNECTION;
+let widget: DroneWidget | null = null;
+/** Route and identity behind the current widget, "" when there is none. */
+let widgetKey = "";
+
+function applyConnection(next: Connection): void {
+    const key = next.via === "none" ? "" : `${next.via}:${next.id}`;
+    if (key !== widgetKey) {
+        widget?.destroy();
+        widget = null;
+        widgetKey = key;
+        if (key !== "") {
+            widget = new DroneWidget(socket, next.kind, next.kindName, next.via !== "udp", hooks);
             droneList.appendChild(widget.root);
         }
+    } else if (widget !== null && connection.live && !next.live) {
+        // The drone was lost: park the transmitter safe, so the drone that
+        // comes back (usually rebooted) is not greeted with an armed stick.
+        widget.killNow();
     }
-    for (const [kind, widget] of widgets) {
-        if (!alive.has(kind)) {
-            widget.destroy();
-            widgets.delete(kind);
-        }
-    }
-    empty.hidden = widgets.size > 0;
-    attitude.setActive(alive);
-    bridges = (message["bridges"] as DiscoveredBridge[]) ?? [];
-    renderBridges();
-});
+    connection = next;
+    empty.hidden = widget !== null;
+    attitude.setActive(new Set(widget === null ? [] : [connection.kind]));
+    renderConnections();
+}
 
 socket.on("telemetry", (message: HubMessage) => {
-    widgets.get(Number(message["sourceId"]))?.onTelemetry(message);
+    if (widget !== null && Number(message["sourceId"]) === connection.kind) {
+        widget.onTelemetry(message);
+    }
 });
 
-/* -------------------- add drone -------------------- */
+/* -------------------- connections -------------------- */
 
-// UDP drones add themselves through discovery; these are the manual doors.
-// The two ways in are exclusive and deliberately presented as a choice: the
-// rows only appear once the operator has said which door they are opening.
-const addBlock = document.createElement("section");
-addBlock.className = "panel add-drone";
-const addBar = document.createElement("div");
-addBar.className = "panel-bar";
-const addTitle = document.createElement("b");
-addTitle.textContent = "Add drone";
-addBar.appendChild(addTitle);
-const uartTab = document.createElement("button");
-uartTab.className = "btn add-tab";
-uartTab.textContent = "Real board (UART)";
-const networkTab = document.createElement("button");
-networkTab.className = "btn add-tab";
-networkTab.textContent = "Real board (WiFi)";
-const replayTab = document.createElement("button");
-replayTab.className = "btn add-tab";
-replayTab.textContent = "Blackbox replay";
-addBar.appendChild(uartTab);
-addBar.appendChild(networkTab);
-addBar.appendChild(replayTab);
-const addHint = document.createElement("span");
-addHint.className = "panel-note";
-addHint.textContent = "simulated drones appear on their own";
-addBar.appendChild(addHint);
-addBlock.appendChild(addBar);
+let processes: AnnouncedProcess[] = [];
+let bridges: AnnouncedBridge[] = [];
 
-const uartRow = document.createElement("div");
-uartRow.className = "panel-body";
-uartRow.hidden = true;
+const connectBlock = document.createElement("section");
+connectBlock.className = "panel";
+const connectBar = document.createElement("div");
+connectBar.className = "panel-bar";
+const connectTitle = document.createElement("b");
+connectTitle.textContent = "Connections";
+connectBar.appendChild(connectTitle);
+const connectHint = document.createElement("span");
+connectHint.className = "panel-note";
+connectHint.textContent = "drones and bridges announce themselves here";
+connectBar.appendChild(connectHint);
+connectBlock.appendChild(connectBar);
+
+const candidateList = document.createElement("div");
+connectBlock.appendChild(candidateList);
+
+function stateChip(state: "connected" | "lost"): HTMLElement {
+    const chip = document.createElement("span");
+    chip.className = `conn-state ${state}`;
+    chip.textContent = state === "connected" ? "connected" : "connection lost, waiting";
+    return chip;
+}
+
+function disconnectButton(): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.className = "btn active";
+    button.textContent = "Disconnect";
+    button.addEventListener("click", () => shell.ask({ type: "disconnect" }, "disconnect"));
+    return button;
+}
+
+function renderConnections(): void {
+    candidateList.replaceChildren();
+    const rows = candidateRows(processes, bridges, connection);
+    if (rows.length === 0) {
+        const note = document.createElement("div");
+        note.className = "panel-body";
+        const text = document.createElement("span");
+        text.className = "panel-note";
+        text.textContent = "nothing on the network: start a drone, power a bridge, or open the UART";
+        note.appendChild(text);
+        candidateList.appendChild(note);
+    }
+    for (const row of rows) {
+        const line = document.createElement("div");
+        line.className = "panel-body";
+        const name = document.createElement("b");
+        name.textContent = row.label;
+        line.appendChild(name);
+        const detail = document.createElement("span");
+        detail.className = "panel-note";
+        detail.textContent = row.detail;
+        line.appendChild(detail);
+        if (row.state !== "available") {
+            line.appendChild(stateChip(row.state));
+            line.appendChild(disconnectButton());
+        } else if (row.connect !== null) {
+            const payload = row.connect;
+            const button = document.createElement("button");
+            button.className = "btn";
+            button.textContent = "Connect";
+            button.addEventListener("click", () => shell.ask(payload, `connect ${row.label}`));
+            line.appendChild(button);
+        }
+        candidateList.appendChild(line);
+    }
+
+    // The UART is the one door nothing announces, so it is always offered.
+    const uartRow = document.createElement("div");
+    uartRow.className = "panel-body";
+    const uartConnected = connection.via === "uart";
+    uartDevice.disabled = uartConnected;
+    uartBaud.disabled = uartConnected;
+    uartRow.appendChild(uartDevice);
+    uartRow.appendChild(uartBaud);
+    if (uartConnected) {
+        uartRow.appendChild(stateChip(connection.live ? "connected" : "lost"));
+        uartRow.appendChild(disconnectButton());
+    } else {
+        const button = document.createElement("button");
+        button.className = "btn";
+        button.textContent = "Connect";
+        button.addEventListener("click", () => {
+            shell.ask(
+                {
+                    type: "connect",
+                    via: "uart",
+                    device: uartDevice.value,
+                    baud: Number(uartBaud.value),
+                },
+                `connect ${uartDevice.value}`,
+            );
+        });
+        uartRow.appendChild(button);
+    }
+    candidateList.appendChild(uartRow);
+}
+
 const uartDevice = document.createElement("input");
 uartDevice.className = "config-title";
 uartDevice.value = "/dev/ttyUSB0";
-uartDevice.title = "UART the board is wired to, or udp:address:port for the WiFi bridge";
+uartDevice.title = "UART the board is wired to";
 const uartBaud = document.createElement("input");
 uartBaud.className = "config-title baud";
 uartBaud.value = "921600";
 uartBaud.title = "line speed [baud]";
-let serialOpen = false;
-const uartButton = document.createElement("button");
-uartButton.className = "btn";
-uartButton.textContent = "Open UART";
-uartButton.addEventListener("click", () => {
-    const payload = serialOpen
-        ? { type: "serial", action: "close" }
-        : {
-              type: "serial",
-              action: "open",
-              device: uartDevice.value,
-              baud: Number(uartBaud.value),
-          };
-    shell.ask(payload, serialOpen ? "uart close" : `uart open ${uartDevice.value}`);
+
+socket.on("discovery", (message: HubMessage) => {
+    processes = (message["processes"] as AnnouncedProcess[]) ?? [];
+    bridges = (message["bridges"] as AnnouncedBridge[]) ?? [];
+    renderConnections();
 });
-uartRow.appendChild(uartDevice);
-uartRow.appendChild(uartBaud);
-uartRow.appendChild(uartButton);
-addBlock.appendChild(uartRow);
 
-// Nobody chooses the address of a bridge, so nothing is typed here: the
-// bridges say where they are, once a second, and this lists what was heard.
-const networkRow = document.createElement("div");
-networkRow.hidden = true;
-addBlock.appendChild(networkRow);
+socket.on("status", (message: HubMessage) => {
+    const raw = message["connection"] as Connection | undefined;
+    const next = raw ?? NO_CONNECTION;
+    if (
+        next.via !== connection.via ||
+        next.id !== connection.id ||
+        next.live !== connection.live
+    ) {
+        applyConnection(next);
+    }
+});
 
+/* -------------------- replay -------------------- */
+
+// Starting a replay is not connecting to one: the drone_replay child
+// announces itself like any other drone and shows up as a candidate above.
+const replayBlock = document.createElement("section");
+replayBlock.className = "panel";
+const replayBar = document.createElement("div");
+replayBar.className = "panel-bar";
+const replayTitle = document.createElement("b");
+replayTitle.textContent = "Blackbox replay";
+replayBar.appendChild(replayTitle);
+replayBlock.appendChild(replayBar);
 const replayRow = document.createElement("div");
 replayRow.className = "panel-body";
-replayRow.hidden = true;
 
-const doors: Array<[HTMLButtonElement, HTMLElement, (() => void) | undefined]> = [
-    [uartTab, uartRow, undefined],
-    [networkTab, networkRow, undefined],
-    [replayTab, replayRow, () => void refreshRecordings()],
-];
-for (const [tab, , onPicked] of doors) {
-    tab.addEventListener("click", () => {
-        for (const [other, otherRow] of doors) {
-            const picked = other === tab;
-            otherRow.hidden = !picked;
-            other.classList.toggle("active", picked);
-        }
-        onPicked?.();
-    });
-}
 const recordingSelect = document.createElement("select");
 recordingSelect.className = "config-select";
 const speedSelect = document.createElement("select");
@@ -203,65 +261,7 @@ replayRow.appendChild(recordingSelect);
 replayRow.appendChild(speedSelect);
 replayRow.appendChild(startReplay);
 replayRow.appendChild(refresh);
-addBlock.appendChild(replayRow);
-
-interface DiscoveredBridge {
-    address: string;
-    port: number;
-    name: string;
-    device: string;
-}
-
-let bridges: DiscoveredBridge[] = [];
-let serialLink = "";
-
-function renderBridges(): void {
-    networkRow.replaceChildren();
-    if (bridges.length === 0) {
-        const empty = document.createElement("div");
-        empty.className = "panel-body";
-        const note = document.createElement("span");
-        note.className = "panel-note";
-        note.textContent = "no bridge on the network: power one on, it announces itself";
-        empty.appendChild(note);
-        networkRow.appendChild(empty);
-        return;
-    }
-    for (const bridge of bridges) {
-        const row = document.createElement("div");
-        row.className = "panel-body";
-        const name = document.createElement("b");
-        name.textContent = bridge.name === "" ? "bridge" : bridge.name;
-        const where = document.createElement("span");
-        where.className = "panel-note";
-        where.textContent = `${bridge.address}:${bridge.port}`;
-        const connected = serialLink === bridge.device;
-        const button = document.createElement("button");
-        button.className = connected ? "btn active" : "btn";
-        button.textContent = connected ? "Disconnect" : "Connect";
-        // A link is a link: the same door the UART tab opens, on an address
-        // nobody had to know.
-        button.addEventListener("click", () => {
-            shell.ask(
-                connected
-                    ? { type: "serial", action: "close" }
-                    : {
-                          type: "serial",
-                          action: "open",
-                          device: bridge.device,
-                          baud: Number(uartBaud.value),
-                      },
-                connected ? "bridge close" : `bridge open ${bridge.address}`
-            );
-        });
-        row.appendChild(name);
-        row.appendChild(where);
-        row.appendChild(button);
-        networkRow.appendChild(row);
-    }
-}
-
-renderBridges();
+replayBlock.appendChild(replayRow);
 
 async function refreshRecordings(): Promise<void> {
     let entries: RecordingEntry[] = [];
@@ -285,19 +285,7 @@ async function refreshRecordings(): Promise<void> {
     }
 }
 
-socket.on("status", (message: HubMessage) => {
-    serialOpen = message["serialOpen"] === true;
-    const link = String(message["serialLink"] ?? "");
-    if (link !== serialLink) {
-        serialLink = link;
-        renderBridges();
-    }
-    uartButton.textContent = serialOpen ? "Close UART" : "Open UART";
-    uartButton.classList.toggle("active", serialOpen);
-    uartDevice.disabled = serialOpen;
-    uartBaud.disabled = serialOpen;
-});
-
+renderConnections();
 void refreshRecordings();
 
 /* -------------------- firmware update -------------------- */
@@ -315,7 +303,8 @@ const left = document.createElement("div");
 left.className = "console-col";
 left.appendChild(droneList);
 left.appendChild(update.root);
-left.appendChild(addBlock);
+left.appendChild(connectBlock);
+left.appendChild(replayBlock);
 const right = document.createElement("div");
 right.className = "console-col observe";
 right.appendChild(attitude.root);

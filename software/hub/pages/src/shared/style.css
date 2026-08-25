@@ -666,8 +666,20 @@ input.config-title {
     border: none;
 }
 
-.add-drone {
-    border-style: dashed;
+/* ===== Connection list ===== */
+
+.conn-state {
+    font-family: var(--mono);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.conn-state.connected {
+    color: var(--ok);
+}
+
+.conn-state.lost {
+    color: var(--warn);
 }
 
 /* ===== Firmware update ===== */
@@ -730,14 +742,6 @@ input.config-title {
 .ota-bundle-id {
     font-family: var(--mono);
     white-space: nowrap;
-}
-
-.add-tab {
-    color: var(--fg-dim);
-}
-
-.add-tab.active {
-    color: #fff;
 }
 
 .btn:disabled {
