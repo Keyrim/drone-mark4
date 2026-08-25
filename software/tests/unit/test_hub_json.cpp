@@ -215,6 +215,10 @@ TEST_CASE("status json carries the counters")
     status.rejectedAnnounces = 50U;
     status.clients = 3U;
     status.rcClients = 2U;
+    status.connectionVia = "bridge";
+    status.connectionId = "c19f6c";
+    status.connectionKind = mark4::StreamSource::FIRMWARE;
+    status.connectionLive = true;
 
     mark4::LinkHealth link;
     link.stream = mark4::StreamKind::SIM_RAW;
@@ -239,6 +243,17 @@ TEST_CASE("status json carries the counters")
     CHECK(message["counts"]["rejectedAnnounces"] == 50U);
     CHECK(message["clients"] == 3U);
     CHECK(message["rcClients"] == 2U);
+    CHECK(message["connection"]["via"] == "bridge");
+    CHECK(message["connection"]["id"] == "c19f6c");
+    CHECK(message["connection"]["kind"] == 1U);
+    CHECK(message["connection"]["kindName"] == "firmware");
+    CHECK(message["connection"]["live"] == true);
+
+    // No connection reads as the explicit "none", never as an absent field
+    mark4::HubStatus idle;
+    const nlohmann::json rest = parsed(mark4::statusToJson(idle));
+    CHECK(rest["connection"]["via"] == "none");
+    CHECK(rest["connection"]["live"] == false);
 
     REQUIRE(message["links"].size() == 1U);
     const nlohmann::json &entry = message["links"][0];
@@ -391,28 +406,44 @@ TEST_CASE("a correlation id past the int range is refused, never wrapped")
     CHECK(std::holds_alternative<std::string>(negative));
 }
 
-TEST_CASE("a serial message opens or closes the board uart")
+TEST_CASE("a connect message names one drone by its route")
 {
-    const auto open = mark4::parseClientMessage(
-        R"({"type":"serial","action":"open","device":"/dev/ttyUSB0","baud":921600})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(open));
-    const auto &opened = std::get<mark4::ClientMessage>(open);
-    CHECK(opened.type == mark4::ClientMessageType::SERIAL);
-    CHECK(opened.serialConnect);
-    CHECK(opened.serialDevice == "/dev/ttyUSB0");
-    CHECK(opened.serialBaud == 921600U);
+    const auto udp =
+        mark4::parseClientMessage(R"({"type":"connect","via":"udp","target":"drone_sim"})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(udp));
+    CHECK(std::get<mark4::ClientMessage>(udp).type == mark4::ClientMessageType::CONNECT);
+    CHECK(std::get<mark4::ClientMessage>(udp).connectVia == "udp");
+    CHECK(std::get<mark4::ClientMessage>(udp).target == mark4::StreamSource::DRONE_SIM);
 
-    const auto close = mark4::parseClientMessage(R"({"type":"serial","action":"close"})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(close));
-    CHECK(!(std::get<mark4::ClientMessage>(close).serialConnect));
+    const auto uart = mark4::parseClientMessage(
+        R"({"type":"connect","via":"uart","device":"/dev/ttyUSB0","baud":921600})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(uart));
+    CHECK(std::get<mark4::ClientMessage>(uart).connectVia == "uart");
+    CHECK(std::get<mark4::ClientMessage>(uart).connectPeer == "/dev/ttyUSB0");
+    CHECK(std::get<mark4::ClientMessage>(uart).serialBaud == 921600U);
 
-    // An open without a device or with a null speed addresses nothing
-    const auto noDevice =
-        mark4::parseClientMessage(R"({"type":"serial","action":"open","baud":921600})");
-    CHECK(std::holds_alternative<std::string>(noDevice));
-    const auto noBaud = mark4::parseClientMessage(
-        R"({"type":"serial","action":"open","device":"/dev/ttyUSB0","baud":0})");
-    CHECK(std::holds_alternative<std::string>(noBaud));
+    const auto bridge =
+        mark4::parseClientMessage(R"({"type":"connect","via":"bridge","name":"c19f6c"})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(bridge));
+    CHECK(std::get<mark4::ClientMessage>(bridge).connectVia == "bridge");
+    CHECK(std::get<mark4::ClientMessage>(bridge).connectPeer == "c19f6c");
+
+    const auto disconnect = mark4::parseClientMessage(R"({"type":"disconnect"})");
+    REQUIRE(std::holds_alternative<mark4::ClientMessage>(disconnect));
+    CHECK(std::get<mark4::ClientMessage>(disconnect).type == mark4::ClientMessageType::DISCONNECT);
+
+    // Each route requires its identity: no device, no name, no target, no
+    // speed means there is nothing to connect to
+    CHECK(std::holds_alternative<std::string>(
+        mark4::parseClientMessage(R"({"type":"connect","via":"udp"})")));
+    CHECK(std::holds_alternative<std::string>(
+        mark4::parseClientMessage(R"({"type":"connect","via":"uart","baud":921600})")));
+    CHECK(std::holds_alternative<std::string>(mark4::parseClientMessage(
+        R"({"type":"connect","via":"uart","device":"/dev/ttyUSB0","baud":0})")));
+    CHECK(std::holds_alternative<std::string>(
+        mark4::parseClientMessage(R"({"type":"connect","via":"bridge"})")));
+    CHECK(std::holds_alternative<std::string>(
+        mark4::parseClientMessage(R"({"type":"connect","via":"carrier-pigeon"})")));
 }
 
 TEST_CASE("a tuning set message becomes the exact tuning set wire packet")

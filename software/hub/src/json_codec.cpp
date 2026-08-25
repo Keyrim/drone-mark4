@@ -578,42 +578,60 @@ namespace mark4
             return true;
         }
 
-        /// @brief Fills the serial part of a client request.
+        /// @brief Fills the connect part of a client request. The route names
+        ///        what identifies the drone: a UDP process is its kind, a
+        ///        board is the door it is reached through (UART device or
+        ///        bridge name), because the board itself never announces.
         /// @param object message object
         /// @param message message being decoded
         /// @param errorOut receives the reason on failure
-        /// @return true when the action is valid and open names a device
-        bool parseSerial(const Json &object, ClientMessage &message, std::string &errorOut)
+        /// @return true when the route and its identity decoded
+        bool parseConnect(const Json &object, ClientMessage &message, std::string &errorOut)
         {
-            const auto action = object.find("action");
-            if (action == object.end() || !action->is_string() ||
-                (action->get<std::string>() != "open" && action->get<std::string>() != "close"))
+            const auto via = object.find("via");
+            if (via == object.end() || !via->is_string())
             {
-                errorOut = R"(field 'action' must be "open" or "close")";
+                errorOut = R"(field 'via' must be "udp", "uart" or "bridge")";
                 return false;
             }
-            message.serialConnect = action->get<std::string>() == "open";
-            if (!message.serialConnect)
+            message.connectVia = via->get<std::string>();
+            if (message.connectVia == "udp")
             {
+                return readTarget(object, message.target, errorOut);
+            }
+            if (message.connectVia == "uart")
+            {
+                const auto device = object.find("device");
+                if (device == object.end() || !device->is_string() ||
+                    device->get<std::string>().empty())
+                {
+                    errorOut = "field 'device' must name the UART to open";
+                    return false;
+                }
+                message.connectPeer = device->get<std::string>();
+                const auto baud = object.find("baud");
+                if (baud == object.end() || !baud->is_number_unsigned() ||
+                    baud->get<std::uint64_t>() == 0U || baud->get<std::uint64_t>() > UINT32_MAX)
+                {
+                    errorOut = "field 'baud' must be a positive line speed";
+                    return false;
+                }
+                message.serialBaud = static_cast<std::uint32_t>(baud->get<std::uint64_t>());
                 return true;
             }
-            const auto device = object.find("device");
-            if (device == object.end() || !device->is_string() ||
-                device->get<std::string>().empty())
+            if (message.connectVia == "bridge")
             {
-                errorOut = "field 'device' must name the UART to open";
-                return false;
+                const auto name = object.find("name");
+                if (name == object.end() || !name->is_string() || name->get<std::string>().empty())
+                {
+                    errorOut = "field 'name' must name the bridge to reach";
+                    return false;
+                }
+                message.connectPeer = name->get<std::string>();
+                return true;
             }
-            message.serialDevice = device->get<std::string>();
-            const auto baud = object.find("baud");
-            if (baud == object.end() || !baud->is_number_unsigned() ||
-                baud->get<std::uint64_t>() == 0U || baud->get<std::uint64_t>() > UINT32_MAX)
-            {
-                errorOut = "field 'baud' must be a positive line speed";
-                return false;
-            }
-            message.serialBaud = static_cast<std::uint32_t>(baud->get<std::uint64_t>());
-            return true;
+            errorOut = R"(field 'via' must be "udp", "uart" or "bridge")";
+            return false;
         }
 
         /// @brief Fills the update-start part of a client request. The bundle
@@ -781,11 +799,21 @@ namespace mark4
             links.push_back(entry);
         }
 
+        // One drone at a time is THE connected drone: this is where every
+        // page reads which one, and whether it currently shows signs of life.
+        Json connection;
+        connection["via"] = status.connectionVia.empty() ? "none" : status.connectionVia;
+        connection["id"] = status.connectionId;
+        connection["kind"] = static_cast<std::uint8_t>(status.connectionKind);
+        connection["kindName"] = streamSourceName(status.connectionKind);
+        connection["live"] = status.connectionLive;
+
         Json message;
         message["type"] = "status";
         message["recording"] = status.recording;
         message["serialOpen"] = status.serialOpen;
         message["serialLink"] = status.serialLink;
+        message["connection"] = connection;
         message["counts"] = counts;
         message["clients"] = status.clients;
         message["rcClients"] = status.rcClients;
@@ -1062,13 +1090,17 @@ namespace mark4
                 return error;
             }
         }
-        else if (typeName == "serial")
+        else if (typeName == "connect")
         {
-            message.type = ClientMessageType::SERIAL;
-            if (!parseSerial(root, message, error))
+            message.type = ClientMessageType::CONNECT;
+            if (!parseConnect(root, message, error))
             {
                 return error;
             }
+        }
+        else if (typeName == "disconnect")
+        {
+            message.type = ClientMessageType::DISCONNECT;
         }
         else if (typeName == "otaStatus")
         {

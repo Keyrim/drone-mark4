@@ -93,13 +93,6 @@ namespace mark4
             }
         }
 
-        if (!m_config.serialDevice.empty())
-        {
-            // A board that is not plugged in yet is not a startup failure:
-            // the link is retried for as long as the hub runs.
-            static_cast<void>(m_serial.open(m_config.serialDevice, m_config.serialBaud));
-        }
-
         if (m_config.otaBundlePath.empty())
         {
             // The bundle is a build artifact: resolving its path must not
@@ -522,8 +515,50 @@ namespace mark4
         }
     }
 
+    bool HubApp::commandAllowed(StreamSource target, std::string &errorOut) const
+    {
+        if (m_connection.via.empty())
+        {
+            errorOut = "no drone connected";
+            return false;
+        }
+        if (target != m_connection.kind)
+        {
+            errorOut = std::string("connected to ") + m_connection.id + ", not to " +
+                       streamSourceName(target);
+            return false;
+        }
+        return true;
+    }
+
     bool HubApp::applyClientMessage(const ClientMessage &message, std::string &errorOut)
     {
+        // Only the connected drone is wired to the controls: a drone that
+        // merely announces itself is visible, not commandable. Everything
+        // else (recording, profiles on disk, replay starts) is hub business
+        // and needs no drone at all.
+        switch (message.type)
+        {
+            case ClientMessageType::RC:
+            case ClientMessageType::SIM_SCENARIO:
+            case ClientMessageType::REBOOT:
+            case ClientMessageType::TUNING_SET:
+            case ClientMessageType::TUNING_GET:
+            case ClientMessageType::TUNING_LIST:
+            case ClientMessageType::PROFILE_PUSH:
+            case ClientMessageType::OTA_STATUS:
+            case ClientMessageType::OTA_START:
+            case ClientMessageType::OTA_REVERT:
+                if (!commandAllowed(message.target, errorOut))
+                {
+                    return false;
+                }
+                break;
+            default:
+                // OTA_ABORT stays reachable: dropping a stuck transfer is hub
+                // business and must work even after the drone is gone.
+                break;
+        }
         switch (message.type)
         {
             case ClientMessageType::RC: {
@@ -601,20 +636,11 @@ namespace mark4
             case ClientMessageType::REPLAY: {
                 return startReplay(message.recordingName, message.replaySpeed, errorOut);
             }
-            case ClientMessageType::SERIAL: {
-                if (message.serialConnect)
-                {
-                    if (!m_serial.open(message.serialDevice, message.serialBaud))
-                    {
-                        errorOut = "cannot open " + message.serialDevice;
-                        return false;
-                    }
-                }
-                else
-                {
-                    m_serial.release();
-                }
-                broadcastStatus();
+            case ClientMessageType::CONNECT: {
+                return applyConnect(message, errorOut);
+            }
+            case ClientMessageType::DISCONNECT: {
+                applyDisconnect();
                 return true;
             }
             case ClientMessageType::RECORD: {
@@ -670,6 +696,119 @@ namespace mark4
         }
     }
 
+    bool HubApp::applyConnect(const ClientMessage &message, std::string &errorOut)
+    {
+        Connection next;
+        next.via = message.connectVia;
+        if (message.connectVia == "udp")
+        {
+            if (message.target == StreamSource::FIRMWARE)
+            {
+                errorOut = "the board is reached over uart or a bridge, not udp";
+                return false;
+            }
+            next.id = streamSourceName(message.target);
+            next.kind = message.target;
+        }
+        else if (message.connectVia == "uart")
+        {
+            if (!m_serial.open(message.connectPeer, message.serialBaud))
+            {
+                // A failed open still remembers the device for the periodic
+                // retry; a refused connect must leave no such ghost behind.
+                m_serial.release();
+                errorOut = "cannot open " + message.connectPeer;
+                return false;
+            }
+            next.id = message.connectPeer;
+        }
+        else
+        {
+            // The bridge told the network where it is; the operator only
+            // ever names it. Its address is resolved here and re-resolved
+            // by refreshConnection() if the router later hands out another.
+            const std::vector<DiscoveredBridge> &bridges = m_bridges.bridges();
+            const auto found = std::find_if(
+                bridges.begin(), bridges.end(), [&message](const DiscoveredBridge &bridge) {
+                    return bridge.name == message.connectPeer;
+                });
+            if (found == bridges.end())
+            {
+                errorOut = "no bridge named '" + message.connectPeer + "' on the network";
+                return false;
+            }
+            const std::string device = std::string(SerialTransport::UDP_PREFIX) + found->address +
+                                       ":" + std::to_string(found->port);
+            if (!m_serial.open(device, DEFAULT_SERIAL_BAUD))
+            {
+                m_serial.release();
+                errorOut = "cannot open " + device;
+                return false;
+            }
+            next.id = message.connectPeer;
+        }
+        if (next.via == "udp" && m_serial.isOpen())
+        {
+            // Connecting is exclusive: the serial link belonged to the
+            // previous connection and nobody is on it any more.
+            m_serial.release();
+        }
+        m_connection = next;
+        refreshConnection();
+        broadcastStatus();
+        return true;
+    }
+
+    void HubApp::applyDisconnect()
+    {
+        if (m_connection.via == "uart" || m_connection.via == "bridge")
+        {
+            m_serial.release();
+        }
+        m_connection = Connection{};
+        broadcastStatus();
+    }
+
+    void HubApp::refreshConnection()
+    {
+        if (m_connection.via.empty())
+        {
+            return;
+        }
+        if (m_connection.via == "bridge")
+        {
+            // Follow a bridge whose router handed out a new address: the
+            // name is the identity, the address is just today's route to it.
+            const std::vector<DiscoveredBridge> &bridges = m_bridges.bridges();
+            const auto found = std::find_if(
+                bridges.begin(), bridges.end(), [this](const DiscoveredBridge &bridge) {
+                    return bridge.name == m_connection.id;
+                });
+            if (found != bridges.end())
+            {
+                const std::string device = std::string(SerialTransport::UDP_PREFIX) +
+                                           found->address + ":" + std::to_string(found->port);
+                if (m_serial.device() != device)
+                {
+                    static_cast<void>(m_serial.open(device, DEFAULT_SERIAL_BAUD));
+                }
+            }
+        }
+        const bool viaSerial = m_connection.via != "udp";
+        const auto &processes = m_registry.processes();
+        const bool live = std::any_of(processes.begin(),
+                                      processes.end(),
+                                      [this, viaSerial](const DiscoveredProcess &process) {
+                                          return process.kind == m_connection.kind &&
+                                                 process.viaSerial == viaSerial;
+                                      });
+        if (live != m_connection.live)
+        {
+            m_connection.live = live;
+            broadcastStatus();
+        }
+    }
+
     void HubApp::answer(int id, bool ok, const std::string &error)
     {
         // Streams are never acknowledged, and neither is a request that
@@ -716,6 +855,7 @@ namespace mark4
             broadcastDiscovery();
         }
         m_serial.maintain(nowUs / US_PER_MS);
+        refreshConnection();
         std::erase_if(m_rcSeenUs, [nowUs](const auto &entry) {
             return nowUs - entry.second > RC_PILOT_WINDOW_US;
         });
@@ -748,6 +888,10 @@ namespace mark4
         snapshot.recording = m_recorder.csvSessionOpen();
         snapshot.serialOpen = m_serial.isOpen();
         snapshot.serialLink = m_serial.isOpen() ? m_serial.device() : std::string{};
+        snapshot.connectionVia = m_connection.via;
+        snapshot.connectionId = m_connection.id;
+        snapshot.connectionKind = m_connection.kind;
+        snapshot.connectionLive = m_connection.live;
         snapshot.telemetryRows = stats.telemetryRows;
         snapshot.simRawRows = stats.simRawRows;
         snapshot.blackboxRecords = stats.blackboxRecords;

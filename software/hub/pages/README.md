@@ -22,16 +22,19 @@ pnpm test
   (`series.ts`, including the one-color-per-drone map).
 - `src/lanes/` - the lane viewer: time-axis math, sample buffers, the uPlot
   charts, the ruler and the lane configuration panel.
-- `src/console/` - the control window: one widget per connected drone
-  (`drone_widget.ts`), whatever its nature. Observation is the same for
-  every nature (phase, throw detector, altitude, motors); the controls
+- `src/console/` - the control window: the one connected drone in its
+  widget (`drone_widget.ts`), whatever its nature. Observation is the same
+  for every nature (phase, throw detector, altitude, motors); the controls
   depend on it - kill/arm/mode switches and a throttle slider for a real
   or simulated drone, replay controls for a blackbox re-execution, plus
-  the folded scenario and tuning blocks. The "Add drone" block holds the
-  two manual doors (board UART, blackbox); UDP drones appear on their
-  own. All drones draw superimposed in the 3D view, one color each. `rc.ts` is the piloting state machine,
-  pure and unit tested. `ota_panel.ts` is the firmware update panel, over
-  the pure `ota.ts`.
+  the folded scenario and tuning blocks. The Connections panel lists
+  everything connectable - announced UDP processes, WiFi bridges, the
+  manual UART row - with the same click-to-connect workflow for all of
+  them (`connection.ts` is the pure list model, unit tested); nothing is
+  wired to the controls until connected, and a lost drone keeps its row
+  and widget, marked lost, until an explicit disconnect. `rc.ts` is the
+  piloting state machine, pure and unit tested. `ota_panel.ts` is the
+  firmware update panel, over the pure `ota.ts`.
 - `src/<page>/main.ts` - one page. Every directory holding a `main.ts`
   becomes its own bundle, so adding a page is adding a directory and an
   `.html` file next to `esbuild.js`.
@@ -104,7 +107,7 @@ streamed RC recently and the top bar warns when there is more than one.
 ## Firmware update
 
 The update panel sits under the drone list on the control page, below the
-widgets and above "Add drone": reflashing is an operation on the drone that is
+widget and above the Connections panel: reflashing is an operation on the drone that is
 already there, and the panel has to stay readable while the board reboots and
 its widget momentarily disappears.
 

@@ -79,8 +79,6 @@ namespace mark4
             std::uint16_t bridgePort = BRIDGE_ANNOUNCE_PORT; ///< bridge announce listen port
             std::uint16_t telemetryPort = TELEMETRY_PORT;    ///< telemetry port watched by default
             std::uint16_t simRawPort = SIM_RAW_PORT;         ///< sim raw port watched by default
-            std::string serialDevice;                        ///< board UART, empty = none
-            std::uint32_t serialBaud = DEFAULT_SERIAL_BAUD;  ///< board UART speed [baud]
             std::string logDirectory = "logs";               ///< where recordings are written
             bool recordOnStart = true;                       ///< open a CSV session at startup
             bool udpRebroadcast = true;                      ///< re-emit serial telemetry on UDP
@@ -198,6 +196,32 @@ namespace mark4
         /// @param port port to release, 0 to do nothing
         void releasePort(std::uint16_t port);
 
+        /// @brief Makes one drone THE connected drone, opening the serial
+        ///        link when the route calls for one. Connecting elsewhere
+        ///        replaces the previous connection.
+        /// @param message decoded connect request
+        /// @param errorOut receives the reason when it cannot be
+        /// @return true when the connection is established
+        bool applyConnect(const ClientMessage &message, std::string &errorOut);
+
+        /// @brief Drops the connected drone, closing the serial link when the
+        ///        route owned one. A no-op when nothing is connected.
+        void applyDisconnect();
+
+        /// @brief Says whether a command aimed at one kind may go out: only
+        ///        the connected drone is wired to the controls.
+        /// @param target kind the command is aimed at
+        /// @param errorOut receives the refusal reason
+        /// @return true when the command may go out
+        bool commandAllowed(StreamSource target, std::string &errorOut) const;
+
+        /// @brief Recomputes whether the connected drone shows signs of life,
+        ///        follows a bridge whose address changed, and tells the
+        ///        clients when the answer changed. The connection itself is
+        ///        never dropped here: losing the drone and letting it go are
+        ///        two different things, and only the operator does the second.
+        void refreshConnection();
+
         /// @brief Decodes and routes everything the clients have sent.
         void handleClientMessages();
 
@@ -267,6 +291,19 @@ namespace mark4
             unsigned users = 0U;     ///< live processes needing it, 0 = pinned by the config
         };
 
+        /// The one drone the operator is connected to. Everything the hub
+        /// hears is still decoded, recorded and published; being connected
+        /// decides where the commands go and which drone the control page
+        /// pilots. Losing the drone keeps the connection with live = false,
+        /// and the same drone coming back turns live true again on its own.
+        struct Connection
+        {
+            std::string via;                            ///< "udp", "uart" or "bridge", empty = none
+            std::string id;                             ///< kind name, UART device or bridge name
+            StreamSource kind = StreamSource::FIRMWARE; ///< kind commands route to
+            bool live = false;                          ///< the drone shows signs of life
+        };
+
         Config m_config;                         ///< settings of this run
         StreamHealth m_health;                   ///< sequence health of every link
         StreamRecorder m_recorder;               ///< CSV pair and blackbox file
@@ -277,6 +314,7 @@ namespace mark4
         SerialTransport m_serial;                ///< board UART, when one is configured
         WsBridge m_ws;                           ///< websocket endpoint
         std::vector<PortUse> m_followedPorts;    ///< refcount behind every subscription
+        Connection m_connection;                 ///< the one drone commands go to
         LiveAligner m_aligner;                   ///< live half of the stream comparison
         std::atomic_bool m_stopRequested{false}; ///< set by a signal handler
         std::uint64_t m_nextStatusUs = 0U;       ///< next status message instant [us]

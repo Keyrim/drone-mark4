@@ -78,14 +78,21 @@ export class DroneWidget {
     private killInput: HTMLInputElement | null = null;
     private readonly onHide = (): void => {
         // A pilot who cannot see the drone is not piloting it
-        if (document.visibilityState === "hidden" && this.timer !== null && !this.state.kill) {
+        if (document.visibilityState === "hidden") {
+            this.killNow();
+        }
+    };
+
+    /** Park the transmitter safe: kill on, streamed at once if streaming. */
+    killNow(): void {
+        if (this.timer !== null && !this.state.kill) {
             this.state = { ...this.state, kill: true };
             if (this.killInput !== null) {
                 this.killInput.checked = true;
             }
             this.send();
         }
-    };
+    }
 
     constructor(
         private readonly socket: HubSocket,
