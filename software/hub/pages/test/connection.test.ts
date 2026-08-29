@@ -15,6 +15,12 @@ test("every announced node is one row, nothing is connected without a click", ()
     assert.deepEqual(rows[1]!.connect, { type: "connect", via: "udp", target: "firmware" });
 });
 
+test("a plant on the LAN is not a drone and gets no row", () => {
+    const rows = candidateRows([{ kind: 3, kindName: "plant" }, SIM], NO_CONNECTION);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.label, "drone_sim");
+});
+
 test("the connected row is marked and offers no connect", () => {
     const connected: Connection = {
         via: "udp",

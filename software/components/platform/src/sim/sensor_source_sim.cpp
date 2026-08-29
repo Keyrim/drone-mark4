@@ -1,7 +1,5 @@
 #include "platform_sim/sensor_source_sim.hpp"
 
-#include <array>
-#include <cstddef>
 #include <cstdint>
 #include <cstring>
 
@@ -9,48 +7,52 @@
 
 namespace mark4
 {
-    namespace
-    {
-        /// Larger than any Envelope, so an oversized datagram comes out with
-        /// its real size instead of being truncated into a valid one.
-        constexpr std::size_t RECEIVE_BUFFER_SIZE = MAX_ENVELOPE_SIZE + 64U;
-    } // namespace
-
     FrameWait SensorSourceSim::waitFrame(mark4::SensorFrame &frameOut)
     {
-        std::array<std::uint8_t, RECEIVE_BUFFER_SIZE> wire{};
-
+        mark4_SimSensor sensor;
+        std::uint32_t src = 0U;
         while (true)
         {
-            const std::size_t received = m_link.receive(wire.data(), wire.size());
-            if (received == 0U)
+            if (!m_link.waitSensor(sensor, src))
             {
                 return FrameWait::TIMEOUT; // idle link: the caller decides
             }
-            mark4_Envelope envelope;
-            if (!decodeEnvelope(wire.data(), received, envelope) ||
-                envelope.which_body != mark4_Envelope_sim_sensor_tag)
+            if (m_link.plantAlive() && src != m_link.plant())
             {
-                continue; // not a sensor message we understand: keep waiting
+                /* Two plants on the LAN: the first one heard drives this
+                   process until the transport forgets it, the other is
+                   somebody else's. */
+                ++m_foreignFrames;
+                continue;
             }
-            const mark4_SimSensor &sensor = envelope.body.sim_sensor;
+            if (src != m_link.plant())
+            {
+                /* Only a validated sensor message may steer the replies:
+                   a stray payload must never redirect them. A plant taking
+                   over from a forgotten one is a new plant, whatever its
+                   clock says. */
+                if (m_link.plant() != 0U)
+                {
+                    ++m_plantRestarts;
+                    m_timestampSeen = false;
+                }
+                m_link.setPlant(src);
+            }
 
             if (m_timestampSeen && sensor.timestamp_us == m_lastTimestampUs)
             {
-                /* The simulator is asking again for the answer to a tick it
+                /* The plant is asking again for the answer to a tick it
                    already sent: the reply was lost, not the sample. Answering
                    twice is correct, stepping twice would fabricate a frame
                    the plant never produced. */
-                m_link.acceptLastSender();
                 static_cast<void>(m_link.repeatLastReply());
                 ++m_duplicateFrames;
                 continue;
             }
             if (m_timestampSeen && sensor.timestamp_us < m_lastTimestampUs)
             {
-                /* A different plant: its simulated clock starts over, so
-                   nothing this source remembers about the previous one
-                   applies any more. */
+                /* The same node, its simulated clock starting over: nothing
+                   this source remembers about the previous run applies. */
                 ++m_plantRestarts;
             }
 
@@ -73,9 +75,6 @@ namespace mark4
             }
             m_lastTimestampUs = sensor.timestamp_us;
             m_timestampSeen = true;
-            // Only a validated sensor message may steer the motor replies:
-            // a stray datagram on the port must not stall the lockstep.
-            m_link.acceptLastSender();
             return FrameWait::FRAME;
         }
     }

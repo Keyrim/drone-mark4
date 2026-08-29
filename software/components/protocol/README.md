@@ -40,9 +40,6 @@ says so when they are missing.
   the on-flash `OtaImageHeader`, the slot and chip identities in their
   flash encoding (`OTA_SLOT_*`, `OTA_MCU_*`, EMPTY is 0xFF on flash and 0
   on the wire, `otaSlotStateToWire()` maps), the chunk size and window.
-- `protocol/ports.hpp`: the one port outside the transport, the lockstep
-  sim link (47800).
-
 Enum values are C-scoped inside the package, so two enums never share a
 value name: `PHASE_*`, `THROW_*`, `RC_*`, `OTA_OK`, `OTA_OP_*` carry the
 prefix the clash forced, the rest stay short. The flight core's own enums
@@ -60,11 +57,11 @@ value by value in `platform_common/telemetry_packer.hpp` and
 - `Rc`, `Reboot`, `SimScenario`, `Tuning{Set,Get,List}`, the `Ota*`
   requests: ground to flight process, as transport unicasts or serial
   frames.
-- `SimSensor` (truth included) and `SimActuator`: the lockstep link between
-  a flight process and its plant, bare envelopes in UDP datagrams on 47800;
-  `SimScenario` is forwarded to the plant on that same link as its own
-  envelope, once per scenario, and the plant plays it once per change of
-  `sequence`.
+- `SimSensor` (truth included) and `SimActuator`: the lockstep exchange
+  between a flight process and its plant, transport unicasts between the
+  two node ids; `SimScenario` is forwarded to the plant the same way as
+  its own envelope, once per scenario, and the plant plays it once per
+  change of `sequence`.
 
 The serial framing (`transport/serial_framing.hpp`) carries one envelope
 per frame behind a two-byte length, 512 bytes at most like the transport's
@@ -80,4 +77,5 @@ updated by a hub built on the previous schema): see `docs/ota-design.md`.
 The C++ unit tests round-trip every message
 (`software/tests/unit/test_protocol_envelope.cpp`) and one test spawns a
 headless Godot to exchange envelopes with the generated GDScript codec
-(`test_plant_link.cpp`, skipped without a godot binary).
+through the two transports (`test_plant_link.cpp`, skipped without a godot
+binary).

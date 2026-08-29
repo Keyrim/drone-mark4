@@ -2,8 +2,8 @@
 """Monte Carlo throw campaign through the Godot simulator.
 
 Starts N simulator pairs (headless Godot plus drone_sim), each on its own
-UDP port range and each running the real physics and the real flight core in
-lockstep, faster than real time. The campaign spawns and tears down the pairs
+transport discovery port and each running the real physics and the real
+flight core in lockstep, faster than real time. The campaign spawns and tears down the pairs
 itself; the hub is a bench tool and plays no part here.
 
 One run is one SimScenario message. It opens with a reset and carries
@@ -11,8 +11,8 @@ everything the run needs - the seed, the delay before the throw, the throw
 itself - so the whole run is scripted inside the plant, on the plant's own
 tick grid, counted from the reset tick. Nothing here has to agree with the
 plant on which absolute tick anything happened at. The message goes to the
-flight process command receiver, which forwards it to the plant on the
-lockstep link; resending it is free, since the plant plays a scenario once
+flight process command receiver, which forwards it to the plant node over
+the transport; resending it is free, since the plant plays a scenario once
 per change of its sequence.
 
 The flight process hashes the trajectory of every run and broadcasts the hash
@@ -92,9 +92,10 @@ PHASE_NAMES = [
     "idle", "altitude", "armed", "ballistic", "recovery", "hover", "cutoff", "manual",
 ]
 
-# One UDP port range per instance: sim link and transport discovery port
-# never overlap between instances, and the discovery port keeps a campaign
-# away from the bench (DISCOVERY_PORT) a live hub may be running.
+# One transport discovery port per instance: Godot, drone_sim and the
+# campaign node of a pair share it and nobody else does, which keeps the
+# pairs apart from each other and the campaign away from the bench
+# (DISCOVERY_PORT) a live hub may be running.
 BASE_PORT = 48000
 PORT_STRIDE = 10
 
@@ -153,13 +154,11 @@ class RunResult:
 
 
 class Instance:
-    """One simulator pair (godot + drone_sim) bound to its own port range."""
+    """One simulator pair (godot + drone_sim) on its own discovery port."""
 
     def __init__(self, index: int, args: argparse.Namespace):
         self.index = index
-        base = BASE_PORT + index * PORT_STRIDE
-        self.sim_port = base
-        self.discovery_port = base + 1
+        self.discovery_port = BASE_PORT + index * PORT_STRIDE
         self.node_id = index + 1
         self.own_node = CAMPAIGN_NODE_BASE + index + 1
 
@@ -170,9 +169,9 @@ class Instance:
             os.path.join(log_dir, f"batch_{stamp}_i{index}.log"), "w", encoding="utf-8"
         )
 
-        # Godot first: it resends until the flight process answers, while
-        # the flight process would sit on an empty socket through a slow
-        # Godot boot and eat into the boot budget.
+        # Godot first: it hosts one virtual drone per drone_sim it hears on
+        # the pair's discovery port, so the flight process finds its plant
+        # ready when its beacon goes out.
         self.plant = subprocess.Popen(
             [
                 args.godot,
@@ -180,8 +179,8 @@ class Instance:
                 "--path",
                 os.path.join(REPO_ROOT, "sim-godot"),
                 "--",
-                "--flight-port",
-                str(self.sim_port),
+                "--discovery-port",
+                str(self.discovery_port),
                 "--lockstep",
                 "--time-scale",
                 str(args.time_scale),
@@ -196,8 +195,6 @@ class Instance:
         self.flight = subprocess.Popen(
             [
                 args.drone_sim,
-                "--sim-port",
-                str(self.sim_port),
                 "--discovery-port",
                 str(self.discovery_port),
                 "--node-id",

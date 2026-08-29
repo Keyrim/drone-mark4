@@ -29,9 +29,10 @@ namespace mark4
     class HubApp
     {
       public:
-        /// TCP port the websocket endpoint listens on. Deliberately not in
-        /// protocol/ports.hpp: that file describes the UDP boundaries between
-        /// processes speaking the binary wire, and this is neither.
+        /// TCP port the websocket endpoint listens on. Deliberately not
+        /// next to the transport's DISCOVERY_PORT: that one is a UDP
+        /// boundary between processes speaking the binary wire, this is
+        /// neither.
         static constexpr std::uint16_t WS_PORT = 47810U;
 
         /// How long the poll loop sleeps when nothing is happening [ms].

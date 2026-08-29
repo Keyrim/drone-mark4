@@ -23,7 +23,7 @@ add_executable(unit_tests
     test_ota_store_sim.cpp
     test_ota_updater.cpp
     test_pilot_modes.cpp
-    test_platform_sim_udp.cpp
+    test_platform_sim_link.cpp
     test_protocol_envelope.cpp
     test_plant_link.cpp
     test_rc_tracker.cpp
@@ -56,6 +56,13 @@ find_program(DRONE_GODOT godot)
 target_compile_definitions(unit_tests
     PRIVATE MARK4_GODOT_PROJECT="${DRONE_REPO_ROOT}/sim-godot"
             MARK4_GODOT_BINARY="${DRONE_GODOT}")
+# The GDScript transport has no C++ counterpart to spawn it from: its smoke
+# test is a headless Godot script, run by ctest when a godot binary exists.
+if(DRONE_GODOT)
+    add_test(NAME godot_transport_check
+        COMMAND ${DRONE_GODOT} --headless --path ${DRONE_REPO_ROOT}/sim-godot
+                --script res://tests/transport_check.gd)
+endif()
 
 # The OTA end-to-end test spawns the real flight process and talks to it over
 # real UDP, so it needs the binary itself, not a library: the path comes from

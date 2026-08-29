@@ -13,7 +13,8 @@ ESP32).
 
 Adopted by every node: `drone_sim` and the `hub` over UDP, the batch
 campaign (`tools/batch/run_batch.py`, through the frame codec of
-`tools/telemetry_wire.py`), the board over its UART (the firmware is a node
+`tools/telemetry_wire.py`), the Godot plant (a GDScript port, see below),
+the board over its UART (the firmware is a node
 with one `UartLink` on USART1), and the ESP32 riding the drone
 (`esp32-bridge/`), which is a relay: a node with a `UartLink` to the board
 and a `UdpLink` on the WiFi LAN, `setRelay(true)`, no beacon, and a filter
@@ -149,13 +150,30 @@ forwarded, one per link for a broadcast.
   the host's addresses) before the transport sees them: a relay would
   otherwise count every frame it forwards as a duplicate of its source.
 
+## GDScript port
+
+`sim-godot/scripts/transport/transport.gd` (`Mark4Transport`) is the same
+transport for the Godot plant: the same header, the same node table and
+counters, the same beacon and expiry rules, the `(src, seq)` duplicate
+drop, no relay. Its two sockets follow the `UdpLink` layout, with one
+substitution forced by the engine: Godot's `PacketPeerUDP.bind()` sets no
+reuse option, so the discovery socket is a `UDPServer` (`listen()` sets
+`SO_REUSEADDR`, which is enough on Linux to share the port with the
+`SO_REUSEADDR + SO_REUSEPORT` sockets of the C++ nodes). The plant hosts
+one virtual drone per `DRONE_SIM` node it hears, and the lockstep
+exchange (`SimSensor`, `SimActuator`, `SimScenario`) is unicast frames
+between the plant's node id and each `drone_sim`'s: `drone_sim` adopts as
+its plant the first node whose `SimSensor` validates, until the transport
+forgets it (`platform_sim/plant_link.hpp`). Nothing is configured, no
+port is reserved. `sim-godot/tests/transport_check.gd` is its ctest
+smoke, `test_plant_link.cpp` exchanges frames with it from C++.
+
 ## Ports
 
 | port | who | what |
 |------|-----|------|
 | udp/47820 | every transport node | discovery: broadcast frames (beacons, telemetry, answers) |
-| ephemeral | every transport node | data socket: unicast frames (commands, beacon on first sight) |
-| udp/47800 | drone_sim <-> Godot | lockstep sim link, bare envelopes (`protocol/ports.hpp`) |
+| ephemeral | every transport node | data socket: unicast frames (commands, lockstep sim link, beacon on first sight) |
 | udp/47810 | hub | HTTP + WebSocket for the pages |
 
 The ESP32 relay owns no port of its own: it is one more node on udp/47820

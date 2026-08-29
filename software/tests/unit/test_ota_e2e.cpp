@@ -414,31 +414,26 @@ namespace
         ///        writes lands in the test's own scratch space instead of
         ///        wherever ctest was started from
         /// @param otaDirectory emulated flash directory
-        /// @param simPort lockstep port (nothing drives it in this test)
         /// @param discoveryPort shared transport port of the test
         /// @param nodeId transport identity the sim takes
         /// @return true when the process started
         bool start(const std::filesystem::path &runDirectory,
                    const std::string &otaDirectory,
-                   std::uint16_t simPort,
                    std::uint16_t discoveryPort,
                    std::uint32_t nodeId)
         {
-            const std::string simPortText = std::to_string(simPort);
             const std::string discoveryPortText = std::to_string(discoveryPort);
             const std::string nodeIdText = std::to_string(nodeId);
             const std::string consolePath = (runDirectory / "drone_sim.log").string();
             const std::string runPath = runDirectory.string();
-            std::array<const char *, 10> argv = {DRONE_SIM_BINARY,
-                                                 "--sim-port",
-                                                 simPortText.c_str(),
-                                                 "--discovery-port",
-                                                 discoveryPortText.c_str(),
-                                                 "--node-id",
-                                                 nodeIdText.c_str(),
-                                                 "--ota-dir",
-                                                 otaDirectory.c_str(),
-                                                 nullptr};
+            std::array<const char *, 8> argv = {DRONE_SIM_BINARY,
+                                                "--discovery-port",
+                                                discoveryPortText.c_str(),
+                                                "--node-id",
+                                                nodeIdText.c_str(),
+                                                "--ota-dir",
+                                                otaDirectory.c_str(),
+                                                nullptr};
 
             posix_spawn_file_actions_t actions;
             static_cast<void>(::posix_spawn_file_actions_init(&actions));
@@ -608,12 +603,11 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
         writeBundle(runDirectory / "second.ota", secondBuild, "bbbbbbbb", true);
 
     const std::uint16_t discoveryPort = pickFreePort();
-    const std::uint16_t simPort = pickFreePort();
     GroundLink link(discoveryPort);
     REQUIRE(link.open());
 
     SimProcess sim;
-    REQUIRE(sim.start(runDirectory, otaDirectory, simPort, discoveryPort, SIM_NODE));
+    REQUIRE(sim.start(runDirectory, otaDirectory, discoveryPort, SIM_NODE));
 
     mark4::OtaClient client(testConfig());
     client.setSink([&link](const mark4_Envelope &envelope, std::string &errorOut) {
@@ -730,13 +724,12 @@ TEST_CASE("a hub-driven update crosses the esp32 relay, its filter and the seria
 
     const std::uint16_t discoveryPort = pickFreePort();
     const std::uint16_t farPort = pickFreePort();
-    const std::uint16_t simPort = pickFreePort();
     GroundLink link(discoveryPort, farPort);
     REQUIRE(link.open());
 
     // The sim lives on the far LAN, behind the wire: where the board is.
     SimProcess sim;
-    REQUIRE(sim.start(runDirectory, otaDirectory, simPort, farPort, SIM_NODE));
+    REQUIRE(sim.start(runDirectory, otaDirectory, farPort, SIM_NODE));
 
     mark4::OtaClient client(testConfig());
     client.setSink([&link](const mark4_Envelope &envelope, std::string &errorOut) {

@@ -1,9 +1,10 @@
 /// @file
-/// @brief The one cross-language check of the wire: a headless Godot runs
-///        the generated GDScript codec (sim-godot/tests/plant_link_check.gd)
-///        and exchanges envelopes with the nanopb codec over UDP, exactly the
-///        way the plant and the flight process do on the lockstep link. Skips
-///        with a message when no godot binary was found at configure time.
+/// @brief The one cross-language check of the wire and of the transport: a
+///        headless Godot runs the GDScript transport and the generated
+///        codec (sim-godot/tests/plant_link_check.gd) against this node,
+///        exactly the way the plant and the flight process do on the sim
+///        link. Skips with a message when no godot binary was found at
+///        configure time.
 
 #include <algorithm>
 #include <array>
@@ -13,44 +14,69 @@
 #include <filesystem>
 #include <string>
 
-#include <arpa/inet.h>
 #include <csignal>
-#include <netinet/in.h>
-#include <poll.h>
 #include <spawn.h>
-#include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "platform_sim/clock_sim.hpp"
 #include "protocol/envelope.hpp"
+#include "protocol/wire_hash.hpp"
+#include "transport/transport.hpp"
+#include "transport/udp_link.hpp"
 
 namespace
 {
     /// How long the plant may take to boot and speak [ms]. Generous: a cold
     /// Godot under the sanitizers takes a few seconds to come up.
-    constexpr int PLANT_BUDGET_MS = 30000;
+    constexpr std::uint64_t PLANT_BUDGET_MS = 30000U;
+    constexpr std::uint64_t US_PER_MS = 1000U;
+    constexpr std::uint32_t DRONE_NODE = 0xD0000002U;
 
-    /// @brief Encodes and sends one envelope to a peer.
-    /// @param fd socket to send on
-    /// @param peer where to send
-    /// @param envelope message
-    void sendEnvelope(int fd, const sockaddr_in &peer, const mark4_Envelope &envelope)
+    /// @return a free UDP port of this host, released again on return
+    std::uint16_t pickFreePort()
+    {
+        mark4::UdpLink probe(0U);
+        REQUIRE(probe.init());
+        return probe.dataPort();
+    }
+
+    /// What the plant sent, captured by the transport delivery callback.
+    struct Delivered
+    {
+        std::uint32_t src = 0U;                             ///< the plant's node id
+        mark4_Envelope envelope = mark4_Envelope_init_zero; ///< the SimSensor envelope
+        bool sensorSeen = false;                            ///< a SimSensor arrived
+    };
+
+    void onPayload(void *context, std::uint32_t src, const std::uint8_t *payload, std::size_t size)
+    {
+        auto &delivered = *static_cast<Delivered *>(context);
+        mark4_Envelope envelope;
+        if (mark4::decodeEnvelope(payload, size, envelope) &&
+            envelope.which_body == mark4_Envelope_sim_sensor_tag)
+        {
+            delivered.src = src;
+            delivered.envelope = envelope;
+            delivered.sensorSeen = true;
+        }
+    }
+
+    /// @brief Encodes and unicasts one envelope to a node.
+    void sendEnvelope(mark4::Transport &transport,
+                      std::uint32_t dst,
+                      const mark4_Envelope &envelope)
     {
         std::array<std::uint8_t, mark4::MAX_ENVELOPE_SIZE> bytes{};
         std::size_t size = 0U;
         REQUIRE(mark4::encodeEnvelope(envelope, bytes.data(), bytes.size(), size));
-        REQUIRE(::sendto(fd,
-                         bytes.data(),
-                         size,
-                         0,
-                         reinterpret_cast<const sockaddr *>(&peer),
-                         sizeof(peer)) == static_cast<ssize_t>(size));
+        REQUIRE(transport.send(dst, bytes.data(), size));
     }
 } // namespace
 
-TEST_CASE("the plant's generated codec and the nanopb codec agree over UDP", "[godot]")
+TEST_CASE("the plant's GDScript transport and codec agree with the C++ ones", "[godot]")
 {
     const std::string godot = MARK4_GODOT_BINARY;
     const std::filesystem::path project = MARK4_GODOT_PROJECT;
@@ -63,51 +89,57 @@ TEST_CASE("the plant's generated codec and the nanopb codec agree over UDP", "[g
         SKIP("sim-godot/scripts/gen/mark4.gd was not generated (proto_gd target)");
     }
 
-    // The flight process side: one socket on an ephemeral loopback port.
-    const int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
-    REQUIRE(fd >= 0);
-    sockaddr_in local{};
-    local.sin_family = AF_INET;
-    local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    REQUIRE(::bind(fd, reinterpret_cast<const sockaddr *>(&local), sizeof(local)) == 0);
-    socklen_t length = sizeof(local);
-    REQUIRE(::getsockname(fd, reinterpret_cast<sockaddr *>(&local), &length) == 0);
-    const std::string port = std::to_string(ntohs(local.sin_port));
+    // The flight process side: a transport node announcing itself as a
+    // DRONE_SIM on a private discovery port, so the plant finds it by its
+    // beacon like it finds drone_sim.
+    const std::uint16_t discoveryPort = pickFreePort();
+    mark4::UdpLink link(discoveryPort);
+    REQUIRE(link.init());
+    mark4::Transport transport(DRONE_NODE);
+    REQUIRE(transport.addLink(link));
+    REQUIRE(transport.init());
+    mark4_Envelope announce = mark4_Envelope_init_zero;
+    announce.which_body = mark4_Envelope_announce_tag;
+    announce.body.announce.kind = mark4_NodeKind_DRONE_SIM;
+    announce.body.announce.mcu = mark4_Mcu_SIM;
+    announce.body.announce.wire_hash = mark4::WIRE_HASH;
+    std::array<std::uint8_t, mark4::Transport::MAX_BEACON_SIZE> beacon{};
+    std::size_t beaconSize = 0U;
+    REQUIRE(mark4::encodeEnvelope(announce, beacon.data(), beacon.size(), beaconSize));
+    transport.setBeacon(beacon.data(), beaconSize);
+    mark4::ClockSim clock;
 
+    const std::string port = std::to_string(discoveryPort);
     const std::string projectText = project.string();
-    std::array<const char *, 9> argv = {godot.c_str(),
-                                        "--headless",
-                                        "--path",
-                                        projectText.c_str(),
-                                        "--script",
-                                        "tests/plant_link_check.gd",
-                                        "--",
-                                        "--port",
-                                        port.c_str()};
-    std::array<const char *, 10> argvWithEnd{};
-    std::copy(argv.begin(), argv.end(), argvWithEnd.begin());
+    std::array<const char *, 10> argv = {godot.c_str(),
+                                         "--headless",
+                                         "--path",
+                                         projectText.c_str(),
+                                         "--script",
+                                         "tests/plant_link_check.gd",
+                                         "--",
+                                         "--discovery-port",
+                                         port.c_str(),
+                                         nullptr};
     pid_t pid = -1;
     REQUIRE(::posix_spawn(&pid,
                           godot.c_str(),
                           nullptr,
                           nullptr,
-                          const_cast<char *const *>(argvWithEnd.data()),
+                          const_cast<char *const *>(argv.data()),
                           nullptr) == 0);
 
-    // The plant speaks first, like on the lockstep link.
-    pollfd entry{fd, POLLIN, 0};
-    REQUIRE(::poll(&entry, 1U, PLANT_BUDGET_MS) == 1);
-    std::array<std::uint8_t, mark4::MAX_ENVELOPE_SIZE + 64U> bytes{};
-    sockaddr_in peer{};
-    socklen_t peerLength = sizeof(peer);
-    const ssize_t received = ::recvfrom(
-        fd, bytes.data(), bytes.size(), 0, reinterpret_cast<sockaddr *>(&peer), &peerLength);
-    REQUIRE(received > 0);
-
-    mark4_Envelope envelope;
-    REQUIRE(mark4::decodeEnvelope(bytes.data(), static_cast<std::size_t>(received), envelope));
-    REQUIRE(envelope.which_body == mark4_Envelope_sim_sensor_tag);
-    const mark4_SimSensor &sensor = envelope.body.sim_sensor;
+    // The plant speaks first, like on the sim link.
+    Delivered delivered;
+    const std::uint64_t deadlineUs = clock.nowUs() + PLANT_BUDGET_MS * US_PER_MS;
+    while (!delivered.sensorSeen && clock.nowUs() < deadlineUs)
+    {
+        transport.poll(clock.nowUs(), &onPayload, &delivered);
+        ::usleep(2000);
+    }
+    REQUIRE(delivered.sensorSeen);
+    REQUIRE(transport.isAlive(delivered.src));
+    const mark4_SimSensor &sensor = delivered.envelope.body.sim_sensor;
     CHECK(sensor.timestamp_us == 42U);
     CHECK(sensor.gyro_rad_s[0] == 0.25f);
     CHECK(sensor.gyro_rad_s[1] == -0.5f);
@@ -121,7 +153,7 @@ TEST_CASE("the plant's generated codec and the nanopb codec agree over UDP", "[g
     CHECK(sensor.truth.position_m[2] == 1.5f);
     CHECK(sensor.truth.velocity_mps[0] == -2.0f);
 
-    // Both replies the flight process sends on that link.
+    // Both replies the flight process unicasts to its plant.
     mark4_Envelope actuator = mark4_Envelope_init_zero;
     actuator.which_body = mark4_Envelope_sim_actuator_tag;
     actuator.body.sim_actuator.echo_timestamp_us = sensor.timestamp_us;
@@ -129,19 +161,19 @@ TEST_CASE("the plant's generated codec and the nanopb codec agree over UDP", "[g
     actuator.body.sim_actuator.motor[1] = 0.2f;
     actuator.body.sim_actuator.motor[2] = 0.3f;
     actuator.body.sim_actuator.motor[3] = 0.4f;
-    sendEnvelope(fd, peer, actuator);
+    sendEnvelope(transport, delivered.src, actuator);
 
     mark4_Envelope scenario = mark4_Envelope_init_zero;
     scenario.which_body = mark4_Envelope_sim_scenario_tag;
     scenario.body.sim_scenario.sequence = 3U;
     scenario.body.sim_scenario.kind = mark4_SimScenarioKind_THROW;
     scenario.body.sim_scenario.velocity_mps[2] = 6.5f;
-    sendEnvelope(fd, peer, scenario);
+    sendEnvelope(transport, delivered.src, scenario);
 
     // The plant judges the replies and says so with its exit code.
     int status = 0;
     bool exited = false;
-    for (int waited = 0; waited < PLANT_BUDGET_MS && !exited; waited += 10)
+    for (std::uint64_t waited = 0U; waited < PLANT_BUDGET_MS && !exited; waited += 10U)
     {
         exited = ::waitpid(pid, &status, WNOHANG) == pid;
         if (!exited)
@@ -154,7 +186,6 @@ TEST_CASE("the plant's generated codec and the nanopb codec agree over UDP", "[g
         static_cast<void>(::kill(pid, SIGKILL));
         static_cast<void>(::waitpid(pid, &status, 0));
     }
-    static_cast<void>(::close(fd));
     REQUIRE(exited);
     REQUIRE(WIFEXITED(status));
     CHECK(WEXITSTATUS(status) == 0);

@@ -30,7 +30,7 @@ namespace mark4
         std::size_t size = 0U;
         if (encodeEnvelope(envelope, wire.data(), wire.size(), size))
         {
-            static_cast<void>(m_link.replyToLastSender(wire.data(), size));
+            static_cast<void>(m_link.reply(wire.data(), size));
         }
     }
 
@@ -48,6 +48,6 @@ namespace mark4
         std::array<std::uint8_t, MAX_ENVELOPE_SIZE> wire{};
         std::size_t size = 0U;
         return encodeEnvelope(envelope, wire.data(), wire.size(), size) &&
-               m_link.sendToLastSender(wire.data(), size);
+               m_link.send(wire.data(), size);
     }
 } // namespace mark4

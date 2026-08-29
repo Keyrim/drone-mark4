@@ -36,8 +36,8 @@ process reaches it by beaconing on the discovery port; nothing is wired by
 hand. Everything operational is driven at runtime through the websocket by
 the pages: connecting to a drone (`connect` message, Connections panel of
 the control page) and the tuning profiles. A default worth changing is a
-compile-time change in `protocol/ports.hpp`, `transport/udp_link.hpp` or
-`HubApp::Config`, not a flag.
+compile-time change in `transport/udp_link.hpp` or `HubApp::Config`, not a
+flag.
 
 One drone at a time is THE connected drone. Everything the hub hears is
 still decoded and published to the clients - being connected
@@ -53,9 +53,14 @@ its relay's, and follows the relay).
 
 The hub never starts Godot or a flight process: both are yours to run and
 restart at will (Godot from its own terminal or the "godot sim" VS Code
-task, `drone_sim` from anywhere). The plant idles and resends until
-the sim port answers, discovery picks each incarnation up within a second,
-so the hub is the process that stays up for the whole bench session.
+task, `drone_sim` from anywhere). Godot is one more node of the LAN, kind
+`plant` (one entry of `processes`, never a connection target: it is not a
+drone), and spawns one virtual drone per `drone_sim` it hears; discovery
+picks each incarnation up within a second, so the hub is the process that
+stays up for the whole bench session. `processes` holds one entry per
+kind: with two `drone_sim` on the LAN the entry alternates between their
+node ids; the streams of the one it names carry `source` 2, the other's
+are published too, with `source` 0.
 
 ## Pages
 
@@ -208,7 +213,7 @@ every message may carry. `startIndex` is optional and defaults to 0. The
 arrived: the descriptions follow as their own `tuningInfo` messages, one per
 flight frame as the process unrolls them.
 
-`target` is a process kind name: `firmware`, `drone_sim`, `sim_plant`. `kill`, `arm` and `mode` are integers, `throttle` a number in
+`target` is a process kind name: `firmware`, `drone_sim`. `kill`, `arm` and `mode` are integers, `throttle` a number in
 [0, 1]. Every field but `type` (and `scenario` / `action`) is optional and
 defaults to zero; a `simScenario` defaults its `target` to `drone_sim`.
 

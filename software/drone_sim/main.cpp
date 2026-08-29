@@ -9,7 +9,6 @@
 #include <cstring>
 
 #include "drone_sim_app.hpp"
-#include "protocol/ports.hpp"
 #include "transport/node_id.hpp"
 #include "transport/udp_link.hpp"
 
@@ -39,14 +38,12 @@ namespace
     {
         static_cast<void>(std::fprintf(
             stderr,
-            "usage: %s [--sim-port N] [--discovery-port N] [--node-id N] [--ota-dir DIR]\n"
-            "  --sim-port        UDP port the sim link listens on (default %u)\n"
+            "usage: %s [--discovery-port N] [--node-id N] [--ota-dir DIR]\n"
             "  --discovery-port  shared UDP port of the transport (default %u)\n"
             "  --node-id         transport identity, 1..4294967295 (default: random)\n"
             "  --ota-dir         directory holding the emulated firmware slots and boot\n"
             "                    metadata (default '%s' next to this binary)\n",
             program,
-            static_cast<unsigned>(mark4::SIM_LINK_PORT),
             static_cast<unsigned>(mark4::DISCOVERY_PORT),
             OTA_DIRECTORY_NAME));
     }
@@ -86,7 +83,6 @@ namespace
 
 int main(int argc, char **argv)
 {
-    std::uint16_t simPort = mark4::SIM_LINK_PORT;
     std::uint16_t discoveryPort = mark4::DISCOVERY_PORT;
     std::uint32_t nodeId = 0U;
     std::array<char, mark4::DroneSimApp::OTA_DIRECTORY_SIZE> otaDirectory{};
@@ -95,16 +91,7 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; ++i)
     {
         long long value = 0LL;
-        if (std::strcmp(argv[i], "--sim-port") == 0 && i + 1 < argc)
-        {
-            if (!parsePositive(argv[++i], MAX_PORT, value))
-            {
-                printUsage(argv[0]);
-                return 1;
-            }
-            simPort = static_cast<std::uint16_t>(value);
-        }
-        else if (std::strcmp(argv[i], "--discovery-port") == 0 && i + 1 < argc)
+        if (std::strcmp(argv[i], "--discovery-port") == 0 && i + 1 < argc)
         {
             if (!parsePositive(argv[++i], MAX_PORT, value))
             {
@@ -149,16 +136,14 @@ int main(int argc, char **argv)
             return 1;
         }
     }
-    mark4::DroneSimApp app(MAX_FRAMES, simPort, discoveryPort, nodeId, otaDirectory.data());
+    mark4::DroneSimApp app(MAX_FRAMES, discoveryPort, nodeId, otaDirectory.data());
     if (!app.init())
     {
         static_cast<void>(std::fprintf(stderr, "drone_sim: initialization failed\n"));
         return 1;
     }
 
-    std::printf("drone_sim: waiting for sensor packets on udp/%u, transport node %u on "
-                "discovery udp/%u\n",
-                static_cast<unsigned>(simPort),
+    std::printf("drone_sim: transport node %u on discovery udp/%u, waiting for a plant\n",
                 static_cast<unsigned>(nodeId),
                 static_cast<unsigned>(discoveryPort));
 
@@ -166,9 +151,7 @@ int main(int argc, char **argv)
     if (steps == 0U)
     {
         static_cast<void>(std::fprintf(
-            stderr,
-            "drone_sim: no sensor packet ever arrived on udp/%u: is the simulator running?\n",
-            static_cast<unsigned>(simPort)));
+            stderr, "drone_sim: no sensor frame ever arrived: is the simulator running?\n"));
         return 1;
     }
     const std::uint64_t elapsedMs = app.accessClock().nowUs() / US_PER_MS;

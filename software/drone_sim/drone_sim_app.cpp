@@ -71,14 +71,10 @@ namespace
 namespace mark4
 {
     DroneSimApp::DroneSimApp(std::uint32_t maxFrames,
-                             std::uint16_t simPort,
                              std::uint16_t discoveryPort,
                              std::uint32_t nodeId,
                              const char *otaDirectory)
         : m_maxFrames(maxFrames),
-          m_simPort(simPort),
-          m_sensorSource(m_simLink),
-          m_motorSink(m_simLink),
           m_udpLink(discoveryPort),
           m_transport(nodeId),
           m_otaDirectory(makeOtaDirectory(otaDirectory))
@@ -87,10 +83,6 @@ namespace mark4
 
     bool DroneSimApp::init()
     {
-        if (!m_simLink.open(m_simPort, IDLE_TIMEOUT_MS))
-        {
-            return false;
-        }
         if (!m_udpLink.init() || !m_transport.addLink(m_udpLink) || !m_transport.init())
         {
             static_cast<void>(std::fprintf(stderr, "drone_sim: transport initialization failed\n"));
@@ -115,20 +107,6 @@ namespace mark4
         }
         m_transport.setBeacon(beacon.data(), beaconSize);
         return bootFirmware();
-    }
-
-    void DroneSimApp::OnPayload(void *context,
-                                std::uint32_t src,
-                                const std::uint8_t *payload,
-                                std::size_t size)
-    {
-        static_cast<void>(src);
-        static_cast<DroneSimApp *>(context)->m_commandReceiver.push(payload, size);
-    }
-
-    void DroneSimApp::pollTransport()
-    {
-        m_transport.poll(m_clock.nowUs(), &DroneSimApp::OnPayload, this);
     }
 
     bool DroneSimApp::bootFirmware()
@@ -334,7 +312,7 @@ namespace mark4
             const std::uint64_t nowUs = m_clock.nowUs();
             // Kept up while parked: the ground side must keep finding this
             // process, and an update takes longer than the beacon period.
-            pollTransport();
+            m_plantLink.poll();
             for (;;)
             {
                 const std::size_t size = m_commandReceiver.poll(command.data(), command.size());
@@ -371,7 +349,7 @@ namespace mark4
 
     void DroneSimApp::drainCommands(std::uint64_t nowUs)
     {
-        pollTransport();
+        m_plantLink.poll();
         std::array<std::uint8_t, MAX_PAYLOAD> command{};
         bool reboot = false;
         for (;;)
@@ -457,9 +435,8 @@ namespace mark4
                 // announcing itself and waits for the world to come back.
                 if (platformReady)
                 {
-                    std::printf("drone_sim: platform not ready, waiting for sensor frames "
-                                "on udp/%u\n",
-                                static_cast<unsigned>(m_simPort));
+                    std::printf("drone_sim: platform not ready, waiting for a plant node to "
+                                "send sensor frames\n");
                     static_cast<void>(std::fflush(stdout));
                     platformReady = false;
                 }

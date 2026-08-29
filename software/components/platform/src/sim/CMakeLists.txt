@@ -1,9 +1,9 @@
-# Desktop variant: sensor frames come in over UDP from the simulator, actuator
-# frames go back to it, telemetry is broadcast. POSIX sockets and stdio,
-# desktop only.
+# Desktop variant: sensor frames come in as transport frames from the plant
+# node, actuator frames go back to it, telemetry is broadcast. POSIX poll(2)
+# and stdio, desktop only.
 add_library(platform_sim STATIC
     clock_sim.cpp
-    udp_socket.cpp
+    plant_link.cpp
     sensor_source_sim.cpp
     motor_sink_sim.cpp
     firmware_store_sim.cpp)

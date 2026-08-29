@@ -3,7 +3,7 @@
 ///        built-in defaults and everything operational (the board link, the
 ///        tuning profiles) is driven at runtime through the websocket by the
 ///        pages. Anything worth deciding earlier than that is a compile-time
-///        default in protocol/ports.hpp or HubApp::Config.
+///        default in transport/udp_link.hpp or HubApp::Config.
 
 #include <atomic>
 #include <csignal>

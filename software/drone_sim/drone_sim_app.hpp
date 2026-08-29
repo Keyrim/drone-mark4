@@ -18,9 +18,9 @@
 #include "platform_sim/clock_sim.hpp"
 #include "platform_sim/firmware_store_sim.hpp"
 #include "platform_sim/motor_sink_sim.hpp"
+#include "platform_sim/plant_link.hpp"
 #include "platform_sim/sensor_source_sim.hpp"
 #include "platform_sim/sim_run_tracker.hpp"
-#include "platform_sim/udp_socket.hpp"
 #include "protocol/envelope.hpp"
 #include "transport/transport.hpp"
 #include "transport/udp_link.hpp"
@@ -52,27 +52,25 @@ namespace mark4
 
         /// @param maxFrames number of frames to process before stopping,
         ///        0 = no limit (the run ends with the operator or the link)
-        /// @param simPort UDP port the sim link listens on
         /// @param discoveryPort shared transport port of this deployment
         /// @param nodeId transport identity of this process, never 0; drawn
         ///        at random by main() unless a campaign pins it
         /// @param otaDirectory directory holding the emulated flash slots and
         ///        boot metadata; copied, so the caller keeps its buffer
         explicit DroneSimApp(std::uint32_t maxFrames,
-                             std::uint16_t simPort,
                              std::uint16_t discoveryPort,
                              std::uint32_t nodeId,
                              const char *otaDirectory);
 
-        /// @brief Initializes services in declaration order: binds the sim link,
-        ///        opens the transport, then runs the fake bootloader that
-        ///        picks the firmware slot. The first failure is logged by the
-        ///        service and returns false immediately.
+        /// @brief Initializes services in declaration order: opens the
+        ///        transport, then runs the fake bootloader that picks the
+        ///        firmware slot. The first failure is logged by the service
+        ///        and returns false immediately.
         /// @return true when every service is ready
         bool init();
 
         /// @brief Runs the waitFrame -> step -> push -> record loop until the
-        ///        requested number of frames is reached or the sim link goes idle.
+        ///        requested number of frames is reached.
         /// @return number of steps executed
         std::uint32_t run();
 
@@ -169,38 +167,23 @@ namespace mark4
         /// @param nowUs instant handed to the RC fail-safe [us]
         void drainCommands(std::uint64_t nowUs);
 
-        /// @brief Pumps the transport on the wall clock: frames in, beacon
-        ///        and node expiry out. Every payload delivered lands in the
-        ///        command receiver; the wall clock, not the simulated one,
-        ///        because the beacon cadence is a real-time contract with the
-        ///        ground side whatever the sim time scale.
-        void pollTransport();
-
-        /// @brief Transport delivery callback: queues one payload.
-        /// @param context the DroneSimApp
-        /// @param src node the payload came from, unused: every command is
-        ///        acted on whoever sent it, as on the board
-        /// @param payload payload bytes
-        /// @param size payload size
-        static void OnPayload(void *context,
-                              std::uint32_t src,
-                              const std::uint8_t *payload,
-                              std::size_t size);
-
         std::uint32_t m_maxFrames; ///< frame budget for run()
-        std::uint16_t m_simPort;   ///< sim link listen port
 
         // Declaration order = construction order; dependencies are injected by
         // reference, so a service may only depend on those declared above it.
         mark4::ClockSim m_clock;
-        mark4::UdpSocket m_simLink;
-        mark4::SensorSourceSim m_sensorSource;
-        mark4::MotorSinkSim m_motorSink;
         mark4::UdpLink m_udpLink;
         mark4::Transport m_transport;
+        mark4::CommandReceiverTransport m_commandReceiver;
+        /// The sim link: the plant's frames off the transport, sorted for
+        /// the sensor source and the command receiver; the wait point of
+        /// the flight loop sleeps on the link's sockets through it.
+        mark4::PlantLink m_plantLink{
+            m_transport, m_udpLink, m_clock, m_commandReceiver, IDLE_TIMEOUT_MS};
+        mark4::SensorSourceSim m_sensorSource{m_plantLink};
+        mark4::MotorSinkSim m_motorSink{m_plantLink};
         mark4::TelemetrySenderTransport m_telemetrySender{m_transport};
         mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender};
-        mark4::CommandReceiverTransport m_commandReceiver;
         mark4::RcTracker m_rcTracker;
         mark4::FlightCore m_core;
         mark4::TuningService m_tuningService{m_core, m_telemetrySender};

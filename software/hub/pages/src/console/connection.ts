@@ -31,6 +31,9 @@ export interface AnnouncedProcess {
     kindName: string;
 }
 
+/** Node kinds that are drones: the only ones a connection can target. */
+const DRONE_KINDS = new Set(["firmware", "drone_sim"]);
+
 export type RowState = "connected" | "lost" | "available";
 
 /** One row of the connection list. */
@@ -55,6 +58,11 @@ export function candidateRows(
     let connectionListed = false;
 
     for (const process of processes) {
+        if (!DRONE_KINDS.has(process.kindName)) {
+            // A plant, a gateway or a campaign is on the LAN but is not a
+            // drone: nothing to connect to.
+            continue;
+        }
         const mine = connection.via === "udp" && connection.id === process.kindName;
         connectionListed ||= mine;
         rows.push({
