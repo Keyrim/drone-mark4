@@ -23,8 +23,8 @@ namespace mark4
         {
         }
 
-        /// @brief Broadcasts one packet. Best effort: a frame the transport
-        ///        could not place is dropped and not counted.
+        /// @brief Broadcasts one packet. Best effort: a frame a link could
+        ///        not take (a full UART ring) is dropped and counted.
         /// @param data packet bytes
         /// @param size packet size in bytes
         void send(const std::uint8_t *data, std::size_t size) override
@@ -34,6 +34,16 @@ namespace mark4
                 ++m_packetCount;
                 m_byteCount += size;
             }
+            else
+            {
+                ++m_dropCount;
+            }
+        }
+
+        /// @return packets refused by a link since construction
+        [[nodiscard]] std::uint32_t dropCount() const
+        {
+            return m_dropCount;
         }
 
         /// @return packets sent since construction
@@ -51,6 +61,7 @@ namespace mark4
       private:
         Transport &m_transport;           ///< output, not owned
         std::uint32_t m_packetCount = 0U; ///< packets actually sent
+        std::uint32_t m_dropCount = 0U;   ///< packets refused by a link
         std::size_t m_byteCount = 0U;     ///< bytes actually sent
     };
 } // namespace mark4

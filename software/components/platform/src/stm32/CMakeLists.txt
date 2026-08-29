@@ -9,8 +9,6 @@ add_library(platform_stm32 STATIC
     mpu6050.cpp
     bmp581.cpp
     uart1.cpp
-    telemetry_sender_stm32.cpp
-    command_receiver_stm32.cpp
     clock_stm32.cpp
     sensor_source_stm32.cpp
     internal_flash.cpp
@@ -18,9 +16,10 @@ add_library(platform_stm32 STATIC
     firmware_store_stm32.cpp)
 target_include_directories(platform_stm32 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # protocol and platform_common are public: the firmware store is an
-# OtaMetaLog over a flash backend, and drone_boot reuses the same log.
+# OtaMetaLog over a flash backend, and drone_boot reuses the same log. The
+# transport is public too: the UART byte stream implements its interface.
 target_link_libraries(platform_stm32
-    PUBLIC platform platform_common protocol
+    PUBLIC platform platform_common protocol transport
     PRIVATE drone_warnings drone_strict)
 
 # The flash map of docs/ota-design.md section 4.2, mirrored in C++ by

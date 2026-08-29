@@ -60,4 +60,10 @@ namespace mark4
     /// @brief Requests an NVIC system reset and never returns: the whole
     ///        chip restarts through the reset vector, peripherals included.
     [[noreturn]] void systemReset();
+
+    /// @brief Transport identity of this board: the 96-bit MCU unique id
+    ///        folded through hashNodeId(). Stable across resets and
+    ///        reflashes, never 0.
+    /// @return node id
+    std::uint32_t boardNodeId();
 } // namespace mark4

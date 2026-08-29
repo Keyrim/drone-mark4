@@ -8,21 +8,26 @@
 
 #include "flight_core/flight_core.hpp"
 #include "flight_core/types.hpp"
+#include "platform_common/command_receiver_transport.hpp"
+#include "platform_common/log_sink_transport.hpp"
 #include "platform_common/ota_updater.hpp"
 #include "platform_common/rc_tracker.hpp"
 #include "platform_common/telemetry_publisher.hpp"
+#include "platform_common/telemetry_sender_transport.hpp"
 #include "platform_common/tuning_service.hpp"
 #include "platform_stm32/bmp581.hpp"
+#include "platform_stm32/board.hpp"
 #include "platform_stm32/clock_stm32.hpp"
-#include "platform_stm32/command_receiver_stm32.hpp"
 #include "platform_stm32/firmware_store_stm32.hpp"
 #include "platform_stm32/i2c_bus.hpp"
 #include "platform_stm32/motor_sink_null.hpp"
 #include "platform_stm32/mpu6050.hpp"
 #include "platform_stm32/ota_slots.hpp"
 #include "platform_stm32/sensor_source_stm32.hpp"
-#include "platform_stm32/telemetry_sender_stm32.hpp"
+#include "platform_stm32/uart1_stream.hpp"
 #include "protocol/envelope.hpp"
+#include "transport/transport.hpp"
+#include "transport/uart_link.hpp"
 
 namespace mark4
 {
@@ -30,18 +35,24 @@ namespace mark4
     /// members. Member declaration order IS the construction order, and a
     /// service may only depend on those declared above it. Built by
     /// main(), passed by reference: no singleton.
+    ///
+    /// The board is one transport node with one link, USART1 through the
+    /// WiFi bridge. Everything it emits (telemetry, tuning and updater
+    /// answers, log lines, its Announce beacon) is a broadcast, like
+    /// drone_sim: the ground side relays and nobody has to know who asked.
+    /// Commands reach it as unicasts to its node id, or as broadcasts.
     class FirmwareApp
     {
       public:
-        /// Frames between two status lines over RTT, and between two
-        /// Announce messages on the UART: one per second.
+        /// Frames between two status lines over RTT: one per second.
         static constexpr std::uint32_t FRAMES_PER_STATUS = SensorSourceStm32::FRAME_RATE_HZ;
 
         FirmwareApp() = default;
 
         /// @brief Initializes the board (clock tree, RTT console, LEDs)
         ///        then the services in declaration order. The first
-        ///        failure is logged over RTT and returns false.
+        ///        failure is logged over RTT and the transport, and
+        ///        returns false.
         /// @return true when the loop is ready to run
         bool init();
 
@@ -53,8 +64,7 @@ namespace mark4
 
       private:
         /// @brief Hands one received message to the update session and sends
-        ///        whatever answer comes back, over the same UART telemetry
-        ///        goes out by.
+        ///        whatever answer comes back.
         /// @param envelope decoded message
         /// @param nowUs monotonic time [us]
         /// @return true when the updater claimed the message, whatever the
@@ -74,28 +84,52 @@ namespace mark4
         ///        and nothing else can move the running slot's state.
         void refreshArmInterlock();
 
-        /// @brief Sends the Announce naming this board: kind, chip and the
-        ///        identity stamped in the running slot's image header.
-        void sendAnnounce();
+        /// @brief Registers the Announce naming this board (kind, chip and
+        ///        the identity stamped in the running slot's image header)
+        ///        as the transport beacon.
+        /// @return false when it does not fit a beacon
+        bool setAnnounceBeacon();
 
-        /// @brief Drains the command uplink into the services: RC to the
+        /// @brief Pumps the transport: frames in, beacon and expiry out.
+        ///        Every payload delivered lands in the command receiver.
+        /// @param nowUs current instant [us]
+        void pollTransport(std::uint64_t nowUs);
+
+        /// @brief Transport delivery callback: queues one payload.
+        static void OnPayload(void *context,
+                              std::uint32_t src,
+                              const std::uint8_t *payload,
+                              std::size_t size);
+
+        /// @brief Drains the command receiver into the services: RC to the
         ///        tracker, updater messages served, tuning answered.
         /// @param nowUs instant handed to the RC fail-safe and the updater [us]
         /// @return true when a reboot command was drained
         bool drainCommands(std::uint64_t nowUs);
 
+        /// @brief One line to both consoles: RTT and the transport.
+        /// @param level severity of the transport line
+        /// @param text zero-terminated line, without newline
+        /// @param nowUs current instant [us]
+        void log(mark4_LogLevel level, const char *text, std::uint64_t nowUs);
+
         // Declaration order = construction order; dependencies are
         // injected by reference, so a service may only depend on those
-        // declared above it.
+        // declared above it. The link comes first so that an init failure
+        // further down is reported on it.
         mark4::ClockStm32 m_clock;
+        mark4::Uart1Stream m_uartStream;
+        mark4::UartLink m_uartLink{m_uartStream};
+        mark4::Transport m_transport{boardNodeId()};
+        mark4::TelemetrySenderTransport m_telemetrySender{m_transport};
+        mark4::LogSinkTransport m_log{m_transport};
         mark4::I2cBus m_bus;
         mark4::Mpu6050 m_imu{m_bus};
         mark4::Bmp581 m_baro{m_bus};
         mark4::SensorSourceStm32 m_sensorSource{m_imu, m_baro, m_clock};
         mark4::MotorSinkNull m_motorSink;
-        mark4::TelemetrySenderStm32 m_telemetrySender;
         mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender};
-        mark4::CommandReceiverStm32 m_commandReceiver;
+        mark4::CommandReceiverTransport m_commandReceiver;
         mark4::RcTracker m_rcTracker;
         mark4::FlightCore m_core;
         mark4::TuningService m_tuningService{m_core, m_telemetrySender};

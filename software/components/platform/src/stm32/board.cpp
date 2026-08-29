@@ -1,8 +1,10 @@
 #include "platform_stm32/board.hpp"
 
+#include <cstddef>
 #include <cstdint>
 
 #include "registers.hpp"
+#include "transport/node_id.hpp"
 
 namespace mark4
 {
@@ -176,5 +178,14 @@ namespace mark4
         {
             __asm volatile("wfi");
         }
+    }
+
+    std::uint32_t boardNodeId()
+    {
+        // The 96-bit unique device id of the F405 (RM0090 39.1), read as
+        // bytes so the hash does not depend on the word order.
+        constexpr std::uint32_t UID_BASE = 0x1FFF7A10U;
+        constexpr std::size_t UID_SIZE = 12U;
+        return hashNodeId(reinterpret_cast<const std::uint8_t *>(UID_BASE), UID_SIZE);
     }
 } // namespace mark4
