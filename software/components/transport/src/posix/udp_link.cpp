@@ -1,11 +1,13 @@
 #include "transport/udp_link.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
 
 #include <arpa/inet.h>
+#include <ifaddrs.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -101,6 +103,21 @@ namespace mark4
             return false;
         }
         m_dataPort = ntohs(bound.sin_port);
+        // Every address a broadcast of ours can come back from. Best
+        // effort: without the list an echo is merely counted as a duplicate.
+        ifaddrs *interfaces = nullptr;
+        if (::getifaddrs(&interfaces) == 0)
+        {
+            for (const ifaddrs *entry = interfaces; entry != nullptr; entry = entry->ifa_next)
+            {
+                if (entry->ifa_addr != nullptr && entry->ifa_addr->sa_family == AF_INET)
+                {
+                    const auto *address = reinterpret_cast<const sockaddr_in *>(entry->ifa_addr);
+                    m_localHosts.push_back(ntohl(address->sin_addr.s_addr));
+                }
+            }
+            ::freeifaddrs(interfaces);
+        }
         return true;
     }
 
@@ -139,7 +156,24 @@ namespace mark4
         {
             return unicast;
         }
-        return ReadOne(m_discoveryFd, bufferOut, capacity, fromOut);
+        for (;;)
+        {
+            const std::size_t size = ReadOne(m_discoveryFd, bufferOut, capacity, fromOut);
+            if (size == 0U || !isOwnEcho(fromOut))
+            {
+                return size;
+            }
+        }
+    }
+
+    bool UdpLink::isOwnEcho(const LinkAddress &from) const
+    {
+        if (from.port != m_dataPort)
+        {
+            return false;
+        }
+        return std::ranges::any_of(m_localHosts,
+                                   [&from](std::uint32_t host) { return host == from.host; });
     }
 
     bool UdpLink::sendTo(const std::uint8_t *data,
@@ -204,5 +238,6 @@ namespace mark4
             }
         }
         m_dataPort = 0U;
+        m_localHosts.clear();
     }
 } // namespace mark4

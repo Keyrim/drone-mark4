@@ -438,6 +438,73 @@ TEST_CASE("a relay in a line forwards towards the destination and no further")
     CHECK(linkR2.broadcasts() == 1U);
 }
 
+TEST_CASE("a hub relays a board broadcast to the lan exactly once and ignores its echo")
+{
+    // board --bus1 (the bridge)-- hub --bus2 (the LAN)-- sim. The hub relays;
+    // the LAN echoes every broadcast back to its sender, the bridge does not.
+    FakeBus bridge;
+    FakeBus lan;
+    FakeLink linkBoard(bridge);
+    FakeLink linkHubBridge(bridge);
+    FakeLink linkHubLan(lan);
+    FakeLink linkSim(lan);
+    mark4::Transport board(NODE_A);
+    mark4::Transport hub(0x4B000000U);
+    mark4::Transport sim(NODE_C);
+    REQUIRE(board.addLink(linkBoard));
+    REQUIRE(hub.addLink(linkHubBridge));
+    REQUIRE(hub.addLink(linkHubLan));
+    REQUIRE(sim.addLink(linkSim));
+    hub.setRelay(true);
+    Observer seenByBoard;
+    Observer seenByHub;
+    Observer seenBySim;
+
+    // Board telemetry: delivered to the hub once, on the LAN once, to the sim
+    // once. The hub then hears its own forwarding come back on the LAN.
+    REQUIRE(board.send(mark4::BROADCAST_NODE, HELLO.data(), HELLO.size()));
+    seenByHub.poll(hub, T0_US);
+    REQUIRE(seenByHub.delivered.size() == 1U);
+    CHECK(linkHubLan.broadcasts() == 1U);
+    CHECK(linkHubBridge.broadcasts() == 0U);
+    seenBySim.poll(sim, T0_US);
+    REQUIRE(seenBySim.delivered.size() == 1U);
+    CHECK(seenBySim.delivered[0].first == NODE_A);
+    seenByHub.poll(hub, T0_US);
+    CHECK(seenByHub.delivered.size() == 1U);
+    CHECK(linkHubLan.broadcasts() == 1U);
+    // The echo of its own forwarding is dropped as a duplicate of the board's
+    // frame, and counted as one: the transport cannot tell it from a loop.
+    // (A UdpLink filters its own echoes before they get here; this fake
+    // medium does not, so the count shows.)
+    REQUIRE(hub.findNode(NODE_A) != nullptr);
+    CHECK(hub.findNode(NODE_A)->duplicates == 1U);
+    CHECK(hub.findNode(NODE_A)->received == 1U);
+
+    // The other way: a LAN broadcast reaches the board through the bridge.
+    REQUIRE(sim.send(mark4::BROADCAST_NODE, HELLO.data(), HELLO.size()));
+    seenByHub.poll(hub, T0_US);
+    CHECK(seenByHub.delivered.size() == 2U);
+    CHECK(linkHubBridge.broadcasts() == 1U);
+    seenByBoard.poll(board, T0_US);
+    REQUIRE(seenByBoard.delivered.size() == 1U);
+    CHECK(seenByBoard.delivered[0].first == NODE_C);
+
+    // A command from the sim to the board crosses to the bridge; the board's
+    // unicast answer crosses back.
+    REQUIRE(sim.send(NODE_A, HELLO.data(), HELLO.size()));
+    seenByHub.poll(hub, T0_US);
+    CHECK(linkHubBridge.sent() == 1U);
+    seenByBoard.poll(board, T0_US);
+    REQUIRE(seenByBoard.delivered.size() == 2U);
+    REQUIRE(board.send(NODE_C, HELLO.data(), HELLO.size()));
+    seenByHub.poll(hub, T0_US);
+    CHECK(linkHubLan.sent() == 1U);
+    seenBySim.poll(sim, T0_US);
+    REQUIRE(seenBySim.delivered.size() == 2U);
+    CHECK(seenBySim.delivered[1].first == NODE_A);
+}
+
 TEST_CASE("relays in a triangle never loop a broadcast")
 {
     // Three relays, each on two buses, every pair sharing one bus.

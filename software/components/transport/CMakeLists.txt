@@ -14,5 +14,6 @@ target_link_libraries(transport PRIVATE drone_warnings drone_strict)
 if(DRONE_PLATFORM STREQUAL "desktop")
     target_sources(transport PRIVATE
         src/posix/udp_link.cpp
+        src/posix/udp_byte_stream.cpp
         src/posix/node_id.cpp)
 endif()

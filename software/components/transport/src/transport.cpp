@@ -176,8 +176,9 @@ namespace mark4
             const auto delta = static_cast<std::uint16_t>(header.seq - node->lastSeq);
             if (delta == 0U)
             {
-                // The same frame again: a relay loop closing, or a medium
-                // that duplicates. Either way it was already handled.
+                // The same frame again: a relay loop closing, a medium that
+                // duplicates, or this node's own forwarding echoed back by
+                // a shared medium. Either way it was already handled.
                 ++node->duplicates;
                 return false;
             }

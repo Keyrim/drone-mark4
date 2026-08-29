@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "transport/link.hpp"
 
@@ -47,6 +48,11 @@ namespace mark4
         ///        node's own discovery socket included.
         bool broadcast(const std::uint8_t *data, std::size_t size) override;
 
+        /// @brief Takes one pending datagram, unicast first. A broadcast
+        ///        this very socket sent comes back from the kernel like any
+        ///        other (own data port, own address) and is dropped here: it
+        ///        carries nothing, and when the node relays it would count
+        ///        as a duplicate of the frame it just forwarded.
         std::size_t receive(std::uint8_t *bufferOut,
                             std::size_t capacity,
                             LinkAddress &fromOut) override;
@@ -99,6 +105,10 @@ namespace mark4
                                    std::size_t capacity,
                                    LinkAddress &fromOut);
 
+        /// @param from sender of a datagram read on the discovery socket
+        /// @return true when it is this node's own data socket
+        [[nodiscard]] bool isOwnEcho(const LinkAddress &from) const;
+
         /// @brief Closes whatever is open.
         void closeSockets();
 
@@ -107,5 +117,7 @@ namespace mark4
         int m_dataFd = -1;             ///< bound to m_dataPort, -1 when closed
         std::uint16_t m_dataPort = 0U; ///< ephemeral port the kernel picked
         bool m_loopbackOnly = false;   ///< 255.255.255.255 failed once: use 127.255.255.255
+        std::vector<std::uint32_t> m_localHosts; ///< this host's IPv4 addresses at init(),
+                                                 ///< host byte order, echo detection
     };
 } // namespace mark4
