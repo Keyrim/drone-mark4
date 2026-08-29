@@ -155,9 +155,9 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: cmake --preset desktop
+      - run: cmake --preset desktop && cmake --build --preset desktop --target protocol
         working-directory: software
       - run: run-clang-tidy -p software/build/desktop -quiet "$(pwd)/software/(components|drone_sim|drone_firmware|hub|tests)/"
-      - run: cmake --preset stm32
+      - run: cmake --preset stm32 && cmake --build --preset stm32 --target protocol
         working-directory: software
       - run: ./scripts/tidy_stm32.sh
