@@ -512,8 +512,8 @@ namespace mark4
 
         /// @brief Fills the connect part of a client request. The route names
         ///        what identifies the drone: a UDP process is its kind, a
-        ///        board is the door it is reached through (UART device or
-        ///        bridge name), because the board itself never announces.
+        ///        board is the bridge it is reached through, because the
+        ///        board itself never announces.
         /// @param object message object
         /// @param message message being decoded
         /// @param errorOut receives the reason on failure
@@ -523,33 +523,13 @@ namespace mark4
             const auto via = object.find("via");
             if (via == object.end() || !via->is_string())
             {
-                errorOut = R"(field 'via' must be "udp", "uart" or "bridge")";
+                errorOut = R"(field 'via' must be "udp" or "bridge")";
                 return false;
             }
             message.connectVia = via->get<std::string>();
             if (message.connectVia == "udp")
             {
                 return readTarget(object, message.target, errorOut);
-            }
-            if (message.connectVia == "uart")
-            {
-                const auto device = object.find("device");
-                if (device == object.end() || !device->is_string() ||
-                    device->get<std::string>().empty())
-                {
-                    errorOut = "field 'device' must name the UART to open";
-                    return false;
-                }
-                message.connectPeer = device->get<std::string>();
-                const auto baud = object.find("baud");
-                if (baud == object.end() || !baud->is_number_unsigned() ||
-                    baud->get<std::uint64_t>() == 0U || baud->get<std::uint64_t>() > UINT32_MAX)
-                {
-                    errorOut = "field 'baud' must be a positive line speed";
-                    return false;
-                }
-                message.serialBaud = static_cast<std::uint32_t>(baud->get<std::uint64_t>());
-                return true;
             }
             if (message.connectVia == "bridge")
             {
@@ -562,7 +542,7 @@ namespace mark4
                 message.connectPeer = name->get<std::string>();
                 return true;
             }
-            errorOut = R"(field 'via' must be "udp", "uart" or "bridge")";
+            errorOut = R"(field 'via' must be "udp" or "bridge")";
             return false;
         }
 

@@ -1,6 +1,6 @@
 /// @file
-/// @brief Serial transport implementation. Raw termios, non-blocking reads,
-///        drained from the single poll loop of the hub.
+/// @brief Serial transport implementation. Non-blocking reads, drained from
+///        the single poll loop of the hub.
 
 #include "hub/serial_transport.hpp"
 
@@ -10,136 +10,33 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include <termios.h>
 #include <unistd.h>
 
 namespace mark4
 {
-    namespace
-    {
-        /// One supported line speed and the termios constant naming it.
-        struct BaudEntry
-        {
-            std::uint32_t baud; ///< speed in bauds
-            speed_t constant;   ///< matching termios value
-        };
-
-        /// Speeds the bench actually uses. Anything else is refused rather
-        /// than silently rounded to a speed the board does not speak.
-        constexpr std::array<BaudEntry, 8U> BAUD_TABLE = {{{9600U, B9600},
-                                                           {19200U, B19200},
-                                                           {38400U, B38400},
-                                                           {57600U, B57600},
-                                                           {115200U, B115200},
-                                                           {230400U, B230400},
-                                                           {460800U, B460800},
-                                                           {921600U, B921600}}};
-
-        /// @brief Looks up the termios constant of a line speed.
-        /// @param baud speed in bauds
-        /// @param constantOut receives the constant
-        /// @return true when the speed is supported
-        bool baudConstant(std::uint32_t baud, speed_t &constantOut)
-        {
-            for (const BaudEntry &entry : BAUD_TABLE)
-            {
-                if (entry.baud == baud)
-                {
-                    constantOut = entry.constant;
-                    return true;
-                }
-            }
-            return false;
-        }
-    } // namespace
-
     SerialTransport::~SerialTransport()
     {
         close();
     }
 
-    bool SerialTransport::open(const std::string &device, std::uint32_t baud)
+    bool SerialTransport::open(const std::string &device)
     {
         close();
         m_device = device;
-        m_baud = baud;
-        return openPort(true);
-    }
-
-    bool SerialTransport::openPort(bool reportFailure)
-    {
-        close();
-
-        m_isDatagram = m_device.rfind(UDP_PREFIX, 0U) == 0U;
-        if (m_isDatagram)
-        {
-            return openDatagram(reportFailure);
-        }
-
-        speed_t speed = B0;
-        if (!baudConstant(m_baud, speed))
-        {
-            static_cast<void>(std::fprintf(stderr, "hub: unsupported serial speed %u\n", m_baud));
-            return false;
-        }
-
-        const int fd = ::open(m_device.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
-        if (fd < 0)
-        {
-            if (reportFailure)
-            {
-                static_cast<void>(std::fprintf(
-                    stderr, "hub: cannot open %s: %s\n", m_device.c_str(), std::strerror(errno)));
-            }
-            return false;
-        }
-
-        termios attributes{};
-        if (::tcgetattr(fd, &attributes) < 0)
-        {
-            if (reportFailure)
-            {
-                static_cast<void>(std::fprintf(stderr,
-                                               "hub: %s is not a serial port: %s\n",
-                                               m_device.c_str(),
-                                               std::strerror(errno)));
-            }
-            static_cast<void>(::close(fd));
-            return false;
-        }
-        // Raw on both directions: the framing of protocol/ is the only
-        // structure on this line, and a driver must not touch a single byte.
-        attributes.c_iflag = 0;
-        attributes.c_oflag = 0;
-        attributes.c_lflag = 0;
-        attributes.c_cflag = CREAD | CLOCAL | CS8;
-        attributes.c_cc[VMIN] = 0;
-        attributes.c_cc[VTIME] = 0;
-        static_cast<void>(::cfsetispeed(&attributes, speed));
-        static_cast<void>(::cfsetospeed(&attributes, speed));
-        if (::tcsetattr(fd, TCSAFLUSH, &attributes) < 0)
-        {
-            if (reportFailure)
-            {
-                static_cast<void>(std::fprintf(stderr,
-                                               "hub: cannot configure %s: %s\n",
-                                               m_device.c_str(),
-                                               std::strerror(errno)));
-            }
-            static_cast<void>(::close(fd));
-            return false;
-        }
-
-        m_fd = fd;
-        m_parser = SerialFrameParser{};
-        return true;
+        return openDatagram(true);
     }
 
     bool SerialTransport::openDatagram(bool reportFailure)
     {
+        close();
+        if (m_device.rfind(UDP_PREFIX, 0U) != 0U)
+        {
+            static_cast<void>(
+                std::fprintf(stderr, "hub: %s is not udp:address:port\n", m_device.c_str()));
+            return false;
+        }
         const std::string target = m_device.substr(std::strlen(UDP_PREFIX));
         const std::size_t colon = target.rfind(':');
         sockaddr_in address{};
@@ -263,7 +160,7 @@ namespace mark4
             // Nothing keeps a datagram link alive but the hello: the bridge
             // forgets where to send when we stop, and a hello that cannot go
             // out means the network went away, which reopening will heal.
-            if (m_isDatagram && nowMs >= m_helloAtMs)
+            if (nowMs >= m_helloAtMs)
             {
                 m_helloAtMs = nowMs + HELLO_PERIOD_MS;
                 if (!sendHello())
@@ -286,7 +183,7 @@ namespace mark4
             return;
         }
         m_reopenAtMs = nowMs + REOPEN_PERIOD_MS;
-        if (openPort(false))
+        if (openDatagram(false))
         {
             static_cast<void>(std::printf("hub: %s reopened\n", m_device.c_str()));
             static_cast<void>(std::fflush(stdout));

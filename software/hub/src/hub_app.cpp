@@ -655,23 +655,11 @@ namespace mark4
         {
             if (message.target == StreamSource::FIRMWARE)
             {
-                errorOut = "the board is reached over uart or a bridge, not udp";
+                errorOut = "the board is reached over a bridge, not udp";
                 return false;
             }
             next.id = streamSourceName(message.target);
             next.kind = message.target;
-        }
-        else if (message.connectVia == "uart")
-        {
-            if (!m_serial.open(message.connectPeer, message.serialBaud))
-            {
-                // A failed open still remembers the device for the periodic
-                // retry; a refused connect must leave no such ghost behind.
-                m_serial.release();
-                errorOut = "cannot open " + message.connectPeer;
-                return false;
-            }
-            next.id = message.connectPeer;
         }
         else
         {
@@ -690,8 +678,10 @@ namespace mark4
             }
             const std::string device = std::string(SerialTransport::UDP_PREFIX) + found->address +
                                        ":" + std::to_string(found->port);
-            if (!m_serial.open(device, DEFAULT_SERIAL_BAUD))
+            if (!m_serial.open(device))
             {
+                // A failed open still remembers the device for the periodic
+                // retry; a refused connect must leave no such ghost behind.
                 m_serial.release();
                 errorOut = "cannot open " + device;
                 return false;
@@ -712,7 +702,7 @@ namespace mark4
 
     void HubApp::applyDisconnect()
     {
-        if (m_connection.via == "uart" || m_connection.via == "bridge")
+        if (m_connection.via == "bridge")
         {
             m_serial.release();
         }
@@ -741,7 +731,7 @@ namespace mark4
                                            found->address + ":" + std::to_string(found->port);
                 if (m_serial.device() != device)
                 {
-                    static_cast<void>(m_serial.open(device, DEFAULT_SERIAL_BAUD));
+                    static_cast<void>(m_serial.open(device));
                 }
             }
         }

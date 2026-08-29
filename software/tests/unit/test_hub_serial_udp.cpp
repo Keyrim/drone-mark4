@@ -110,7 +110,7 @@ TEST_CASE("a udp device carries the framed stream of the bridge")
 
     mark4::SerialTransport transport;
     const std::string device = "udp:127.0.0.1:" + std::to_string(BRIDGE_PORT);
-    REQUIRE(transport.open(device, 921600U));
+    REQUIRE(transport.open(device));
     REQUIRE(transport.isOpen());
 
     // The hub speaks first: the bridge only knows where to send once it has
@@ -151,8 +151,8 @@ TEST_CASE("a udp device carries the framed stream of the bridge")
 TEST_CASE("a malformed udp device is refused")
 {
     mark4::SerialTransport transport;
-    REQUIRE(!transport.open("udp:127.0.0.1", 921600U));
-    REQUIRE(!transport.open("udp:not-an-address:47839", 921600U));
-    REQUIRE(!transport.open("udp:127.0.0.1:0", 921600U));
+    REQUIRE(!transport.open("udp:127.0.0.1"));
+    REQUIRE(!transport.open("udp:not-an-address:47839"));
+    REQUIRE(!transport.open("udp:127.0.0.1:0"));
     REQUIRE(!transport.isOpen());
 }

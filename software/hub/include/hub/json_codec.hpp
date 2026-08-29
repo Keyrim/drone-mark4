@@ -66,9 +66,8 @@ namespace mark4
         TuningListPacket tuningList{};                  ///< TUNING_LIST: packet to forward
         std::string profileName;                        ///< PROFILE_*: profile concerned
         TuningValues profileValues;                     ///< PROFILE_SAVE: values to store
-        std::string connectVia;                         ///< CONNECT: "udp", "uart" or "bridge"
-        std::string connectPeer;                        ///< CONNECT: UART device or bridge name
-        std::uint32_t serialBaud = 0U;                  ///< CONNECT: line speed [baud], uart only
+        std::string connectVia;                         ///< CONNECT: "udp" or "bridge"
+        std::string connectPeer;                        ///< CONNECT: bridge name
         std::string otaBundlePath;                      ///< OTA_START: bundle to send, empty
                                                         ///< for the standard build output
     };
@@ -78,8 +77,8 @@ namespace mark4
     {
         bool serialOpen = false;   ///< the serial link is usable
         std::string serialLink;    ///< device the link is open on, empty = none
-        std::string connectionVia; ///< "udp", "uart" or "bridge", empty = none
-        std::string connectionId;  ///< kind name, UART device or bridge name
+        std::string connectionVia; ///< "udp" or "bridge", empty = none
+        std::string connectionId;  ///< kind name or bridge name
         StreamSource connectionKind = StreamSource::FIRMWARE; ///< kind commands route to
         bool connectionLive = false;          ///< the connected drone shows signs of life
         std::uint64_t badFrames = 0U;         ///< serial frames that decoded to nothing

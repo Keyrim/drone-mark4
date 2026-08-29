@@ -1,10 +1,10 @@
 #pragma once
 
 /// @file
-/// @brief The serial side of the hub: the single owner of the UART the real
-///        board is wired to. Everything else in the system stays on the UDP
-///        boundary of protocol/, exactly as it will when an ESP32 bridge
-///        replaces this cable.
+/// @brief The serial side of the hub: the single owner of the link to the
+///        real board. The bytes reach this machine as datagrams from the
+///        ESP32 bridge, and carry the stream framing of protocol/ from end
+///        to end.
 
 #include <cstddef>
 #include <cstdint>
@@ -16,8 +16,8 @@
 namespace mark4
 {
     /// One raw serial link, framed with the stream framing of protocol/.
-    /// A board that reboots, or a cable pulled out, closes the link; the hub
-    /// keeps running and reopens it on its own.
+    /// A board that reboots, or a bridge that goes away, closes the link;
+    /// the hub keeps running and reopens it on its own.
     class SerialTransport
     {
       public:
@@ -27,9 +27,8 @@ namespace mark4
         /// Bytes read from the port per drain().
         static constexpr std::size_t READ_CHUNK = 4096U;
 
-        /// Device prefix naming the WiFi bridge instead of a serial port, as
-        /// in udp:192.168.4.1:47830. Same stream, same framing, same fd: only
-        /// the way the bytes reach this machine changes.
+        /// Device prefix naming the WiFi bridge, as in
+        /// udp:192.168.4.1:47830. Nothing else is a valid device.
         static constexpr const char *UDP_PREFIX = "udp:";
 
         /// Delay between two hello datagrams [ms]. The bridge sends its
@@ -47,12 +46,11 @@ namespace mark4
         SerialTransport &operator=(SerialTransport &&) = delete;
         ~SerialTransport();
 
-        /// @brief Opens a serial port in raw non-blocking mode. The device is
+        /// @brief Opens the link in non-blocking mode. The device is
         ///        remembered, so a later maintain() can reopen it alone.
-        /// @param device device path, for instance /dev/ttyUSB0
-        /// @param baud line speed in bauds
-        /// @return true when the port is open and configured
-        bool open(const std::string &device, std::uint32_t baud);
+        /// @param device bridge device, as in udp:192.168.4.1:47830
+        /// @return true when the link is open and configured
+        bool open(const std::string &device);
 
         /// @brief Closes the port, if it is open.
         void close();
@@ -98,17 +96,12 @@ namespace mark4
         bool sendPacket(const std::uint8_t *payload, std::size_t size) const;
 
       private:
-        /// @brief Opens the configured device.
+        /// @brief Opens the UDP link the configured device names. The
+        ///        socket is connected, so the rest of the class treats the
+        ///        link as one descriptor to read from and write to.
         /// @param reportFailure true to log why the open failed; the periodic
-        ///        reopen attempts stay silent, a missing board must not fill
+        ///        reopen attempts stay silent, a missing bridge must not fill
         ///        the console with the same line every two seconds
-        /// @return true when the port is open and configured
-        bool openPort(bool reportFailure);
-
-        /// @brief Opens the UDP link a UDP_PREFIX device names. The socket is
-        ///        connected, so the rest of the class keeps treating the link
-        ///        as one descriptor to read from and write to.
-        /// @param reportFailure true to log why the link could not be opened
         /// @return true when the link is usable
         bool openDatagram(bool reportFailure);
 
@@ -116,10 +109,8 @@ namespace mark4
         /// @return true when it went out
         [[nodiscard]] bool sendHello() const;
 
-        std::string m_device;            ///< device path, empty when unconfigured
-        std::uint32_t m_baud = 0U;       ///< configured line speed [baud]
+        std::string m_device;            ///< bridge device, empty when unconfigured
         int m_fd = -1;                   ///< open descriptor, -1 when closed
-        bool m_isDatagram = false;       ///< true when the link is the WiFi bridge
         std::uint64_t m_helloAtMs = 0U;  ///< earliest next hello datagram [ms]
         std::uint64_t m_reopenAtMs = 0U; ///< earliest next reopen attempt [ms]
         SerialFrameParser m_parser;      ///< incremental decoder of the downlink

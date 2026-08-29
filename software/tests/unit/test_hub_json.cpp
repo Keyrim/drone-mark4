@@ -397,13 +397,6 @@ TEST_CASE("a connect message names one drone by its route")
     CHECK(std::get<mark4::ClientMessage>(udp).connectVia == "udp");
     CHECK(std::get<mark4::ClientMessage>(udp).target == mark4::StreamSource::DRONE_SIM);
 
-    const auto uart = mark4::parseClientMessage(
-        R"({"type":"connect","via":"uart","device":"/dev/ttyUSB0","baud":921600})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(uart));
-    CHECK(std::get<mark4::ClientMessage>(uart).connectVia == "uart");
-    CHECK(std::get<mark4::ClientMessage>(uart).connectPeer == "/dev/ttyUSB0");
-    CHECK(std::get<mark4::ClientMessage>(uart).serialBaud == 921600U);
-
     const auto bridge =
         mark4::parseClientMessage(R"({"type":"connect","via":"bridge","name":"c19f6c"})");
     REQUIRE(std::holds_alternative<mark4::ClientMessage>(bridge));
@@ -414,14 +407,10 @@ TEST_CASE("a connect message names one drone by its route")
     REQUIRE(std::holds_alternative<mark4::ClientMessage>(disconnect));
     CHECK(std::get<mark4::ClientMessage>(disconnect).type == mark4::ClientMessageType::DISCONNECT);
 
-    // Each route requires its identity: no device, no name, no target, no
-    // speed means there is nothing to connect to
+    // Each route requires its identity: no name and no target means there
+    // is nothing to connect to
     CHECK(std::holds_alternative<std::string>(
         mark4::parseClientMessage(R"({"type":"connect","via":"udp"})")));
-    CHECK(std::holds_alternative<std::string>(
-        mark4::parseClientMessage(R"({"type":"connect","via":"uart","baud":921600})")));
-    CHECK(std::holds_alternative<std::string>(mark4::parseClientMessage(
-        R"({"type":"connect","via":"uart","device":"/dev/ttyUSB0","baud":0})")));
     CHECK(std::holds_alternative<std::string>(
         mark4::parseClientMessage(R"({"type":"connect","via":"bridge"})")));
     CHECK(std::holds_alternative<std::string>(

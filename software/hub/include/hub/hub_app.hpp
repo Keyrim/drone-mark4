@@ -61,9 +61,6 @@ namespace mark4
         /// counts as a pilot (the stream runs at 10 Hz while engaged).
         static constexpr std::uint64_t RC_PILOT_WINDOW_US = 2'000'000U;
 
-        /// Default line speed of the board UART [baud].
-        static constexpr std::uint32_t DEFAULT_SERIAL_BAUD = 921600U;
-
         /// Highest scenario sequence number the hub stamps before wrapping.
         /// Zero is reserved on the wire for "no scenario", so the counter
         /// runs 1..255.
@@ -119,12 +116,6 @@ namespace mark4
         void requestStop()
         {
             m_stopRequested.store(true);
-        }
-
-        /// @return serial link, so a caller that requires the board can check it
-        [[nodiscard]] const SerialTransport &accessSerial() const
-        {
-            return m_serial;
         }
 
       private:
@@ -286,8 +277,8 @@ namespace mark4
         /// and the same drone coming back turns live true again on its own.
         struct Connection
         {
-            std::string via;                            ///< "udp", "uart" or "bridge", empty = none
-            std::string id;                             ///< kind name, UART device or bridge name
+            std::string via;                            ///< "udp" or "bridge", empty = none
+            std::string id;                             ///< kind name or bridge name
             StreamSource kind = StreamSource::FIRMWARE; ///< kind commands route to
             bool live = false;                          ///< the drone shows signs of life
         };
@@ -298,7 +289,7 @@ namespace mark4
         DiscoveryRegistry m_registry;            ///< live processes
         BridgeDirectory m_bridges;               ///< WiFi bridges heard on the network
         UdpTransport m_udp;                      ///< every UDP socket
-        SerialTransport m_serial;                ///< board UART, when one is configured
+        SerialTransport m_serial;                ///< board link, when one is open
         WsBridge m_ws;                           ///< websocket endpoint
         std::vector<PortUse> m_followedPorts;    ///< refcount behind every subscription
         Connection m_connection;                 ///< the one drone commands go to
