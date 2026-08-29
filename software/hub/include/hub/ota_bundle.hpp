@@ -17,9 +17,9 @@
 ///            M bytes  image, starting with the 512-byte OtaImageHeader
 ///
 ///        Manifest: {"name", "mcuId", "buildEpoch", "gitHash",
-///        "protocolVersion", "images":[{"slot","size","crc32"}]}.
+///        "wireHash", "images":[{"slot","size","crc32"}]}.
 ///        Loading validates every cross-check it can make on its own: the
-///        magic, the protocol version against PROTOCOL_VERSION, the
+///        magic, the wire hash against this build's WIRE_HASH, the
 ///        announced sizes against the bytes actually present, the announced
 ///        CRC against the bytes actually present, and the image header of
 ///        each image against the manifest entry that describes it. A bundle
@@ -32,7 +32,8 @@
 #include <string>
 #include <vector>
 
-#include "protocol/ota.hpp"
+#include "protocol/envelope.hpp"
+#include "protocol/ota_image.hpp"
 
 namespace mark4
 {
@@ -43,9 +44,9 @@ namespace mark4
     [[nodiscard]] const char *otaBundleMagic();
 
     /// CRC-32/MPEG-2 of a byte range, tail padded to a word with 0xFF: the
-    /// one checksum of the update system (see protocol/ota.hpp). The hub
-    /// links protocol/ headers alone, so it carries its own copy of this
-    /// rather than reaching into platform_common for it.
+    /// one checksum of the update system (see protocol/ota_image.hpp). The
+    /// hub links protocol/ alone, so it carries its own copy of this rather
+    /// than reaching into platform_common for it.
     /// @param data bytes to checksum
     /// @param size byte count
     /// @return the CRC the board and the packaging script compute too
@@ -68,7 +69,7 @@ namespace mark4
         std::uint8_t mcuId = 0U;            ///< OTA_MCU_* this build targets
         std::uint32_t buildEpoch = 0U;      ///< packaging time [unix s], the build's identity
         std::string gitHash;                ///< short hash of the build
-        std::uint8_t protocolVersion = 0U;  ///< wire version the build speaks
+        std::string wireHash;               ///< schema hash the build speaks, 8 hex chars
         std::vector<OtaBundleImage> images; ///< one entry per slot, in slot order
 
         /// @return true when a bundle was actually loaded into this object

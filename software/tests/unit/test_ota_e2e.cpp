@@ -41,9 +41,8 @@
 
 #include "hub/ota_bundle.hpp"
 #include "hub/ota_client.hpp"
-#include "protocol/commands.hpp"
-#include "protocol/header.hpp"
-#include "protocol/ota.hpp"
+#include "protocol/envelope.hpp"
+#include "protocol/ota_image.hpp"
 #include "transport/transport.hpp"
 #include "transport/udp_link.hpp"
 
@@ -183,9 +182,10 @@ namespace
                     std::to_string(mark4::otaImageCrc32(slotB.data(), slotB.size())) +
                     R"(,"size":)" + std::to_string(slotB.size()) + R"(,"slot":1}],)";
         manifest += R"("mcuId":)" + std::to_string(mark4::OTA_MCU_SIM);
-        manifest +=
-            R"(,"name":"drone_sim","protocolVersion":)" + std::to_string(mark4::PROTOCOL_VERSION);
-        manifest += "}";
+        std::array<char, 9U> wireHash{};
+        static_cast<void>(
+            std::snprintf(wireHash.data(), wireHash.size(), "%08x", mark4::WIRE_HASH));
+        manifest += R"(,"name":"drone_sim","wireHash":")" + std::string(wireHash.data()) + R"("})";
 
         std::vector<std::uint8_t> bytes;
         const char *magic = mark4::otaBundleMagic();
@@ -232,14 +232,16 @@ namespace
             return m_udp.init() && m_transport.addLink(m_udp) && m_transport.init();
         }
 
-        /// @brief Sends one packet to the sim, by node id.
-        /// @param data packet bytes
-        /// @param size packet size
+        /// @brief Sends one message to the sim, by node id.
+        /// @param envelope message
         /// @return true when the frame went out, false while the sim has
         ///         not been heard yet
-        bool send(const std::uint8_t *data, std::size_t size)
+        bool send(const mark4_Envelope &envelope)
         {
-            return m_transport.send(SIM_NODE, data, size);
+            std::array<std::uint8_t, mark4::MAX_ENVELOPE_SIZE> bytes{};
+            std::size_t size = 0U;
+            return mark4::encodeEnvelope(envelope, bytes.data(), bytes.size(), size) &&
+                   m_transport.send(SIM_NODE, bytes.data(), size);
         }
 
         /// @brief Hands every pending payload to the client, the way the
@@ -261,7 +263,11 @@ namespace
         {
             static_cast<void>(src);
             auto *self = static_cast<GroundLink *>(context);
-            static_cast<void>(self->m_pending->onPacket(payload, size, self->m_pendingUs));
+            mark4_Envelope envelope;
+            if (mark4::decodeEnvelope(payload, size, envelope))
+            {
+                static_cast<void>(self->m_pending->onEnvelope(envelope, self->m_pendingUs));
+            }
         }
 
         mark4::UdpLink m_udp;                      ///< the one link
@@ -475,13 +481,13 @@ namespace
         return config;
     }
 
-    /// @brief The reboot command the trial boot needs, on the wire.
-    /// @return the three bytes
-    std::array<std::uint8_t, mark4::REBOOT_COMMAND_PACKET_SIZE> rebootCommand()
+    /// @brief The reboot command the trial boot needs.
+    /// @return the message
+    mark4_Envelope rebootCommand()
     {
-        return {mark4::PROTOCOL_VERSION,
-                static_cast<std::uint8_t>(mark4::PacketType::REBOOT_COMMAND),
-                mark4::BOARD_REBOOT_MAGIC};
+        mark4_Envelope envelope = mark4_Envelope_init_zero;
+        envelope.which_body = mark4_Envelope_reboot_tag;
+        return envelope;
     }
 } // namespace
 
@@ -515,8 +521,8 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     REQUIRE(sim.start(runDirectory, otaDirectory, simPort, discoveryPort, SIM_NODE));
 
     mark4::OtaClient client(testConfig());
-    client.setSink([&link](const std::uint8_t *data, std::size_t size, std::string &errorOut) {
-        if (!link.send(data, size))
+    client.setSink([&link](const mark4_Envelope &envelope, std::string &errorOut) {
+        if (!link.send(envelope))
         {
             errorOut = "the loopback link refused the datagram";
             return false;
@@ -528,7 +534,7 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     // no image header at all, which is how a desktop process says "what runs
     // here is my own build".
     REQUIRE(refreshBoard(client, link));
-    REQUIRE(client.board().mcuId == mark4::OTA_MCU_SIM);
+    REQUIRE(client.board().mcu == mark4_Mcu_SIM);
     REQUIRE(client.board().runningSlot == mark4::OTA_SLOT_A);
     REQUIRE(client.board().gitHash.empty());
 
@@ -552,14 +558,14 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     REQUIRE(client.board().activeSlot == mark4::OTA_SLOT_B);
     REQUIRE(client.board().buildEpoch == firstBuild);
     REQUIRE(client.board().gitHash == "aaaaaaaa");
-    REQUIRE(client.board().slots[mark4::OTA_SLOT_B].state == mark4::OTA_SLOT_VALID);
+    REQUIRE(client.board().slots[mark4::OTA_SLOT_B].state == mark4_OtaSlotState_VALID);
     REQUIRE(sim.alive());
 
     // --- The rollback path: a trial that never confirms itself, then a
     // reset. ---
     mark4::OtaClient manual(testConfig());
-    manual.setSink([&link](const std::uint8_t *data, std::size_t size, std::string &errorOut) {
-        if (!link.send(data, size))
+    manual.setSink([&link](const mark4_Envelope &envelope, std::string &errorOut) {
+        if (!link.send(envelope))
         {
             errorOut = "the loopback link refused the datagram";
             return false;
@@ -576,7 +582,7 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     REQUIRE(manual.board().runningSlot == mark4::OTA_SLOT_A);
     REQUIRE(manual.board().buildEpoch == secondBuild);
     REQUIRE(manual.board().gitHash == "bbbbbbbb");
-    REQUIRE(manual.board().slots[mark4::OTA_SLOT_A].state == mark4::OTA_SLOT_TESTING);
+    REQUIRE(manual.board().slots[mark4::OTA_SLOT_A].state == mark4_OtaSlotState_TESTING);
     // The metadata still prefers the confirmed image: a trial boot never
     // moves the active slot, which is exactly what makes the rollback free.
     REQUIRE(manual.board().activeSlot == mark4::OTA_SLOT_B);
@@ -584,8 +590,7 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     // The reset the trial does not survive. On a board this is a watchdog, a
     // crash or a power cycle; here it is the same reboot command the hub
     // sends, and the sim's fake bootloader takes it from there.
-    const auto reboot = rebootCommand();
-    REQUIRE(link.send(reboot.data(), reboot.size()));
+    REQUIRE(link.send(rebootCommand()));
 
     REQUIRE(driveUntil(
         manual, link, [&manual] { return manual.verdict() != mark4::OtaVerdict::NONE; }));
@@ -601,8 +606,8 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     REQUIRE(manual.board().activeSlot == mark4::OTA_SLOT_B);
     REQUIRE(manual.board().buildEpoch == firstBuild);
     REQUIRE(manual.board().gitHash == "aaaaaaaa");
-    REQUIRE(manual.board().slots[mark4::OTA_SLOT_A].state == mark4::OTA_SLOT_BAD);
-    REQUIRE(manual.board().slots[mark4::OTA_SLOT_B].state == mark4::OTA_SLOT_VALID);
+    REQUIRE(manual.board().slots[mark4::OTA_SLOT_A].state == mark4_OtaSlotState_BAD);
+    REQUIRE(manual.board().slots[mark4::OTA_SLOT_B].state == mark4_OtaSlotState_VALID);
     REQUIRE(sim.alive());
 
     sim.stop();

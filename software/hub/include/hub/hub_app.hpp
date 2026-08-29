@@ -15,11 +15,10 @@
 #include "hub/json_codec.hpp"
 #include "hub/ota_client.hpp"
 #include "hub/serial_transport.hpp"
-#include "hub/stream_health.hpp"
 #include "hub/tuning_profiles.hpp"
 #include "hub/udp_transport.hpp"
 #include "hub/ws_bridge.hpp"
-#include "protocol/ports.hpp"
+#include "protocol/envelope.hpp"
 #include "transport/transport.hpp"
 #include "transport/udp_link.hpp"
 
@@ -67,7 +66,7 @@ namespace mark4
         /// Highest scenario sequence number the hub stamps before wrapping.
         /// Zero is reserved on the wire for "no scenario", so the counter
         /// runs 1..255.
-        static constexpr std::uint8_t MAX_SCENARIO_SEQUENCE = 255U;
+        static constexpr std::uint32_t MAX_SCENARIO_SEQUENCE = 255U;
 
         /// Everything main() decides before the hub starts.
         struct Config
@@ -76,7 +75,6 @@ namespace mark4
             std::uint16_t discoveryPort = DISCOVERY_PORT;    ///< shared transport port
             std::uint32_t nodeId = 0U;                       ///< transport identity, 0 = random
             std::uint16_t bridgePort = BRIDGE_ANNOUNCE_PORT; ///< bridge announce listen port
-            std::uint16_t simRawPort = SIM_RAW_PORT;         ///< sim raw port watched by default
             bool udpRebroadcast = true;                      ///< re-emit serial telemetry as a
                                                              ///< transport broadcast
             std::string profilesDir = "profiles";            ///< directory the profiles live in
@@ -104,9 +102,9 @@ namespace mark4
         /// @param config settings of this run
         explicit HubApp(Config config);
 
-        /// @brief Initializes services in declaration order: opens the raw
-        ///        UDP listeners, the transport and the websocket. The first
-        ///        failure is logged and returns false immediately.
+        /// @brief Initializes services in declaration order: opens the bridge
+        ///        announce listener, the transport and the websocket. The
+        ///        first failure is logged and returns false immediately.
         /// @return true when every service is ready
         bool init();
 
@@ -123,8 +121,8 @@ namespace mark4
         }
 
       private:
-        /// @brief Handles one datagram read from a raw listening socket: the
-        ///        simulator's raw state or a bridge announce.
+        /// @brief Handles one datagram read from a raw listening socket: a
+        ///        bridge announce.
         /// @param localPort port the datagram landed on
         /// @param from where the datagram came from
         /// @param data datagram bytes
@@ -134,9 +132,7 @@ namespace mark4
                         const std::uint8_t *data,
                         std::size_t size);
 
-        /// @brief Handles one payload the transport delivered: a beacon feeds
-        ///        discovery, everything else is a protocol/ packet from the
-        ///        node that sent it.
+        /// @brief Handles one payload the transport delivered.
         /// @param src transport node the payload came from
         /// @param data payload bytes
         /// @param size payload size
@@ -157,44 +153,22 @@ namespace mark4
         /// @param size payload size
         void onSerialPayload(const std::uint8_t *payload, std::size_t size);
 
-        /// @brief Routes one telemetry packet to the clients.
-        /// @param data packet bytes
-        void onTelemetryPacket(const std::uint8_t *data);
+        /// @brief Routes one decoded message, whatever link it came by.
+        /// @param envelope decoded message
+        /// @param nodeId transport node it came from, 0 for the serial link
+        /// @param kind kind of the sender, when discovery knows it
+        void onEnvelope(const mark4_Envelope &envelope, std::uint32_t nodeId, mark4_NodeKind kind);
 
-        /// @brief Routes one raw simulator packet to the clients.
-        /// @param data packet bytes
-        void onSimRawPacket(const std::uint8_t *data);
-
-        /// @brief Names the one silent failure a protocol bump causes: a
-        ///        board still running another PROTOCOL_VERSION keeps sending
-        ///        well formed packets that every demultiplexer above refuses
-        ///        on the version byte alone, so the bench looks connected and
-        ///        stays empty. Logged once per foreign version seen, because
-        ///        the stream that triggers it runs at 500 Hz.
-        /// @param data packet bytes that nothing above claimed
-        /// @param size packet size in bytes
-        void noteForeignProtocol(const std::uint8_t *data, std::size_t size);
-
-        /// @brief Renders one tuning answer to the clients.
-        /// @param data packet bytes
-        /// @param size packet size in bytes
-        /// @param source process the answer came from, inferred from the path
-        ///        it arrived by
-        /// @return true when the packet was a tuning answer
-        bool onTuningAnswer(const std::uint8_t *data, std::size_t size, StreamSource source);
-
-        /// @brief Sends one command packet to a process, by the route that
-        ///        kind of process is reachable on: the board is at the end of
-        ///        the serial cable, everything else is the transport node its
+        /// @brief Sends one command to a process, by the route that kind of
+        ///        process is reachable on: the board is at the end of the
+        ///        serial cable, everything else is the transport node its
         ///        beacon came from.
         /// @param target kind of process to reach
-        /// @param data packet bytes
-        /// @param size packet size in bytes
+        /// @param envelope message to send
         /// @param errorOut receives the reason when the target is unreachable
         /// @return true when the bytes went out
-        bool sendToTarget(StreamSource target,
-                          const std::uint8_t *data,
-                          std::size_t size,
+        bool sendToTarget(mark4_NodeKind target,
+                          const mark4_Envelope &envelope,
                           std::string &errorOut);
 
         /// @brief Applies one discovery event: logs it, pushes the configured
@@ -219,7 +193,7 @@ namespace mark4
         /// @param target kind the command is aimed at
         /// @param errorOut receives the refusal reason
         /// @return true when the command may go out
-        bool commandAllowed(StreamSource target, std::string &errorOut) const;
+        bool commandAllowed(mark4_NodeKind target, std::string &errorOut) const;
 
         /// @brief Recomputes whether the connected drone shows signs of life,
         ///        follows a bridge whose address changed, and tells the
@@ -252,7 +226,7 @@ namespace mark4
         /// @param target kind of process to push it to
         /// @param errorOut receives the reason when the push cannot happen
         /// @return true when every value went out
-        bool pushProfile(const std::string &name, StreamSource target, std::string &errorOut);
+        bool pushProfile(const std::string &name, mark4_NodeKind target, std::string &errorOut);
 
         /// @brief Sends the current discovery table to the clients.
         void broadcastDiscovery();
@@ -285,33 +259,29 @@ namespace mark4
         /// and the same drone coming back turns live true again on its own.
         struct Connection
         {
-            std::string via;                            ///< "udp" or "bridge", empty = none
-            std::string id;                             ///< kind name or bridge name
-            StreamSource kind = StreamSource::FIRMWARE; ///< kind commands route to
-            bool live = false;                          ///< the drone shows signs of life
+            std::string via;                               ///< "udp" or "bridge", empty = none
+            std::string id;                                ///< kind name or bridge name
+            mark4_NodeKind kind = mark4_NodeKind_FIRMWARE; ///< kind commands route to
+            bool live = false;                             ///< the drone shows signs of life
         };
 
-        Config m_config;                                   ///< settings of this run
-        StreamHealth m_health;                             ///< sequence health of every link
-        TuningProfiles m_profiles;                         ///< stored tuning profiles
-        DiscoveryRegistry m_registry;                      ///< live processes
-        BridgeDirectory m_bridges;                         ///< WiFi bridges heard on the network
-        UdpTransport m_udp;                                ///< raw UDP listeners
-        UdpLink m_udpLink;                                 ///< the transport's one link
-        Transport m_transport;                             ///< this hub as a transport node
-        SerialTransport m_serial;                          ///< board link, when one is open
-        WsBridge m_ws;                                     ///< websocket endpoint
-        Connection m_connection;                           ///< the one drone commands go to
-        std::atomic_bool m_stopRequested{false};           ///< set by a signal handler
-        std::uint64_t m_nextStatusUs = 0U;                 ///< next status message instant [us]
-        std::uint64_t m_badFrames = 0U;                    ///< serial frames that decoded to
-                                                           ///< nothing
-        std::uint8_t m_foreignProtocol = 0U;               ///< last foreign version reported,
-                                                           ///< 0 = none yet
-        std::uint8_t m_scenarioSequence = 0U;              ///< rolling number stamped on a
-                                                           ///< scenario the client left at 0
-        std::map<std::string, std::uint64_t> m_rcSeenUs;   ///< last RC instant per client
-        OtaClient m_ota;                                   ///< firmware update session
-        StreamSource m_otaTarget = StreamSource::FIRMWARE; ///< process the update packets go to
+        Config m_config;                                      ///< settings of this run
+        TuningProfiles m_profiles;                            ///< stored tuning profiles
+        DiscoveryRegistry m_registry;                         ///< live processes
+        BridgeDirectory m_bridges;                            ///< WiFi bridges heard on the network
+        UdpTransport m_udp;                                   ///< raw UDP listeners
+        UdpLink m_udpLink;                                    ///< the transport's one link
+        Transport m_transport;                                ///< this hub as a transport node
+        SerialTransport m_serial;                             ///< board link, when one is open
+        WsBridge m_ws;                                        ///< websocket endpoint
+        Connection m_connection;                              ///< the one drone commands go to
+        std::atomic_bool m_stopRequested{false};              ///< set by a signal handler
+        std::uint64_t m_nextStatusUs = 0U;                    ///< next status message instant [us]
+        std::uint64_t m_badFrames = 0U;                       ///< payloads that decoded to nothing
+        std::uint32_t m_scenarioSequence = 0U;                ///< rolling number stamped on a
+                                                              ///< scenario the client left at 0
+        std::map<std::string, std::uint64_t> m_rcSeenUs;      ///< last RC instant per client
+        OtaClient m_ota;                                      ///< firmware update session
+        mark4_NodeKind m_otaTarget = mark4_NodeKind_FIRMWARE; ///< process the updater talks to
     };
 } // namespace mark4

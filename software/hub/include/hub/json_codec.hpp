@@ -1,19 +1,16 @@
 #pragma once
 
 /// @file
-/// @brief Translation between the binary wire of protocol/ and the JSON a
-///        browser or a script can read. Pure functions, no socket, no state:
-///        one side takes a packet and returns text, the other takes text and
-///        returns a ready-made wire packet. This is the only place in the
-///        repo where a protocol/ field name becomes a JSON key.
+/// @brief Translation between the wire messages and the JSON a browser or a
+///        script can read. Pure functions, no socket, no state: one side
+///        takes a message and returns text, the other takes text and returns
+///        a ready-made Envelope. This is the only place in the repo where a
+///        wire field name becomes a JSON key.
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -21,11 +18,7 @@
 #include "hub/ota_client.hpp"
 #include "hub/stream_health.hpp"
 #include "hub/tuning_profiles.hpp"
-#include "protocol/commands.hpp"
-#include "protocol/header.hpp"
-#include "protocol/sim_raw.hpp"
-#include "protocol/telemetry.hpp"
-#include "protocol/tuning.hpp"
+#include "protocol/envelope.hpp"
 
 namespace mark4
 {
@@ -49,25 +42,22 @@ namespace mark4
         OTA_REVERT,   ///< activate the other firmware slot
     };
 
-    /// One decoded client request. The wire packets are already built: the
-    /// codec owns every version and magic byte, the caller only routes bytes.
+    /// One decoded client request. The wire message is already built: the
+    /// codec owns every field, the caller only routes it.
     struct ClientMessage
     {
-        ClientMessageType type = ClientMessageType::RC; ///< which request this is
-        int id = -1;                                    ///< client correlation id,
-                                                        ///< -1 when the client sent none
-        StreamSource target = StreamSource::FIRMWARE;   ///< command destination
-        RcCommandPacket rc{};                           ///< RC: packet to forward as is
-        SimScenarioPacket simScenario{};                ///< SIM_SCENARIO: packet to send
-        RebootCommandPacket reboot{};                   ///< REBOOT: packet to send, magic included
-        TuningSetPacket tuningSet{};                    ///< TUNING_SET: packet to forward
-        TuningListPacket tuningList{};                  ///< TUNING_LIST: packet to forward
-        std::string profileName;                        ///< PROFILE_*: profile concerned
-        TuningValues profileValues;                     ///< PROFILE_SAVE: values to store
-        std::string connectVia;                         ///< CONNECT: "udp" or "bridge"
-        std::string connectPeer;                        ///< CONNECT: bridge name
-        std::string otaBundlePath;                      ///< OTA_START: bundle to send, empty
-                                                        ///< for the standard build output
+        ClientMessageType type = ClientMessageType::RC;    ///< which request this is
+        int id = -1;                                       ///< client correlation id,
+                                                           ///< -1 when the client sent none
+        mark4_NodeKind target = mark4_NodeKind_FIRMWARE;   ///< command destination
+        mark4_Envelope command = mark4_Envelope_init_zero; ///< RC, SIM_SCENARIO, REBOOT,
+                                                           ///< TUNING_*: message to forward
+        std::string profileName;                           ///< PROFILE_*: profile concerned
+        TuningValues profileValues;                        ///< PROFILE_SAVE: values to store
+        std::string connectVia;                            ///< CONNECT: "udp" or "bridge"
+        std::string connectPeer;                           ///< CONNECT: bridge name
+        std::string otaBundlePath;                         ///< OTA_START: bundle to send, empty
+                                                           ///< for the standard build output
     };
 
     /// Counters and flags the hub publishes once per second.
@@ -77,52 +67,39 @@ namespace mark4
         std::string serialLink;    ///< device the link is open on, empty = none
         std::string connectionVia; ///< "udp" or "bridge", empty = none
         std::string connectionId;  ///< kind name or bridge name
-        StreamSource connectionKind = StreamSource::FIRMWARE; ///< kind commands route to
+        mark4_NodeKind connectionKind = mark4_NodeKind_FIRMWARE; ///< kind commands route to
         bool connectionLive = false;          ///< the connected drone shows signs of life
-        std::uint64_t badFrames = 0U;         ///< serial frames that decoded to nothing
+        std::uint64_t badFrames = 0U;         ///< payloads that decoded to nothing
         std::uint64_t rejectedAnnounces = 0U; ///< announces dropped as invalid
         std::size_t clients = 0U;             ///< websocket clients connected
         std::size_t rcClients = 0U;           ///< clients that streamed RC recently
-        std::vector<LinkHealth> links;        ///< sequence health, one entry per link
+        std::vector<LinkHealth> links;        ///< frame counters, one entry per node
     };
 
-    /// @brief Serialized bytes of a packed wire struct, ready for a socket.
-    ///        The wire structs are trivially copyable and padding-free, so the
-    ///        copy is the exact byte sequence the protocol describes.
-    /// @param packet packet to serialize
-    /// @return the packet bytes
-    template <typename Packet>
-    std::array<std::uint8_t, sizeof(Packet)> wireBytes(const Packet &packet)
-    {
-        static_assert(std::is_trivially_copyable_v<Packet>);
-        std::array<std::uint8_t, sizeof(Packet)> bytes{};
-        std::memcpy(bytes.data(), &packet, sizeof(Packet));
-        return bytes;
-    }
+    /// @brief Renders one telemetry message as a JSON object.
+    /// @param telemetry message to render
+    /// @param source kind of the node it came from
+    /// @return one line of JSON
+    std::string telemetryToJson(const mark4_Telemetry &telemetry, mark4_NodeKind source);
 
-    /// @brief Renders one telemetry packet as a JSON object.
-    /// @param packet packet to render
-    /// @return one line of JSON, keys named exactly like the struct fields
-    std::string telemetryToJson(const TelemetryPacket &packet);
-
-    /// @brief Renders one raw simulator state packet as a JSON object.
-    /// @param packet packet to render
-    /// @return one line of JSON, keys named exactly like the struct fields
-    std::string simRawToJson(const SimRawPacket &packet);
+    /// @brief Renders the plant truth a telemetry message carries as the
+    ///        simRaw JSON object the pages compare the estimate against.
+    /// @param telemetry message carrying the truth (has_truth must be set)
+    /// @param source kind of the node it came from
+    /// @return one line of JSON
+    std::string simRawToJson(const mark4_Telemetry &telemetry, mark4_NodeKind source);
 
     /// @brief Renders one tuning acknowledgement as a JSON object.
-    /// @param packet packet to render
+    /// @param ack message to render
     /// @param source process the answer came from
     /// @return one line of JSON
-    std::string tuningAckToJson(const TuningAckPacket &packet, StreamSource source);
+    std::string tuningAckToJson(const mark4_TuningAck &ack, mark4_NodeKind source);
 
-    /// @brief Renders one parameter description as a JSON object. The wire
-    ///        name is zero-padded and a full-length one carries no
-    ///        terminator, so it is read by bounded length, never by strlen.
-    /// @param packet packet to render
+    /// @brief Renders one parameter description as a JSON object.
+    /// @param info message to render
     /// @param source process the description came from
     /// @return one line of JSON
-    std::string tuningInfoToJson(const TuningInfoPacket &packet, StreamSource source);
+    std::string tuningInfoToJson(const mark4_TuningInfo &info, mark4_NodeKind source);
 
     /// @brief Renders the names of the stored profiles as a JSON object.
     /// @param names profile names

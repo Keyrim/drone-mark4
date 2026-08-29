@@ -121,6 +121,11 @@ body {
     opacity: 0.45;
 }
 
+.chip.mismatch {
+    border-color: #e66767;
+    color: #e66767;
+}
+
 .content {
     flex: 1;
     display: flex;

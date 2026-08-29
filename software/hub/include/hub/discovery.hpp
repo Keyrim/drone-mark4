@@ -1,11 +1,11 @@
 #pragma once
 
 /// @file
-/// @brief Registry of the flight processes currently alive, fed by the
-///        AnnouncePacket every transport node beacons. Pure logic: no
-///        socket, no clock, no thread. The caller passes the payloads and
-///        the current time, so the whole discovery behavior is reproducible
-///        in a unit test.
+/// @brief Registry of the nodes currently alive, fed by the Announce every
+///        node beacons: the transport nodes through their frames, the board
+///        through its serial link. Pure logic: no socket, no clock, no
+///        thread. The caller passes the messages and the current time, so the
+///        whole discovery behavior is reproducible in a unit test.
 
 #include <cstddef>
 #include <cstdint>
@@ -13,23 +13,27 @@
 #include <string>
 #include <vector>
 
-#include "protocol/announce.hpp"
-#include "protocol/header.hpp"
+#include "protocol/envelope.hpp"
 
 namespace mark4
 {
-    /// One process the ground side knows about, either because its beacon
-    /// reached the transport or because its telemetry reached us over a
-    /// serial link.
+    /// One node the ground side knows about, as its last Announce described
+    /// it.
     struct DiscoveredProcess
     {
-        StreamSource kind = StreamSource::FIRMWARE; ///< kind the process claims
-        std::uint32_t nodeId = 0U;                  ///< transport node the process is,
-                                                    ///< the address commands go to; 0
-                                                    ///< for a process heard over serial
-        std::uint64_t lastSeenUs = 0U;              ///< time of the last sign of life [us]
-        bool viaSerial = false;                     ///< true when the evidence came from
-                                                    ///< a serial link, not from a beacon
+        mark4_NodeKind kind = mark4_NodeKind_FIRMWARE; ///< kind the node claims
+        std::uint32_t nodeId = 0U;                     ///< transport node the process is, the
+                                                       ///< address commands go to; 0 for a
+                                                       ///< node heard over serial
+        std::uint64_t lastSeenUs = 0U;                 ///< time of the last announce [us]
+        bool viaSerial = false;                        ///< true when the evidence came from a
+                                                       ///< serial link, not from the transport
+        std::string name;                              ///< label the node gave itself
+        mark4_Mcu mcu = mark4_Mcu_MCU_UNSPECIFIED;     ///< chip it runs on
+        std::uint32_t buildEpoch = 0U;                 ///< build identity, 0 when none
+        std::string gitHash;                           ///< short commit hash, empty when none
+        std::uint32_t wireHash = 0U;                   ///< schema hash the node was built on
+        bool wireMismatch = false;                     ///< its schema is not this hub's
     };
 
     /// What happened to one entry of the registry.
@@ -48,14 +52,20 @@ namespace mark4
         DiscoveredProcess process;                       ///< entry the event concerns
     };
 
-    /// @brief Human-readable name of a stream source, as the JSON messages
-    ///        and the log lines spell it.
-    /// @param kind stream source to name
+    /// @brief Human-readable name of a node kind, as the JSON messages and
+    ///        the log lines spell it.
+    /// @param kind node kind to name
     /// @return static name, "unknown" for a value outside the enumeration
-    const char *streamSourceName(StreamSource kind);
+    const char *nodeKindName(mark4_NodeKind kind);
+
+    /// @brief Parses a node kind name back, the inverse of nodeKindName().
+    /// @param name name to look up
+    /// @param[out] kindOut receives the kind when the name is known
+    /// @return true when the name is a known kind
+    bool parseNodeKindName(const std::string &name, mark4_NodeKind &kindOut);
 
     /// One WiFi bridge that told the network it is there. A bridge is not a
-    /// process and carries no telemetry of its own: it is the address a
+    /// node and carries no telemetry of its own: it is the address a
     /// serial link can be opened on.
     struct DiscoveredBridge
     {
@@ -110,31 +120,23 @@ namespace mark4
         std::vector<DiscoveredBridge> m_bridges; ///< live bridges, insertion order
     };
 
-    /// Set of live processes, keyed by (kind, route): one drone_sim over the
+    /// Set of live nodes, keyed by (kind, route): one drone_sim over the
     /// transport, one firmware over the serial cable. The node identity
     /// behind an entry is what tells a restart from a refresh, since a
     /// process draws a new one every time it starts.
     class DiscoveryRegistry
     {
       public:
-        /// @brief Feeds one announce payload the transport delivered.
-        /// @param nodeId transport node the payload came from
-        /// @param data payload bytes
-        /// @param size payload size in bytes
+        /// @brief Feeds one Announce.
+        /// @param nodeId transport node the message came from, 0 for the
+        ///        serial route
+        /// @param announce decoded message
         /// @param nowUs current time [us], the entry's freshness reference
         /// @return the event this announce caused, nothing on a plain refresh
-        ///         or on a payload that is not a valid announce
+        ///         or on an announce naming no kind
         std::optional<DiscoveryChange> onAnnounce(std::uint32_t nodeId,
-                                                  const std::uint8_t *data,
-                                                  std::size_t size,
+                                                  const mark4_Announce &announce,
                                                   std::uint64_t nowUs);
-
-        /// @brief Records that firmware telemetry arrived over a serial link.
-        ///        The board cannot broadcast UDP, so it never announces
-        ///        itself: its telemetry is the only evidence it is alive.
-        /// @param nowUs current time [us]
-        /// @return APPEARED the first time, nothing afterwards
-        std::optional<DiscoveryChange> onSerialTelemetry(std::uint64_t nowUs);
 
         /// @brief Drops the entries nothing has been heard from for too long.
         /// @param nowUs current time [us]
@@ -151,10 +153,15 @@ namespace mark4
         /// @brief Looks up the transport node of a live process of one kind.
         /// @param kind kind to look for
         /// @return node id, 0 when no live process of that kind is on the transport
-        [[nodiscard]] std::uint32_t nodeIdOf(StreamSource kind) const;
+        [[nodiscard]] std::uint32_t nodeIdOf(mark4_NodeKind kind) const;
 
-        /// @return announce payloads dropped for a wrong version byte, a
-        ///         wrong type byte or a wrong size
+        /// @brief Looks up the kind of a live transport node.
+        /// @param nodeId transport node
+        /// @param[out] kindOut receives the kind when the node is known
+        /// @return true when the node announced itself
+        [[nodiscard]] bool kindOf(std::uint32_t nodeId, mark4_NodeKind &kindOut) const;
+
+        /// @return announces dropped for naming no kind
         [[nodiscard]] std::uint64_t rejectedAnnounces() const
         {
             return m_rejectedAnnounces;

@@ -27,17 +27,19 @@ export const PALETTE = [
     "#d95926",
 ];
 
-/** StreamSource of the protocol header, one name per process kind. */
+/** NodeKind of the wire, one name per process kind. */
 export const SOURCE_NAMES = new Map<number, string>([
     [1, "firmware"],
     [2, "drone_sim"],
-    [4, "sim_plant"],
+    [3, "plant"],
+    [4, "gateway"],
+    [5, "batch"],
 ]);
 
 /**
  * One color per drone, shared by the widgets and the 3D view so an operator
- * maps them at a glance. Keyed by StreamSource kind: the wire has no
- * per-instance identity yet, so a kind is a drone.
+ * maps them at a glance. Keyed by NodeKind: the wire has no per-instance
+ * identity yet, so a kind is a drone.
  */
 export const SOURCE_COLORS = new Map<number, string>([
     [1, "#e66767"],

@@ -6,11 +6,11 @@
 
 #include "hub/json_codec.hpp"
 
+#include <array>
 #include <cstdlib>
 #include <limits>
 #include <nlohmann/json.hpp>
 
-#include "hub/packed_field.hpp"
 #include "hub/serial_transport.hpp"
 
 namespace mark4
@@ -18,13 +18,13 @@ namespace mark4
     namespace
     {
         /// Insertion-ordered JSON, so a message reads in the order the wire
-        /// struct declares its fields instead of in alphabetical order.
+        /// message declares its fields instead of in alphabetical order.
         using Json = nlohmann::ordered_json;
 
         /// @brief Renders a fixed-size float array as a JSON array.
         /// @param values values to render
         /// @return JSON array of numbers
-        template <std::size_t N> Json floatsToJson(const std::array<float, N> &values)
+        template <std::size_t N> Json floatsToJson(const float (&values)[N])
         {
             Json array = Json::array();
             for (const float value : values)
@@ -56,36 +56,33 @@ namespace mark4
             return true;
         }
 
-        /// @brief Reads an optional unsigned integer field into a byte.
+        /// @brief Reads an optional boolean field, accepting the 0/1 the older
+        ///        pages sent as well as true/false.
         /// @param object object to read from
         /// @param key field name
         /// @param valueOut receives the value, untouched when the field is absent
         /// @param errorOut receives the reason on failure
-        /// @return true when the field is absent or an integer in [0, 255]
-        bool readByte(const Json &object,
-                      const char *key,
-                      std::uint8_t &valueOut,
-                      std::string &errorOut)
+        /// @return true when the field is absent, a boolean or 0/1
+        bool readFlag(const Json &object, const char *key, bool &valueOut, std::string &errorOut)
         {
-            static constexpr int MAX_BYTE = 255;
             const auto found = object.find(key);
             if (found == object.end())
             {
                 return true;
             }
-            if (!found->is_number_integer())
+            if (found->is_boolean())
             {
-                errorOut = std::string("field '") + key + "' must be an integer";
-                return false;
+                valueOut = found->get<bool>();
+                return true;
             }
-            const auto raw = found->get<std::int64_t>();
-            if (raw < 0 || raw > MAX_BYTE)
+            if (found->is_number_integer() &&
+                (found->get<std::int64_t>() == 0 || found->get<std::int64_t>() == 1))
             {
-                errorOut = std::string("field '") + key + "' must be in [0, 255]";
-                return false;
+                valueOut = found->get<std::int64_t>() == 1;
+                return true;
             }
-            valueOut = static_cast<std::uint8_t>(raw);
-            return true;
+            errorOut = std::string("field '") + key + "' must be a boolean";
+            return false;
         }
 
         /// @brief Reads an optional unsigned integer field of any width.
@@ -127,14 +124,20 @@ namespace mark4
         /// @param valueOut receives the id
         /// @param errorOut receives the reason on failure
         /// @return true when the field is present and in range
-        bool readParamId(const Json &object, std::uint16_t &valueOut, std::string &errorOut)
+        bool readParamId(const Json &object, std::uint32_t &valueOut, std::string &errorOut)
         {
             if (object.find("paramId") == object.end())
             {
                 errorOut = "field 'paramId' must be a parameter id";
                 return false;
             }
-            return readUnsigned(object, "paramId", valueOut, errorOut);
+            std::uint16_t id = 0U;
+            if (!readUnsigned(object, "paramId", id, errorOut))
+            {
+                return false;
+            }
+            valueOut = id;
+            return true;
         }
 
         /// @brief Reads an optional three-number array field.
@@ -145,7 +148,7 @@ namespace mark4
         /// @return true when the field is absent or an array of three numbers
         bool readVector(const Json &object,
                         const char *key,
-                        std::array<float, 3> &valueOut,
+                        float (&valueOut)[3],
                         std::string &errorOut)
         {
             const auto found = object.find(key);
@@ -153,12 +156,12 @@ namespace mark4
             {
                 return true;
             }
-            if (!found->is_array() || found->size() != valueOut.size())
+            if (!found->is_array() || found->size() != 3U)
             {
                 errorOut = std::string("field '") + key + "' must be an array of 3 numbers";
                 return false;
             }
-            for (std::size_t axis = 0U; axis < valueOut.size(); ++axis)
+            for (std::size_t axis = 0U; axis < 3U; ++axis)
             {
                 const Json &component = (*found)[axis];
                 if (!component.is_number())
@@ -176,7 +179,7 @@ namespace mark4
         /// @param valueOut receives the kind
         /// @param errorOut receives the reason on failure
         /// @return true when the field names a known kind
-        bool readTarget(const Json &object, StreamSource &valueOut, std::string &errorOut)
+        bool readTarget(const Json &object, mark4_NodeKind &valueOut, std::string &errorOut)
         {
             const auto found = object.find("target");
             if (found == object.end() || !found->is_string())
@@ -185,14 +188,9 @@ namespace mark4
                 return false;
             }
             const auto name = found->get<std::string>();
-            for (const StreamSource kind :
-                 {StreamSource::FIRMWARE, StreamSource::DRONE_SIM, StreamSource::SIM_PLANT})
+            if (parseNodeKindName(name, valueOut))
             {
-                if (name == streamSourceName(kind))
-                {
-                    valueOut = kind;
-                    return true;
-                }
+                return true;
             }
             errorOut = "unknown target '" + name + "'";
             return false;
@@ -229,26 +227,25 @@ namespace mark4
         /// @return true when every RC field decoded
         bool parseRc(const Json &object, ClientMessage &message, std::string &errorOut)
         {
-            message.rc.version = PROTOCOL_VERSION;
-            message.rc.type = static_cast<std::uint8_t>(PacketType::RC_COMMAND);
-            // The byte fields are read in place: a byte is aligned wherever
-            // the packed layout puts it. The throttle is not, so it is read
-            // into a local and stored afterwards.
-            float throttle = message.rc.throttle;
+            message.command.which_body = mark4_Envelope_rc_tag;
+            mark4_Rc &rc = message.command.body.rc;
+            bool altitudeAuto = false;
+            std::uint8_t mode = 0U;
             if (!readTarget(object, message.target, errorOut) ||
-                !readByte(object, "kill", message.rc.killSwitch, errorOut) ||
-                !readByte(object, "arm", message.rc.armSwitch, errorOut) ||
-                !readByte(object, "mode", message.rc.mode, errorOut) ||
-                !readFloat(object, "throttle", throttle, errorOut))
+                !readFlag(object, "kill", rc.kill, errorOut) ||
+                !readFlag(object, "arm", rc.arm, errorOut) ||
+                !readUnsigned(object, "mode", mode, errorOut) ||
+                !readFloat(object, "throttle", rc.throttle, errorOut))
             {
                 return false;
             }
-            if (!(throttle >= 0.0f) || !(throttle <= 1.0f))
+            altitudeAuto = mode == static_cast<std::uint8_t>(mark4_RcMode_RC_ALTITUDE_AUTO);
+            rc.mode = altitudeAuto ? mark4_RcMode_RC_ALTITUDE_AUTO : mark4_RcMode_RC_MANUAL;
+            if (!(rc.throttle >= 0.0f) || !(rc.throttle <= 1.0f))
             {
                 errorOut = "field 'throttle' must be in [0, 1]";
                 return false;
             }
-            message.rc.throttle = throttle;
             return true;
         }
 
@@ -265,18 +262,20 @@ namespace mark4
                 errorOut = "field 'scenario' must be a scenario name";
                 return false;
             }
+            message.command.which_body = mark4_Envelope_sim_scenario_tag;
+            mark4_SimScenario &scenario = message.command.body.sim_scenario;
             const auto name = found->get<std::string>();
             if (name == "reset")
             {
-                message.simScenario.scenario.scenario = SIM_SCENARIO_RESET;
+                scenario.kind = mark4_SimScenarioKind_RESET;
             }
             else if (name == "throw")
             {
-                message.simScenario.scenario.scenario = SIM_SCENARIO_THROW;
+                scenario.kind = mark4_SimScenarioKind_THROW;
             }
             else if (name == "handThrow")
             {
-                message.simScenario.scenario.scenario = SIM_SCENARIO_HAND_THROW;
+                scenario.kind = mark4_SimScenarioKind_HAND_THROW;
             }
             else
             {
@@ -287,87 +286,48 @@ namespace mark4
             // A scenario goes to a flight process, which forwards it to the
             // plant it drives. The simulator is the only kind that has one,
             // so it is the default, but the field is honored when given.
-            message.target = StreamSource::DRONE_SIM;
+            message.target = mark4_NodeKind_DRONE_SIM;
             if (object.contains("target") && !readTarget(object, message.target, errorOut))
             {
                 return false;
             }
 
-            message.simScenario.version = PROTOCOL_VERSION;
-            message.simScenario.type = static_cast<std::uint8_t>(PacketType::SIM_SCENARIO);
-            // Everything wider than a byte is decoded into aligned locals
-            // first: the wire struct is packed, and nothing may hold a
-            // reference to one of its fields.
-            std::array<float, 3> velocity =
-                readPackedField(&message.simScenario.scenario.velocityMps);
-            std::array<float, 3> angular =
-                readPackedField(&message.simScenario.scenario.angularVelocityRadS);
-            std::uint64_t seed = 0U;
-            std::uint32_t throwDelayUs = 0U;
-            std::uint32_t hashWindowUs = 0U;
-            float heldSeconds = 0.0f;
-            float heldTiltRad = 0.0f;
-            float heldAzimuthRad = 0.0f;
-            float swingSeconds = 0.0f;
-            if (!readUnsigned(
-                    object, "sequence", message.simScenario.scenario.sequence, errorOut) ||
-                !readUnsigned(object, "seed", seed, errorOut) ||
-                !readUnsigned(object, "throwDelayUs", throwDelayUs, errorOut) ||
-                !readUnsigned(object, "hashWindowUs", hashWindowUs, errorOut) ||
-                !readVector(object, "velocityMps", velocity, errorOut) ||
-                !readVector(object, "angularVelocityRadS", angular, errorOut) ||
-                !readFloat(object, "heldSeconds", heldSeconds, errorOut) ||
-                !readFloat(object, "heldTiltRad", heldTiltRad, errorOut) ||
-                !readFloat(object, "heldAzimuthRad", heldAzimuthRad, errorOut) ||
-                !readFloat(object, "swingSeconds", swingSeconds, errorOut))
+            std::uint8_t sequence = 0U;
+            if (!readUnsigned(object, "sequence", sequence, errorOut) ||
+                !readUnsigned(object, "seed", scenario.seed, errorOut) ||
+                !readUnsigned(object, "throwDelayUs", scenario.throw_delay_us, errorOut) ||
+                !readUnsigned(object, "hashWindowUs", scenario.hash_window_us, errorOut) ||
+                !readVector(object, "velocityMps", scenario.velocity_mps, errorOut) ||
+                !readVector(
+                    object, "angularVelocityRadS", scenario.angular_velocity_rad_s, errorOut) ||
+                !readFloat(object, "heldSeconds", scenario.held_seconds, errorOut) ||
+                !readFloat(object, "heldTiltRad", scenario.held_tilt_rad, errorOut) ||
+                !readFloat(object, "heldAzimuthRad", scenario.held_azimuth_rad, errorOut) ||
+                !readFloat(object, "swingSeconds", scenario.swing_seconds, errorOut))
             {
                 return false;
             }
-            writePackedField(&message.simScenario.scenario.velocityMps, velocity);
-            writePackedField(&message.simScenario.scenario.angularVelocityRadS, angular);
-            message.simScenario.scenario.seed = seed;
-            message.simScenario.scenario.throwDelayUs = throwDelayUs;
-            message.simScenario.scenario.hashWindowUs = hashWindowUs;
-            message.simScenario.scenario.heldSeconds = heldSeconds;
-            message.simScenario.scenario.heldTiltRad = heldTiltRad;
-            message.simScenario.scenario.heldAzimuthRad = heldAzimuthRad;
-            message.simScenario.scenario.swingSeconds = swingSeconds;
+            scenario.sequence = sequence;
             return true;
         }
 
-        /// @brief Names one wire-level tuning status.
-        /// @param status one of the TUNING_ACK_* values
+        /// @brief Names one wire tuning status.
+        /// @param status wire value
         /// @return static name, "unknown" outside the enumeration
-        const char *tuningStatusName(std::uint8_t status)
+        const char *tuningStatusName(mark4_TuningStatus status)
         {
             switch (status)
             {
-                case TUNING_ACK_OK:
+                case mark4_TuningStatus_OK:
                     return "ok";
-                case TUNING_ACK_UNKNOWN_ID:
+                case mark4_TuningStatus_UNKNOWN_ID:
                     return "unknownId";
-                case TUNING_ACK_OUT_OF_BOUNDS:
+                case mark4_TuningStatus_OUT_OF_BOUNDS:
                     return "outOfBounds";
-                case TUNING_ACK_LOCKED_WHILE_ARMED:
+                case mark4_TuningStatus_LOCKED_WHILE_ARMED:
                     return "lockedWhileArmed";
-                default:
-                    return "unknown";
             }
-        }
-
-        /// @brief Reads a wire parameter name, which is zero-padded and
-        ///        carries no terminator when it fills the field. strlen would
-        ///        run off the end of that one, so the length is bounded here.
-        /// @param name name field, already copied out of the packed struct
-        /// @return the name, at most TUNING_NAME_SIZE characters
-        std::string boundedName(const std::array<char, TUNING_NAME_SIZE> &name)
-        {
-            std::size_t length = 0U;
-            while (length < name.size() && name[length] != '\0')
-            {
-                ++length;
-            }
-            return {name.data(), length};
+            return "unknown";
         }
 
         /// @brief Fills the parameter write part of a client request.
@@ -377,11 +337,10 @@ namespace mark4
         /// @return true when every field decoded
         bool parseTuningSet(const Json &object, ClientMessage &message, std::string &errorOut)
         {
-            message.tuningSet.version = PROTOCOL_VERSION;
-            message.tuningSet.type = static_cast<std::uint8_t>(PacketType::TUNING_SET);
-            std::uint16_t id = 0U;
-            float value = 0.0f;
-            if (!readTarget(object, message.target, errorOut) || !readParamId(object, id, errorOut))
+            message.command.which_body = mark4_Envelope_tuning_set_tag;
+            mark4_TuningSet &set = message.command.body.tuning_set;
+            if (!readTarget(object, message.target, errorOut) ||
+                !readParamId(object, set.id, errorOut))
             {
                 return false;
             }
@@ -390,13 +349,7 @@ namespace mark4
                 errorOut = "field 'value' must be a number";
                 return false;
             }
-            if (!readFloat(object, "value", value, errorOut))
-            {
-                return false;
-            }
-            message.tuningSet.id = id;
-            message.tuningSet.value = value;
-            return true;
+            return readFloat(object, "value", set.value, errorOut);
         }
 
         /// @brief Fills the table walk part of a client request.
@@ -406,15 +359,14 @@ namespace mark4
         /// @return true when every field decoded
         bool parseTuningList(const Json &object, ClientMessage &message, std::string &errorOut)
         {
-            message.tuningList.version = PROTOCOL_VERSION;
-            message.tuningList.type = static_cast<std::uint8_t>(PacketType::TUNING_LIST);
+            message.command.which_body = mark4_Envelope_tuning_list_tag;
             std::uint16_t startIndex = 0U;
             if (!readTarget(object, message.target, errorOut) ||
                 !readUnsigned(object, "startIndex", startIndex, errorOut))
             {
                 return false;
             }
-            message.tuningList.startIndex = startIndex;
+            message.command.body.tuning_list.start_index = startIndex;
             return true;
         }
 
@@ -559,58 +511,57 @@ namespace mark4
         /// @return true when the field is absent or names a known kind
         bool readOtaTarget(const Json &object, ClientMessage &message, std::string &errorOut)
         {
-            message.target = StreamSource::FIRMWARE;
+            message.target = mark4_NodeKind_FIRMWARE;
             if (object.find("target") == object.end())
             {
                 return true;
             }
             return readTarget(object, message.target, errorOut);
         }
+
+        /// @brief Renders the 8 hex characters of a wire hash.
+        /// @param hash hash to render
+        /// @return the hash, zero padded
+        std::string wireHashText(std::uint32_t hash)
+        {
+            static constexpr std::size_t TEXT_CAPACITY = 9U;
+            std::array<char, TEXT_CAPACITY> text{};
+            static_cast<void>(std::snprintf(text.data(), text.size(), "%08x", hash));
+            return text.data();
+        }
     } // namespace
 
-    std::string telemetryToJson(const TelemetryPacket &packet)
+    std::string telemetryToJson(const mark4_Telemetry &telemetry, mark4_NodeKind source)
     {
-        // Every field wider than a byte is copied out of the packed struct
-        // before the JSON library takes a reference to it.
-        const std::uint16_t sequence = packet.sequence;
-        const std::uint64_t timestampUs = packet.timestampUs;
-        const std::uint32_t throwCount = packet.throwCount;
-        const std::uint64_t apexTimestampUs = packet.apexTimestampUs;
-
         Json message;
         message["type"] = "telemetry";
-        message["sourceId"] = packet.sourceId;
-        message["sequence"] = sequence;
-        message["timestampUs"] = timestampUs;
-        message["gyroRadS"] = floatsToJson(readPackedField(&packet.gyroRadS));
-        message["attitudeQuat"] = floatsToJson(readPackedField(&packet.attitudeQuat));
-        message["gyroBiasRadS"] = floatsToJson(readPackedField(&packet.gyroBiasRadS));
-        message["motor"] = floatsToJson(readPackedField(&packet.motor));
-        message["altitudeM"] = static_cast<double>(packet.altitudeM);
-        message["baroAltitudeM"] = static_cast<double>(packet.baroAltitudeM);
-        message["verticalVelocityMps"] = static_cast<double>(packet.verticalVelocityMps);
-        message["throwState"] = packet.throwState;
-        message["throwCount"] = throwCount;
-        message["releaseVelocityMps"] = static_cast<double>(packet.releaseVelocityMps);
-        message["apexTimestampUs"] = apexTimestampUs;
-        message["apexAltitudeM"] = static_cast<double>(packet.apexAltitudeM);
-        message["flightPhase"] = packet.flightPhase;
+        message["sourceId"] = static_cast<int>(source);
+        message["timestampUs"] = telemetry.timestamp_us;
+        message["gyroRadS"] = floatsToJson(telemetry.gyro_rad_s);
+        message["attitudeQuat"] = floatsToJson(telemetry.attitude_quat);
+        message["gyroBiasRadS"] = floatsToJson(telemetry.gyro_bias_rad_s);
+        message["motor"] = floatsToJson(telemetry.motor);
+        message["altitudeM"] = static_cast<double>(telemetry.altitude_m);
+        message["baroAltitudeM"] = static_cast<double>(telemetry.baro_altitude_m);
+        message["verticalVelocityMps"] = static_cast<double>(telemetry.vertical_velocity_mps);
+        message["throwState"] = static_cast<int>(telemetry.throw_state);
+        message["throwCount"] = telemetry.throw_count;
+        message["releaseVelocityMps"] = static_cast<double>(telemetry.release_velocity_mps);
+        message["apexTimestampUs"] = telemetry.apex_timestamp_us;
+        message["apexAltitudeM"] = static_cast<double>(telemetry.apex_altitude_m);
+        message["flightPhase"] = static_cast<int>(telemetry.flight_phase);
         return message.dump();
     }
 
-    std::string simRawToJson(const SimRawPacket &packet)
+    std::string simRawToJson(const mark4_Telemetry &telemetry, mark4_NodeKind source)
     {
-        const std::uint16_t sequence = packet.sequence;
-        const std::uint64_t timestampUs = packet.timestampUs;
-
         Json message;
         message["type"] = "simRaw";
-        message["sourceId"] = packet.sourceId;
-        message["sequence"] = sequence;
-        message["timestampUs"] = timestampUs;
-        message["attitudeQuat"] = floatsToJson(readPackedField(&packet.attitudeQuat));
-        message["positionM"] = floatsToJson(readPackedField(&packet.positionM));
-        message["velocityMps"] = floatsToJson(readPackedField(&packet.velocityMps));
+        message["sourceId"] = static_cast<int>(source);
+        message["timestampUs"] = telemetry.timestamp_us;
+        message["attitudeQuat"] = floatsToJson(telemetry.truth.attitude_quat);
+        message["positionM"] = floatsToJson(telemetry.truth.position_m);
+        message["velocityMps"] = floatsToJson(telemetry.truth.velocity_mps);
         return message.dump();
     }
 
@@ -623,12 +574,18 @@ namespace mark4
         for (const DiscoveredProcess &process : processes)
         {
             Json entry;
-            entry["kind"] = static_cast<std::uint8_t>(process.kind);
-            entry["kindName"] = streamSourceName(process.kind);
+            entry["kind"] = static_cast<int>(process.kind);
+            entry["kindName"] = nodeKindName(process.kind);
             // The transport node id is what identifies one start of the
             // process, which is what this key has meant to the pages all along.
             entry["sessionId"] = process.nodeId;
             entry["viaSerial"] = process.viaSerial;
+            entry["name"] = process.name;
+            entry["mcu"] = static_cast<int>(process.mcu);
+            entry["buildEpoch"] = process.buildEpoch;
+            entry["gitHash"] = process.gitHash;
+            entry["wireHash"] = wireHashText(process.wireHash);
+            entry["wireMismatch"] = process.wireMismatch;
             entry["ageMs"] =
                 (nowUs > process.lastSeenUs ? nowUs - process.lastSeenUs : 0U) / US_PER_MS;
             entries.push_back(entry);
@@ -648,6 +605,7 @@ namespace mark4
         }
         Json message;
         message["type"] = "discovery";
+        message["wireHash"] = wireHashText(WIRE_HASH);
         message["processes"] = entries;
         message["bridges"] = found;
         return message.dump();
@@ -663,13 +621,12 @@ namespace mark4
         for (const LinkHealth &link : status.links)
         {
             Json entry;
-            entry["stream"] = streamKindName(link.stream);
+            entry["stream"] = "transport";
             entry["sourceId"] = link.sourceId;
             entry["sourceName"] = link.sourceName;
             entry["received"] = link.received;
             entry["lost"] = link.lost;
             entry["duplicates"] = link.duplicates;
-            entry["resyncs"] = link.resyncs;
             entry["lossRate"] = linkLossRate(link);
             entry["lastSequence"] = link.lastSequence;
             links.push_back(entry);
@@ -680,8 +637,8 @@ namespace mark4
         Json connection;
         connection["via"] = status.connectionVia.empty() ? "none" : status.connectionVia;
         connection["id"] = status.connectionId;
-        connection["kind"] = static_cast<std::uint8_t>(status.connectionKind);
-        connection["kindName"] = streamSourceName(status.connectionKind);
+        connection["kind"] = static_cast<int>(status.connectionKind);
+        connection["kindName"] = nodeKindName(status.connectionKind);
         connection["live"] = status.connectionLive;
 
         Json message;
@@ -710,7 +667,7 @@ namespace mark4
         bundleJson["mcuId"] = bundle.mcuId;
         bundleJson["buildEpoch"] = bundle.buildEpoch;
         bundleJson["gitHash"] = bundle.gitHash;
-        bundleJson["protocolVersion"] = bundle.protocolVersion;
+        bundleJson["wireHash"] = bundle.wireHash;
         Json images = Json::array();
         for (const OtaBundleImage &image : bundle.images)
         {
@@ -724,14 +681,14 @@ namespace mark4
 
         Json boardJson;
         boardJson["seen"] = board.seen;
-        boardJson["mcuId"] = board.mcuId;
+        boardJson["mcuId"] = static_cast<int>(board.mcu);
         boardJson["runningSlot"] = board.runningSlot;
         boardJson["activeSlot"] = board.activeSlot;
         Json slots = Json::array();
         for (const OtaSlotInfo &slot : board.slots)
         {
             Json entry;
-            entry["state"] = slot.state;
+            entry["state"] = static_cast<int>(slot.state);
             entry["stateName"] = otaSlotStateName(slot.state);
             entry["buildEpoch"] = slot.buildEpoch;
             entry["gitHash"] = slot.gitHash;
@@ -780,43 +737,31 @@ namespace mark4
         return message.dump();
     }
 
-    std::string tuningAckToJson(const TuningAckPacket &packet, StreamSource source)
+    std::string tuningAckToJson(const mark4_TuningAck &ack, mark4_NodeKind source)
     {
-        // Copied out of the packed struct before the JSON library sees them.
-        const std::uint16_t id = packet.id;
-        const float value = packet.value;
-
         Json message;
         message["type"] = "tuningAck";
-        message["source"] = streamSourceName(source);
-        message["paramId"] = id;
-        message["value"] = static_cast<double>(value);
-        message["status"] = packet.status;
-        message["statusName"] = tuningStatusName(packet.status);
+        message["source"] = nodeKindName(source);
+        message["paramId"] = ack.id;
+        message["value"] = static_cast<double>(ack.value);
+        message["status"] = static_cast<int>(ack.status);
+        message["statusName"] = tuningStatusName(ack.status);
         return message.dump();
     }
 
-    std::string tuningInfoToJson(const TuningInfoPacket &packet, StreamSource source)
+    std::string tuningInfoToJson(const mark4_TuningInfo &info, mark4_NodeKind source)
     {
-        const std::uint16_t index = packet.index;
-        const std::uint16_t count = packet.count;
-        const std::uint16_t id = packet.id;
-        const std::array<char, TUNING_NAME_SIZE> name = readPackedField(&packet.name);
-        const float value = packet.value;
-        const float minValue = packet.minValue;
-        const float maxValue = packet.maxValue;
-
         Json message;
         message["type"] = "tuningInfo";
-        message["source"] = streamSourceName(source);
-        message["index"] = index;
-        message["count"] = count;
-        message["paramId"] = id;
-        message["name"] = boundedName(name);
-        message["value"] = static_cast<double>(value);
-        message["minValue"] = static_cast<double>(minValue);
-        message["maxValue"] = static_cast<double>(maxValue);
-        message["armedChange"] = (packet.flags & TUNING_FLAG_ARMED_CHANGE) != 0U;
+        message["source"] = nodeKindName(source);
+        message["index"] = info.index;
+        message["count"] = info.count;
+        message["paramId"] = info.id;
+        message["name"] = info.name;
+        message["value"] = static_cast<double>(info.value);
+        message["minValue"] = static_cast<double>(info.min_value);
+        message["maxValue"] = static_cast<double>(info.max_value);
+        message["armedChange"] = info.armed_change;
         return message.dump();
     }
 
@@ -891,9 +836,7 @@ namespace mark4
             {
                 return error;
             }
-            message.reboot.version = PROTOCOL_VERSION;
-            message.reboot.type = static_cast<std::uint8_t>(PacketType::REBOOT_COMMAND);
-            message.reboot.magic = BOARD_REBOOT_MAGIC;
+            message.command.which_body = mark4_Envelope_reboot_tag;
         }
         else if (typeName == "tuningSet")
         {

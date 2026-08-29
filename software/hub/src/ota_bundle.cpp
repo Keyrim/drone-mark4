@@ -414,22 +414,25 @@ namespace mark4
 
         OtaBundle bundle;
         bundle.path = path;
-        std::uint32_t protocolVersion = 0U;
         if (!readMcuId(manifest, bundle.mcuId, errorOut) ||
             !readBuildEpoch(manifest, bundle, errorOut) ||
-            !readManifestU32(
-                manifest, "protocolVersion", "protocol version", protocolVersion, errorOut) ||
             !readImageList(manifest, bundle, errorOut))
         {
             return false;
         }
-        if (protocolVersion != PROTOCOL_VERSION)
+        const auto wireHash = manifest.find("wireHash");
+        if (wireHash == manifest.end() || !wireHash->is_string())
         {
-            errorOut = "the bundle speaks protocol version " + std::to_string(protocolVersion) +
-                       ", this hub speaks " + std::to_string(PROTOCOL_VERSION);
+            errorOut = "the manifest carries no 'wireHash'";
             return false;
         }
-        bundle.protocolVersion = static_cast<std::uint8_t>(protocolVersion);
+        bundle.wireHash = wireHash->get<std::string>();
+        if (bundle.wireHash != hexText(WIRE_HASH).substr(2))
+        {
+            errorOut = "the bundle speaks wire " + bundle.wireHash + ", this hub speaks " +
+                       hexText(WIRE_HASH).substr(2);
+            return false;
+        }
         const auto name = manifest.find("name");
         if (name != manifest.end() && name->is_string())
         {

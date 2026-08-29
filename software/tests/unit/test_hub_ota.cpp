@@ -5,7 +5,7 @@
 ///        acknowledgement, an erase that never finishes, a CRC refusal, a
 ///        board that refuses while armed, and the rollback verdict.
 ///
-/// The client owns no socket and no clock: packets go into onPacket() and
+/// The client owns no socket and no clock: messages go into onEnvelope() and
 /// time into tick(), so the fake board below is the whole test rig.
 ///
 /// CHECK(!x) rather than CHECK_FALSE: that flag combination trips
@@ -13,6 +13,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -27,8 +28,8 @@
 #include "hub/json_codec.hpp"
 #include "hub/ota_bundle.hpp"
 #include "hub/ota_client.hpp"
-#include "protocol/header.hpp"
-#include "protocol/ota.hpp"
+#include "protocol/envelope.hpp"
+#include "protocol/ota_image.hpp"
 
 namespace
 {
@@ -167,18 +168,27 @@ namespace
         std::array<std::uint32_t, 2> crc{};              ///< announced CRC per slot
     };
 
+    /// @return the 8 hex characters of this build's wire hash, as the
+    ///         packaging script writes them
+    std::string currentWireHash()
+    {
+        std::array<char, 9U> text{};
+        static_cast<void>(std::snprintf(text.data(), text.size(), "%08x", WIRE_HASH));
+        return text.data();
+    }
+
     /// @brief Assembles a bundle file the way scripts/make_ota.py does.
     /// @param mcuId chip the build targets
     /// @param buildEpoch build identity of the build
     /// @param gitHash short hash of the build
-    /// @param protocolVersion wire version to announce
+    /// @param wireHash schema hash to announce, 8 hex characters
     /// @param breakCrcOfSlot slot whose announced CRC is deliberately wrong,
     ///        or 2 to keep both honest
     /// @return the file and its facts
     BuiltBundle buildBundle(std::uint8_t mcuId,
                             std::uint32_t buildEpoch,
                             const std::string &gitHash,
-                            std::uint8_t protocolVersion,
+                            const std::string &wireHash,
                             std::uint8_t breakCrcOfSlot = 2U)
     {
         BuiltBundle built;
@@ -194,8 +204,8 @@ namespace
         std::string manifest = R"({"name":"drone_firmware","mcuId":)";
         manifest += std::to_string(mcuId);
         manifest += R"(,"buildEpoch":)" + std::to_string(buildEpoch);
-        manifest += R"(,"gitHash":")" + gitHash + R"(","protocolVersion":)" +
-                    std::to_string(protocolVersion) + R"(,"images":[)";
+        manifest +=
+            R"(,"gitHash":")" + gitHash + R"(","wireHash":")" + wireHash + R"(","images":[)";
         for (std::uint8_t slot = 0U; slot < OTA_SLOT_COUNT; ++slot)
         {
             manifest += slot == 0U ? "" : ",";
@@ -218,76 +228,73 @@ namespace
         return built;
     }
 
-    /// @brief Builds one OtaStatusPacket the way a board would send it.
+    /// @brief Builds an envelope holding one empty body.
+    /// @param tag mark4_Envelope_*_tag of the body
+    /// @return the envelope
+    mark4_Envelope bareEnvelope(pb_size_t tag)
+    {
+        mark4_Envelope envelope = mark4_Envelope_init_zero;
+        envelope.which_body = tag;
+        return envelope;
+    }
+
+    /// @brief Builds one OtaStatus the way a board would send it.
     /// @param runningSlot slot the reported firmware runs from
-    /// @param runningState state of that slot
+    /// @param runningState state of that slot, in the flash encoding
     /// @param buildEpoch build identity of the running image
     /// @param gitHash short hash
     /// @param busy true to report an open transfer session
-    /// @return the packet bytes
-    std::vector<std::uint8_t> statusPacket(std::uint8_t runningSlot,
-                                           std::uint8_t runningState,
-                                           std::uint32_t buildEpoch,
-                                           const std::string &gitHash,
-                                           bool busy = false)
+    /// @return the envelope
+    mark4_Envelope statusEnvelope(std::uint8_t runningSlot,
+                                  std::uint8_t runningState,
+                                  std::uint32_t buildEpoch,
+                                  const std::string &gitHash,
+                                  bool busy = false)
     {
-        OtaStatusPacket packet{};
-        packet.version = PROTOCOL_VERSION;
-        packet.type = static_cast<std::uint8_t>(PacketType::OTA_STATUS);
-        packet.mcuId = OTA_MCU_STM32F405;
-        packet.runningSlot = runningSlot;
+        mark4_Envelope envelope = bareEnvelope(mark4_Envelope_ota_status_tag);
+        mark4_OtaStatus &status = envelope.body.ota_status;
+        status.mcu = mark4_Mcu_STM32F405;
+        status.running_slot = runningSlot;
         // During a trial boot the metadata still prefers the other slot;
         // everywhere else active and running coincide.
-        packet.activeSlot = (runningState == OTA_SLOT_TESTING)
-                                ? static_cast<std::uint8_t>(1U - runningSlot)
-                                : runningSlot;
-        packet.updaterBusy = busy ? 1U : 0U;
-        packet.slot[runningSlot].state = runningState;
-        packet.slot[1U - runningSlot].state = OTA_SLOT_EMPTY;
-        packet.slot[runningSlot].buildEpoch = buildEpoch;
-        const auto field = hashField(gitHash);
-        std::memcpy(&packet.slot[runningSlot].gitHash, field.data(), field.size());
-        packet.slotSize = TEST_SLOT_SIZE;
-        packet.maxChunkData = static_cast<std::uint16_t>(OTA_CHUNK_DATA_SIZE);
-        std::vector<std::uint8_t> bytes(sizeof(packet));
-        std::memcpy(bytes.data(), &packet, sizeof(packet));
-        return bytes;
+        status.active_slot = (runningState == OTA_SLOT_TESTING) ? 1U - runningSlot : runningSlot;
+        status.updater_busy = busy;
+        status.slots[runningSlot].state = otaSlotStateToWire(runningState);
+        status.slots[1U - runningSlot].state = mark4_OtaSlotState_EMPTY;
+        status.slots[runningSlot].build_epoch = buildEpoch;
+        static_cast<void>(std::snprintf(status.slots[runningSlot].git_hash,
+                                        sizeof(status.slots[runningSlot].git_hash),
+                                        "%s",
+                                        gitHash.c_str()));
+        status.slot_size = TEST_SLOT_SIZE;
+        status.max_chunk_data = static_cast<std::uint32_t>(OTA_CHUNK_DATA_SIZE);
+        return envelope;
     }
 
-    /// @brief Builds one OtaAckPacket.
+    /// @brief Builds one OtaAck.
     /// @param session session nonce to echo
-    /// @param acked packet type being answered
-    /// @param result one of the OTA_RESULT_* values
-    /// @return the packet bytes
-    std::vector<std::uint8_t> ackPacket(std::uint32_t session,
-                                        PacketType acked,
-                                        std::uint8_t result)
+    /// @param op request being answered
+    /// @param result outcome
+    /// @return the envelope
+    mark4_Envelope ackEnvelope(std::uint32_t session, mark4_OtaOp op, mark4_OtaResult result)
     {
-        OtaAckPacket packet{};
-        packet.version = PROTOCOL_VERSION;
-        packet.type = static_cast<std::uint8_t>(PacketType::OTA_ACK);
-        packet.session = session;
-        packet.ackedType = static_cast<std::uint8_t>(acked);
-        packet.result = result;
-        std::vector<std::uint8_t> bytes(sizeof(packet));
-        std::memcpy(bytes.data(), &packet, sizeof(packet));
-        return bytes;
+        mark4_Envelope envelope = bareEnvelope(mark4_Envelope_ota_ack_tag);
+        envelope.body.ota_ack.session = session;
+        envelope.body.ota_ack.op = op;
+        envelope.body.ota_ack.result = result;
+        return envelope;
     }
 
-    /// @brief Builds one OtaChunkAckPacket.
+    /// @brief Builds one OtaChunkAck.
     /// @param session session nonce to echo
     /// @param nextOffset first image byte still missing
-    /// @return the packet bytes
-    std::vector<std::uint8_t> chunkAckPacket(std::uint32_t session, std::uint32_t nextOffset)
+    /// @return the envelope
+    mark4_Envelope chunkAckEnvelope(std::uint32_t session, std::uint32_t nextOffset)
     {
-        OtaChunkAckPacket packet{};
-        packet.version = PROTOCOL_VERSION;
-        packet.type = static_cast<std::uint8_t>(PacketType::OTA_CHUNK_ACK);
-        packet.session = session;
-        packet.nextOffset = nextOffset;
-        std::vector<std::uint8_t> bytes(sizeof(packet));
-        std::memcpy(bytes.data(), &packet, sizeof(packet));
-        return bytes;
+        mark4_Envelope envelope = bareEnvelope(mark4_Envelope_ota_chunk_ack_tag);
+        envelope.body.ota_chunk_ack.session = session;
+        envelope.body.ota_chunk_ack.next_offset = nextOffset;
+        return envelope;
     }
 
     /// The board the client talks to: it records what went out and answers
@@ -303,16 +310,15 @@ namespace
             // window is what is under test, not the milliseconds.
             config.chunkDelayUs = 0U;
             m_client = OtaClient(config);
-            m_client.setSink(
-                [this](const std::uint8_t *data, std::size_t size, std::string &errorOut) {
-                    if (!m_reachable)
-                    {
-                        errorOut = "no serial link to the board";
-                        return false;
-                    }
-                    m_sent.emplace_back(data, data + size);
-                    return true;
-                });
+            m_client.setSink([this](const mark4_Envelope &envelope, std::string &errorOut) {
+                if (!m_reachable)
+                {
+                    errorOut = "no serial link to the board";
+                    return false;
+                }
+                m_sent.push_back(envelope);
+                return true;
+            });
         }
 
         /// @return the client under test
@@ -335,11 +341,11 @@ namespace
             m_client.tick(m_nowUs);
         }
 
-        /// @brief Hands one packet to the client at the current instant.
-        /// @param bytes packet bytes
-        void feed(const std::vector<std::uint8_t> &bytes)
+        /// @brief Hands one message to the client at the current instant.
+        /// @param envelope message
+        void feed(const mark4_Envelope &envelope)
         {
-            REQUIRE(m_client.onPacket(bytes.data(), bytes.size(), m_nowUs));
+            REQUIRE(m_client.onEnvelope(envelope, m_nowUs));
         }
 
         /// @brief Cuts or restores the route to the board.
@@ -349,14 +355,14 @@ namespace
             m_reachable = on;
         }
 
-        /// @param type packet type to count
-        /// @return how many packets of that type went out
-        [[nodiscard]] std::size_t countSent(PacketType type) const
+        /// @param tag body tag to count
+        /// @return how many messages with that body went out
+        [[nodiscard]] std::size_t countSent(pb_size_t tag) const
         {
             std::size_t count = 0U;
-            for (const auto &packet : m_sent)
+            for (const auto &envelope : m_sent)
             {
-                if (hasHeader(packet.data(), packet.size(), type))
+                if (envelope.which_body == tag)
                 {
                     ++count;
                 }
@@ -364,14 +370,14 @@ namespace
             return count;
         }
 
-        /// @param type packet type to look for
-        /// @return the last packet of that type, empty when none went out
-        [[nodiscard]] std::vector<std::uint8_t> lastSent(PacketType type) const
+        /// @param tag body tag to look for
+        /// @return the last message with that body, which_body 0 when none
+        [[nodiscard]] mark4_Envelope lastSent(pb_size_t tag) const
         {
-            std::vector<std::uint8_t> found;
+            mark4_Envelope found = mark4_Envelope_init_zero;
             for (const auto &entry : m_sent)
             {
-                if (hasHeader(entry.data(), entry.size(), type))
+                if (entry.which_body == tag)
                 {
                     found = entry;
                 }
@@ -379,30 +385,23 @@ namespace
             return found;
         }
 
-        /// @return the session nonce of the OTA_BEGIN that went out
+        /// @return the session nonce of the OtaBegin that went out
         [[nodiscard]] std::uint32_t session() const
         {
-            const auto begin = lastSent(PacketType::OTA_BEGIN);
-            REQUIRE(begin.size() == OTA_BEGIN_PACKET_SIZE);
-            OtaBeginPacket packet{};
-            std::memcpy(&packet, begin.data(), sizeof(packet));
-            return packet.session;
+            const mark4_Envelope begin = lastSent(mark4_Envelope_ota_begin_tag);
+            REQUIRE(begin.which_body == mark4_Envelope_ota_begin_tag);
+            return begin.body.ota_begin.session;
         }
 
-        /// @return the offsets of every OTA_CHUNK that went out, in order
+        /// @return the offsets of every OtaChunk that went out, in order
         [[nodiscard]] std::vector<std::uint32_t> chunkOffsets() const
         {
             std::vector<std::uint32_t> offsets;
             for (const auto &entry : m_sent)
             {
-                if (hasHeader(entry.data(), entry.size(), PacketType::OTA_CHUNK))
+                if (entry.which_body == mark4_Envelope_ota_chunk_tag)
                 {
-                    OtaChunkPacket packet{};
-                    std::memcpy(&packet, entry.data(), sizeof(packet));
-                    // Copy the packed field out before push_back binds a
-                    // reference to it; the member itself is misaligned.
-                    const std::uint32_t offset = packet.offset;
-                    offsets.push_back(offset);
+                    offsets.push_back(entry.body.ota_chunk.offset);
                 }
             }
             return offsets;
@@ -417,7 +416,7 @@ namespace
 
       private:
         OtaClient m_client;
-        std::vector<std::vector<std::uint8_t>> m_sent;
+        std::vector<mark4_Envelope> m_sent;
         std::uint64_t m_nowUs = 1'000'000U;
         bool m_reachable = true;
     };
@@ -429,12 +428,12 @@ namespace
     /// @return the total bytes of the image that will be sent
     std::uint32_t startHappySession(Bench &bench, const ScratchDirectory &directory)
     {
-        const BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 2U, NEW_HASH, PROTOCOL_VERSION);
+        const BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 2U, NEW_HASH, currentWireHash());
         const std::string path = directory.write("drone_firmware.ota", built.bytes);
         std::string error;
         REQUIRE(bench.client().start(path, bench.nowUs(), error));
         REQUIRE(bench.client().phase() == OtaPhase::QUERY);
-        bench.feed(statusPacket(OTA_SLOT_A, OTA_SLOT_VALID, 1U, OLD_HASH));
+        bench.feed(statusEnvelope(OTA_SLOT_A, OTA_SLOT_VALID, 1U, OLD_HASH));
         REQUIRE(bench.client().phase() == OtaPhase::ERASING);
         REQUIRE(bench.client().targetSlot() == OTA_SLOT_B);
         return static_cast<std::uint32_t>(built.images[OTA_SLOT_B].size());
@@ -446,13 +445,13 @@ namespace
     void runTransfer(Bench &bench, std::uint32_t totalBytes)
     {
         const std::uint32_t session = bench.session();
-        bench.feed(ackPacket(session, PacketType::OTA_BEGIN, OTA_RESULT_OK));
+        bench.feed(ackEnvelope(session, mark4_OtaOp_BEGIN, mark4_OtaResult_OTA_OK));
         REQUIRE(bench.client().phase() == OtaPhase::TRANSFER);
         while (bench.client().phase() == OtaPhase::TRANSFER)
         {
             const std::uint32_t sent = bench.client().progress().sentBytes;
             REQUIRE(sent > bench.client().progress().ackedBytes);
-            bench.feed(chunkAckPacket(session, sent));
+            bench.feed(chunkAckEnvelope(session, sent));
         }
         REQUIRE(bench.client().phase() == OtaPhase::VERIFYING);
         REQUIRE(bench.client().progress().ackedBytes == totalBytes);
@@ -463,9 +462,9 @@ namespace
     void runTrialBoot(Bench &bench)
     {
         const std::uint32_t session = bench.session();
-        bench.feed(ackPacket(session, PacketType::OTA_FINISH, OTA_RESULT_OK));
+        bench.feed(ackEnvelope(session, mark4_OtaOp_FINISH, mark4_OtaResult_OTA_OK));
         REQUIRE(bench.client().phase() == OtaPhase::REBOOTING);
-        REQUIRE(bench.countSent(PacketType::REBOOT_COMMAND) == 1U);
+        REQUIRE(bench.countSent(mark4_Envelope_reboot_tag) == 1U);
         bench.advance(OtaClient::REBOOT_SETTLE_MS);
         REQUIRE(bench.client().phase() == OtaPhase::WAITING_BOARD);
     }
@@ -474,7 +473,7 @@ namespace
 TEST_CASE("a bundle round trips through the reader")
 {
     const ScratchDirectory directory;
-    const BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 3U, "deadbeef", PROTOCOL_VERSION);
+    const BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 3U, "deadbeef", currentWireHash());
     const std::string path = directory.write("good.ota", built.bytes);
 
     OtaBundle bundle;
@@ -486,7 +485,7 @@ TEST_CASE("a bundle round trips through the reader")
     CHECK(bundle.mcuId == OTA_MCU_STM32F405);
     CHECK(bundle.gitHash == "deadbeef");
     CHECK(bundle.buildEpoch == 3U);
-    CHECK(bundle.protocolVersion == PROTOCOL_VERSION);
+    CHECK(bundle.wireHash == currentWireHash());
     REQUIRE(bundle.images.size() == OTA_SLOT_COUNT);
     CHECK(bundle.images[0].slot == OTA_SLOT_A);
     CHECK(bundle.images[1].slot == OTA_SLOT_B);
@@ -504,7 +503,7 @@ TEST_CASE("a rebuilt bundle is picked up with no gesture, and a deleted one is f
     const ScratchDirectory directory;
     Bench bench;
     const std::string path = directory.write(
-        "watched.ota", buildBundle(OTA_MCU_STM32F405, 100U, "aaaaaaaa", PROTOCOL_VERSION).bytes);
+        "watched.ota", buildBundle(OTA_MCU_STM32F405, 100U, "aaaaaaaa", currentWireHash()).bytes);
     bench.client().setDefaultBundlePath(path);
 
     // The first idle tick loads the bundle without any start.
@@ -514,7 +513,7 @@ TEST_CASE("a rebuilt bundle is picked up with no gesture, and a deleted one is f
 
     // A rebuild rewrites the file; the next check sees the new identity.
     static_cast<void>(directory.write(
-        "watched.ota", buildBundle(OTA_MCU_STM32F405, 200U, "bbbbbbbb", PROTOCOL_VERSION).bytes));
+        "watched.ota", buildBundle(OTA_MCU_STM32F405, 200U, "bbbbbbbb", currentWireHash()).bytes));
     bench.advance(OtaClient::BUNDLE_CHECK_MS);
     CHECK(bench.client().bundle().buildEpoch == 200U);
     CHECK(bench.client().bundle().gitHash == "bbbbbbbb");
@@ -539,24 +538,23 @@ TEST_CASE("the reader refuses everything that is not a consistent bundle")
 
     SECTION("a file that carries another magic")
     {
-        BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 1U, "abcd1234", PROTOCOL_VERSION);
+        BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 1U, "abcd1234", currentWireHash());
         built.bytes[0] = 'X';
         CHECK(!(loadOtaBundle(directory.write("bad.ota", built.bytes), bundle, error)));
         CHECK(error.find("not an .ota bundle") != std::string::npos);
     }
 
-    SECTION("a bundle built against another wire version")
+    SECTION("a bundle built against another wire schema")
     {
-        const BuiltBundle built = buildBundle(
-            OTA_MCU_STM32F405, 1U, "abcd1234", static_cast<std::uint8_t>(PROTOCOL_VERSION - 1U));
+        const BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 1U, "abcd1234", "00000000");
         CHECK(!(loadOtaBundle(directory.write("old.ota", built.bytes), bundle, error)));
-        CHECK(error.find("protocol version") != std::string::npos);
+        CHECK(error.find("wire") != std::string::npos);
     }
 
     SECTION("an image whose bytes do not hash to the announced CRC")
     {
         const BuiltBundle built =
-            buildBundle(OTA_MCU_STM32F405, 1U, "abcd1234", PROTOCOL_VERSION, OTA_SLOT_B);
+            buildBundle(OTA_MCU_STM32F405, 1U, "abcd1234", currentWireHash(), OTA_SLOT_B);
         CHECK(!(loadOtaBundle(directory.write("crc.ota", built.bytes), bundle, error)));
         CHECK(error.find("crc32") != std::string::npos);
         // The refusal names the other plausible convention too, so an
@@ -566,7 +564,7 @@ TEST_CASE("the reader refuses everything that is not a consistent bundle")
 
     SECTION("a bundle cut short of its last image")
     {
-        BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 1U, "abcd1234", PROTOCOL_VERSION);
+        BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 1U, "abcd1234", currentWireHash());
         built.bytes.resize(built.bytes.size() - 32U);
         CHECK(!(loadOtaBundle(directory.write("cut.ota", built.bytes), bundle, error)));
         CHECK(error.find("truncated") != std::string::npos);
@@ -574,7 +572,7 @@ TEST_CASE("the reader refuses everything that is not a consistent bundle")
 
     SECTION("an image whose header was stamped for the other slot")
     {
-        BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 1U, "abcd1234", PROTOCOL_VERSION);
+        BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 1U, "abcd1234", currentWireHash());
         // Swap the two image bodies without touching the manifest: each
         // header then contradicts the entry it is filed under.
         const std::size_t firstAt =
@@ -593,11 +591,9 @@ TEST_CASE("the happy path stages the image, trial boots it and confirms it")
 
     // The board was told the size and CRC of the slot B image, and only of
     // that one: the running slot is never written.
-    const auto begin = bench.lastSent(PacketType::OTA_BEGIN);
-    REQUIRE(begin.size() == OTA_BEGIN_PACKET_SIZE);
-    OtaBeginPacket beginPacket{};
-    std::memcpy(&beginPacket, begin.data(), sizeof(beginPacket));
-    CHECK(beginPacket.imageSize == total);
+    const mark4_Envelope begin = bench.lastSent(mark4_Envelope_ota_begin_tag);
+    REQUIRE(begin.which_body == mark4_Envelope_ota_begin_tag);
+    CHECK(begin.body.ota_begin.image_size == total);
 
     runTransfer(bench, total);
     // Every byte went out exactly once: no window was resent.
@@ -607,18 +603,17 @@ TEST_CASE("the happy path stages the image, trial boots it and confirms it")
     {
         CHECK(offsets[index] == index * OTA_CHUNK_DATA_SIZE);
     }
-    CHECK(bench.countSent(PacketType::OTA_FINISH) == 1U);
+    CHECK(bench.countSent(mark4_Envelope_ota_finish_tag) == 1U);
 
     runTrialBoot(bench);
     // The trial image confirms itself on the first request it serves, so
     // the very first status the hub sees already reports VALID; the hub
     // never sends a confirmation of its own.
-    bench.feed(statusPacket(OTA_SLOT_B, OTA_SLOT_VALID, 2U, NEW_HASH));
+    bench.feed(statusEnvelope(OTA_SLOT_B, OTA_SLOT_VALID, 2U, NEW_HASH));
     CHECK(bench.client().phase() == OtaPhase::CONFIRMED);
     CHECK(bench.client().verdict() == OtaVerdict::CONFIRMED);
     CHECK(bench.client().verdictText().find("confirmed") != std::string::npos);
     CHECK(bench.client().lastError().empty());
-    CHECK(bench.countSent(PacketType::OTA_CONFIRM) == 0U);
 }
 
 TEST_CASE("a chunk acknowledgement that never comes sends the window again")
@@ -627,7 +622,7 @@ TEST_CASE("a chunk acknowledgement that never comes sends the window again")
     Bench bench;
     const std::uint32_t total = startHappySession(bench, directory);
     const std::uint32_t session = bench.session();
-    bench.feed(ackPacket(session, PacketType::OTA_BEGIN, OTA_RESULT_OK));
+    bench.feed(ackEnvelope(session, mark4_OtaOp_BEGIN, mark4_OtaResult_OTA_OK));
     REQUIRE(bench.client().phase() == OtaPhase::TRANSFER);
 
     const std::uint32_t windowBytes =
@@ -646,11 +641,11 @@ TEST_CASE("a chunk acknowledgement that never comes sends the window again")
     CHECK(offsets.front() == 0U);
 
     // The resent window lands and the transfer carries on to the end.
-    bench.feed(chunkAckPacket(session, windowBytes));
+    bench.feed(chunkAckEnvelope(session, windowBytes));
     CHECK(bench.client().progress().ackedBytes == windowBytes);
     while (bench.client().phase() == OtaPhase::TRANSFER)
     {
-        bench.feed(chunkAckPacket(session, bench.client().progress().sentBytes));
+        bench.feed(chunkAckEnvelope(session, bench.client().progress().sentBytes));
     }
     CHECK(bench.client().phase() == OtaPhase::VERIFYING);
     CHECK(bench.client().progress().ackedBytes == total);
@@ -662,16 +657,16 @@ TEST_CASE("a repeated acknowledgement offset resends without waiting out the sil
     Bench bench;
     static_cast<void>(startHappySession(bench, directory));
     const std::uint32_t session = bench.session();
-    bench.feed(ackPacket(session, PacketType::OTA_BEGIN, OTA_RESULT_OK));
+    bench.feed(ackEnvelope(session, mark4_OtaOp_BEGIN, mark4_OtaResult_OTA_OK));
 
     const auto chunk = static_cast<std::uint32_t>(OTA_CHUNK_DATA_SIZE);
-    bench.feed(chunkAckPacket(session, 3U * chunk));
+    bench.feed(chunkAckEnvelope(session, 3U * chunk));
     REQUIRE(bench.client().progress().ackedBytes == 3U * chunk);
     bench.clearSent();
 
     // The board says it is still missing the same byte: an out-of-order
     // chunk was dropped, so everything above that offset goes again now.
-    bench.feed(chunkAckPacket(session, 3U * chunk));
+    bench.feed(chunkAckEnvelope(session, 3U * chunk));
     CHECK(bench.client().progress().retries == 1U);
     const auto offsets = bench.chunkOffsets();
     REQUIRE_FALSE(offsets.empty());
@@ -690,16 +685,16 @@ TEST_CASE("one lost chunk echoes a whole window of repeats and costs one retry")
     Bench bench;
     static_cast<void>(startHappySession(bench, directory));
     const std::uint32_t session = bench.session();
-    bench.feed(ackPacket(session, PacketType::OTA_BEGIN, OTA_RESULT_OK));
+    bench.feed(ackEnvelope(session, mark4_OtaOp_BEGIN, mark4_OtaResult_OTA_OK));
 
     const auto chunk = static_cast<std::uint32_t>(OTA_CHUNK_DATA_SIZE);
-    bench.feed(chunkAckPacket(session, 3U * chunk));
+    bench.feed(chunkAckEnvelope(session, 3U * chunk));
     bench.clearSent();
 
     // A storm of repeats at one offset: one resend, one retry, not a fail.
     for (std::uint32_t echo = 0U; echo < 2U * OTA_CHUNK_ACK_WINDOW; ++echo)
     {
-        bench.feed(chunkAckPacket(session, 3U * chunk));
+        bench.feed(chunkAckEnvelope(session, 3U * chunk));
     }
     CHECK(bench.client().progress().retries == 1U);
     CHECK(bench.client().phase() == OtaPhase::TRANSFER);
@@ -708,10 +703,10 @@ TEST_CASE("one lost chunk echoes a whole window of repeats and costs one retry")
     // add up to a failure as long as bytes keep landing in between.
     for (std::uint32_t round = 4U; round < 24U; ++round)
     {
-        bench.feed(chunkAckPacket(session, round * chunk));
+        bench.feed(chunkAckEnvelope(session, round * chunk));
         for (std::uint32_t echo = 0U; echo < OTA_CHUNK_ACK_WINDOW; ++echo)
         {
-            bench.feed(chunkAckPacket(session, round * chunk));
+            bench.feed(chunkAckEnvelope(session, round * chunk));
         }
         REQUIRE(bench.client().phase() == OtaPhase::TRANSFER);
     }
@@ -740,12 +735,12 @@ TEST_CASE("a CRC refusal at the end of the transfer is reported in plain words")
     const std::uint32_t total = startHappySession(bench, directory);
     runTransfer(bench, total);
 
-    bench.feed(ackPacket(bench.session(), PacketType::OTA_FINISH, OTA_RESULT_CRC_MISMATCH));
+    bench.feed(ackEnvelope(bench.session(), mark4_OtaOp_FINISH, mark4_OtaResult_CRC_MISMATCH));
     CHECK(bench.client().phase() == OtaPhase::FAILED);
-    CHECK(bench.client().lastError() == otaResultText(OTA_RESULT_CRC_MISMATCH));
+    CHECK(bench.client().lastError() == otaResultText(mark4_OtaResult_CRC_MISMATCH));
     CHECK(bench.client().lastError().find("announced CRC") != std::string::npos);
     // Nothing was rebooted: an image that did not stage must not be booted.
-    CHECK(bench.countSent(PacketType::REBOOT_COMMAND) == 0U);
+    CHECK(bench.countSent(mark4_Envelope_reboot_tag) == 0U);
 }
 
 TEST_CASE("a board that refuses because it is armed says exactly that")
@@ -754,10 +749,10 @@ TEST_CASE("a board that refuses because it is armed says exactly that")
     Bench bench;
     static_cast<void>(startHappySession(bench, directory));
 
-    bench.feed(ackPacket(bench.session(), PacketType::OTA_BEGIN, OTA_RESULT_DENIED_ARMED));
+    bench.feed(ackEnvelope(bench.session(), mark4_OtaOp_BEGIN, mark4_OtaResult_DENIED_ARMED));
     CHECK(bench.client().phase() == OtaPhase::FAILED);
     CHECK(bench.client().lastError().find("it is armed") != std::string::npos);
-    CHECK(bench.countSent(PacketType::OTA_CHUNK) == 0U);
+    CHECK(bench.countSent(mark4_Envelope_ota_chunk_tag) == 0U);
 }
 
 TEST_CASE("an answer to the end of the transfer that is a chunk ack resumes the transfer")
@@ -773,7 +768,7 @@ TEST_CASE("an answer to the end of the transfer that is a chunk ack resumes the 
     const std::uint32_t resumeAt = total - static_cast<std::uint32_t>(OTA_CHUNK_DATA_SIZE);
     const std::uint32_t session = bench.session();
     bench.clearSent();
-    bench.feed(chunkAckPacket(session, resumeAt));
+    bench.feed(chunkAckEnvelope(session, resumeAt));
     CHECK(bench.client().phase() == OtaPhase::TRANSFER);
     CHECK(bench.client().progress().ackedBytes == resumeAt);
     const auto offsets = bench.chunkOffsets();
@@ -789,12 +784,11 @@ TEST_CASE("a board that comes back on the old firmware is a rollback")
     runTransfer(bench, total);
     runTrialBoot(bench);
 
-    bench.feed(statusPacket(OTA_SLOT_A, OTA_SLOT_VALID, 1U, OLD_HASH));
+    bench.feed(statusEnvelope(OTA_SLOT_A, OTA_SLOT_VALID, 1U, OLD_HASH));
     CHECK(bench.client().phase() == OtaPhase::ROLLED_BACK);
     CHECK(bench.client().verdict() == OtaVerdict::ROLLED_BACK);
     CHECK(bench.client().verdictText().find("rolled back") != std::string::npos);
     // Nothing is confirmed on a rollback: the trial image is gone.
-    CHECK(bench.countSent(PacketType::OTA_CONFIRM) == 0U);
 }
 
 TEST_CASE("a board that never comes back after the reboot fails the session")
@@ -820,23 +814,21 @@ TEST_CASE("a trial that has not vouched for itself yet keeps the hub polling")
     // A board that answers but still says TESTING has not reached its own
     // checkpoint (or its metadata write raced this answer): the hub stays
     // in TESTING and keeps asking, sending nothing.
-    bench.feed(statusPacket(OTA_SLOT_B, OTA_SLOT_TESTING, 2U, NEW_HASH));
+    bench.feed(statusEnvelope(OTA_SLOT_B, OTA_SLOT_TESTING, 2U, NEW_HASH));
     REQUIRE(bench.client().phase() == OtaPhase::TESTING);
 
     for (int round = 0; round < 3; ++round)
     {
         bench.advance(OtaClient::STATUS_PERIOD_MS);
-        bench.feed(statusPacket(OTA_SLOT_B, OTA_SLOT_TESTING, 2U, NEW_HASH));
+        bench.feed(statusEnvelope(OTA_SLOT_B, OTA_SLOT_TESTING, 2U, NEW_HASH));
         REQUIRE(bench.client().phase() == OtaPhase::TESTING);
     }
-    CHECK(bench.countSent(PacketType::OTA_CONFIRM) == 0U);
 
     // The image finally vouches for itself; the next answer says so.
     bench.advance(OtaClient::STATUS_PERIOD_MS);
-    bench.feed(statusPacket(OTA_SLOT_B, OTA_SLOT_VALID, 2U, NEW_HASH));
+    bench.feed(statusEnvelope(OTA_SLOT_B, OTA_SLOT_VALID, 2U, NEW_HASH));
     CHECK(bench.client().phase() == OtaPhase::CONFIRMED);
     CHECK(bench.client().verdict() == OtaVerdict::CONFIRMED);
-    CHECK(bench.countSent(PacketType::OTA_CONFIRM) == 0U);
 }
 
 TEST_CASE("an abort with no update running is refused")
@@ -852,12 +844,12 @@ TEST_CASE("an abort tells the board and frees the session")
     const ScratchDirectory directory;
     Bench bench;
     static_cast<void>(startHappySession(bench, directory));
-    bench.feed(ackPacket(bench.session(), PacketType::OTA_BEGIN, OTA_RESULT_OK));
+    bench.feed(ackEnvelope(bench.session(), mark4_OtaOp_BEGIN, mark4_OtaResult_OTA_OK));
     REQUIRE(bench.client().phase() == OtaPhase::TRANSFER);
 
     std::string error;
     REQUIRE(bench.client().abortSession(bench.nowUs(), error));
-    CHECK(bench.countSent(PacketType::OTA_ABORT) == 1U);
+    CHECK(bench.countSent(mark4_Envelope_ota_abort_tag) == 1U);
     CHECK(bench.client().phase() == OtaPhase::IDLE);
     CHECK(bench.client().progress().totalBytes == 0U);
     CHECK(bench.client().lastError() == "aborted by the operator");
@@ -869,10 +861,10 @@ TEST_CASE("a revert flips the slot and reboots the board")
     std::string error;
     REQUIRE(bench.client().revert(bench.nowUs(), error));
     REQUIRE(bench.client().phase() == OtaPhase::REVERTING);
-    CHECK(bench.countSent(PacketType::OTA_REVERT) == 1U);
+    CHECK(bench.countSent(mark4_Envelope_ota_revert_tag) == 1U);
 
-    bench.feed(ackPacket(0U, PacketType::OTA_REVERT, OTA_RESULT_OK));
-    CHECK(bench.countSent(PacketType::REBOOT_COMMAND) == 1U);
+    bench.feed(ackEnvelope(0U, mark4_OtaOp_REVERT, mark4_OtaResult_OTA_OK));
+    CHECK(bench.countSent(mark4_Envelope_reboot_tag) == 1U);
     CHECK(bench.client().verdict() == OtaVerdict::REVERTED);
     CHECK(bench.client().phase() == OtaPhase::IDLE);
 }
@@ -880,7 +872,7 @@ TEST_CASE("a revert flips the slot and reboots the board")
 TEST_CASE("a board that is not reachable fails the session instead of hanging")
 {
     const ScratchDirectory directory;
-    const BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 2U, NEW_HASH, PROTOCOL_VERSION);
+    const BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 2U, NEW_HASH, currentWireHash());
     Bench bench;
     const std::string path = directory.write("drone_firmware.ota", built.bytes);
     bench.setReachable(false);
@@ -894,25 +886,25 @@ TEST_CASE("a bundle for another chip is refused before a single byte is sent")
 {
     const ScratchDirectory directory;
     Bench bench;
-    const BuiltBundle built = buildBundle(OTA_MCU_STM32F722, 2U, NEW_HASH, PROTOCOL_VERSION);
+    const BuiltBundle built = buildBundle(OTA_MCU_STM32F722, 2U, NEW_HASH, currentWireHash());
     const std::string path = directory.write("wrong_chip.ota", built.bytes);
     std::string error;
     REQUIRE(bench.client().start(path, bench.nowUs(), error));
-    bench.feed(statusPacket(OTA_SLOT_A, OTA_SLOT_VALID, 1U, OLD_HASH));
+    bench.feed(statusEnvelope(OTA_SLOT_A, OTA_SLOT_VALID, 1U, OLD_HASH));
     CHECK(bench.client().phase() == OtaPhase::FAILED);
     CHECK(bench.client().lastError().find("mcu") != std::string::npos);
-    CHECK(bench.countSent(PacketType::OTA_BEGIN) == 0U);
+    CHECK(bench.countSent(mark4_Envelope_ota_begin_tag) == 0U);
 }
 
 TEST_CASE("a board that already has a session open is not overwritten")
 {
     const ScratchDirectory directory;
     Bench bench;
-    const BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 2U, NEW_HASH, PROTOCOL_VERSION);
+    const BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 2U, NEW_HASH, currentWireHash());
     const std::string path = directory.write("drone_firmware.ota", built.bytes);
     std::string error;
     REQUIRE(bench.client().start(path, bench.nowUs(), error));
-    bench.feed(statusPacket(OTA_SLOT_A, OTA_SLOT_VALID, 1U, OLD_HASH, true));
+    bench.feed(statusEnvelope(OTA_SLOT_A, OTA_SLOT_VALID, 1U, OLD_HASH, true));
     CHECK(bench.client().phase() == OtaPhase::FAILED);
     CHECK(bench.client().lastError().find("already has an update session") != std::string::npos);
 }
@@ -921,7 +913,7 @@ TEST_CASE("a board that never answers the initial query gives up saying so")
 {
     const ScratchDirectory directory;
     Bench bench;
-    const BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 2U, NEW_HASH, PROTOCOL_VERSION);
+    const BuiltBundle built = buildBundle(OTA_MCU_STM32F405, 2U, NEW_HASH, currentWireHash());
     const std::string path = directory.write("drone_firmware.ota", built.bytes);
     std::string error;
     REQUIRE(bench.client().start(path, bench.nowUs(), error));
@@ -931,7 +923,7 @@ TEST_CASE("a board that never answers the initial query gives up saying so")
     }
     CHECK(bench.client().phase() == OtaPhase::FAILED);
     CHECK(bench.client().lastError().find("did not answer a status request") != std::string::npos);
-    CHECK(bench.countSent(PacketType::OTA_STATUS_REQUEST) == OtaClient::STATUS_TRIES);
+    CHECK(bench.countSent(mark4_Envelope_ota_status_request_tag) == OtaClient::STATUS_TRIES);
 }
 
 TEST_CASE("the ota message carries the phase, the progress and the two identities")
@@ -939,8 +931,8 @@ TEST_CASE("the ota message carries the phase, the progress and the two identitie
     const ScratchDirectory directory;
     Bench bench;
     const std::uint32_t total = startHappySession(bench, directory);
-    bench.feed(ackPacket(bench.session(), PacketType::OTA_BEGIN, OTA_RESULT_OK));
-    bench.feed(chunkAckPacket(bench.session(), bench.client().progress().sentBytes));
+    bench.feed(ackEnvelope(bench.session(), mark4_OtaOp_BEGIN, mark4_OtaResult_OTA_OK));
+    bench.feed(chunkAckEnvelope(bench.session(), bench.client().progress().sentBytes));
 
     const std::string text = otaToJson(bench.client());
     CHECK(text.find(R"("type":"ota")") != std::string::npos);
@@ -966,7 +958,7 @@ TEST_CASE("the update messages decode into the requests the hub carries out")
         asMessage(R"({"type":"otaStart","id":1,"bundle":"/tmp/drone_firmware.ota"})");
     CHECK(start.type == ClientMessageType::OTA_START);
     CHECK(start.otaBundlePath == "/tmp/drone_firmware.ota");
-    CHECK(start.target == StreamSource::FIRMWARE);
+    CHECK(start.target == mark4_NodeKind_FIRMWARE);
 
     const ClientMessage bare = asMessage(R"({"type":"otaStart"})");
     CHECK(bare.otaBundlePath.empty());

@@ -1,14 +1,14 @@
 /// @file
-/// @brief Discovery registry: what the ground side learns from the beacons
-///        the transport delivers, and how it tells a restart from a refresh.
+/// @brief Discovery registry: what the ground side learns from the announces
+///        the nodes beacon, and how it tells a restart from a refresh.
 
-#include <array>
 #include <catch2/catch_test_macros.hpp>
+#include <cstdio>
 #include <cstring>
 #include <string>
 
 #include "hub/discovery.hpp"
-#include "protocol/announce.hpp"
+#include "protocol/envelope.hpp"
 
 namespace
 {
@@ -16,48 +16,49 @@ namespace
     constexpr std::uint32_t OTHER_SIM_NODE = 8U;
     constexpr std::uint32_t PLANT_NODE = 9U;
 
-    /// @brief Builds one announce payload, as a beacon carries it: the port
-    ///        fields are always 0 since the transport took over.
-    /// @param kind announcing process kind
-    /// @return the packed payload bytes
-    std::array<std::uint8_t, mark4::ANNOUNCE_PACKET_SIZE> announce(mark4::StreamSource kind)
+    /// @brief Builds one announce, on this build's wire.
+    /// @param kind announcing node kind
+    /// @return the message
+    mark4_Announce announce(mark4_NodeKind kind)
     {
-        mark4::AnnouncePacket packet{};
-        packet.version = mark4::PROTOCOL_VERSION;
-        packet.type = static_cast<std::uint8_t>(mark4::PacketType::ANNOUNCE);
-        packet.kind = static_cast<std::uint8_t>(kind);
-        packet.sessionId = 0U;
-        packet.telemetryPort = 0U;
-        packet.commandPort = 0U;
-        std::array<std::uint8_t, mark4::ANNOUNCE_PACKET_SIZE> bytes{};
-        std::memcpy(bytes.data(), &packet, bytes.size());
-        return bytes;
+        mark4_Announce message = mark4_Announce_init_zero;
+        message.kind = kind;
+        message.mcu = mark4_Mcu_SIM;
+        message.wire_hash = mark4::WIRE_HASH;
+        static_cast<void>(std::snprintf(message.name, sizeof(message.name), "%s", "node"));
+        return message;
     }
 } // namespace
 
 TEST_CASE("a first announce makes a process appear")
 {
     mark4::DiscoveryRegistry registry;
-    const auto bytes = announce(mark4::StreamSource::DRONE_SIM);
 
-    const auto change = registry.onAnnounce(SIM_NODE, bytes.data(), bytes.size(), 1000U);
+    const auto change = registry.onAnnounce(SIM_NODE, announce(mark4_NodeKind_DRONE_SIM), 1000U);
     REQUIRE(change.has_value());
     CHECK(change->event == mark4::DiscoveryEvent::APPEARED);
-    CHECK(change->process.kind == mark4::StreamSource::DRONE_SIM);
+    CHECK(change->process.kind == mark4_NodeKind_DRONE_SIM);
     CHECK(change->process.nodeId == SIM_NODE);
     CHECK(change->process.lastSeenUs == 1000U);
     CHECK(!(change->process.viaSerial));
+    CHECK(change->process.name == "node");
+    CHECK(change->process.mcu == mark4_Mcu_SIM);
+    CHECK(!(change->process.wireMismatch));
     REQUIRE(registry.processes().size() == 1U);
-    CHECK(registry.nodeIdOf(mark4::StreamSource::DRONE_SIM) == SIM_NODE);
+    CHECK(registry.nodeIdOf(mark4_NodeKind_DRONE_SIM) == SIM_NODE);
+    mark4_NodeKind kind = mark4_NodeKind_NODE_KIND_UNSPECIFIED;
+    CHECK(registry.kindOf(SIM_NODE, kind));
+    CHECK(kind == mark4_NodeKind_DRONE_SIM);
+    CHECK(!(registry.kindOf(OTHER_SIM_NODE, kind)));
 }
 
 TEST_CASE("a repeated announce is a silent refresh")
 {
     mark4::DiscoveryRegistry registry;
-    const auto bytes = announce(mark4::StreamSource::DRONE_SIM);
-    static_cast<void>(registry.onAnnounce(SIM_NODE, bytes.data(), bytes.size(), 1000U));
+    static_cast<void>(registry.onAnnounce(SIM_NODE, announce(mark4_NodeKind_DRONE_SIM), 1000U));
 
-    const auto change = registry.onAnnounce(SIM_NODE, bytes.data(), bytes.size(), 2'000'000U);
+    const auto change =
+        registry.onAnnounce(SIM_NODE, announce(mark4_NodeKind_DRONE_SIM), 2'000'000U);
     CHECK(!(change.has_value()));
     REQUIRE(registry.processes().size() == 1U);
     CHECK(registry.processes()[0].lastSeenUs == 2'000'000U);
@@ -66,31 +67,40 @@ TEST_CASE("a repeated announce is a silent refresh")
 TEST_CASE("a new node identity behind the same kind is a restart")
 {
     mark4::DiscoveryRegistry registry;
-    const auto bytes = announce(mark4::StreamSource::DRONE_SIM);
-    static_cast<void>(registry.onAnnounce(SIM_NODE, bytes.data(), bytes.size(), 1000U));
+    static_cast<void>(registry.onAnnounce(SIM_NODE, announce(mark4_NodeKind_DRONE_SIM), 1000U));
 
-    const auto change = registry.onAnnounce(OTHER_SIM_NODE, bytes.data(), bytes.size(), 2000U);
+    const auto change =
+        registry.onAnnounce(OTHER_SIM_NODE, announce(mark4_NodeKind_DRONE_SIM), 2000U);
     REQUIRE(change.has_value());
     CHECK(change->event == mark4::DiscoveryEvent::RESTARTED);
     CHECK(change->process.nodeId == OTHER_SIM_NODE);
     CHECK(registry.processes().size() == 1U);
-    CHECK(registry.nodeIdOf(mark4::StreamSource::DRONE_SIM) == OTHER_SIM_NODE);
+    CHECK(registry.nodeIdOf(mark4_NodeKind_DRONE_SIM) == OTHER_SIM_NODE);
 }
 
-TEST_CASE("an announce from no node at all is rejected")
+TEST_CASE("an announce over the serial link is the board")
 {
     mark4::DiscoveryRegistry registry;
-    const auto bytes = announce(mark4::StreamSource::DRONE_SIM);
-    CHECK(!(registry.onAnnounce(0U, bytes.data(), bytes.size(), 1000U).has_value()));
-    CHECK(registry.processes().empty());
-    CHECK(registry.rejectedAnnounces() == 1U);
+
+    const auto change = registry.onAnnounce(0U, announce(mark4_NodeKind_FIRMWARE), 1000U);
+    REQUIRE(change.has_value());
+    CHECK(change->event == mark4::DiscoveryEvent::APPEARED);
+    CHECK(change->process.kind == mark4_NodeKind_FIRMWARE);
+    CHECK(change->process.viaSerial);
+    CHECK(change->process.nodeId == 0U);
+
+    // The serial route carries no node identity, so it never proves a
+    // restart: every later announce is a refresh.
+    CHECK(!(registry.onAnnounce(0U, announce(mark4_NodeKind_FIRMWARE), 2000U).has_value()));
+    REQUIRE(registry.processes().size() == 1U);
+    CHECK(registry.processes()[0].lastSeenUs == 2000U);
+    CHECK(registry.nodeIdOf(mark4_NodeKind_FIRMWARE) == 0U);
 }
 
 TEST_CASE("silence makes a process disappear exactly once")
 {
     mark4::DiscoveryRegistry registry;
-    const auto bytes = announce(mark4::StreamSource::DRONE_SIM);
-    static_cast<void>(registry.onAnnounce(SIM_NODE, bytes.data(), bytes.size(), 1000U));
+    static_cast<void>(registry.onAnnounce(SIM_NODE, announce(mark4_NodeKind_DRONE_SIM), 1000U));
 
     CHECK(registry.expire(2'000'000U, 3'000'000U).empty());
 
@@ -106,47 +116,53 @@ TEST_CASE("silence makes a process disappear exactly once")
 TEST_CASE("two kinds coexist in the registry")
 {
     mark4::DiscoveryRegistry registry;
-    const auto sim = announce(mark4::StreamSource::DRONE_SIM);
-    const auto plant = announce(mark4::StreamSource::SIM_PLANT);
 
-    REQUIRE(registry.onAnnounce(SIM_NODE, sim.data(), sim.size(), 1000U).has_value());
-    REQUIRE(registry.onAnnounce(PLANT_NODE, plant.data(), plant.size(), 1000U).has_value());
+    REQUIRE(registry.onAnnounce(SIM_NODE, announce(mark4_NodeKind_DRONE_SIM), 1000U).has_value());
+    REQUIRE(registry.onAnnounce(PLANT_NODE, announce(mark4_NodeKind_PLANT), 1000U).has_value());
     REQUIRE(registry.processes().size() == 2U);
-    CHECK(registry.nodeIdOf(mark4::StreamSource::DRONE_SIM) == SIM_NODE);
-    CHECK(registry.nodeIdOf(mark4::StreamSource::SIM_PLANT) == PLANT_NODE);
-    CHECK(registry.nodeIdOf(mark4::StreamSource::FIRMWARE) == 0U);
+    CHECK(registry.nodeIdOf(mark4_NodeKind_DRONE_SIM) == SIM_NODE);
+    CHECK(registry.nodeIdOf(mark4_NodeKind_PLANT) == PLANT_NODE);
+    CHECK(registry.nodeIdOf(mark4_NodeKind_FIRMWARE) == 0U);
 }
 
-TEST_CASE("serial telemetry synthesizes the firmware entry")
+TEST_CASE("an announce naming no kind is counted and dropped")
 {
     mark4::DiscoveryRegistry registry;
-
-    const auto change = registry.onSerialTelemetry(1000U);
-    REQUIRE(change.has_value());
-    CHECK(change->event == mark4::DiscoveryEvent::APPEARED);
-    CHECK(change->process.kind == mark4::StreamSource::FIRMWARE);
-    CHECK(change->process.viaSerial);
-    CHECK(change->process.nodeId == 0U);
-
-    CHECK(!(registry.onSerialTelemetry(2000U).has_value()));
-    REQUIRE(registry.processes().size() == 1U);
-    CHECK(registry.processes()[0].lastSeenUs == 2000U);
-    CHECK(registry.nodeIdOf(mark4::StreamSource::FIRMWARE) == 0U);
-}
-
-TEST_CASE("an announce on the wrong wire version is counted and dropped")
-{
-    mark4::DiscoveryRegistry registry;
-    auto bytes = announce(mark4::StreamSource::DRONE_SIM);
-    bytes[0] = mark4::PROTOCOL_VERSION - 1U;
-
-    CHECK(!(registry.onAnnounce(SIM_NODE, bytes.data(), bytes.size(), 1000U).has_value()));
+    CHECK(!(registry.onAnnounce(SIM_NODE, announce(mark4_NodeKind_NODE_KIND_UNSPECIFIED), 1000U)
+                .has_value()));
     CHECK(registry.processes().empty());
     CHECK(registry.rejectedAnnounces() == 1U);
+}
 
-    // A truncated payload is just as invalid, and just as worth counting.
-    CHECK(!(registry.onAnnounce(SIM_NODE, bytes.data(), bytes.size() - 1U, 1000U).has_value()));
-    CHECK(registry.rejectedAnnounces() == 2U);
+TEST_CASE("a node built on another wire schema is listed as a mismatch")
+{
+    mark4::DiscoveryRegistry registry;
+    mark4_Announce foreign = announce(mark4_NodeKind_FIRMWARE);
+    foreign.wire_hash = mark4::WIRE_HASH ^ 0x1U;
+
+    const auto change = registry.onAnnounce(0U, foreign, 1000U);
+    REQUIRE(change.has_value());
+    CHECK(change->process.wireMismatch);
+    CHECK(change->process.wireHash == foreign.wire_hash);
+    // Still listed: the page must show the board is there and why it is mute.
+    REQUIRE(registry.processes().size() == 1U);
+}
+
+TEST_CASE("kind names round trip")
+{
+    for (const mark4_NodeKind kind : {mark4_NodeKind_FIRMWARE,
+                                      mark4_NodeKind_DRONE_SIM,
+                                      mark4_NodeKind_PLANT,
+                                      mark4_NodeKind_GATEWAY,
+                                      mark4_NodeKind_BATCH})
+    {
+        mark4_NodeKind parsed = mark4_NodeKind_NODE_KIND_UNSPECIFIED;
+        REQUIRE(mark4::parseNodeKindName(mark4::nodeKindName(kind), parsed));
+        CHECK(parsed == kind);
+    }
+    mark4_NodeKind parsed = mark4_NodeKind_NODE_KIND_UNSPECIFIED;
+    CHECK(!(mark4::parseNodeKindName("ghost", parsed)));
+    CHECK(std::string(mark4::nodeKindName(mark4_NodeKind_NODE_KIND_UNSPECIFIED)) == "unknown");
 }
 
 namespace

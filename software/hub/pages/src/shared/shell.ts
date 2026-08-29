@@ -15,6 +15,8 @@ interface DiscoveredProcess {
     sessionId: number;
     viaSerial: boolean;
     ageMs: number;
+    /** The node was built on another mark4.proto than the hub: it is listed, and mute. */
+    wireMismatch: boolean;
 }
 
 /** A process not seen for this long is stale, whatever the hub still lists. */
@@ -112,7 +114,13 @@ export class Shell {
         }
         for (const process of processes) {
             const chip = document.createElement("span");
-            chip.className = "chip" + (process.ageMs > STALE_MS ? " stale" : "");
+            chip.className =
+                "chip" +
+                (process.ageMs > STALE_MS ? " stale" : "") +
+                (process.wireMismatch ? " mismatch" : "");
+            if (process.wireMismatch) {
+                chip.title = "built on another wire schema than the hub: rebuild and reflash";
+            }
             const name = document.createElement("b");
             name.textContent = process.kindName;
             chip.appendChild(name);
@@ -120,7 +128,8 @@ export class Shell {
             detail.textContent =
                 ` node ${process.sessionId}` +
                 ` ${process.viaSerial ? "serial" : "udp"}` +
-                ` ${(process.ageMs / 1000).toFixed(1)} s ago`;
+                ` ${(process.ageMs / 1000).toFixed(1)} s ago` +
+                (process.wireMismatch ? " WIRE MISMATCH" : "");
             chip.appendChild(detail);
             this.discovery.appendChild(chip);
         }

@@ -1,6 +1,6 @@
 /// @file
 /// @brief Session state machine implementation. Time enters through tick()
-///        and packets through onPacket(); nothing here reads a clock or a
+///        and messages through onEnvelope(); nothing here reads a clock or a
 ///        socket, which is what lets the whole flow run against a scripted
 ///        board in a unit test.
 
@@ -13,11 +13,6 @@
 #include <filesystem>
 #include <random>
 #include <utility>
-
-#include "hub/json_codec.hpp"
-#include "hub/packed_field.hpp"
-#include "protocol/commands.hpp"
-#include "protocol/header.hpp"
 
 namespace mark4
 {
@@ -72,6 +67,16 @@ namespace mark4
             static_cast<void>(std::strftime(text.data(), text.size(), "%Y-%m-%d %H:%M:%S", &utc));
             return std::string("the build of ") + text.data() + " UTC";
         }
+
+        /// @brief Builds an envelope holding one body, chosen by tag.
+        /// @param tag mark4_Envelope_*_tag of the body
+        /// @return zeroed envelope with that body selected
+        mark4_Envelope envelopeOf(pb_size_t tag)
+        {
+            mark4_Envelope envelope = mark4_Envelope_init_zero;
+            envelope.which_body = tag;
+            return envelope;
+        }
     } // namespace
 
     const char *otaPhaseName(OtaPhase phase)
@@ -124,50 +129,49 @@ namespace mark4
         return "unknown";
     }
 
-    const char *otaSlotStateName(std::uint8_t state)
+    const char *otaSlotStateName(mark4_OtaSlotState state)
     {
         switch (state)
         {
-            case OTA_SLOT_STAGED:
+            case mark4_OtaSlotState_STAGED:
                 return "staged";
-            case OTA_SLOT_TESTING:
+            case mark4_OtaSlotState_TESTING:
                 return "testing";
-            case OTA_SLOT_VALID:
+            case mark4_OtaSlotState_VALID:
                 return "valid";
-            case OTA_SLOT_BAD:
+            case mark4_OtaSlotState_BAD:
                 return "bad";
-            case OTA_SLOT_EMPTY:
+            case mark4_OtaSlotState_EMPTY:
                 return "empty";
-            default:
-                return "unknown";
         }
+        return "unknown";
     }
 
-    std::string otaResultText(std::uint8_t result)
+    std::string otaResultText(mark4_OtaResult result)
     {
         switch (result)
         {
-            case OTA_RESULT_OK:
+            case mark4_OtaResult_OTA_OK:
                 return "ok";
-            case OTA_RESULT_DENIED_ARMED:
+            case mark4_OtaResult_DENIED_ARMED:
                 return "the board refused: it is armed";
-            case OTA_RESULT_DENIED_VOLTAGE:
+            case mark4_OtaResult_DENIED_VOLTAGE:
                 return "the board refused: the battery is under the update floor";
-            case OTA_RESULT_DENIED_BUSY:
+            case mark4_OtaResult_DENIED_BUSY:
                 return "the board refused: another update session is already open";
-            case OTA_RESULT_BAD_SESSION:
+            case mark4_OtaResult_BAD_SESSION:
                 return "the board does not know this session any more";
-            case OTA_RESULT_BAD_STATE:
+            case mark4_OtaResult_BAD_STATE:
                 return "the board refused: the request makes no sense in its current state";
-            case OTA_RESULT_BAD_IMAGE:
+            case mark4_OtaResult_BAD_IMAGE:
                 return "the board rejected the image: wrong chip, wrong slot or too large";
-            case OTA_RESULT_CRC_MISMATCH:
+            case mark4_OtaResult_CRC_MISMATCH:
                 return "the image in flash does not match the announced CRC";
-            case OTA_RESULT_STORE_FAILURE:
+            case mark4_OtaResult_STORE_FAILURE:
                 return "the board could not erase, program or record the update";
-            default:
-                return "the board answered with unknown refusal code " + std::to_string(result);
         }
+        return "the board answered with unknown refusal code " +
+               std::to_string(static_cast<int>(result));
     }
 
     OtaClient::OtaClient(Config config)
@@ -175,7 +179,7 @@ namespace mark4
     {
     }
 
-    void OtaClient::setSink(PacketSink sink)
+    void OtaClient::setSink(MessageSink sink)
     {
         m_sink = std::move(sink);
     }
@@ -304,13 +308,10 @@ namespace mark4
             // Best effort: telling the board frees its half-written slot now
             // instead of at its own session timeout. A link already gone is
             // not a reason to refuse the operator's abort.
-            OtaAbortPacket packet{};
-            packet.version = PROTOCOL_VERSION;
-            packet.type = static_cast<std::uint8_t>(PacketType::OTA_ABORT);
-            packet.session = m_session;
-            const auto bytes = wireBytes(packet);
+            mark4_Envelope abort = envelopeOf(mark4_Envelope_ota_abort_tag);
+            abort.body.ota_abort.session = m_session;
             std::string reason;
-            static_cast<void>(m_sink && m_sink(bytes.data(), bytes.size(), reason));
+            static_cast<void>(m_sink && m_sink(abort, reason));
         }
         m_progress = OtaProgress{};
         m_targetSlot = OTA_SLOT_COUNT;
@@ -333,16 +334,12 @@ namespace mark4
             errorOut = "no route to the board";
             return false;
         }
-        OtaRevertPacket packet{};
-        packet.version = PROTOCOL_VERSION;
-        packet.type = static_cast<std::uint8_t>(PacketType::OTA_REVERT);
-        const auto bytes = wireBytes(packet);
         m_lastError.clear();
         m_verdict = OtaVerdict::NONE;
         m_ackTries = 1U;
         m_deadlineUs = nowUs + m_config.ackTimeoutMs * US_PER_MS;
         enter(OtaPhase::REVERTING);
-        if (!emit(bytes.data(), bytes.size()))
+        if (!sendRevert())
         {
             errorOut = m_lastError;
             return false;
@@ -358,12 +355,8 @@ namespace mark4
             errorOut = "no route to the board";
             return false;
         }
-        OtaStatusRequestPacket packet{};
-        packet.version = PROTOCOL_VERSION;
-        packet.type = static_cast<std::uint8_t>(PacketType::OTA_STATUS_REQUEST);
-        const auto bytes = wireBytes(packet);
         std::string reason;
-        if (!m_sink(bytes.data(), bytes.size(), reason))
+        if (!m_sink(envelopeOf(mark4_Envelope_ota_status_request_tag), reason))
         {
             // A status request is a question, never a session: a board that
             // is not there must not fail an update that is not running.
@@ -373,24 +366,22 @@ namespace mark4
         return true;
     }
 
-    bool OtaClient::onPacket(const std::uint8_t *data, std::size_t size, std::uint64_t nowUs)
+    bool OtaClient::onEnvelope(const mark4_Envelope &envelope, std::uint64_t nowUs)
     {
-        if (size == OTA_STATUS_PACKET_SIZE && hasHeader(data, size, PacketType::OTA_STATUS))
+        switch (envelope.which_body)
         {
-            onStatus(data, nowUs);
-            return true;
+            case mark4_Envelope_ota_status_tag:
+                onStatus(envelope.body.ota_status, nowUs);
+                return true;
+            case mark4_Envelope_ota_ack_tag:
+                onAck(envelope.body.ota_ack, nowUs);
+                return true;
+            case mark4_Envelope_ota_chunk_ack_tag:
+                onChunkAck(envelope.body.ota_chunk_ack, nowUs);
+                return true;
+            default:
+                return false;
         }
-        if (size == OTA_ACK_PACKET_SIZE && hasHeader(data, size, PacketType::OTA_ACK))
-        {
-            onAck(data, nowUs);
-            return true;
-        }
-        if (size == OTA_CHUNK_ACK_PACKET_SIZE && hasHeader(data, size, PacketType::OTA_CHUNK_ACK))
-        {
-            onChunkAck(data, nowUs);
-            return true;
-        }
-        return false;
     }
 
     void OtaClient::refreshBundle(std::uint64_t nowUs)
@@ -529,11 +520,7 @@ namespace mark4
                     }
                     ++m_ackTries;
                     m_deadlineUs = nowUs + m_config.ackTimeoutMs * US_PER_MS;
-                    OtaRevertPacket packet{};
-                    packet.version = PROTOCOL_VERSION;
-                    packet.type = static_cast<std::uint8_t>(PacketType::OTA_REVERT);
-                    const auto bytes = wireBytes(packet);
-                    static_cast<void>(emit(bytes.data(), bytes.size()));
+                    static_cast<void>(sendRevert());
                 }
                 break;
             case OtaPhase::IDLE:
@@ -544,7 +531,7 @@ namespace mark4
         }
     }
 
-    bool OtaClient::emit(const std::uint8_t *data, std::size_t size)
+    bool OtaClient::emit(const mark4_Envelope &envelope)
     {
         if (!m_sink)
         {
@@ -552,7 +539,7 @@ namespace mark4
             return false;
         }
         std::string reason;
-        if (!m_sink(data, size, reason))
+        if (!m_sink(envelope, reason))
         {
             fail(reason.empty() ? std::string("the board link went away") : reason);
             return false;
@@ -562,21 +549,17 @@ namespace mark4
 
     bool OtaClient::sendStatusRequest()
     {
-        OtaStatusRequestPacket packet{};
-        packet.version = PROTOCOL_VERSION;
-        packet.type = static_cast<std::uint8_t>(PacketType::OTA_STATUS_REQUEST);
-        const auto bytes = wireBytes(packet);
-        return emit(bytes.data(), bytes.size());
+        return emit(envelopeOf(mark4_Envelope_ota_status_request_tag));
     }
 
     bool OtaClient::sendReboot()
     {
-        RebootCommandPacket packet{};
-        packet.version = PROTOCOL_VERSION;
-        packet.type = static_cast<std::uint8_t>(PacketType::REBOOT_COMMAND);
-        packet.magic = BOARD_REBOOT_MAGIC;
-        const auto bytes = wireBytes(packet);
-        return emit(bytes.data(), bytes.size());
+        return emit(envelopeOf(mark4_Envelope_reboot_tag));
+    }
+
+    bool OtaClient::sendRevert()
+    {
+        return emit(envelopeOf(mark4_Envelope_ota_revert_tag));
     }
 
     bool OtaClient::sendChunk()
@@ -589,19 +572,13 @@ namespace mark4
         }
         const std::uint32_t remaining = m_progress.totalBytes - m_progress.sentBytes;
         const std::uint32_t length = std::min(remaining, m_chunkData);
-        OtaChunkPacket packet{};
-        packet.version = PROTOCOL_VERSION;
-        packet.type = static_cast<std::uint8_t>(PacketType::OTA_CHUNK);
-        packet.session = m_session;
-        packet.offset = m_progress.sentBytes;
-        packet.length = static_cast<std::uint8_t>(length);
-        // The data field is copied in as a whole aligned value: a packed
-        // member is written through, never bound to.
-        std::array<std::uint8_t, OTA_CHUNK_DATA_SIZE> data{};
-        std::memcpy(data.data(), image->bytes.data() + m_progress.sentBytes, length);
-        writePackedField(&packet.data, data);
-        const auto bytes = wireBytes(packet);
-        if (!emit(bytes.data(), bytes.size()))
+        mark4_Envelope envelope = envelopeOf(mark4_Envelope_ota_chunk_tag);
+        mark4_OtaChunk &chunk = envelope.body.ota_chunk;
+        chunk.session = m_session;
+        chunk.offset = m_progress.sentBytes;
+        chunk.data.size = static_cast<pb_size_t>(length);
+        std::memcpy(chunk.data.bytes, image->bytes.data() + m_progress.sentBytes, length);
+        if (!emit(envelope))
         {
             return false;
         }
@@ -639,10 +616,10 @@ namespace mark4
 
     void OtaClient::openTransfer(std::uint64_t nowUs)
     {
-        if (m_board.mcuId != m_bundle.mcuId)
+        if (static_cast<std::uint8_t>(m_board.mcu) != m_bundle.mcuId)
         {
             fail("the bundle is built for mcu " + std::to_string(m_bundle.mcuId) +
-                 " and the board is mcu " + std::to_string(m_board.mcuId));
+                 " and the board is mcu " + std::to_string(static_cast<int>(m_board.mcu)));
             return;
         }
         if (m_board.updaterBusy)
@@ -670,10 +647,10 @@ namespace mark4
                  std::to_string(m_board.slotSize));
             return;
         }
-        m_chunkData = m_board.maxChunkData == 0U
-                          ? static_cast<std::uint32_t>(OTA_CHUNK_DATA_SIZE)
-                          : std::min(static_cast<std::uint32_t>(OTA_CHUNK_DATA_SIZE),
-                                     static_cast<std::uint32_t>(m_board.maxChunkData));
+        m_chunkData =
+            m_board.maxChunkData == 0U
+                ? static_cast<std::uint32_t>(OTA_CHUNK_DATA_SIZE)
+                : std::min(static_cast<std::uint32_t>(OTA_CHUNK_DATA_SIZE), m_board.maxChunkData);
         if (m_chunkData == 0U)
         {
             fail("the board accepts no chunk data at all");
@@ -691,23 +668,17 @@ namespace mark4
         m_stalledRounds = 0U;
         m_resendOffset = 0U;
         m_resendGuardUs = 0U;
-        OtaBeginPacket packet{};
-        packet.version = PROTOCOL_VERSION;
-        packet.type = static_cast<std::uint8_t>(PacketType::OTA_BEGIN);
-        packet.session = m_session;
-        packet.imageSize = image->size;
-        packet.imageCrc = image->crc32;
-        const auto bytes = wireBytes(packet);
+        mark4_Envelope begin = envelopeOf(mark4_Envelope_ota_begin_tag);
+        begin.body.ota_begin.session = m_session;
+        begin.body.ota_begin.image_size = image->size;
+        begin.body.ota_begin.image_crc = image->crc32;
         m_deadlineUs = nowUs + m_config.beginTimeoutMs * US_PER_MS;
         enter(OtaPhase::ERASING);
-        static_cast<void>(emit(bytes.data(), bytes.size()));
+        static_cast<void>(emit(begin));
     }
 
-    void OtaClient::onStatus(const std::uint8_t *data, std::uint64_t nowUs)
+    void OtaClient::onStatus(const mark4_OtaStatus &status, std::uint64_t nowUs)
     {
-        OtaStatusPacket packet{};
-        std::memcpy(&packet, data, sizeof(packet));
-
         if ((m_phase == OtaPhase::REBOOTING || m_phase == OtaPhase::WAITING_BOARD) &&
             nowUs < m_settleUntilUs)
         {
@@ -718,25 +689,24 @@ namespace mark4
 
         m_board.seen = true;
         m_board.seenAtUs = nowUs;
-        m_board.mcuId = packet.mcuId;
-        m_board.runningSlot = packet.runningSlot;
-        m_board.activeSlot = packet.activeSlot;
+        m_board.mcu = status.mcu;
+        m_board.runningSlot = static_cast<std::uint8_t>(status.running_slot);
+        m_board.activeSlot = static_cast<std::uint8_t>(status.active_slot);
         for (std::size_t slot = 0U; slot < OTA_SLOT_COUNT; ++slot)
         {
-            const OtaSlotStatus wire = readPackedField(&packet.slot[slot]);
-            m_board.slots[slot].state = wire.state;
-            m_board.slots[slot].buildEpoch = wire.buildEpoch;
-            m_board.slots[slot].gitHash = otaGitHashText(wire.gitHash);
+            m_board.slots[slot].state = status.slots[slot].state;
+            m_board.slots[slot].buildEpoch = status.slots[slot].build_epoch;
+            m_board.slots[slot].gitHash = status.slots[slot].git_hash;
         }
-        m_board.updaterBusy = packet.updaterBusy != 0U;
+        m_board.updaterBusy = status.updater_busy;
         // The running slot's identity doubles as the board's, which is what
         // every verdict compares.
         const OtaSlotInfo &running =
-            m_board.slots[packet.runningSlot < OTA_SLOT_COUNT ? packet.runningSlot : 0U];
+            m_board.slots[m_board.runningSlot < OTA_SLOT_COUNT ? m_board.runningSlot : 0U];
         m_board.buildEpoch = running.buildEpoch;
         m_board.gitHash = running.gitHash;
-        m_board.slotSize = packet.slotSize;
-        m_board.maxChunkData = packet.maxChunkData;
+        m_board.slotSize = status.slot_size;
+        m_board.maxChunkData = status.max_chunk_data;
 
         switch (m_phase)
         {
@@ -749,10 +719,10 @@ namespace mark4
             case OtaPhase::TESTING:
                 if (boardRunsBundle())
                 {
-                    const std::uint8_t state = m_board.runningSlot < OTA_SLOT_COUNT
-                                                   ? m_board.slots[m_board.runningSlot].state
-                                                   : static_cast<std::uint8_t>(OTA_SLOT_EMPTY);
-                    if (state != OTA_SLOT_TESTING)
+                    const mark4_OtaSlotState state = m_board.runningSlot < OTA_SLOT_COUNT
+                                                         ? m_board.slots[m_board.runningSlot].state
+                                                         : mark4_OtaSlotState_EMPTY;
+                    if (state != mark4_OtaSlotState_TESTING)
                     {
                         // The image confirmed itself since the last answer.
                         m_verdict = OtaVerdict::CONFIRMED;
@@ -770,7 +740,7 @@ namespace mark4
                 }
                 break;
             // Every other phase only takes the snapshot above: a status
-            // packet in the middle of an erase or a transfer is information,
+            // message in the middle of an erase or a transfer is information,
             // not an event.
             case OtaPhase::REVERTING:
             case OtaPhase::IDLE:
@@ -790,10 +760,10 @@ namespace mark4
     {
         if (boardRunsBundle())
         {
-            const std::uint8_t state = m_board.runningSlot < OTA_SLOT_COUNT
-                                           ? m_board.slots[m_board.runningSlot].state
-                                           : static_cast<std::uint8_t>(OTA_SLOT_EMPTY);
-            if (state == OTA_SLOT_TESTING)
+            const mark4_OtaSlotState state = m_board.runningSlot < OTA_SLOT_COUNT
+                                                 ? m_board.slots[m_board.runningSlot].state
+                                                 : mark4_OtaSlotState_EMPTY;
+            if (state == mark4_OtaSlotState_TESTING)
             {
                 m_nextStatusUs = nowUs + m_config.statusPeriodMs * US_PER_MS;
                 enter(OtaPhase::TESTING);
@@ -816,23 +786,18 @@ namespace mark4
              ", which is neither the bundle nor what it ran before");
     }
 
-    void OtaClient::onAck(const std::uint8_t *data, std::uint64_t nowUs)
+    void OtaClient::onAck(const mark4_OtaAck &ack, std::uint64_t nowUs)
     {
-        OtaAckPacket packet{};
-        std::memcpy(&packet, data, sizeof(packet));
-        const std::uint32_t session = packet.session;
-        const auto acked = static_cast<PacketType>(packet.ackedType);
-
-        switch (acked)
+        switch (ack.op)
         {
-            case PacketType::OTA_BEGIN:
-                if (m_phase != OtaPhase::ERASING || session != m_session)
+            case mark4_OtaOp_BEGIN:
+                if (m_phase != OtaPhase::ERASING || ack.session != m_session)
                 {
                     return;
                 }
-                if (packet.result != OTA_RESULT_OK)
+                if (ack.result != mark4_OtaResult_OTA_OK)
                 {
-                    fail(otaResultText(packet.result));
+                    fail(otaResultText(ack.result));
                     return;
                 }
                 m_progress.sentBytes = 0U;
@@ -843,31 +808,31 @@ namespace mark4
                 enter(OtaPhase::TRANSFER);
                 pumpChunks(nowUs);
                 return;
-            case PacketType::OTA_FINISH:
-                if (m_phase != OtaPhase::VERIFYING || session != m_session)
+            case mark4_OtaOp_FINISH:
+                if (m_phase != OtaPhase::VERIFYING || ack.session != m_session)
                 {
                     return;
                 }
-                if (packet.result != OTA_RESULT_OK)
+                if (ack.result != mark4_OtaResult_OTA_OK)
                 {
-                    fail(otaResultText(packet.result));
+                    fail(otaResultText(ack.result));
                     return;
                 }
                 // Staged. The trial boot is the existing reboot command:
-                // nothing in the protocol had to move for the update path.
+                // nothing in the wire had to move for the update path.
                 m_settleUntilUs = nowUs + m_config.rebootSettleMs * US_PER_MS;
                 m_deadlineUs = nowUs + m_config.boardReturnTimeoutMs * US_PER_MS;
                 enter(OtaPhase::REBOOTING);
                 static_cast<void>(sendReboot());
                 return;
-            case PacketType::OTA_REVERT:
+            case mark4_OtaOp_REVERT:
                 if (m_phase != OtaPhase::REVERTING)
                 {
                     return;
                 }
-                if (packet.result != OTA_RESULT_OK)
+                if (ack.result != mark4_OtaResult_OTA_OK)
                 {
-                    fail(otaResultText(packet.result));
+                    fail(otaResultText(ack.result));
                     return;
                 }
                 m_verdict = OtaVerdict::REVERTED;
@@ -878,18 +843,17 @@ namespace mark4
                 static_cast<void>(sendReboot());
                 enter(OtaPhase::IDLE);
                 return;
-            default:
+            case mark4_OtaOp_CHUNK:
+            case mark4_OtaOp_ABORT:
+            case mark4_OtaOp_OTA_OP_UNSPECIFIED:
                 return;
         }
     }
 
-    void OtaClient::onChunkAck(const std::uint8_t *data, std::uint64_t nowUs)
+    void OtaClient::onChunkAck(const mark4_OtaChunkAck &ack, std::uint64_t nowUs)
     {
-        OtaChunkAckPacket packet{};
-        std::memcpy(&packet, data, sizeof(packet));
-        const std::uint32_t session = packet.session;
-        const std::uint32_t nextOffset = packet.nextOffset;
-        if (session != m_session || m_session == 0U)
+        const std::uint32_t nextOffset = ack.next_offset;
+        if (ack.session != m_session || m_session == 0U)
         {
             return;
         }
@@ -910,7 +874,7 @@ namespace mark4
                 // cumulative offset never goes backwards.
                 return;
             }
-            // In answer to OTA_FINISH the board's offset is the authority:
+            // In answer to OtaFinish the board's offset is the authority:
             // bytes the sender believed written are not there, so the
             // transfer resumes from where the board says it stopped.
             m_progress.ackedBytes = nextOffset;
@@ -962,19 +926,16 @@ namespace mark4
 
         if (m_progress.ackedBytes >= m_progress.totalBytes)
         {
-            OtaFinishPacket finish{};
-            finish.version = PROTOCOL_VERSION;
-            finish.type = static_cast<std::uint8_t>(PacketType::OTA_FINISH);
-            finish.session = m_session;
-            const auto bytes = wireBytes(finish);
+            mark4_Envelope finish = envelopeOf(mark4_Envelope_ota_finish_tag);
+            finish.body.ota_finish.session = m_session;
             m_deadlineUs = nowUs + m_config.finishTimeoutMs * US_PER_MS;
             enter(OtaPhase::VERIFYING);
-            static_cast<void>(emit(bytes.data(), bytes.size()));
+            static_cast<void>(emit(finish));
             return;
         }
         if (m_phase == OtaPhase::VERIFYING)
         {
-            // A chunk acknowledgement in answer to OTA_FINISH means bytes
+            // A chunk acknowledgement in answer to OtaFinish means bytes
             // are still missing: the transfer resumes from that offset.
             m_nextChunkUs = nowUs;
             enter(OtaPhase::TRANSFER);

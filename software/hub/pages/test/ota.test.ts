@@ -34,7 +34,7 @@ const TRANSFER_MESSAGE = {
         mcuId: 1,
         buildEpoch: 1756100000,
         gitHash: "bbbbbbbb",
-        protocolVersion: 12,
+        wireHash: "7e8201a9",
         images: [
             { slot: 0, size: 8512, crc32: 111 },
             { slot: 1, size: 8512, crc32: 222 },

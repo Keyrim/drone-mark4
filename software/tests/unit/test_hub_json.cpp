@@ -1,8 +1,9 @@
 /// @file
 /// @brief JSON codec: the shape of what the hub publishes, and the exact wire
-///        bytes it builds out of what a client asks for.
+///        message it builds out of what a client asks for.
 
 #include <catch2/catch_test_macros.hpp>
+#include <cstdio>
 #include <cstring>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -10,35 +11,34 @@
 #include <vector>
 
 #include "hub/json_codec.hpp"
-#include "hub/packed_field.hpp"
 
 namespace
 {
-    /// @brief Builds a telemetry packet whose every field differs from every
+    /// @brief Builds a telemetry message whose every field differs from every
     ///        other, so a swapped pair of keys cannot go unnoticed.
-    /// @return the packet
-    mark4::TelemetryPacket asymmetricTelemetry()
+    /// @return the message
+    mark4_Telemetry asymmetricTelemetry()
     {
-        mark4::TelemetryPacket packet{};
-        packet.version = mark4::PROTOCOL_VERSION;
-        packet.type = static_cast<std::uint8_t>(mark4::PacketType::TELEMETRY);
-        packet.sourceId = static_cast<std::uint8_t>(mark4::StreamSource::DRONE_SIM);
-        packet.sequence = 1234U;
-        packet.timestampUs = 9'876'543'210U;
-        packet.gyroRadS = {0.25f, -0.5f, 0.75f};
-        packet.attitudeQuat = {0.5f, -0.25f, 0.125f, -0.0625f};
-        packet.gyroBiasRadS = {1.5f, -2.5f, 3.5f};
-        packet.motor = {0.125f, 0.25f, 0.375f, 0.5f};
-        packet.altitudeM = 12.5f;
-        packet.verticalVelocityMps = -3.25f;
-        packet.throwState = 2U;
-        packet.throwCount = 5U;
-        packet.releaseVelocityMps = 6.75f;
-        packet.apexTimestampUs = 1'234'567'890U;
-        packet.apexAltitudeM = 8.5f;
-        packet.flightPhase = 4U;
-        packet.baroAltitudeM = 11.75f;
-        return packet;
+        mark4_Telemetry telemetry = mark4_Telemetry_init_zero;
+        telemetry.timestamp_us = 9'876'543'210U;
+        const float gyro[3] = {0.25f, -0.5f, 0.75f};
+        const float quat[4] = {0.5f, -0.25f, 0.125f, -0.0625f};
+        const float bias[3] = {1.5f, -2.5f, 3.5f};
+        const float motor[4] = {0.125f, 0.25f, 0.375f, 0.5f};
+        std::memcpy(telemetry.gyro_rad_s, gyro, sizeof(gyro));
+        std::memcpy(telemetry.attitude_quat, quat, sizeof(quat));
+        std::memcpy(telemetry.gyro_bias_rad_s, bias, sizeof(bias));
+        std::memcpy(telemetry.motor, motor, sizeof(motor));
+        telemetry.altitude_m = 12.5f;
+        telemetry.vertical_velocity_mps = -3.25f;
+        telemetry.throw_state = mark4_ThrowState_THROW_BALLISTIC;
+        telemetry.throw_count = 5U;
+        telemetry.release_velocity_mps = 6.75f;
+        telemetry.apex_timestamp_us = 1'234'567'890U;
+        telemetry.apex_altitude_m = 8.5f;
+        telemetry.flight_phase = mark4_FlightPhase_PHASE_RECOVERY;
+        telemetry.baro_altitude_m = 11.75f;
+        return telemetry;
     }
 
     /// @brief Decodes the message the codec produced.
@@ -49,36 +49,25 @@ namespace
         return nlohmann::json::parse(text);
     }
 
-    /// Number of byte offsets a relocated packet is tried at: eight covers
-    /// every residue, so each field of the struct is misaligned by at least
-    /// one of them.
-    constexpr std::size_t OFFSET_COUNT = 8U;
-
-    /// @brief Copies a packed wire struct a few bytes further along.
-    ///        A packet arrives as bytes, so nothing ever guarantees its
-    ///        fields land aligned; this reproduces that on demand.
-    /// @tparam T wire struct type
-    /// @param packet packet to relocate
-    /// @param storage buffer the copy lives in, resized here
-    /// @param offset how far into the buffer the copy starts
-    /// @return a reference to the copy
-    template <typename T>
-    const T &atOffset(const T &packet, std::vector<std::uint8_t> &storage, std::size_t offset)
+    /// @brief Decodes one client message, requiring it to be valid.
+    /// @param text message text
+    /// @return the decoded request
+    mark4::ClientMessage decoded(std::string_view text)
     {
-        storage.assign(sizeof(T) + OFFSET_COUNT, 0U);
-        std::memcpy(&storage[offset], &packet, sizeof(T));
-        return *reinterpret_cast<const T *>(&storage[offset]);
+        const auto result = mark4::parseClientMessage(text);
+        REQUIRE(std::holds_alternative<mark4::ClientMessage>(result));
+        return std::get<mark4::ClientMessage>(result);
     }
 } // namespace
 
-TEST_CASE("telemetry json carries every field of the packet")
+TEST_CASE("telemetry json carries every field of the message")
 {
-    const mark4::TelemetryPacket packet = asymmetricTelemetry();
-    const nlohmann::json message = parsed(mark4::telemetryToJson(packet));
+    const mark4_Telemetry telemetry = asymmetricTelemetry();
+    const nlohmann::json message =
+        parsed(mark4::telemetryToJson(telemetry, mark4_NodeKind_DRONE_SIM));
 
     CHECK(message["type"] == "telemetry");
     CHECK(message["sourceId"] == 2U);
-    CHECK(message["sequence"] == 1234U);
     CHECK(message["timestampUs"] == 9'876'543'210U);
     CHECK(message["gyroRadS"] == nlohmann::json({0.25, -0.5, 0.75}));
     CHECK(message["attitudeQuat"] == nlohmann::json({0.5, -0.25, 0.125, -0.0625}));
@@ -93,105 +82,77 @@ TEST_CASE("telemetry json carries every field of the packet")
     CHECK(message["apexAltitudeM"] == 8.5);
     CHECK(message["flightPhase"] == 4U);
     CHECK(message["baroAltitudeM"] == 11.75);
-    CHECK(message.size() == 17U);
+    CHECK(message.size() == 16U);
 }
 
-TEST_CASE("sim raw json carries every field of the packet")
+TEST_CASE("sim raw json is the plant truth a telemetry message carries")
 {
-    mark4::SimRawPacket packet{};
-    packet.version = mark4::PROTOCOL_VERSION;
-    packet.type = static_cast<std::uint8_t>(mark4::PacketType::SIM_RAW);
-    packet.sourceId = static_cast<std::uint8_t>(mark4::StreamSource::SIM_PLANT);
-    packet.sequence = 77U;
-    packet.timestampUs = 424'242U;
-    packet.attitudeQuat = {1.0f, 0.5f, 0.25f, 0.125f};
-    packet.positionM = {-1.5f, 2.5f, 3.5f};
-    packet.velocityMps = {4.5f, -5.5f, 6.5f};
+    mark4_Telemetry telemetry = asymmetricTelemetry();
+    telemetry.timestamp_us = 424'242U;
+    telemetry.has_truth = true;
+    const float quat[4] = {1.0f, 0.5f, 0.25f, 0.125f};
+    const float position[3] = {-1.5f, 2.5f, 3.5f};
+    const float velocity[3] = {4.5f, -5.5f, 6.5f};
+    std::memcpy(telemetry.truth.attitude_quat, quat, sizeof(quat));
+    std::memcpy(telemetry.truth.position_m, position, sizeof(position));
+    std::memcpy(telemetry.truth.velocity_mps, velocity, sizeof(velocity));
 
-    const nlohmann::json message = parsed(mark4::simRawToJson(packet));
+    const nlohmann::json message = parsed(mark4::simRawToJson(telemetry, mark4_NodeKind_DRONE_SIM));
     CHECK(message["type"] == "simRaw");
-    CHECK(message["sourceId"] == 4U);
-    CHECK(message["sequence"] == 77U);
+    // The truth is named after the process whose estimate it accompanies:
+    // the pages line the two up by that id.
+    CHECK(message["sourceId"] == 2U);
     CHECK(message["timestampUs"] == 424'242U);
     CHECK(message["attitudeQuat"] == nlohmann::json({1.0, 0.5, 0.25, 0.125}));
     CHECK(message["positionM"] == nlohmann::json({-1.5, 2.5, 3.5}));
     CHECK(message["velocityMps"] == nlohmann::json({4.5, -5.5, 6.5}));
-    CHECK(message.size() == 7U);
-}
-
-TEST_CASE("a packet whose fields are misaligned encodes like any other")
-{
-    // The wire structs are packed to the byte: a sequence number or a float
-    // array of theirs sits wherever the layout puts it. Encoding a packet
-    // shifted by every byte offset in turn fails the sanitizer build the
-    // moment something binds a reference to one of those fields.
-    std::vector<std::uint8_t> storage;
-
-    const mark4::TelemetryPacket telemetry = asymmetricTelemetry();
-    const std::string telemetryText = mark4::telemetryToJson(telemetry);
-
-    mark4::SimRawPacket simRaw{};
-    simRaw.version = mark4::PROTOCOL_VERSION;
-    simRaw.type = static_cast<std::uint8_t>(mark4::PacketType::SIM_RAW);
-    simRaw.sequence = 77U;
-    simRaw.timestampUs = 424'242U;
-    simRaw.attitudeQuat = {1.0f, 0.5f, 0.25f, 0.125f};
-    simRaw.positionM = {-1.5f, 2.5f, 3.5f};
-    simRaw.velocityMps = {4.5f, -5.5f, 6.5f};
-    const std::string simRawText = mark4::simRawToJson(simRaw);
-
-    mark4::TuningAckPacket ack{};
-    ack.version = mark4::PROTOCOL_VERSION;
-    ack.type = static_cast<std::uint8_t>(mark4::PacketType::TUNING_ACK);
-    ack.id = 101U;
-    ack.value = 0.028f;
-    ack.status = mark4::TUNING_ACK_OK;
-    const std::string ackText = mark4::tuningAckToJson(ack, mark4::StreamSource::DRONE_SIM);
-
-    mark4::TuningInfoPacket info{};
-    info.version = mark4::PROTOCOL_VERSION;
-    info.type = static_cast<std::uint8_t>(mark4::PacketType::TUNING_INFO);
-    info.index = 3U;
-    info.count = 12U;
-    info.id = 401U;
-    info.name = {'a', 'h', 'r', 's', '_', 'k', 'p', '\0'};
-    info.value = 2.0f;
-    info.minValue = 0.5f;
-    info.maxValue = 8.0f;
-    const std::string infoText = mark4::tuningInfoToJson(info, mark4::StreamSource::DRONE_SIM);
-
-    std::vector<std::uint8_t> ackStorage;
-    std::vector<std::uint8_t> infoStorage;
-    for (std::size_t offset = 0U; offset < OFFSET_COUNT; ++offset)
-    {
-        CHECK(mark4::telemetryToJson(atOffset(telemetry, storage, offset)) == telemetryText);
-        CHECK(mark4::simRawToJson(atOffset(simRaw, storage, offset)) == simRawText);
-        CHECK(mark4::tuningAckToJson(atOffset(ack, ackStorage, offset),
-                                     mark4::StreamSource::DRONE_SIM) == ackText);
-        CHECK(mark4::tuningInfoToJson(atOffset(info, infoStorage, offset),
-                                      mark4::StreamSource::DRONE_SIM) == infoText);
-    }
+    CHECK(message.size() == 6U);
 }
 
 TEST_CASE("discovery json describes every live process")
 {
     std::vector<mark4::DiscoveredProcess> processes;
-    processes.push_back({mark4::StreamSource::DRONE_SIM, 7U, 1'000'000U, false});
-    processes.push_back({mark4::StreamSource::FIRMWARE, 0U, 1'500'000U, true});
+    mark4::DiscoveredProcess sim;
+    sim.kind = mark4_NodeKind_DRONE_SIM;
+    sim.nodeId = 7U;
+    sim.lastSeenUs = 1'000'000U;
+    sim.name = "drone_sim";
+    sim.mcu = mark4_Mcu_SIM;
+    sim.wireHash = mark4::WIRE_HASH;
+    processes.push_back(sim);
+    mark4::DiscoveredProcess board;
+    board.kind = mark4_NodeKind_FIRMWARE;
+    board.lastSeenUs = 1'500'000U;
+    board.viaSerial = true;
+    board.name = "mark4-fc";
+    board.mcu = mark4_Mcu_STM32F405;
+    board.buildEpoch = 0x66E00001U;
+    board.gitHash = "deadbeef";
+    board.wireHash = 0x01020304U;
+    board.wireMismatch = true;
+    processes.push_back(board);
 
     std::vector<mark4::DiscoveredBridge> bridges;
     bridges.push_back({"192.168.1.31", 47830U, "c19f6c", 1'800'000U});
 
     const nlohmann::json message = parsed(mark4::discoveryToJson(processes, bridges, 2'000'000U));
     CHECK(message["type"] == "discovery");
+    CHECK(message["wireHash"].get<std::string>().size() == 8U);
     REQUIRE(message["processes"].size() == 2U);
     CHECK(message["processes"][0]["kind"] == 2U);
     CHECK(message["processes"][0]["kindName"] == "drone_sim");
     CHECK(message["processes"][0]["sessionId"] == 7U);
     CHECK(message["processes"][0]["viaSerial"] == false);
+    CHECK(message["processes"][0]["name"] == "drone_sim");
+    CHECK(message["processes"][0]["mcu"] == 200U);
+    CHECK(message["processes"][0]["wireMismatch"] == false);
     CHECK(message["processes"][0]["ageMs"] == 1000U);
     CHECK(message["processes"][1]["kindName"] == "firmware");
     CHECK(message["processes"][1]["viaSerial"] == true);
+    CHECK(message["processes"][1]["buildEpoch"] == 0x66E00001U);
+    CHECK(message["processes"][1]["gitHash"] == "deadbeef");
+    CHECK(message["processes"][1]["wireHash"] == "01020304");
+    CHECK(message["processes"][1]["wireMismatch"] == true);
     CHECK(message["processes"][1]["ageMs"] == 500U);
     REQUIRE(message["bridges"].size() == 1U);
     CHECK(message["bridges"][0]["address"] == "192.168.1.31");
@@ -213,17 +174,15 @@ TEST_CASE("status json carries the counters")
     status.rcClients = 2U;
     status.connectionVia = "bridge";
     status.connectionId = "c19f6c";
-    status.connectionKind = mark4::StreamSource::FIRMWARE;
+    status.connectionKind = mark4_NodeKind_FIRMWARE;
     status.connectionLive = true;
 
     mark4::LinkHealth link;
-    link.stream = mark4::StreamKind::SIM_RAW;
-    link.sourceId = 4U;
-    link.sourceName = "sim_plant";
+    link.sourceId = 2U;
+    link.sourceName = "drone_sim";
     link.received = 9U;
     link.lost = 1U;
     link.duplicates = 2U;
-    link.resyncs = 3U;
     link.lastSequence = 123U;
     status.links.push_back(link);
 
@@ -249,13 +208,12 @@ TEST_CASE("status json carries the counters")
 
     REQUIRE(message["links"].size() == 1U);
     const nlohmann::json &entry = message["links"][0];
-    CHECK(entry["stream"] == "simRaw");
-    CHECK(entry["sourceId"] == 4U);
-    CHECK(entry["sourceName"] == "sim_plant");
+    CHECK(entry["stream"] == "transport");
+    CHECK(entry["sourceId"] == 2U);
+    CHECK(entry["sourceName"] == "drone_sim");
     CHECK(entry["received"] == 9U);
     CHECK(entry["lost"] == 1U);
     CHECK(entry["duplicates"] == 2U);
-    CHECK(entry["resyncs"] == 3U);
     CHECK(entry["lossRate"] == 0.1);
     CHECK(entry["lastSequence"] == 123U);
 }
@@ -273,105 +231,81 @@ TEST_CASE("an ack answers one request by its correlation id")
     CHECK(nack["error"] == "no serial link");
 }
 
-TEST_CASE("an rc message becomes the exact rc wire packet")
+TEST_CASE("an rc message becomes the rc wire message")
 {
-    const auto decoded = mark4::parseClientMessage(
+    const mark4::ClientMessage message = decoded(
         R"({"type":"rc","id":7,"target":"firmware","kill":0,"arm":1,"mode":1,"throttle":0.5})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(decoded));
-    const auto &message = std::get<mark4::ClientMessage>(decoded);
     CHECK(message.type == mark4::ClientMessageType::RC);
     CHECK(message.id == 7);
-    CHECK(message.target == mark4::StreamSource::FIRMWARE);
+    CHECK(message.target == mark4_NodeKind_FIRMWARE);
+    REQUIRE(message.command.which_body == mark4_Envelope_rc_tag);
+    CHECK(message.command.body.rc.kill == false);
+    CHECK(message.command.body.rc.arm == true);
+    CHECK(message.command.body.rc.mode == mark4_RcMode_RC_ALTITUDE_AUTO);
+    CHECK(message.command.body.rc.throttle == 0.5f);
 
-    const auto bytes = mark4::wireBytes(message.rc);
-    REQUIRE(bytes.size() == mark4::RC_COMMAND_PACKET_SIZE);
-    CHECK(bytes[0] == mark4::PROTOCOL_VERSION);
-    CHECK(bytes[1] == static_cast<std::uint8_t>(mark4::PacketType::RC_COMMAND));
-    CHECK(bytes[2] == 0U);
-    CHECK(bytes[3] == 1U);
-    CHECK(bytes[4] == mark4::RC_MODE_ALTITUDE_AUTO);
-    float throttle = 0.0f;
-    std::memcpy(&throttle, &bytes[5], sizeof(throttle));
-    CHECK(throttle == 0.5f);
+    // Booleans are accepted as well as the 0/1 of the older pages.
+    const mark4::ClientMessage flags = decoded(
+        R"({"type":"rc","target":"firmware","kill":true,"arm":false,"mode":0,"throttle":0})");
+    CHECK(flags.command.body.rc.kill == true);
+    CHECK(flags.command.body.rc.arm == false);
+    CHECK(flags.command.body.rc.mode == mark4_RcMode_RC_MANUAL);
 }
 
 TEST_CASE("an rc message can target the simulator")
 {
-    const auto decoded = mark4::parseClientMessage(
-        R"({"type":"rc","target":"drone_sim","kill":1,"arm":0,"mode":0,"throttle":0})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(decoded));
-    const auto &message = std::get<mark4::ClientMessage>(decoded);
-    CHECK(message.target == mark4::StreamSource::DRONE_SIM);
+    const mark4::ClientMessage message =
+        decoded(R"({"type":"rc","target":"drone_sim","kill":1,"arm":0,"mode":0,"throttle":0})");
+    CHECK(message.target == mark4_NodeKind_DRONE_SIM);
     CHECK(message.id == -1);
-    CHECK(message.rc.killSwitch == 1U);
+    CHECK(message.command.body.rc.kill == true);
 }
 
-TEST_CASE("a scenario message becomes the exact sim scenario wire packet")
+TEST_CASE("a scenario message becomes the sim scenario wire message")
 {
-    const auto decoded = mark4::parseClientMessage(
+    const mark4::ClientMessage message = decoded(
         R"({"type":"simScenario","id":3,"scenario":"handThrow","sequence":7,)"
         R"("seed":81985529216486895,"throwDelayUs":2000000,"hashWindowUs":16000000,)"
         R"("velocityMps":[1.0,2.0,3.0],"angularVelocityRadS":[4.0,5.0,6.0],)"
         R"("heldSeconds":1.5,"heldTiltRad":0.25,"heldAzimuthRad":0.5,"swingSeconds":0.375})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(decoded));
-    const auto &message = std::get<mark4::ClientMessage>(decoded);
     CHECK(message.type == mark4::ClientMessageType::SIM_SCENARIO);
     CHECK(message.id == 3);
     // A scenario goes to the flight process driving a plant: the simulator
     // unless the message says otherwise.
-    CHECK(message.target == mark4::StreamSource::DRONE_SIM);
-
-    const auto bytes = mark4::wireBytes(message.simScenario);
-    REQUIRE(bytes.size() == mark4::SIM_SCENARIO_PACKET_SIZE);
-    CHECK(bytes[0] == mark4::PROTOCOL_VERSION);
-    CHECK(bytes[1] == static_cast<std::uint8_t>(mark4::PacketType::SIM_SCENARIO));
-
-    // Read back out of the bytes: the block layout is the contract, and the
-    // plant reads it at this offset inside the lockstep reply too.
-    mark4::SimScenario block{};
-    std::memcpy(&block, bytes.data() + offsetof(mark4::SimScenarioPacket, scenario), sizeof(block));
-    CHECK(block.sequence == 7U);
-    CHECK(block.scenario == mark4::SIM_SCENARIO_HAND_THROW);
-    CHECK(block.seed == 0x0123456789ABCDEFULL);
-    CHECK(block.throwDelayUs == 2000000U);
-    CHECK(block.hashWindowUs == 16000000U);
-    CHECK(mark4::readPackedField(&block.velocityMps) == std::array<float, 3>{1.0f, 2.0f, 3.0f});
-    CHECK(mark4::readPackedField(&block.angularVelocityRadS) ==
-          std::array<float, 3>{4.0f, 5.0f, 6.0f});
-    CHECK(block.heldSeconds == 1.5f);
-    CHECK(block.heldTiltRad == 0.25f);
-    CHECK(block.heldAzimuthRad == 0.5f);
-    CHECK(block.swingSeconds == 0.375f);
+    CHECK(message.target == mark4_NodeKind_DRONE_SIM);
+    REQUIRE(message.command.which_body == mark4_Envelope_sim_scenario_tag);
+    const mark4_SimScenario &scenario = message.command.body.sim_scenario;
+    CHECK(scenario.sequence == 7U);
+    CHECK(scenario.kind == mark4_SimScenarioKind_HAND_THROW);
+    CHECK(scenario.seed == 0x0123456789ABCDEFULL);
+    CHECK(scenario.throw_delay_us == 2000000U);
+    CHECK(scenario.hash_window_us == 16000000U);
+    CHECK(scenario.velocity_mps[0] == 1.0f);
+    CHECK(scenario.velocity_mps[2] == 3.0f);
+    CHECK(scenario.angular_velocity_rad_s[1] == 5.0f);
+    CHECK(scenario.held_seconds == 1.5f);
+    CHECK(scenario.held_tilt_rad == 0.25f);
+    CHECK(scenario.held_azimuth_rad == 0.5f);
+    CHECK(scenario.swing_seconds == 0.375f);
 }
 
 TEST_CASE("a reset scenario message needs nothing but its name")
 {
-    const auto decoded = mark4::parseClientMessage(R"({"type":"simScenario","scenario":"reset"})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(decoded));
-    const auto &message = std::get<mark4::ClientMessage>(decoded);
-    CHECK(message.simScenario.scenario.scenario == mark4::SIM_SCENARIO_RESET);
+    const mark4::ClientMessage message = decoded(R"({"type":"simScenario","scenario":"reset"})");
+    CHECK(message.command.body.sim_scenario.kind == mark4_SimScenarioKind_RESET);
     // Left at 0, so the hub stamps its own number before sending.
-    CHECK(message.simScenario.scenario.sequence == 0U);
+    CHECK(message.command.body.sim_scenario.sequence == 0U);
 
-    const auto thrown = mark4::parseClientMessage(R"({"type":"simScenario","scenario":"throw"})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(thrown));
-    CHECK(std::get<mark4::ClientMessage>(thrown).simScenario.scenario.scenario ==
-          mark4::SIM_SCENARIO_THROW);
+    const mark4::ClientMessage thrown = decoded(R"({"type":"simScenario","scenario":"throw"})");
+    CHECK(thrown.command.body.sim_scenario.kind == mark4_SimScenarioKind_THROW);
 }
 
-TEST_CASE("a reboot message carries the board reboot magic")
+TEST_CASE("a reboot message becomes the reboot wire message")
 {
-    const auto decoded =
-        mark4::parseClientMessage(R"({"type":"reboot","id":11,"target":"firmware"})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(decoded));
-    const auto &message = std::get<mark4::ClientMessage>(decoded);
+    const mark4::ClientMessage message =
+        decoded(R"({"type":"reboot","id":11,"target":"firmware"})");
     CHECK(message.type == mark4::ClientMessageType::REBOOT);
-
-    const auto bytes = mark4::wireBytes(message.reboot);
-    REQUIRE(bytes.size() == mark4::REBOOT_COMMAND_PACKET_SIZE);
-    CHECK(bytes[0] == mark4::PROTOCOL_VERSION);
-    CHECK(bytes[1] == static_cast<std::uint8_t>(mark4::PacketType::REBOOT_COMMAND));
-    CHECK(bytes[2] == mark4::BOARD_REBOOT_MAGIC);
+    CHECK(message.command.which_body == mark4_Envelope_reboot_tag);
 }
 
 TEST_CASE("a correlation id past the int range is refused, never wrapped")
@@ -388,22 +322,19 @@ TEST_CASE("a correlation id past the int range is refused, never wrapped")
 
 TEST_CASE("a connect message names one drone by its route")
 {
-    const auto udp =
-        mark4::parseClientMessage(R"({"type":"connect","via":"udp","target":"drone_sim"})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(udp));
-    CHECK(std::get<mark4::ClientMessage>(udp).type == mark4::ClientMessageType::CONNECT);
-    CHECK(std::get<mark4::ClientMessage>(udp).connectVia == "udp");
-    CHECK(std::get<mark4::ClientMessage>(udp).target == mark4::StreamSource::DRONE_SIM);
+    const mark4::ClientMessage udp =
+        decoded(R"({"type":"connect","via":"udp","target":"drone_sim"})");
+    CHECK(udp.type == mark4::ClientMessageType::CONNECT);
+    CHECK(udp.connectVia == "udp");
+    CHECK(udp.target == mark4_NodeKind_DRONE_SIM);
 
-    const auto bridge =
-        mark4::parseClientMessage(R"({"type":"connect","via":"bridge","name":"c19f6c"})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(bridge));
-    CHECK(std::get<mark4::ClientMessage>(bridge).connectVia == "bridge");
-    CHECK(std::get<mark4::ClientMessage>(bridge).connectPeer == "c19f6c");
+    const mark4::ClientMessage bridge =
+        decoded(R"({"type":"connect","via":"bridge","name":"c19f6c"})");
+    CHECK(bridge.connectVia == "bridge");
+    CHECK(bridge.connectPeer == "c19f6c");
 
-    const auto disconnect = mark4::parseClientMessage(R"({"type":"disconnect"})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(disconnect));
-    CHECK(std::get<mark4::ClientMessage>(disconnect).type == mark4::ClientMessageType::DISCONNECT);
+    const mark4::ClientMessage disconnect = decoded(R"({"type":"disconnect"})");
+    CHECK(disconnect.type == mark4::ClientMessageType::DISCONNECT);
 
     // Each route requires its identity: no name and no target means there
     // is nothing to connect to
@@ -415,61 +346,40 @@ TEST_CASE("a connect message names one drone by its route")
         mark4::parseClientMessage(R"({"type":"connect","via":"carrier-pigeon"})")));
 }
 
-TEST_CASE("a tuning set message becomes the exact tuning set wire packet")
+TEST_CASE("a tuning set message becomes the tuning set wire message")
 {
-    const auto decoded = mark4::parseClientMessage(
-        R"({"type":"tuningSet","id":7,"target":"drone_sim","paramId":101,"value":0.028})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(decoded));
-    const auto &message = std::get<mark4::ClientMessage>(decoded);
+    const mark4::ClientMessage message =
+        decoded(R"({"type":"tuningSet","id":7,"target":"drone_sim","paramId":101,"value":0.028})");
     CHECK(message.type == mark4::ClientMessageType::TUNING_SET);
     CHECK(message.id == 7);
-    CHECK(message.target == mark4::StreamSource::DRONE_SIM);
-
-    const auto bytes = mark4::wireBytes(message.tuningSet);
-    REQUIRE(bytes.size() == mark4::TUNING_SET_PACKET_SIZE);
-    CHECK(bytes[0] == mark4::PROTOCOL_VERSION);
-    CHECK(bytes[1] == static_cast<std::uint8_t>(mark4::PacketType::TUNING_SET));
-    std::uint16_t paramId = 0U;
-    std::memcpy(&paramId, &bytes[2], sizeof(paramId));
-    CHECK(paramId == 101U);
-    float value = 0.0f;
-    std::memcpy(&value, &bytes[4], sizeof(value));
-    CHECK(value == 0.028f);
+    CHECK(message.target == mark4_NodeKind_DRONE_SIM);
+    REQUIRE(message.command.which_body == mark4_Envelope_tuning_set_tag);
+    CHECK(message.command.body.tuning_set.id == 101U);
+    CHECK(message.command.body.tuning_set.value == 0.028f);
 }
 
-TEST_CASE("a tuning list becomes its exact wire packet")
+TEST_CASE("a tuning list becomes its wire message")
 {
     // startIndex is optional and defaults to the top of the table.
-    const auto list =
-        mark4::parseClientMessage(R"({"type":"tuningList","id":9,"target":"drone_sim"})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(list));
-    const auto &listMessage = std::get<mark4::ClientMessage>(list);
-    CHECK(listMessage.type == mark4::ClientMessageType::TUNING_LIST);
-    const auto listBytes = mark4::wireBytes(listMessage.tuningList);
-    REQUIRE(listBytes.size() == mark4::TUNING_LIST_PACKET_SIZE);
-    std::uint16_t startIndex = 1U;
-    std::memcpy(&startIndex, &listBytes[2], sizeof(startIndex));
-    CHECK(startIndex == 0U);
+    const mark4::ClientMessage list =
+        decoded(R"({"type":"tuningList","id":9,"target":"drone_sim"})");
+    CHECK(list.type == mark4::ClientMessageType::TUNING_LIST);
+    REQUIRE(list.command.which_body == mark4_Envelope_tuning_list_tag);
+    CHECK(list.command.body.tuning_list.start_index == 0U);
 
-    const auto paged =
-        mark4::parseClientMessage(R"({"type":"tuningList","target":"drone_sim","startIndex":4})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(paged));
-    const auto pagedBytes = mark4::wireBytes(std::get<mark4::ClientMessage>(paged).tuningList);
-    std::memcpy(&startIndex, &pagedBytes[2], sizeof(startIndex));
-    CHECK(startIndex == 4U);
+    const mark4::ClientMessage paged =
+        decoded(R"({"type":"tuningList","target":"drone_sim","startIndex":4})");
+    CHECK(paged.command.body.tuning_list.start_index == 4U);
 }
 
 TEST_CASE("tuning ack json names the status it carries")
 {
-    mark4::TuningAckPacket packet{};
-    packet.version = mark4::PROTOCOL_VERSION;
-    packet.type = static_cast<std::uint8_t>(mark4::PacketType::TUNING_ACK);
-    packet.id = 101U;
-    packet.value = 0.028f;
-    packet.status = mark4::TUNING_ACK_OK;
+    mark4_TuningAck ack = mark4_TuningAck_init_zero;
+    ack.id = 101U;
+    ack.value = 0.028f;
+    ack.status = mark4_TuningStatus_OK;
 
-    const nlohmann::json message =
-        parsed(mark4::tuningAckToJson(packet, mark4::StreamSource::DRONE_SIM));
+    const nlohmann::json message = parsed(mark4::tuningAckToJson(ack, mark4_NodeKind_DRONE_SIM));
     CHECK(message["type"] == "tuningAck");
     CHECK(message["source"] == "drone_sim");
     // The parameter id key is never "id": that one is the correlation id.
@@ -480,33 +390,29 @@ TEST_CASE("tuning ack json names the status it carries")
     CHECK(message.size() == 6U);
 
     const char *names[] = {"ok", "unknownId", "outOfBounds", "lockedWhileArmed", "unknown"};
-    for (std::uint8_t status = 0U; status < 5U; ++status)
+    for (int status = 0; status < 5; ++status)
     {
-        packet.status = status;
-        const nlohmann::json named =
-            parsed(mark4::tuningAckToJson(packet, mark4::StreamSource::FIRMWARE));
-        INFO("status " << static_cast<unsigned>(status));
+        ack.status = static_cast<mark4_TuningStatus>(status);
+        const nlohmann::json named = parsed(mark4::tuningAckToJson(ack, mark4_NodeKind_FIRMWARE));
+        INFO("status " << status);
         CHECK(named["statusName"] == names[status]);
         CHECK(named["source"] == "firmware");
     }
 }
 
-TEST_CASE("tuning info json reads a name that fills the whole wire field")
+TEST_CASE("tuning info json carries the description")
 {
-    mark4::TuningInfoPacket packet{};
-    packet.version = mark4::PROTOCOL_VERSION;
-    packet.type = static_cast<std::uint8_t>(mark4::PacketType::TUNING_INFO);
-    packet.index = 3U;
-    packet.count = 12U;
-    packet.id = 401U;
-    packet.name = {'a', 'h', 'r', 's', '_', 'k', 'p', '\0'};
-    packet.value = 2.0f;
-    packet.minValue = 0.5f;
-    packet.maxValue = 8.0f;
-    packet.flags = 0U;
+    mark4_TuningInfo info = mark4_TuningInfo_init_zero;
+    info.index = 3U;
+    info.count = 12U;
+    info.id = 401U;
+    static_cast<void>(std::snprintf(info.name, sizeof(info.name), "%s", "ahrs_kp"));
+    info.value = 2.0f;
+    info.min_value = 0.5f;
+    info.max_value = 8.0f;
+    info.armed_change = false;
 
-    const nlohmann::json message =
-        parsed(mark4::tuningInfoToJson(packet, mark4::StreamSource::DRONE_SIM));
+    const nlohmann::json message = parsed(mark4::tuningInfoToJson(info, mark4_NodeKind_DRONE_SIM));
     CHECK(message["type"] == "tuningInfo");
     CHECK(message["source"] == "drone_sim");
     CHECK(message["index"] == 3U);
@@ -519,45 +425,34 @@ TEST_CASE("tuning info json reads a name that fills the whole wire field")
     CHECK(message["armedChange"] == false);
     CHECK(message.size() == 10U);
 
-    // A name filling the field carries no terminator: reading it must stop
-    // at the field boundary rather than run off the end of the struct.
-    for (char &character : packet.name)
-    {
-        character = 'x';
-    }
-    packet.flags = mark4::TUNING_FLAG_ARMED_CHANGE;
-    const nlohmann::json full =
-        parsed(mark4::tuningInfoToJson(packet, mark4::StreamSource::DRONE_SIM));
-    CHECK(full["name"] == std::string(mark4::TUNING_NAME_SIZE, 'x'));
+    // A name filling the whole wire field.
+    static_cast<void>(std::snprintf(info.name, sizeof(info.name), "%s", "xxxxxxxxxxxxxxxx"));
+    info.armed_change = true;
+    const nlohmann::json full = parsed(mark4::tuningInfoToJson(info, mark4_NodeKind_DRONE_SIM));
+    CHECK(full["name"] == std::string(16U, 'x'));
     CHECK(full["armedChange"] == true);
 }
 
 TEST_CASE("profile messages decode and render")
 {
-    const auto list = mark4::parseClientMessage(R"({"type":"profileList","id":10})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(list));
-    CHECK(std::get<mark4::ClientMessage>(list).type == mark4::ClientMessageType::PROFILE_LIST);
+    const mark4::ClientMessage list = decoded(R"({"type":"profileList","id":10})");
+    CHECK(list.type == mark4::ClientMessageType::PROFILE_LIST);
 
-    const auto save = mark4::parseClientMessage(
+    const mark4::ClientMessage save = decoded(
         R"({"type":"profileSave","id":11,"name":"bench","values":{"101":0.028,"303":0.55}})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(save));
-    const auto &saveMessage = std::get<mark4::ClientMessage>(save);
-    CHECK(saveMessage.type == mark4::ClientMessageType::PROFILE_SAVE);
-    CHECK(saveMessage.profileName == "bench");
-    REQUIRE(saveMessage.profileValues.size() == 2U);
-    CHECK(saveMessage.profileValues.at(101U) == 0.028f);
-    CHECK(saveMessage.profileValues.at(303U) == 0.55f);
+    CHECK(save.type == mark4::ClientMessageType::PROFILE_SAVE);
+    CHECK(save.profileName == "bench");
+    REQUIRE(save.profileValues.size() == 2U);
+    CHECK(save.profileValues.at(101U) == 0.028f);
+    CHECK(save.profileValues.at(303U) == 0.55f);
 
-    const auto load = mark4::parseClientMessage(R"({"type":"profileLoad","id":12,"name":"bench"})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(load));
-    CHECK(std::get<mark4::ClientMessage>(load).profileName == "bench");
+    const mark4::ClientMessage load = decoded(R"({"type":"profileLoad","id":12,"name":"bench"})");
+    CHECK(load.profileName == "bench");
 
-    const auto push = mark4::parseClientMessage(
-        R"({"type":"profilePush","id":13,"name":"bench","target":"drone_sim"})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(push));
-    const auto &pushMessage = std::get<mark4::ClientMessage>(push);
-    CHECK(pushMessage.type == mark4::ClientMessageType::PROFILE_PUSH);
-    CHECK(pushMessage.target == mark4::StreamSource::DRONE_SIM);
+    const mark4::ClientMessage push =
+        decoded(R"({"type":"profilePush","id":13,"name":"bench","target":"drone_sim"})");
+    CHECK(push.type == mark4::ClientMessageType::PROFILE_PUSH);
+    CHECK(push.target == mark4_NodeKind_DRONE_SIM);
 
     const nlohmann::json names = parsed(mark4::profileNamesToJson({"bench", "field-2"}));
     CHECK(names["type"] == "profiles");
@@ -617,10 +512,10 @@ TEST_CASE("a malformed client message is refused, never thrown")
     };
     for (const char *text : rejected)
     {
-        const auto decoded = mark4::parseClientMessage(text);
+        const auto result = mark4::parseClientMessage(text);
         INFO("message: " << text);
-        REQUIRE(std::holds_alternative<std::string>(decoded));
-        CHECK(!(std::get<std::string>(decoded).empty()));
+        REQUIRE(std::holds_alternative<std::string>(result));
+        CHECK(!(std::get<std::string>(result).empty()));
     }
 }
 

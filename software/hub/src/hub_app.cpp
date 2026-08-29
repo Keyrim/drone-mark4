@@ -1,6 +1,6 @@
 /// @file
 /// @brief hub composition root implementation: the single poll loop that
-///        drains every source, routes every packet and keeps the discovery
+///        drains every source, routes every message and keeps the discovery
 ///        table honest.
 
 #include "hub/hub_app.hpp"
@@ -18,9 +18,6 @@
 #include <utility>
 #include <variant>
 
-#include "hub/packed_field.hpp"
-#include "protocol/announce.hpp"
-#include "protocol/tuning.hpp"
 #include "transport/node_id.hpp"
 
 namespace mark4
@@ -69,6 +66,18 @@ namespace mark4
             return static_cast<std::uint64_t>(
                 std::chrono::duration_cast<std::chrono::microseconds>(now).count());
         }
+
+        /// @brief Encodes one envelope for a link.
+        /// @param envelope message to encode
+        /// @param[out] bytes destination
+        /// @param[out] sizeOut bytes written
+        /// @return true when the message encoded
+        bool encodeForLink(const mark4_Envelope &envelope,
+                           std::array<std::uint8_t, MAX_ENVELOPE_SIZE> &bytes,
+                           std::size_t &sizeOut)
+        {
+            return encodeEnvelope(envelope, bytes.data(), bytes.size(), sizeOut);
+        }
     } // namespace
 
     HubApp::HubApp(Config config)
@@ -88,13 +97,27 @@ namespace mark4
         {
             return false;
         }
-        // The hub sets no beacon: it learns every node from that node's own
-        // beacon and is learnt in return from the first command it sends.
         if (!m_udpLink.init() || !m_transport.addLink(m_udpLink) || !m_transport.init())
         {
             static_cast<void>(std::fprintf(stderr, "hub: cannot start the transport\n"));
             return false;
         }
+        // The hub's own beacon: every node learns the gateway and the schema
+        // it speaks, and the flight processes learn where to unicast.
+        mark4_Envelope announce = mark4_Envelope_init_zero;
+        announce.which_body = mark4_Envelope_announce_tag;
+        announce.body.announce.kind = mark4_NodeKind_GATEWAY;
+        static_cast<void>(
+            std::snprintf(announce.body.announce.name, sizeof(announce.body.announce.name), "hub"));
+        announce.body.announce.wire_hash = WIRE_HASH;
+        std::array<std::uint8_t, MAX_ENVELOPE_SIZE> beacon{};
+        std::size_t beaconSize = 0U;
+        if (!encodeForLink(announce, beacon, beaconSize) || beaconSize > Transport::MAX_BEACON_SIZE)
+        {
+            static_cast<void>(std::fprintf(stderr, "hub: the announce does not fit a beacon\n"));
+            return false;
+        }
+        m_transport.setBeacon(beacon.data(), beaconSize);
         if (m_config.pagesDir.empty())
         {
             m_config.pagesDir = defaultProjectPath(DEFAULT_PAGES_DIR);
@@ -113,12 +136,6 @@ namespace mark4
         {
             return false;
         }
-        // The plant's raw state is the one stream still outside the
-        // transport: a plain broadcast port, watched for the whole run.
-        if (!m_udp.subscribe(m_config.simRawPort))
-        {
-            return false;
-        }
 
         if (m_config.otaBundlePath.empty())
         {
@@ -134,10 +151,10 @@ namespace mark4
         }
         m_ota.setDefaultBundlePath(m_config.otaBundlePath);
         // The update client owns no socket: it sends through the same routing
-        // as every other command, so an OTA packet reaches the board exactly
-        // like an RC frame does, framed on the serial link.
-        m_ota.setSink([this](const std::uint8_t *data, std::size_t size, std::string &errorOut) {
-            return sendToTarget(m_otaTarget, data, size, errorOut);
+        // as every other command, so an updater message reaches the board
+        // exactly like an RC frame does, framed on the serial link.
+        m_ota.setSink([this](const mark4_Envelope &envelope, std::string &errorOut) {
+            return sendToTarget(m_otaTarget, envelope, errorOut);
         });
         m_ota.setOnChange([this]() { broadcastOta(); });
         return true;
@@ -189,24 +206,10 @@ namespace mark4
                             const std::uint8_t *data,
                             std::size_t size)
     {
-        const std::uint64_t nowUs = monotonicUs();
-        if (localPort == m_config.bridgePort)
+        if (localPort == m_config.bridgePort &&
+            m_bridges.onAnnounce(from.address, from.port, data, size, monotonicUs()))
         {
-            if (m_bridges.onAnnounce(from.address, from.port, data, size, nowUs))
-            {
-                broadcastDiscovery();
-            }
-            return;
-        }
-        // Demultiplexing is by header, never by size: a packet whose version
-        // or type byte does not match is simply not ours.
-        if (hasHeader(data, size, PacketType::SIM_RAW) && size == SIM_RAW_PACKET_SIZE)
-        {
-            onSimRawPacket(data);
-        }
-        else
-        {
-            noteForeignProtocol(data, size);
+            broadcastDiscovery();
         }
     }
 
@@ -220,175 +223,142 @@ namespace mark4
 
     void HubApp::onFrame(std::uint32_t src, const std::uint8_t *data, std::size_t size)
     {
-        const std::uint64_t nowUs = monotonicUs();
-        if (hasHeader(data, size, PacketType::ANNOUNCE))
+        mark4_Envelope envelope;
+        if (!decodeEnvelope(data, size, envelope))
         {
-            // The beacon of a flight process: the node it came from is the
-            // address every command to that process goes to.
-            const auto change = m_registry.onAnnounce(src, data, size, nowUs);
-            if (change.has_value())
-            {
-                onDiscoveryChange(*change);
-            }
+            ++m_badFrames;
             return;
         }
-        if (hasHeader(data, size, PacketType::TELEMETRY) && size == TELEMETRY_PACKET_SIZE)
-        {
-            onTelemetryPacket(data);
-        }
-        else if (onTuningAnswer(data, size, StreamSource::DRONE_SIM))
-        {
-            // Tuning answers carry no source byte of their own, so the
-            // arrival path is what names them: a payload from the transport
-            // came from the simulator side, never from the board.
-        }
-        else if (!m_ota.onPacket(data, size, nowUs))
-        {
-            // Updater answers are one more packet type on whatever link the
-            // process being updated is reachable on: a desktop flight process
-            // answers over the transport, the board over the framed serial
-            // link. Past the updater, nothing here knows these bytes.
-            noteForeignProtocol(data, size);
-        }
-    }
-
-    void HubApp::noteForeignProtocol(const std::uint8_t *data, std::size_t size)
-    {
-        if (size < 2U || data[0] == PROTOCOL_VERSION || data[0] == m_foreignProtocol)
-        {
-            return;
-        }
-        // A type byte in range is what separates a version mismatch from
-        // unrelated traffic that happened to land on the port.
-        if (data[1] == 0U || data[1] > static_cast<std::uint8_t>(PacketType::OTA_ACK))
-        {
-            return;
-        }
-        m_foreignProtocol = data[0];
-        static_cast<void>(std::fprintf(
-            stderr,
-            "hub: dropping type %u packets, protocol %u != %u - a board flashed with another "
-            "protocol version? it cannot be reached or updated from here (docs/ota-design.md)\n",
-            static_cast<unsigned>(data[1]),
-            static_cast<unsigned>(data[0]),
-            static_cast<unsigned>(PROTOCOL_VERSION)));
+        // The kind comes from the node's own announce; a node that never
+        // announced (or announced on another schema) still has its telemetry
+        // rendered, under the kind nobody claims.
+        mark4_NodeKind source = mark4_NodeKind_NODE_KIND_UNSPECIFIED;
+        static_cast<void>(m_registry.kindOf(src, source));
+        onEnvelope(envelope, src, source);
     }
 
     void HubApp::onSerialPayload(const std::uint8_t *payload, std::size_t size)
     {
-        if (hasHeader(payload, size, PacketType::TELEMETRY) && size == TELEMETRY_PACKET_SIZE)
+        mark4_Envelope envelope;
+        if (!decodeEnvelope(payload, size, envelope))
         {
-            const auto change = m_registry.onSerialTelemetry(monotonicUs());
-            if (change.has_value())
-            {
-                onDiscoveryChange(*change);
-            }
-            onTelemetryPacket(payload);
-            if (m_config.udpRebroadcast)
-            {
-                // The other transport nodes know nothing about this cable.
-                static_cast<void>(m_transport.send(BROADCAST_NODE, payload, size));
-            }
+            ++m_badFrames;
             return;
         }
-        if (onTuningAnswer(payload, size, StreamSource::FIRMWARE))
+        if (envelope.which_body == mark4_Envelope_telemetry_tag && m_config.udpRebroadcast)
         {
-            return;
+            // The other transport nodes know nothing about this cable.
+            static_cast<void>(m_transport.send(BROADCAST_NODE, payload, size));
         }
-        // OTA packets share this link with telemetry and commands: telemetry
-        // keeps flowing between them, and the updater only ever sees its own.
-        if (m_ota.onPacket(payload, size, monotonicUs()))
-        {
-            return;
-        }
-        noteForeignProtocol(payload, size);
-        ++m_badFrames;
+        onEnvelope(envelope, 0U, mark4_NodeKind_FIRMWARE);
     }
 
-    bool HubApp::onTuningAnswer(const std::uint8_t *data, std::size_t size, StreamSource source)
+    void HubApp::onEnvelope(const mark4_Envelope &envelope,
+                            std::uint32_t nodeId,
+                            mark4_NodeKind kind)
     {
-        if (size == TUNING_ACK_PACKET_SIZE && hasHeader(data, size, PacketType::TUNING_ACK))
+        const std::uint64_t nowUs = monotonicUs();
+        switch (envelope.which_body)
         {
-            TuningAckPacket packet{};
-            std::memcpy(&packet, data, sizeof(packet));
-            m_ws.broadcastText(tuningAckToJson(packet, source));
-            return true;
+            case mark4_Envelope_announce_tag: {
+                // The beacon of a node: the node it came from is the address
+                // every command to that process goes to.
+                const auto change = m_registry.onAnnounce(nodeId, envelope.body.announce, nowUs);
+                if (change.has_value())
+                {
+                    onDiscoveryChange(*change);
+                }
+                return;
+            }
+            case mark4_Envelope_telemetry_tag:
+                m_ws.broadcastText(telemetryToJson(envelope.body.telemetry, kind));
+                if (envelope.body.telemetry.has_truth)
+                {
+                    // The plant's exact state rides inside the estimate it is
+                    // compared against; the pages read it as its own message.
+                    m_ws.broadcastText(simRawToJson(envelope.body.telemetry, kind));
+                }
+                return;
+            case mark4_Envelope_tuning_ack_tag:
+                m_ws.broadcastText(tuningAckToJson(envelope.body.tuning_ack, kind));
+                return;
+            case mark4_Envelope_tuning_info_tag:
+                m_ws.broadcastText(tuningInfoToJson(envelope.body.tuning_info, kind));
+                return;
+            default:
+                // Updater answers are one more body on whatever link the
+                // process being updated is reachable on. Past the updater,
+                // a body this hub does not render (run stats, logs, another
+                // node's commands) is simply not for it.
+                static_cast<void>(m_ota.onEnvelope(envelope, nowUs));
+                return;
         }
-        if (size == TUNING_INFO_PACKET_SIZE && hasHeader(data, size, PacketType::TUNING_INFO))
-        {
-            TuningInfoPacket packet{};
-            std::memcpy(&packet, data, sizeof(packet));
-            m_ws.broadcastText(tuningInfoToJson(packet, source));
-            return true;
-        }
-        return false;
     }
 
-    bool HubApp::sendToTarget(StreamSource target,
-                              const std::uint8_t *data,
-                              std::size_t size,
+    bool HubApp::sendToTarget(mark4_NodeKind target,
+                              const mark4_Envelope &envelope,
                               std::string &errorOut)
     {
-        if (target == StreamSource::FIRMWARE)
+        std::array<std::uint8_t, MAX_ENVELOPE_SIZE> bytes{};
+        std::size_t size = 0U;
+        if (!encodeForLink(envelope, bytes, size))
+        {
+            errorOut = "the command does not encode";
+            return false;
+        }
+        if (target == mark4_NodeKind_FIRMWARE)
         {
             if (!m_serial.isOpen())
             {
                 errorOut = "no serial link to the board";
                 return false;
             }
-            return m_serial.sendPacket(data, size);
+            return m_serial.sendPacket(bytes.data(), size);
         }
         const std::uint32_t nodeId = m_registry.nodeIdOf(target);
         if (nodeId == 0U)
         {
-            errorOut = std::string("no process of kind ") + streamSourceName(target);
+            errorOut = std::string("no process of kind ") + nodeKindName(target);
             return false;
         }
-        if (!m_transport.send(nodeId, data, size))
+        if (!m_transport.send(nodeId, bytes.data(), size))
         {
             errorOut =
-                std::string("transport node of ") + streamSourceName(target) + " is not reachable";
+                std::string("transport node of ") + nodeKindName(target) + " is not reachable";
             return false;
         }
         return true;
     }
 
-    void HubApp::onTelemetryPacket(const std::uint8_t *data)
-    {
-        TelemetryPacket packet{};
-        std::memcpy(&packet, data, sizeof(packet));
-        m_health.onPacket(StreamKind::TELEMETRY, packet.sourceId, packet.sequence);
-
-        m_ws.broadcastText(telemetryToJson(packet));
-    }
-
-    void HubApp::onSimRawPacket(const std::uint8_t *data)
-    {
-        SimRawPacket packet{};
-        std::memcpy(&packet, data, sizeof(packet));
-        m_health.onPacket(StreamKind::SIM_RAW, packet.sourceId, packet.sequence);
-
-        m_ws.broadcastText(simRawToJson(packet));
-    }
-
     void HubApp::onDiscoveryChange(const DiscoveryChange &change)
     {
+        const char *kind = nodeKindName(change.process.kind);
         switch (change.event)
         {
             case DiscoveryEvent::APPEARED:
-                static_cast<void>(std::printf("hub: %s appeared (node %u)\n",
-                                              streamSourceName(change.process.kind),
-                                              change.process.nodeId));
+                static_cast<void>(
+                    std::printf("hub: %s appeared (node %u)\n", kind, change.process.nodeId));
                 break;
             case DiscoveryEvent::RESTARTED:
-                static_cast<void>(std::printf("hub: %s restarted (node %u)\n",
-                                              streamSourceName(change.process.kind),
-                                              change.process.nodeId));
+                static_cast<void>(
+                    std::printf("hub: %s restarted (node %u)\n", kind, change.process.nodeId));
                 break;
             case DiscoveryEvent::DISAPPEARED:
-                static_cast<void>(
-                    std::printf("hub: %s disappeared\n", streamSourceName(change.process.kind)));
+                static_cast<void>(std::printf("hub: %s disappeared\n", kind));
                 break;
+        }
+        if (change.event != DiscoveryEvent::DISAPPEARED && change.process.wireMismatch)
+        {
+            // The one silent failure of a wire change: a node built on another
+            // schema keeps sending well formed envelopes this hub decodes into
+            // nonsense, or not at all. Named here, once per appearance.
+            static_cast<void>(std::fprintf(
+                stderr,
+                "hub: %s speaks wire %08x, this hub speaks %08x: rebuild and reflash it, "
+                "it cannot be trusted or updated from here (docs/ota-design.md)\n",
+                kind,
+                change.process.wireHash,
+                WIRE_HASH));
         }
         if (!m_config.pushProfileName.empty() && change.event != DiscoveryEvent::DISAPPEARED)
         {
@@ -398,16 +368,15 @@ namespace mark4
             std::string error;
             if (pushProfile(m_config.pushProfileName, change.process.kind, error))
             {
-                static_cast<void>(std::printf("hub: pushed profile %s to %s\n",
-                                              m_config.pushProfileName.c_str(),
-                                              streamSourceName(change.process.kind)));
+                static_cast<void>(std::printf(
+                    "hub: pushed profile %s to %s\n", m_config.pushProfileName.c_str(), kind));
             }
             else
             {
                 static_cast<void>(std::fprintf(stderr,
                                                "hub: cannot push profile %s to %s: %s\n",
                                                m_config.pushProfileName.c_str(),
-                                               streamSourceName(change.process.kind),
+                                               kind,
                                                error.c_str()));
             }
         }
@@ -415,7 +384,7 @@ namespace mark4
         broadcastDiscovery();
     }
 
-    bool HubApp::pushProfile(const std::string &name, StreamSource target, std::string &errorOut)
+    bool HubApp::pushProfile(const std::string &name, mark4_NodeKind target, std::string &errorOut)
     {
         TuningValues values;
         if (!m_profiles.load(name, values, errorOut))
@@ -424,13 +393,11 @@ namespace mark4
         }
         for (const auto &[id, value] : values)
         {
-            TuningSetPacket packet{};
-            packet.version = PROTOCOL_VERSION;
-            packet.type = static_cast<std::uint8_t>(PacketType::TUNING_SET);
-            packet.id = id;
-            packet.value = value;
-            const auto bytes = wireBytes(packet);
-            if (!sendToTarget(target, bytes.data(), bytes.size(), errorOut))
+            mark4_Envelope envelope = mark4_Envelope_init_zero;
+            envelope.which_body = mark4_Envelope_tuning_set_tag;
+            envelope.body.tuning_set.id = id;
+            envelope.body.tuning_set.value = value;
+            if (!sendToTarget(target, envelope, errorOut))
             {
                 return false;
             }
@@ -461,7 +428,7 @@ namespace mark4
         }
     }
 
-    bool HubApp::commandAllowed(StreamSource target, std::string &errorOut) const
+    bool HubApp::commandAllowed(mark4_NodeKind target, std::string &errorOut) const
     {
         if (m_connection.via.empty())
         {
@@ -470,8 +437,8 @@ namespace mark4
         }
         if (target != m_connection.kind)
         {
-            errorOut = std::string("connected to ") + m_connection.id + ", not to " +
-                       streamSourceName(target);
+            errorOut =
+                std::string("connected to ") + m_connection.id + ", not to " + nodeKindName(target);
             return false;
         }
         return true;
@@ -505,49 +472,37 @@ namespace mark4
         }
         switch (message.type)
         {
-            case ClientMessageType::RC: {
+            case ClientMessageType::RC:
                 // The hub forwards RC one for one and never repeats or
                 // synthesizes it: a silent link means kill downstream, and
                 // that silence is the pilot's, not the hub's to fill in.
-                const auto bytes = wireBytes(message.rc);
-                return sendToTarget(message.target, bytes.data(), bytes.size(), errorOut);
-            }
-            case ClientMessageType::TUNING_SET: {
-                const auto bytes = wireBytes(message.tuningSet);
-                return sendToTarget(message.target, bytes.data(), bytes.size(), errorOut);
-            }
-            case ClientMessageType::TUNING_LIST: {
+            case ClientMessageType::TUNING_SET:
+            case ClientMessageType::TUNING_LIST:
                 // The ack the client gets back says the request went out, not
                 // that the table arrived: the descriptions come as their own
                 // messages, one per flight frame, as the process unrolls them.
-                const auto bytes = wireBytes(message.tuningList);
-                return sendToTarget(message.target, bytes.data(), bytes.size(), errorOut);
-            }
+                return sendToTarget(message.target, message.command, errorOut);
             case ClientMessageType::SIM_SCENARIO: {
-                SimScenarioPacket packet = message.simScenario;
-                if (packet.scenario.sequence == 0U)
+                mark4_Envelope envelope = message.command;
+                if (envelope.body.sim_scenario.sequence == 0U)
                 {
                     // 0 means "no scenario" on the wire, so a client that
                     // sent none gets the hub's own rolling number: two
                     // scenarios in a row are then two scenarios, not one.
-                    m_scenarioSequence =
-                        static_cast<std::uint8_t>(m_scenarioSequence % MAX_SCENARIO_SEQUENCE + 1U);
-                    packet.scenario.sequence = m_scenarioSequence;
+                    m_scenarioSequence = m_scenarioSequence % MAX_SCENARIO_SEQUENCE + 1U;
+                    envelope.body.sim_scenario.sequence = m_scenarioSequence;
                 }
-                // Routed like every other command: to the port the target
-                // announced. The plant binds nothing and the hub hardwires
-                // no port; the flight process forwards the block from there.
-                const auto bytes = wireBytes(packet);
-                return sendToTarget(message.target, bytes.data(), bytes.size(), errorOut);
+                // Routed like every other command, to the node that
+                // announced; the flight process forwards it to its plant.
+                return sendToTarget(message.target, envelope, errorOut);
             }
             case ClientMessageType::REBOOT: {
-                if (message.target != StreamSource::FIRMWARE)
+                if (message.target != mark4_NodeKind_FIRMWARE)
                 {
-                    errorOut = std::string("cannot reboot ") + streamSourceName(message.target);
+                    errorOut = std::string("cannot reboot ") + nodeKindName(message.target);
                     return false;
                 }
-                const auto bytes = wireBytes(message.reboot);
-                return sendToTarget(message.target, bytes.data(), bytes.size(), errorOut);
+                return sendToTarget(message.target, message.command, errorOut);
             }
             case ClientMessageType::PROFILE_LIST: {
                 m_ws.broadcastText(profileNamesToJson(m_profiles.list()));
@@ -623,12 +578,12 @@ namespace mark4
         next.via = message.connectVia;
         if (message.connectVia == "udp")
         {
-            if (message.target == StreamSource::FIRMWARE)
+            if (message.target == mark4_NodeKind_FIRMWARE)
             {
                 errorOut = "the board is reached over a bridge, not udp";
                 return false;
             }
-            next.id = streamSourceName(message.target);
+            next.id = nodeKindName(message.target);
             next.kind = message.target;
         }
         else
@@ -797,23 +752,7 @@ namespace mark4
             std::count_if(m_rcSeenUs.begin(), m_rcSeenUs.end(), [nowUs](const auto &entry) {
                 return nowUs - entry.second <= RC_PILOT_WINDOW_US;
             }));
-        snapshot.links = m_health.links();
-        for (LinkHealth &link : snapshot.links)
-        {
-            // The counters know a source byte; only the discovery table knows
-            // what that byte is called, and only while the process is alive.
-            const auto found =
-                std::find_if(m_registry.processes().begin(),
-                             m_registry.processes().end(),
-                             [&link](const DiscoveredProcess &process) {
-                                 return static_cast<std::uint8_t>(process.kind) == link.sourceId;
-                             });
-            if (found != m_registry.processes().end())
-            {
-                link.sourceName = streamSourceName(found->kind);
-            }
-        }
-        // One more entry per process reached over the transport: the frame
+        // One entry per process reached over the transport: the frame
         // counters of its node, every payload type included.
         for (const DiscoveredProcess &process : m_registry.processes())
         {
@@ -823,9 +762,8 @@ namespace mark4
                 continue;
             }
             LinkHealth link;
-            link.stream = StreamKind::TRANSPORT;
             link.sourceId = static_cast<std::uint8_t>(process.kind);
-            link.sourceName = streamSourceName(process.kind);
+            link.sourceName = nodeKindName(process.kind);
             link.received = node->received;
             link.lost = node->lost;
             link.duplicates = node->duplicates;

@@ -44,7 +44,8 @@ export interface OtaBundleInfo {
     mcuId: number;
     buildEpoch: number;
     gitHash: string;
-    protocolVersion: number;
+    /** 8 hex characters of the mark4.proto hash the build speaks. */
+    wireHash: string;
     images: OtaImageInfo[];
 }
 
@@ -105,7 +106,7 @@ export const IDLE_OTA: OtaState = {
         mcuId: 0,
         buildEpoch: 0,
         gitHash: "",
-        protocolVersion: 0,
+        wireHash: "",
         images: [],
     },
     board: {
@@ -209,7 +210,7 @@ export function readOtaState(message: Record<string, unknown>): OtaState {
             mcuId: readNumber(bundle, "mcuId"),
             buildEpoch: readNumber(bundle, "buildEpoch"),
             gitHash: readString(bundle, "gitHash"),
-            protocolVersion: readNumber(bundle, "protocolVersion"),
+            wireHash: readString(bundle, "wireHash"),
             images: Array.isArray(images)
                 ? images.map((entry) => {
                       const image = entry as Record<string, unknown>;

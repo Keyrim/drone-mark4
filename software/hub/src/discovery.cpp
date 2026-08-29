@@ -4,58 +4,68 @@
 #include "hub/discovery.hpp"
 
 #include <algorithm>
-#include <cstring>
 #include <string_view>
 
 namespace mark4
 {
-    const char *streamSourceName(StreamSource kind)
+    const char *nodeKindName(mark4_NodeKind kind)
     {
         switch (kind)
         {
-            case StreamSource::FIRMWARE:
+            case mark4_NodeKind_FIRMWARE:
                 return "firmware";
-            case StreamSource::DRONE_SIM:
+            case mark4_NodeKind_DRONE_SIM:
                 return "drone_sim";
-            case StreamSource::SIM_PLANT:
-                return "sim_plant";
+            case mark4_NodeKind_PLANT:
+                return "plant";
+            case mark4_NodeKind_GATEWAY:
+                return "gateway";
+            case mark4_NodeKind_BATCH:
+                return "batch";
+            case mark4_NodeKind_NODE_KIND_UNSPECIFIED:
+                break;
         }
         return "unknown";
     }
 
+    bool parseNodeKindName(const std::string &name, mark4_NodeKind &kindOut)
+    {
+        for (const mark4_NodeKind kind : {mark4_NodeKind_FIRMWARE,
+                                          mark4_NodeKind_DRONE_SIM,
+                                          mark4_NodeKind_PLANT,
+                                          mark4_NodeKind_GATEWAY,
+                                          mark4_NodeKind_BATCH})
+        {
+            if (name == nodeKindName(kind))
+            {
+                kindOut = kind;
+                return true;
+            }
+        }
+        return false;
+    }
+
     std::optional<DiscoveryChange> DiscoveryRegistry::onAnnounce(std::uint32_t nodeId,
-                                                                 const std::uint8_t *data,
-                                                                 std::size_t size,
+                                                                 const mark4_Announce &announce,
                                                                  std::uint64_t nowUs)
     {
-        // The caller hands over what looks like an announce, so anything
-        // else is a real mismatch worth counting: an emitter left behind on
-        // an older wire version shows up here and nowhere else.
-        if (nodeId == 0U || size != ANNOUNCE_PACKET_SIZE ||
-            !hasHeader(data, size, PacketType::ANNOUNCE))
+        if (announce.kind == mark4_NodeKind_NODE_KIND_UNSPECIFIED)
         {
             ++m_rejectedAnnounces;
             return std::nullopt;
         }
 
-        AnnouncePacket packet{};
-        std::memcpy(&packet, data, sizeof(packet));
-
         DiscoveredProcess candidate;
-        candidate.kind = static_cast<StreamSource>(packet.kind);
+        candidate.kind = announce.kind;
         candidate.nodeId = nodeId;
         candidate.lastSeenUs = nowUs;
-        candidate.viaSerial = false;
-        return touch(candidate);
-    }
-
-    std::optional<DiscoveryChange> DiscoveryRegistry::onSerialTelemetry(std::uint64_t nowUs)
-    {
-        DiscoveredProcess candidate;
-        candidate.kind = StreamSource::FIRMWARE;
-        candidate.nodeId = 0U;
-        candidate.lastSeenUs = nowUs;
-        candidate.viaSerial = true;
+        candidate.viaSerial = nodeId == 0U;
+        candidate.name = announce.name;
+        candidate.mcu = announce.mcu;
+        candidate.buildEpoch = announce.build_epoch;
+        candidate.gitHash = announce.git_hash;
+        candidate.wireHash = announce.wire_hash;
+        candidate.wireMismatch = announce.wire_hash != WIRE_HASH;
         return touch(candidate);
     }
 
@@ -153,7 +163,7 @@ namespace mark4
         return before - m_bridges.size();
     }
 
-    std::uint32_t DiscoveryRegistry::nodeIdOf(StreamSource kind) const
+    std::uint32_t DiscoveryRegistry::nodeIdOf(mark4_NodeKind kind) const
     {
         for (const DiscoveredProcess &known : m_processes)
         {
@@ -163,5 +173,18 @@ namespace mark4
             }
         }
         return 0U;
+    }
+
+    bool DiscoveryRegistry::kindOf(std::uint32_t nodeId, mark4_NodeKind &kindOut) const
+    {
+        for (const DiscoveredProcess &known : m_processes)
+        {
+            if (nodeId != 0U && known.nodeId == nodeId)
+            {
+                kindOut = known.kind;
+                return true;
+            }
+        }
+        return false;
     }
 } // namespace mark4

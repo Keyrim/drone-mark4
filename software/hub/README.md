@@ -2,21 +2,23 @@
 
 The single process that decodes the binary protocol on behalf of humans.
 
-Everything else in the system speaks `protocol/` packets: the desktop flight
-process inside transport frames (`software/components/transport/`), the
-board through the WiFi bridge that frames its UART onto UDP. The hub is the
-one place those bytes become JSON: it is one transport node, learns who is
-alive from the beacons the other nodes send, and publishes everything on one
-websocket endpoint that a browser or a script can read without ever touching
-a socket or a packed struct. Commands travel the other way through the same
-endpoint.
+Everything else in the system speaks the wire of
+`software/components/protocol/mark4.proto`, one `Envelope` per datagram or
+serial frame: the desktop flight process inside transport frames
+(`software/components/transport/`), the board through the WiFi bridge that
+frames its UART onto UDP. The hub is the one place those bytes become JSON:
+it is one transport node (kind `gateway`, it beacons like the others),
+learns who is alive from the `Announce` the other nodes send, and publishes
+everything on one websocket endpoint that a browser or a script can read
+without ever touching a socket or a codec. Commands travel the other way
+through the same endpoint.
 
 That same TCP port also serves the static pages: the library dispatches on
 the `Upgrade` header, so a page loaded from the hub reaches it back with
 `new WebSocket("ws://" + location.host)` and never learns a port of its own.
 
-It links `protocol/` headers and the `transport` library and nothing else:
-never `flight-core`, never `platform`. Desktop only.
+It links the `protocol` and `transport` libraries and nothing else: never
+`flight-core`, never `platform`. Desktop only.
 
 ## Building and running
 
@@ -26,8 +28,8 @@ cmake --preset desktop && cmake --build --preset desktop
 ```
 
 The hub takes **no arguments**. It decodes and serves with its built-in
-defaults (endpoint on 127.0.0.1:47810, transport discovery port 47820, sim
-raw 47802, bridge announces 47831, profiles in `profiles/`, pages in
+defaults (endpoint on 127.0.0.1:47810, transport discovery port 47820,
+bridge announces 47831, profiles in `profiles/`, pages in
 `software/hub/pages/dist` resolved from the binary location). A flight
 process reaches it by beaconing on the discovery port; nothing is wired by
 hand. Everything operational is driven at runtime through the websocket by
@@ -230,14 +232,14 @@ failed to decode. Streams are never acknowledged.
 ## Firmware update
 
 An `otaStart` sends one `.ota` bundle to the board over the link that is
-already open: the updater packets of `protocol/ota.hpp` are one more packet
-type on the framed serial stream, so telemetry keeps flowing between them and
+already open: the updater messages are one more body of the same envelope
+on the framed serial stream, so telemetry keeps flowing between them and
 the ESP32 bridge needs to know nothing about any of it.
 
 The `bundle` field is optional and defaults to
 `software/build/stm32/drone_firmware/drone_firmware.ota`, resolved from the
 hub binary: the common case is one click after a build. Loading validates the
-bundle against itself (magic, protocol version, announced sizes and CRC-32,
+bundle against itself (magic, wire hash, announced sizes and CRC-32,
 and each image header against the manifest entry describing it) and then
 against the board (right chip, an image for the inactive slot, an image that
 fits a slot). Only then does a byte go out.
@@ -263,16 +265,15 @@ for the duration so that pacing is the throttle rather than the sleep.
 show; `sentBytes` runs up to one window ahead of it and goes backwards on a
 resend.
 
-After the reboot the hub polls `OTA_STATUS_REQUEST` once a second until the
+After the reboot the hub polls `OtaStatusRequest` once a second until the
 board answers again, ignoring answers for the first 1.5 s (the old image can
 still answer one request between the command and the reset). What comes back
 decides the verdict, and the verdict is a sentence in `verdictText`:
 
-- the bundle's git hash, on a slot reported `testing`: the trial boot worked.
-  With `autoConfirm` on, the hub sends `OTA_CONFIRM` once the new image has
-  answered at least three status requests over at least three seconds; with it
-  off, the operator's `otaConfirm` does. Either way the answer moves the phase
-  to `confirmed`.
+- the bundle's build epoch, on a slot reported `testing`: the trial boot
+  worked. The image confirms itself on the first request it serves, so the
+  hub keeps polling until the slot reads `valid`, which moves the phase to
+  `confirmed`; nothing is sent to confirm.
 - the git hash it ran before: the bootloader rolled back. Phase `rolledBack`,
   and nothing is confirmed.
 - neither: phase `failed`, saying what it found.
