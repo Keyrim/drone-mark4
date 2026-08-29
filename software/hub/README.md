@@ -175,7 +175,6 @@ drop a connection through it.
  "heldAzimuthRad":0.0,"swingSeconds":0.35}
 {"type":"reboot","id":9,"target":"firmware"}
 {"type":"tuningSet","id":11,"target":"drone_sim","paramId":101,"value":0.028}
-{"type":"tuningGet","id":12,"target":"drone_sim","paramId":101}
 {"type":"tuningList","id":13,"target":"drone_sim","startIndex":0}
 {"type":"profileList","id":14}
 {"type":"profileSave","id":15,"name":"bench","values":{"101":0.028}}
