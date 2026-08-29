@@ -13,6 +13,7 @@
 #include "platform_common/rc_tracker.hpp"
 #include "platform_common/telemetry_publisher.hpp"
 #include "platform_common/tuning_service.hpp"
+#include "platform_stm32/bmp581.hpp"
 #include "platform_stm32/clock_stm32.hpp"
 #include "platform_stm32/command_receiver_stm32.hpp"
 #include "platform_stm32/firmware_store_stm32.hpp"
@@ -20,7 +21,6 @@
 #include "platform_stm32/log_sink_uart.hpp"
 #include "platform_stm32/motor_sink_null.hpp"
 #include "platform_stm32/mpu6050.hpp"
-#include "platform_stm32/ms5611.hpp"
 #include "platform_stm32/ota_slots.hpp"
 #include "platform_stm32/sensor_source_stm32.hpp"
 #include "platform_stm32/telemetry_sender_stm32.hpp"
@@ -86,7 +86,7 @@ namespace mark4
         mark4::ClockStm32 m_clock;
         mark4::I2cBus m_bus;
         mark4::Mpu6050 m_imu{m_bus};
-        mark4::Ms5611 m_baro{m_bus};
+        mark4::Bmp581 m_baro{m_bus};
         mark4::SensorSourceStm32 m_sensorSource{m_imu, m_baro, m_clock};
         mark4::MotorSinkNull m_motorSink;
         mark4::TelemetrySenderStm32 m_telemetrySender;

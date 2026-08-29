@@ -91,7 +91,7 @@ glitch frame moves the altitude estimate by roughly 145 m and the velocity
 estimate by roughly 207 m/s. The vertical controller rails, and the throw
 detector release check (`throw_detector.cpp:66`) consumes the same
 poisoned velocity. Every other input has a plausibility gate; the baro has
-none, and an MS5611 over I2C will produce garbage frames eventually.
+none, and a barometer over I2C will produce garbage frames eventually.
 
 The test suite hides this: `feed()` in `software/tests/unit/test_flight_core.cpp:24`
 never sets `baroPa`, so every FlightCore integration test flies with a

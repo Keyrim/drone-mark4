@@ -31,7 +31,7 @@ with relaxed timing lives on APB1.
 | IMU LSM6DSR (SNS-1) | SPI1 | poll first, DMA later | DMA2 S0C3 RX / S3C3 TX reserved | none (poll) | 108/16 = 6.75 MHz SCK (IMU limit 10 MHz); 14-byte burst = ~17 us, poll is fine at 500 Hz |
 | IMU data-ready (SNS-2) | EXTI on INT1 | IRQ | - | EXTI line | Routed, unused while the loop stays timer-paced |
 | Blackbox flash W25Q128 (STO-1) | SPI2 | DMA TX | DMA1 S4C0 TX / S3C0 RX | DMA1 S4 TC | 54/2 = 27 MHz SCK; background page writes from the RAM ring (STO-5); DMA1 is otherwise empty = zero conflict domain |
-| Baro SPA06 (SNS-3) | I2C1 | poll | - | none | Slow conversion state machine, same shape as the MS5611 driver |
+| Baro SPA06 (SNS-3) | I2C1 | poll | - | none | Continuous mode read on a decimated tick, same shape as the BMP581 driver |
 | Telemetry UART (CON-1) | USART1 | IRQ first, DMA TX later | DMA2 S7C4 TX reserved | USART1 | The per-byte IRQ at 921600 was measured ~3% CPU on mark1; DMA is the known upgrade |
 | ESC telemetry RX (ESC-2) | USART2 RX | IRQ | - | USART2 | mark1 ESC connector carried UART2_RX; kept |
 | Spare UART / RC receiver (CON-3) | USART3 | IRQ | - | USART3 | Unpopulated path until a radio exists |

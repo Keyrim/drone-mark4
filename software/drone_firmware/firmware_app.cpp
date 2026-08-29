@@ -15,17 +15,17 @@
 
 namespace
 {
-    constexpr std::uint32_t US_PER_S = 1000000U;
     constexpr std::uint32_t US_PER_MS = 1000U;
 
-    /// OSR-4096 conversion time of the MS5611, datasheet maximum.
-    constexpr std::uint32_t MS5611_CONVERSION_US = 9040U;
-
-    /// The barometer wait states must outlast its 9.04 ms OSR-4096
-    /// conversion at the loop rate the state machine is pumped at.
-    constexpr std::uint32_t FRAME_PERIOD_US = US_PER_S / mark4::SensorSourceStm32::FRAME_RATE_HZ;
-    static_assert(mark4::Ms5611::CONVERSION_WAIT_UPDATES * FRAME_PERIOD_US >= MS5611_CONVERSION_US,
-                  "MS5611 conversion outlasts the wait budget");
+    /// The barometer runs on its own free-running grid, so the loop cannot
+    /// line up with it and can only oversample it. Reading at twice the
+    /// output rate keeps the pressure in a frame younger than one output
+    /// period even with the rate tolerance of both clocks; at parity, a
+    /// slow tick would let a whole output go unread.
+    constexpr std::uint32_t BARO_READ_RATE_HZ =
+        mark4::SensorSourceStm32::FRAME_RATE_HZ / mark4::Bmp581::TICKS_PER_READ;
+    static_assert(BARO_READ_RATE_HZ >= 2U * mark4::Bmp581::OUTPUT_RATE_HZ,
+                  "the barometer must be read at least twice per output");
 
     static_assert(mark4::LED_FRAMES_PER_SLOT * mark4::LED_PATTERN_SLOTS ==
                       mark4::SensorSourceStm32::FRAME_RATE_HZ,
@@ -84,7 +84,11 @@ namespace mark4
         }
         if (!m_baro.init())
         {
-            return false; // the driver logged the reason
+            // Not fatal: the altitude channel is one input among several,
+            // and a board that refuses to boot over it says nothing at all
+            // on the link it would have been diagnosed from. The driver
+            // logged the reason, the frames carry baroPa = 0.
+            rttWrite("baro: init failed, flying without the pressure channel\n");
         }
         m_sensorSource.init();
         if (!m_telemetrySender.init())
@@ -278,7 +282,7 @@ namespace mark4
                 // LED1 on the degraded pattern for the next one.
                 const std::uint32_t failureCount =
                     m_sensorSource.overruns() + m_sensorSource.readFailures() + m_baro.failures() +
-                    m_telemetrySender.packetsDropped();
+                    m_baro.implausibleSolutions() + m_telemetrySender.packetsDropped();
                 degraded = failureCount != lastFailureCount;
                 lastFailureCount = failureCount;
                 const std::uint64_t nowUs = frame.timestampUs;

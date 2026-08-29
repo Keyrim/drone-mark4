@@ -7,7 +7,7 @@ add_library(platform_stm32 STATIC
     rtt.cpp
     i2c_bus.cpp
     mpu6050.cpp
-    ms5611.cpp
+    bmp581.cpp
     uart1.cpp
     telemetry_sender_stm32.cpp
     command_receiver_stm32.cpp
