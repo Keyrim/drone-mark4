@@ -463,51 +463,6 @@ namespace mark4
             return true;
         }
 
-        /// @brief Fills the playback part of a client request. The name is
-        ///        looked up in the recording listing further down, which is
-        ///        the whole address space: nothing here builds a path. The
-        ///        speed does become an argument of a child process, so it is
-        ///        validated here, at the boundary: "max" or a positive number
-        ///        and nothing else ever reaches a command line.
-        /// @param object message object
-        /// @param message message being decoded
-        /// @param errorOut receives the reason on failure
-        /// @return true when every field decoded
-        bool parseReplay(const Json &object, ClientMessage &message, std::string &errorOut)
-        {
-            const auto name = object.find("name");
-            if (name == object.end() || !name->is_string() || name->get<std::string>().empty())
-            {
-                errorOut = "field 'name' must be a recording name";
-                return false;
-            }
-            message.recordingName = name->get<std::string>();
-
-            const auto speed = object.find("speed");
-            if (speed == object.end() || speed->is_null())
-            {
-                return true;
-            }
-            if (!speed->is_string())
-            {
-                errorOut = "field 'speed' must be 'max' or a positive number as a string";
-                return false;
-            }
-            const auto text = speed->get<std::string>();
-            if (text != "max")
-            {
-                char *end = nullptr;
-                const float factor = std::strtof(text.c_str(), &end);
-                if (text.empty() || end != text.c_str() + text.size() || !(factor > 0.0f))
-                {
-                    errorOut = "field 'speed' must be 'max' or a positive number as a string";
-                    return false;
-                }
-            }
-            message.replaySpeed = text;
-            return true;
-        }
-
         /// @brief Reads the values object of a profile save request: keys are
         ///        parameter ids as decimal strings, values are numbers.
         /// @param object object to read from
@@ -552,29 +507,6 @@ namespace mark4
                 valueOut[static_cast<std::uint16_t>(id)] =
                     static_cast<float>(entry.value().get<double>());
             }
-            return true;
-        }
-
-        /// @brief Fills the recording part of a client request.
-        /// @param object message object
-        /// @param message message being decoded
-        /// @param errorOut receives the reason on failure
-        /// @return true when the action names start or stop
-        bool parseRecord(const Json &object, ClientMessage &message, std::string &errorOut)
-        {
-            const auto found = object.find("action");
-            if (found == object.end() || !found->is_string())
-            {
-                errorOut = R"(field 'action' must be "start" or "stop")";
-                return false;
-            }
-            const auto action = found->get<std::string>();
-            if (action != "start" && action != "stop")
-            {
-                errorOut = R"(field 'action' must be "start" or "stop")";
-                return false;
-            }
-            message.recordStart = action == "start";
             return true;
         }
 
@@ -761,26 +693,9 @@ namespace mark4
         return message.dump();
     }
 
-    std::string compareToJson(const AlignedPair &pair)
-    {
-        // Both instants are whole microseconds, so the integers below are
-        // the exact values and not a rendering of them.
-        Json message;
-        message["type"] = "compare";
-        message["timestampUs"] = static_cast<std::uint64_t>(pair.timestampUs);
-        message["gapUs"] = static_cast<std::int64_t>(pair.gapUs);
-        message["attitudeErrorDeg"] = pair.attitudeErrorDeg;
-        message["altitudeErrorM"] = pair.altitudeErrorM;
-        message["verticalVelocityErrorMps"] = pair.verticalVelocityErrorMps;
-        return message.dump();
-    }
-
     std::string statusToJson(const HubStatus &status)
     {
         Json counts;
-        counts["telemetryRows"] = status.telemetryRows;
-        counts["simRawRows"] = status.simRawRows;
-        counts["blackboxRecords"] = status.blackboxRecords;
         counts["badFrames"] = status.badFrames;
         counts["rejectedAnnounces"] = status.rejectedAnnounces;
 
@@ -811,7 +726,6 @@ namespace mark4
 
         Json message;
         message["type"] = "status";
-        message["recording"] = status.recording;
         message["serialOpen"] = status.serialOpen;
         message["serialLink"] = status.serialLink;
         message["connection"] = connection;
@@ -1021,14 +935,6 @@ namespace mark4
             message.reboot.type = static_cast<std::uint8_t>(PacketType::REBOOT_COMMAND);
             message.reboot.magic = BOARD_REBOOT_MAGIC;
         }
-        else if (typeName == "record")
-        {
-            message.type = ClientMessageType::RECORD;
-            if (!parseRecord(root, message, error))
-            {
-                return error;
-            }
-        }
         else if (typeName == "tuningSet")
         {
             message.type = ClientMessageType::TUNING_SET;
@@ -1079,14 +985,6 @@ namespace mark4
             message.type = ClientMessageType::PROFILE_PUSH;
             if (!readProfileName(root, message.profileName, error) ||
                 !readTarget(root, message.target, error))
-            {
-                return error;
-            }
-        }
-        else if (typeName == "replay")
-        {
-            message.type = ClientMessageType::REPLAY;
-            if (!parseReplay(root, message, error))
             {
                 return error;
             }

@@ -207,12 +207,8 @@ TEST_CASE("discovery json describes every live process")
 TEST_CASE("status json carries the counters")
 {
     mark4::HubStatus status;
-    status.recording = true;
     status.serialOpen = true;
     status.serialLink = "udp:192.168.1.31:47830";
-    status.telemetryRows = 10U;
-    status.simRawRows = 20U;
-    status.blackboxRecords = 30U;
     status.badFrames = 40U;
     status.rejectedAnnounces = 50U;
     status.clients = 3U;
@@ -235,12 +231,8 @@ TEST_CASE("status json carries the counters")
 
     const nlohmann::json message = parsed(mark4::statusToJson(status));
     CHECK(message["type"] == "status");
-    CHECK(message["recording"] == true);
     CHECK(message["serialOpen"] == true);
     CHECK(message["serialLink"] == "udp:192.168.1.31:47830");
-    CHECK(message["counts"]["telemetryRows"] == 10U);
-    CHECK(message["counts"]["simRawRows"] == 20U);
-    CHECK(message["counts"]["blackboxRecords"] == 30U);
     CHECK(message["counts"]["badFrames"] == 40U);
     CHECK(message["counts"]["rejectedAnnounces"] == 50U);
     CHECK(message["clients"] == 3U);
@@ -384,27 +376,15 @@ TEST_CASE("a reboot message carries the board reboot magic")
     CHECK(bytes[2] == mark4::BOARD_REBOOT_MAGIC);
 }
 
-TEST_CASE("a record message toggles the csv session")
-{
-    const auto start = mark4::parseClientMessage(R"({"type":"record","action":"start"})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(start));
-    CHECK(std::get<mark4::ClientMessage>(start).type == mark4::ClientMessageType::RECORD);
-    CHECK(std::get<mark4::ClientMessage>(start).recordStart);
-
-    const auto stop = mark4::parseClientMessage(R"({"type":"record","action":"stop"})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(stop));
-    CHECK(!(std::get<mark4::ClientMessage>(stop).recordStart));
-}
-
 TEST_CASE("a correlation id past the int range is refused, never wrapped")
 {
     // A wrapped id would come back in the ack and match nothing: the page
     // would see a timeout instead of an answer
     const auto tooBig =
-        mark4::parseClientMessage(R"({"type":"record","action":"start","id":4294901760})");
+        mark4::parseClientMessage(R"({"type":"reboot","target":"firmware","id":4294901760})");
     CHECK(std::holds_alternative<std::string>(tooBig));
     const auto negative =
-        mark4::parseClientMessage(R"({"type":"record","action":"start","id":-2})");
+        mark4::parseClientMessage(R"({"type":"reboot","target":"firmware","id":-2})");
     CHECK(std::holds_alternative<std::string>(negative));
 }
 
@@ -616,28 +596,6 @@ TEST_CASE("profile messages decode and render")
     CHECK(profile["values"]["101"] == 0.028f);
 }
 
-TEST_CASE("a replay message names a recording and a validated tempo")
-{
-    const auto plain =
-        mark4::parseClientMessage(R"({"type":"replay","id":18,"name":"board_1.m4bb"})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(plain));
-    const auto &plainMessage = std::get<mark4::ClientMessage>(plain);
-    CHECK(plainMessage.type == mark4::ClientMessageType::REPLAY);
-    CHECK(plainMessage.recordingName == "board_1.m4bb");
-    // Empty means "the tempo the run was recorded at", so no --speed goes out
-    CHECK(plainMessage.replaySpeed.empty());
-
-    const auto fast =
-        mark4::parseClientMessage(R"({"type":"replay","name":"board_1.m4bb","speed":"max"})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(fast));
-    CHECK(std::get<mark4::ClientMessage>(fast).replaySpeed == "max");
-
-    const auto slow =
-        mark4::parseClientMessage(R"({"type":"replay","name":"board_1.m4bb","speed":"0.25"})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(slow));
-    CHECK(std::get<mark4::ClientMessage>(slow).replaySpeed == "0.25");
-}
-
 TEST_CASE("a malformed client message is refused, never thrown")
 {
     const char *rejected[] = {
@@ -662,8 +620,6 @@ TEST_CASE("a malformed client message is refused, never thrown")
         R"({"type":"simScenario","scenario":"throw","sequence":300})",
         R"({"type":"simScenario","scenario":"throw","target":"ghost"})",
         R"({"type":"reboot"})",
-        R"({"type":"record"})",
-        R"({"type":"record","action":"pause"})",
         R"({"type":"tuningSet","target":"drone_sim","value":1.0})",
         R"({"type":"tuningSet","target":"drone_sim","paramId":101})",
         R"({"type":"tuningSet","target":"drone_sim","paramId":101,"value":"fast"})",
@@ -685,16 +641,6 @@ TEST_CASE("a malformed client message is refused, never thrown")
         R"({"type":"profileLoad"})",
         R"({"type":"profilePush","name":"bench"})",
         R"({"type":"profilePush","name":"bench","target":"ghost"})",
-        R"({"type":"replay"})",
-        R"({"type":"replay","name":""})",
-        R"({"type":"replay","name":42})",
-        // The tempo becomes an argument of a child process: only "max" or a
-        // positive number ever gets that far.
-        R"({"type":"replay","name":"board_1.m4bb","speed":"max; rm -rf /"})",
-        R"({"type":"replay","name":"board_1.m4bb","speed":"-1"})",
-        R"({"type":"replay","name":"board_1.m4bb","speed":"0"})",
-        R"({"type":"replay","name":"board_1.m4bb","speed":"2x"})",
-        R"({"type":"replay","name":"board_1.m4bb","speed":2})",
     };
     for (const char *text : rejected)
     {

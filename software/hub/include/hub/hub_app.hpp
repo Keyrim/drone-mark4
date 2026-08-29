@@ -13,11 +13,9 @@
 
 #include "hub/discovery.hpp"
 #include "hub/json_codec.hpp"
-#include "hub/launcher.hpp"
 #include "hub/ota_client.hpp"
 #include "hub/serial_transport.hpp"
 #include "hub/stream_health.hpp"
-#include "hub/stream_recorder.hpp"
 #include "hub/tuning_profiles.hpp"
 #include "hub/udp_transport.hpp"
 #include "hub/ws_bridge.hpp"
@@ -79,8 +77,6 @@ namespace mark4
             std::uint16_t bridgePort = BRIDGE_ANNOUNCE_PORT; ///< bridge announce listen port
             std::uint16_t telemetryPort = TELEMETRY_PORT;    ///< telemetry port watched by default
             std::uint16_t simRawPort = SIM_RAW_PORT;         ///< sim raw port watched by default
-            std::string logDirectory = "logs";               ///< where recordings are written
-            bool recordOnStart = true;                       ///< open a CSV session at startup
             bool udpRebroadcast = true;                      ///< re-emit serial telemetry on UDP
             std::string profilesDir = "profiles";            ///< directory the profiles live in
             std::string pushProfileName;                     ///< profile pushed to every process
@@ -108,8 +104,8 @@ namespace mark4
         explicit HubApp(Config config);
 
         /// @brief Initializes services in declaration order: opens the UDP
-        ///        sockets, the serial port and the recording. The first
-        ///        failure is logged and returns false immediately.
+        ///        sockets and the serial port. The first failure is logged
+        ///        and returns false immediately.
         /// @return true when every service is ready
         bool init();
 
@@ -131,12 +127,6 @@ namespace mark4
             return m_serial;
         }
 
-        /// @return recorder, for post-run reporting
-        [[nodiscard]] const StreamRecorder &accessRecorder() const
-        {
-            return m_recorder;
-        }
-
       private:
         /// @brief Handles one datagram read from a listening socket.
         /// @param localPort port the datagram landed on
@@ -153,11 +143,11 @@ namespace mark4
         /// @param size payload size
         void onSerialPayload(const std::uint8_t *payload, std::size_t size);
 
-        /// @brief Routes one telemetry packet to the recorder and the clients.
+        /// @brief Routes one telemetry packet to the clients.
         /// @param data packet bytes
         void onTelemetryPacket(const std::uint8_t *data);
 
-        /// @brief Routes one raw simulator packet to the recorder and clients.
+        /// @brief Routes one raw simulator packet to the clients.
         /// @param data packet bytes
         void onSimRawPacket(const std::uint8_t *data);
 
@@ -258,18 +248,6 @@ namespace mark4
         /// @return true when every value went out
         bool pushProfile(const std::string &name, StreamSource target, std::string &errorOut);
 
-        /// @brief Starts a drone_replay on one stored blackbox recording. The
-        ///        replay then announces itself like any other flight process,
-        ///        so discovery and the telemetry stream do the rest.
-        /// @param name recording to play back, as the listing names it
-        /// @param speed tempo argument, empty for the recorded one
-        /// @param errorOut receives the reason when it cannot be started
-        /// @return true when the child started
-        bool startReplay(const std::string &name, const std::string &speed, std::string &errorOut);
-
-        /// @brief Sends every comparison that has come due to the clients.
-        void emitCompare();
-
         /// @brief Sends the current discovery table to the clients.
         void broadcastDiscovery();
 
@@ -316,7 +294,6 @@ namespace mark4
 
         Config m_config;                         ///< settings of this run
         StreamHealth m_health;                   ///< sequence health of every link
-        StreamRecorder m_recorder;               ///< CSV pair and blackbox file
         TuningProfiles m_profiles;               ///< stored tuning profiles
         DiscoveryRegistry m_registry;            ///< live processes
         BridgeDirectory m_bridges;               ///< WiFi bridges heard on the network
@@ -325,14 +302,14 @@ namespace mark4
         WsBridge m_ws;                           ///< websocket endpoint
         std::vector<PortUse> m_followedPorts;    ///< refcount behind every subscription
         Connection m_connection;                 ///< the one drone commands go to
-        LiveAligner m_aligner;                   ///< live half of the stream comparison
         std::atomic_bool m_stopRequested{false}; ///< set by a signal handler
         std::uint64_t m_nextStatusUs = 0U;       ///< next status message instant [us]
+        std::uint64_t m_badFrames = 0U;          ///< serial frames that decoded to
+                                                 ///< nothing
         std::uint8_t m_foreignProtocol = 0U;     ///< last foreign version reported,
                                                  ///< 0 = none yet
         std::uint8_t m_scenarioSequence = 0U;    ///< rolling number stamped on a
                                                  ///< scenario the client left at 0
-        ProcessGroup m_replays;                  ///< drone_replay children a client asked for
         std::map<std::string, std::uint64_t> m_rcSeenUs;   ///< last RC instant per client
         OtaClient m_ota;                                   ///< firmware update session
         StreamSource m_otaTarget = StreamSource::FIRMWARE; ///< process the update packets go to

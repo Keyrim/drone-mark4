@@ -32,10 +32,7 @@ add_library(hub_core STATIC
     src/json_codec.cpp
     src/ota_bundle.cpp
     src/ota_client.cpp
-    src/recordings.cpp
-    src/stream_align.cpp
     src/stream_health.cpp
-    src/stream_recorder.cpp
     src/tuning_profiles.cpp)
 target_include_directories(hub_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(hub_core PUBLIC protocol nlohmann_json::nlohmann_json)
@@ -46,7 +43,6 @@ target_link_libraries(hub_core PRIVATE drone_warnings)
 # protocol/ and nothing else.
 add_executable(hub
     src/hub_app.cpp
-    src/launcher.cpp
     src/main.cpp
     src/serial_transport.cpp
     src/udp_transport.cpp

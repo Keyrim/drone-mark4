@@ -6,6 +6,7 @@
 #include "hub/hub_app.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -13,13 +14,11 @@
 #include <poll.h>
 #include <string>
 #include <system_error>
+#include <unistd.h>
 #include <utility>
 #include <variant>
 
-#include "hub/launcher.hpp"
 #include "hub/packed_field.hpp"
-#include "hub/recordings.hpp"
-#include "protocol/blackbox.hpp"
 #include "protocol/tuning.hpp"
 
 namespace mark4
@@ -27,6 +26,39 @@ namespace mark4
     namespace
     {
         constexpr std::uint64_t US_PER_MS = 1000U;
+
+        /// Size of the buffer the path of the running executable is read into.
+        constexpr std::size_t PATH_BUFFER_SIZE = 4096U;
+
+        /// @brief Default path of a directory or a file of the source tree,
+        ///        resolved from the running executable so a build tree
+        ///        anywhere works, and falling back to the path as written,
+        ///        relative to the current directory.
+        /// @param relative path relative to the source tree root
+        /// @param mustExist true to only accept a resolved path that exists,
+        ///        which is what a directory of assets wants; false for a
+        ///        build artifact that is legitimately absent until it is built
+        /// @return the path
+        std::string defaultProjectPath(const char *relative, bool mustExist = true)
+        {
+            std::array<char, PATH_BUFFER_SIZE> path{};
+            const ssize_t size = ::readlink("/proc/self/exe", path.data(), path.size() - 1U);
+            if (size > 0)
+            {
+                const std::string directory =
+                    std::filesystem::path(std::string(path.data(), static_cast<std::size_t>(size)))
+                        .parent_path()
+                        .string();
+                // software/build/<preset>/hub is four levels below the root.
+                const std::string candidate = directory + "/../../../../" + relative;
+                std::error_code failure;
+                if (!mustExist || std::filesystem::exists(candidate, failure))
+                {
+                    return candidate;
+                }
+            }
+            return relative;
+        }
 
         /// @return a monotonic timestamp [us]
         std::uint64_t monotonicUs()
@@ -38,9 +70,7 @@ namespace mark4
     } // namespace
 
     HubApp::HubApp(Config config)
-        : m_config(std::move(config)),
-          m_recorder(m_config.logDirectory),
-          m_profiles(m_config.profilesDir)
+        : m_config(std::move(config)), m_profiles(m_config.profilesDir)
     {
     }
 
@@ -64,14 +94,13 @@ namespace mark4
         std::error_code failure;
         if (!std::filesystem::is_directory(m_config.pagesDir, failure))
         {
-            // A hub without pages still decodes, records and serves the
-            // websocket: the pages are a client, not a dependency.
+            // A hub without pages still decodes and serves the websocket:
+            // the pages are a client, not a dependency.
             static_cast<void>(
                 std::printf("hub: no pages in %s, serving none\n", m_config.pagesDir.c_str()));
         }
         HttpConfig http;
         http.pagesDir = m_config.pagesDir;
-        http.logDir = m_config.logDirectory;
         if (!m_ws.start(m_config.wsPort, m_config.bindAddress, std::move(http)))
         {
             return false;
@@ -113,13 +142,6 @@ namespace mark4
             return sendToTarget(m_otaTarget, data, size, errorOut);
         });
         m_ota.setOnChange([this]() { broadcastOta(); });
-
-        if (m_config.recordOnStart && !m_recorder.startCsvSession())
-        {
-            static_cast<void>(std::fprintf(
-                stderr, "hub: cannot open a recording in %s\n", m_config.logDirectory.c_str()));
-            return false;
-        }
         return true;
     }
 
@@ -238,11 +260,6 @@ namespace mark4
 
     void HubApp::onSerialPayload(const std::uint8_t *payload, std::size_t size)
     {
-        if (size == BLACKBOX_RECORD_SIZE && validBlackboxRecord(payload))
-        {
-            static_cast<void>(m_recorder.onBlackboxRecord(payload, size));
-            return;
-        }
         if (hasHeader(payload, size, PacketType::TELEMETRY) && size == TELEMETRY_PACKET_SIZE)
         {
             const auto change = m_registry.onSerialTelemetry(monotonicUs());
@@ -269,7 +286,7 @@ namespace mark4
             return;
         }
         noteForeignProtocol(payload, size);
-        m_recorder.countBadFrame();
+        ++m_badFrames;
     }
 
     bool HubApp::onTuningAnswer(const std::uint8_t *data, std::size_t size, StreamSource source)
@@ -319,18 +336,6 @@ namespace mark4
         TelemetryPacket packet{};
         std::memcpy(&packet, data, sizeof(packet));
         m_health.onPacket(StreamKind::TELEMETRY, packet.sourceId, packet.sequence);
-        m_recorder.onTelemetry(packet);
-
-        const auto quaternion = readPackedField(&packet.attitudeQuat);
-        AlignSample sample;
-        sample.timestampUs = static_cast<double>(packet.timestampUs);
-        for (std::size_t index = 0U; index < quaternion.size(); ++index)
-        {
-            sample.attitudeQuat[index] = static_cast<double>(quaternion[index]);
-        }
-        sample.altitudeM = static_cast<double>(packet.altitudeM);
-        sample.verticalVelocityMps = static_cast<double>(packet.verticalVelocityMps);
-        m_aligner.onTelemetry(sample);
 
         m_ws.broadcastText(telemetryToJson(packet));
     }
@@ -340,23 +345,6 @@ namespace mark4
         SimRawPacket packet{};
         std::memcpy(&packet, data, sizeof(packet));
         m_health.onPacket(StreamKind::SIM_RAW, packet.sourceId, packet.sequence);
-        m_recorder.onSimRaw(packet);
-
-        const auto quaternion = readPackedField(&packet.attitudeQuat);
-        const auto position = readPackedField(&packet.positionM);
-        const auto velocity = readPackedField(&packet.velocityMps);
-        AlignSample sample;
-        sample.timestampUs = static_cast<double>(packet.timestampUs);
-        for (std::size_t index = 0U; index < quaternion.size(); ++index)
-        {
-            sample.attitudeQuat[index] = static_cast<double>(quaternion[index]);
-        }
-        // The exact altitude is the world z of the position, the exact
-        // vertical speed the world z of the velocity, exactly as the sim raw
-        // CSV columns the offline comparison reads.
-        sample.altitudeM = static_cast<double>(position[2]);
-        sample.verticalVelocityMps = static_cast<double>(velocity[2]);
-        m_aligner.onSimRaw(sample);
 
         m_ws.broadcastText(simRawToJson(packet));
     }
@@ -428,47 +416,6 @@ namespace mark4
             {
                 return false;
             }
-        }
-        return true;
-    }
-
-    bool HubApp::startReplay(const std::string &name,
-                             const std::string &speed,
-                             std::string &errorOut)
-    {
-        Recording recording;
-        if (!findRecording(listRecordings(m_config.logDirectory), name, recording))
-        {
-            errorOut = "no recording named '" + name + "'";
-            return false;
-        }
-        if (recording.kind != "blackbox")
-        {
-            // A streams pair is two CSV files of what a run published; only
-            // a blackbox holds the sensor frames a replay steps through.
-            errorOut = "'" + name + "' is a streams recording, not a blackbox";
-            return false;
-        }
-
-        // One replay at a time: two of them would broadcast telemetry on the
-        // same port and the ground side would read one interleaved run.
-        static_cast<void>(m_replays.terminateAll());
-
-        ChildSpec child;
-        child.program = defaultBinaryPath("drone_replay");
-        child.arguments.push_back(recordingDirectory(m_config.logDirectory, recording) + "/" +
-                                  recording.name);
-        if (!speed.empty())
-        {
-            child.arguments.emplace_back("--speed");
-            child.arguments.push_back(speed);
-        }
-        child.arguments.emplace_back("--announce-port");
-        child.arguments.push_back(std::to_string(m_config.announcePort));
-        if (!m_replays.spawn(child))
-        {
-            errorOut = "cannot start " + child.program;
-            return false;
         }
         return true;
     }
@@ -558,9 +505,8 @@ namespace mark4
     bool HubApp::applyClientMessage(const ClientMessage &message, std::string &errorOut)
     {
         // Only the connected drone is wired to the controls: a drone that
-        // merely announces itself is visible, not commandable. Everything
-        // else (recording, profiles on disk, replay starts) is hub business
-        // and needs no drone at all.
+        // merely announces itself is visible, not commandable. The profiles
+        // on disk are hub business and need no drone at all.
         switch (message.type)
         {
             case ClientMessageType::RC:
@@ -657,30 +603,11 @@ namespace mark4
             case ClientMessageType::PROFILE_PUSH: {
                 return pushProfile(message.profileName, message.target, errorOut);
             }
-            case ClientMessageType::REPLAY: {
-                return startReplay(message.recordingName, message.replaySpeed, errorOut);
-            }
             case ClientMessageType::CONNECT: {
                 return applyConnect(message, errorOut);
             }
             case ClientMessageType::DISCONNECT: {
                 applyDisconnect();
-                return true;
-            }
-            case ClientMessageType::RECORD: {
-                if (message.recordStart)
-                {
-                    if (!m_recorder.startCsvSession())
-                    {
-                        errorOut = "cannot open a recording in " + m_config.logDirectory;
-                        return false;
-                    }
-                }
-                else
-                {
-                    m_recorder.stopCsvSession();
-                }
-                broadcastStatus();
                 return true;
             }
             case ClientMessageType::OTA_STATUS:
@@ -844,14 +771,6 @@ namespace mark4
         m_ws.broadcastText(ackToJson(id, ok, error));
     }
 
-    void HubApp::emitCompare()
-    {
-        for (const AlignedPair &pair : m_aligner.takeDue())
-        {
-            m_ws.broadcastText(compareToJson(pair));
-        }
-    }
-
     void HubApp::broadcastDiscovery()
     {
         m_ws.broadcastText(
@@ -883,11 +802,7 @@ namespace mark4
         std::erase_if(m_rcSeenUs, [nowUs](const auto &entry) {
             return nowUs - entry.second > RC_PILOT_WINDOW_US;
         });
-        // A replay that reached the end of its file must be reaped, or it
-        // stays a zombie for as long as the hub runs.
-        static_cast<void>(m_replays.anyExited());
         m_ota.tick(nowUs);
-        emitCompare();
 
         // A client that just connected knows nothing yet: it gets the table
         // and the counters as they stand, without waiting for a change.
@@ -907,19 +822,14 @@ namespace mark4
 
     HubStatus HubApp::status() const
     {
-        const StreamRecorder::Stats &stats = m_recorder.stats();
         HubStatus snapshot;
-        snapshot.recording = m_recorder.csvSessionOpen();
         snapshot.serialOpen = m_serial.isOpen();
         snapshot.serialLink = m_serial.isOpen() ? m_serial.device() : std::string{};
         snapshot.connectionVia = m_connection.via;
         snapshot.connectionId = m_connection.id;
         snapshot.connectionKind = m_connection.kind;
         snapshot.connectionLive = m_connection.live;
-        snapshot.telemetryRows = stats.telemetryRows;
-        snapshot.simRawRows = stats.simRawRows;
-        snapshot.blackboxRecords = stats.blackboxRecords;
-        snapshot.badFrames = stats.badFrames;
+        snapshot.badFrames = m_badFrames;
         snapshot.rejectedAnnounces = m_registry.rejectedAnnounces();
         snapshot.clients = m_ws.clientCount();
         const std::uint64_t nowUs = monotonicUs();

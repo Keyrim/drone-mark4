@@ -19,7 +19,6 @@
 
 #include "hub/discovery.hpp"
 #include "hub/ota_client.hpp"
-#include "hub/stream_align.hpp"
 #include "hub/stream_health.hpp"
 #include "hub/tuning_profiles.hpp"
 #include "protocol/commands.hpp"
@@ -36,7 +35,6 @@ namespace mark4
         RC,           ///< pilot state to forward to a flight process
         SIM_SCENARIO, ///< run to play, forwarded to a flight process
         REBOOT,       ///< reset the real board
-        RECORD,       ///< start or stop the CSV recording
         TUNING_SET,   ///< write one tunable parameter
         TUNING_GET,   ///< read one tunable parameter
         TUNING_LIST,  ///< walk the parameter table
@@ -44,7 +42,6 @@ namespace mark4
         PROFILE_SAVE, ///< store one named set of values
         PROFILE_LOAD, ///< read one named set of values back
         PROFILE_PUSH, ///< send one named set to a flight process
-        REPLAY,       ///< replay one stored blackbox recording
         CONNECT,      ///< make one drone THE connected drone
         DISCONNECT,   ///< drop the connected drone
         OTA_STATUS,   ///< ask the board what firmware it runs
@@ -64,15 +61,11 @@ namespace mark4
         RcCommandPacket rc{};                           ///< RC: packet to forward as is
         SimScenarioPacket simScenario{};                ///< SIM_SCENARIO: packet to send
         RebootCommandPacket reboot{};                   ///< REBOOT: packet to send, magic included
-        bool recordStart = false;                       ///< RECORD: true = start, false = stop
         TuningSetPacket tuningSet{};                    ///< TUNING_SET: packet to forward
         TuningGetPacket tuningGet{};                    ///< TUNING_GET: packet to forward
         TuningListPacket tuningList{};                  ///< TUNING_LIST: packet to forward
         std::string profileName;                        ///< PROFILE_*: profile concerned
         TuningValues profileValues;                     ///< PROFILE_SAVE: values to store
-        std::string recordingName;                      ///< REPLAY: recording to play back
-        std::string replaySpeed;                        ///< REPLAY: tempo, "max" or a positive
-                                                        ///< number, empty = the recorded one
         std::string connectVia;                         ///< CONNECT: "udp", "uart" or "bridge"
         std::string connectPeer;                        ///< CONNECT: UART device or bridge name
         std::uint32_t serialBaud = 0U;                  ///< CONNECT: line speed [baud], uart only
@@ -83,16 +76,12 @@ namespace mark4
     /// Counters and flags the hub publishes once per second.
     struct HubStatus
     {
-        bool recording = false;    ///< a CSV session is open
         bool serialOpen = false;   ///< the serial link is usable
         std::string serialLink;    ///< device the link is open on, empty = none
         std::string connectionVia; ///< "udp", "uart" or "bridge", empty = none
         std::string connectionId;  ///< kind name, UART device or bridge name
         StreamSource connectionKind = StreamSource::FIRMWARE; ///< kind commands route to
         bool connectionLive = false;          ///< the connected drone shows signs of life
-        std::uint64_t telemetryRows = 0U;     ///< telemetry rows written
-        std::uint64_t simRawRows = 0U;        ///< sim raw rows written
-        std::uint64_t blackboxRecords = 0U;   ///< blackbox records written
         std::uint64_t badFrames = 0U;         ///< serial frames that decoded to nothing
         std::uint64_t rejectedAnnounces = 0U; ///< announces dropped as invalid
         std::size_t clients = 0U;             ///< websocket clients connected
@@ -158,11 +147,6 @@ namespace mark4
     std::string discoveryToJson(const std::vector<DiscoveredProcess> &processes,
                                 const std::vector<DiscoveredBridge> &bridges,
                                 std::uint64_t nowUs);
-
-    /// @brief Renders one aligned pair as a JSON object.
-    /// @param pair pair to render
-    /// @return one line of JSON
-    std::string compareToJson(const AlignedPair &pair);
 
     /// @brief Renders the whole state of the update client as a JSON object:
     ///        what the board runs, what the bundle holds, where the session

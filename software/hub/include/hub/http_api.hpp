@@ -8,11 +8,10 @@
 ///        Pure routing: a method and a URI go in, a response comes out. No
 ///        socket, no state, so a unit test drives the whole surface.
 ///
-///        THE INVARIANT: /api/ is filesystem-only; everything live is
-///        websocket. These handlers run on the connection threads of the
-///        websocket library, so they must never touch the recorder, the
-///        discovery registry or the counters. That is what keeps the hub
-///        free of locks.
+///        THE INVARIANT: the HTTP side is filesystem-only; everything live
+///        is websocket. These handlers run on the connection threads of the
+///        websocket library, so they must never touch the discovery registry
+///        or the counters. That is what keeps the hub free of locks.
 
 #include <string>
 #include <string_view>
@@ -31,7 +30,6 @@ namespace mark4
     {
         std::string pagesDir; ///< directory the static pages are read from,
                               ///< empty or missing = every page is a 404
-        std::string logDir;   ///< directory the recordings live in
     };
 
     /// One answer, ready to be turned into an HTTP response.

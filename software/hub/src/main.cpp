@@ -1,10 +1,9 @@
 /// @file
 /// @brief hub entry point. The hub takes no arguments: it serves with its
-///        built-in defaults and everything operational (board UART, stream
-///        recording, replay, tuning profiles) is driven at runtime through
-///        the websocket by the pages. Anything worth deciding earlier than
-///        that is a compile-time default in protocol/ports.hpp or
-///        HubApp::Config.
+///        built-in defaults and everything operational (the board link, the
+///        tuning profiles) is driven at runtime through the websocket by the
+///        pages. Anything worth deciding earlier than that is a compile-time
+///        default in protocol/ports.hpp or HubApp::Config.
 
 #include <atomic>
 #include <csignal>
@@ -29,19 +28,6 @@ namespace
         {
             app->requestStop();
         }
-    }
-
-    /// @brief Prints what the run recorded.
-    /// @param app app that ran
-    void reportCounters(const mark4::HubApp &app)
-    {
-        const mark4::StreamRecorder::Stats &stats = app.accessRecorder().stats();
-        static_cast<void>(std::printf(
-            "hub: %llu telemetry rows, %llu sim raw rows, %llu blackbox records, %llu bad frames\n",
-            static_cast<unsigned long long>(stats.telemetryRows),
-            static_cast<unsigned long long>(stats.simRawRows),
-            static_cast<unsigned long long>(stats.blackboxRecords),
-            static_cast<unsigned long long>(stats.badFrames)));
     }
 } // namespace
 
@@ -73,6 +59,5 @@ int main(int argc, char **argv)
 
     const int code = app.run(nullptr);
     G_APP.store(nullptr);
-    reportCounters(app);
     return code;
 }
