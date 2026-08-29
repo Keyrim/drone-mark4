@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:c59604b8440950f3418381827bff0163366970a2b53bb146afe20ee1a2de8a00
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:5bce3fb7f37649c7ad436e5e0de011f42700e31ecfeae60fd78221163178b7b3
       # The image runs as user "dev"; the runner's mounted workdirs belong to
       # another UID, so container jobs must run as root.
       options: --user root
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:c59604b8440950f3418381827bff0163366970a2b53bb146afe20ee1a2de8a00
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:5bce3fb7f37649c7ad436e5e0de011f42700e31ecfeae60fd78221163178b7b3
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -78,7 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:c59604b8440950f3418381827bff0163366970a2b53bb146afe20ee1a2de8a00
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:5bce3fb7f37649c7ad436e5e0de011f42700e31ecfeae60fd78221163178b7b3
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -93,7 +93,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:c59604b8440950f3418381827bff0163366970a2b53bb146afe20ee1a2de8a00
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:5bce3fb7f37649c7ad436e5e0de011f42700e31ecfeae60fd78221163178b7b3
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -112,7 +112,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:c59604b8440950f3418381827bff0163366970a2b53bb146afe20ee1a2de8a00
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:5bce3fb7f37649c7ad436e5e0de011f42700e31ecfeae60fd78221163178b7b3
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -132,7 +132,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:c59604b8440950f3418381827bff0163366970a2b53bb146afe20ee1a2de8a00
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:5bce3fb7f37649c7ad436e5e0de011f42700e31ecfeae60fd78221163178b7b3
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -148,7 +148,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:c59604b8440950f3418381827bff0163366970a2b53bb146afe20ee1a2de8a00
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:5bce3fb7f37649c7ad436e5e0de011f42700e31ecfeae60fd78221163178b7b3
       options: --user root
       credentials:
         username: ${{ github.actor }}
