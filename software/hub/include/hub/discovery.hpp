@@ -2,10 +2,10 @@
 
 /// @file
 /// @brief Registry of the nodes currently alive, fed by the Announce every
-///        node beacons: the transport nodes through their frames, the board
-///        through its serial link. Pure logic: no socket, no clock, no
-///        thread. The caller passes the messages and the current time, so the
-///        whole discovery behavior is reproducible in a unit test.
+///        node beacons through its transport frames, the board included.
+///        Pure logic: no socket, no clock, no thread. The caller passes the
+///        messages and the current time, so the whole discovery behavior is
+///        reproducible in a unit test.
 
 #include <cstddef>
 #include <cstdint>
@@ -23,11 +23,8 @@ namespace mark4
     {
         mark4_NodeKind kind = mark4_NodeKind_FIRMWARE; ///< kind the node claims
         std::uint32_t nodeId = 0U;                     ///< transport node the process is, the
-                                                       ///< address commands go to; 0 for a
-                                                       ///< node heard over serial
+                                                       ///< address commands go to
         std::uint64_t lastSeenUs = 0U;                 ///< time of the last announce [us]
-        bool viaSerial = false;                        ///< true when the evidence came from a
-                                                       ///< serial link, not from the transport
         std::string name;                              ///< label the node gave itself
         mark4_Mcu mcu = mark4_Mcu_MCU_UNSPECIFIED;     ///< chip it runs on
         std::uint32_t buildEpoch = 0U;                 ///< build identity, 0 when none
@@ -39,8 +36,8 @@ namespace mark4
     /// What happened to one entry of the registry.
     enum class DiscoveryEvent : std::uint8_t
     {
-        APPEARED,   ///< a kind and route nobody had seen yet
-        RESTARTED,  ///< same kind and route, new node identity
+        APPEARED,   ///< a kind nobody had seen yet
+        RESTARTED,  ///< same kind, new node identity
         DISAPPEARED ///< nothing heard for longer than the expiry delay
     };
 
@@ -65,8 +62,8 @@ namespace mark4
     bool parseNodeKindName(const std::string &name, mark4_NodeKind &kindOut);
 
     /// One WiFi bridge that told the network it is there. A bridge is not a
-    /// node and carries no telemetry of its own: it is the address a
-    /// serial link can be opened on.
+    /// node and carries no telemetry of its own: it is the address the
+    /// board's link is opened on.
     struct DiscoveredBridge
     {
         std::string address;           ///< where it announced from, dotted quad
@@ -120,16 +117,14 @@ namespace mark4
         std::vector<DiscoveredBridge> m_bridges; ///< live bridges, insertion order
     };
 
-    /// Set of live nodes, keyed by (kind, route): one drone_sim over the
-    /// transport, one firmware over the serial cable. The node identity
-    /// behind an entry is what tells a restart from a refresh, since a
-    /// process draws a new one every time it starts.
+    /// Set of live nodes, keyed by kind: one drone_sim, one firmware. The
+    /// node identity behind an entry is what tells a restart from a
+    /// refresh, since a process draws a new one every time it starts.
     class DiscoveryRegistry
     {
       public:
         /// @brief Feeds one Announce.
-        /// @param nodeId transport node the message came from, 0 for the
-        ///        serial route
+        /// @param nodeId transport node the message came from
         /// @param announce decoded message
         /// @param nowUs current time [us], the entry's freshness reference
         /// @return the event this announce caused, nothing on a plain refresh
@@ -152,7 +147,7 @@ namespace mark4
 
         /// @brief Looks up the transport node of a live process of one kind.
         /// @param kind kind to look for
-        /// @return node id, 0 when no live process of that kind is on the transport
+        /// @return node id, 0 when no live process of that kind
         [[nodiscard]] std::uint32_t nodeIdOf(mark4_NodeKind kind) const;
 
         /// @brief Looks up the kind of a live transport node.

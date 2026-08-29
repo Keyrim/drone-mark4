@@ -44,7 +44,6 @@ target_link_libraries(hub_core PRIVATE drone_warnings)
 add_executable(hub
     src/hub_app.cpp
     src/main.cpp
-    src/serial_transport.cpp
     src/udp_transport.cpp
     src/ws_bridge.cpp)
 target_link_libraries(hub PRIVATE hub_core protocol transport ixwebsocket drone_warnings)

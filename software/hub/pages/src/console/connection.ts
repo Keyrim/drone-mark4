@@ -29,8 +29,10 @@ export const NO_CONNECTION: Connection = {
 export interface AnnouncedProcess {
     kind: number;
     kindName: string;
-    viaSerial: boolean;
 }
+
+/** Kind of the board, the one process reached through a bridge, never by udp. */
+const KIND_FIRMWARE = 1;
 
 /** One WiFi bridge, as the discovery message lists it. */
 export interface AnnouncedBridge {
@@ -64,8 +66,8 @@ export function candidateRows(
     let connectionListed = false;
 
     for (const process of processes) {
-        if (process.viaSerial) {
-            // Serial telemetry is the board already connected through the
+        if (process.kind === KIND_FIRMWARE) {
+            // The board announces like every node but is reached through a
             // bridge row: it is evidence, not a candidate.
             continue;
         }

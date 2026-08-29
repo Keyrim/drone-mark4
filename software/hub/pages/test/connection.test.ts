@@ -3,8 +3,8 @@ import test from "node:test";
 
 import { NO_CONNECTION, candidateRows, type Connection } from "../src/console/connection";
 
-const SIM = { kind: 2, kindName: "drone_sim", viaSerial: false };
-const BOARD_OVER_SERIAL = { kind: 1, kindName: "firmware", viaSerial: true };
+const SIM = { kind: 2, kindName: "drone_sim" };
+const BOARD = { kind: 1, kindName: "firmware" };
 const BRIDGE = { address: "192.168.1.31", port: 47830, name: "c19f6c" };
 
 test("every route is one list, nothing is connected without a click", () => {
@@ -16,8 +16,8 @@ test("every route is one list, nothing is connected without a click", () => {
     assert.deepEqual(rows[1]!.connect, { type: "connect", via: "bridge", name: "c19f6c" });
 });
 
-test("the board seen over serial is evidence, not a candidate", () => {
-    const rows = candidateRows([BOARD_OVER_SERIAL], [], NO_CONNECTION);
+test("the board is evidence, not a udp candidate", () => {
+    const rows = candidateRows([BOARD], [], NO_CONNECTION);
     assert.equal(rows.length, 0);
 });
 

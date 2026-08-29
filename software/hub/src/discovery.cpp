@@ -59,7 +59,6 @@ namespace mark4
         candidate.kind = announce.kind;
         candidate.nodeId = nodeId;
         candidate.lastSeenUs = nowUs;
-        candidate.viaSerial = nodeId == 0U;
         candidate.name = announce.name;
         candidate.mcu = announce.mcu;
         candidate.buildEpoch = announce.build_epoch;
@@ -72,7 +71,7 @@ namespace mark4
     std::optional<DiscoveryChange> DiscoveryRegistry::touch(const DiscoveredProcess &candidate)
     {
         const auto same = [&candidate](const DiscoveredProcess &known) {
-            return known.kind == candidate.kind && known.viaSerial == candidate.viaSerial;
+            return known.kind == candidate.kind;
         };
         const auto found = std::find_if(m_processes.begin(), m_processes.end(), same);
         if (found == m_processes.end())
@@ -81,10 +80,7 @@ namespace mark4
             return DiscoveryChange{DiscoveryEvent::APPEARED, candidate};
         }
 
-        // A node identity of 0 is the serial route, which carries none: it
-        // can never prove a restart, so such evidence is always a plain
-        // refresh.
-        const bool restarted = candidate.nodeId != 0U && found->nodeId != candidate.nodeId;
+        const bool restarted = found->nodeId != candidate.nodeId;
         *found = candidate;
         if (restarted)
         {

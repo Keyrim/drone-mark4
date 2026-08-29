@@ -139,7 +139,10 @@ export class OtaPanel {
 
         socket.on("ota", (message: HubMessage) => this.onOta(message));
         socket.on("status", (message: HubMessage) => {
-            this.boardLinked = message["serialOpen"] === true;
+            // The board is linked when it is THE connected drone and alive:
+            // it is a node like the others, there is no link to be open.
+            const connection = (message["connection"] ?? {}) as Record<string, unknown>;
+            this.boardLinked = connection["kindName"] === "firmware" && connection["live"] === true;
             this.paint();
         });
         // A board that was just plugged in has slots to show, not an event:

@@ -13,7 +13,6 @@ import type { Ack, HubMessage, HubSocket } from "./hub_socket";
 interface DiscoveredProcess {
     kindName: string;
     sessionId: number;
-    viaSerial: boolean;
     ageMs: number;
     /** The node was built on another mark4.proto than the hub: it is listed, and mute. */
     wireMismatch: boolean;
@@ -84,6 +83,12 @@ export class Shell {
             this.setDiscovery((message["processes"] as DiscoveredProcess[]) ?? []);
         });
         socket.on("status", (message: HubMessage) => this.setStatus(message));
+        // A console line of a node that has no console on this desk: the
+        // board behind the bridge. Level 0 is INFO; anything above is bad.
+        socket.on("log", (message: HubMessage) => {
+            const level = typeof message["level"] === "number" ? (message["level"] as number) : 0;
+            this.notify(`${String(message["source"])}: ${String(message["text"])}`, level === 0);
+        });
     }
 
     /** One line to the operator, shared by the page and the shell itself. */
@@ -127,7 +132,6 @@ export class Shell {
             const detail = document.createElement("span");
             detail.textContent =
                 ` node ${process.sessionId}` +
-                ` ${process.viaSerial ? "serial" : "udp"}` +
                 ` ${(process.ageMs / 1000).toFixed(1)} s ago` +
                 (process.wireMismatch ? " WIRE MISMATCH" : "");
             chip.appendChild(detail);

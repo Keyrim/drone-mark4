@@ -39,11 +39,14 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "fake_bridge.hpp"
 #include "hub/ota_bundle.hpp"
 #include "hub/ota_client.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
 #include "transport/transport.hpp"
+#include "transport/uart_link.hpp"
+#include "transport/udp_byte_stream.hpp"
 #include "transport/udp_link.hpp"
 
 namespace
@@ -213,23 +216,54 @@ namespace
     /// address it before it ever announced anything but its beacon.
     constexpr std::uint32_t SIM_NODE = 0x51300001U;
 
-    /// The ground side of the link: one transport node over one UDP link on
-    /// a private discovery port, exactly what the hub is, addressing the sim
-    /// by the node id it was started with.
+    /// The ground side of the link, exactly what the hub is: one transport
+    /// node addressing the sim by the node id it was started with. Two
+    /// shapes: straight on the LAN (one UDP link on a private discovery
+    /// port), or through a bridge: the ground node's only link is then a
+    /// UartLink over datagrams to a FakeBridge, and a relay node on the far
+    /// side (UartLink to the bridge, UDP link on the LAN) stands where the
+    /// board's transport stands, so every updater message crosses the serial
+    /// framing and the relay both ways.
     class GroundLink
     {
       public:
+        /// Node the relay behind the bridge takes.
+        static constexpr std::uint32_t RELAY_NODE = 0x4E1A4000U;
+
         /// @param discoveryPort shared port of this test's private deployment
-        explicit GroundLink(std::uint16_t discoveryPort)
-            : m_udp(discoveryPort)
+        /// @param viaBridge true to go through the bridge and the relay
+        explicit GroundLink(std::uint16_t discoveryPort, bool viaBridge = false)
+            : m_viaBridge(viaBridge),
+              m_udp(discoveryPort)
         {
         }
 
-        /// @brief Opens the sockets and composes the transport.
+        /// @brief Opens the sockets and composes the transport(s).
         /// @return true when frames can flow
         bool open()
         {
-            return m_udp.init() && m_transport.addLink(m_udp) && m_transport.init();
+            if (!m_udp.init())
+            {
+                return false;
+            }
+            if (!m_viaBridge)
+            {
+                return m_transport.addLink(m_udp) && m_transport.init();
+            }
+            if (!m_bridge.ok() || !m_groundStream.open("127.0.0.1", m_bridge.groundPort()) ||
+                !m_relayStream.open("127.0.0.1", m_bridge.boardPort()))
+            {
+                return false;
+            }
+            // Both nodes beacon: that is what teaches the bridge its two
+            // peers, and what lets each side learn the other.
+            static constexpr std::array<std::uint8_t, 2U> GROUND_BEACON = {'g', 'w'};
+            static constexpr std::array<std::uint8_t, 2U> RELAY_BEACON = {'r', 'l'};
+            m_transport.setBeacon(GROUND_BEACON.data(), GROUND_BEACON.size());
+            m_relay.setBeacon(RELAY_BEACON.data(), RELAY_BEACON.size());
+            m_relay.setRelay(true);
+            return m_transport.addLink(m_groundLink) && m_transport.init() &&
+                   m_relay.addLink(m_relayLink) && m_relay.addLink(m_udp) && m_relay.init();
         }
 
         /// @brief Sends one message to the sim, by node id.
@@ -252,7 +286,18 @@ namespace
         {
             m_pending = &client;
             m_pendingUs = instantUs;
+            if (m_viaBridge)
+            {
+                // The far side first, so what the sim answered this step is
+                // already on the bridge when the ground node polls.
+                m_relay.poll(instantUs, nullptr, nullptr);
+                m_bridge.pump();
+            }
             m_transport.poll(instantUs, &GroundLink::Deliver, this);
+            if (m_viaBridge)
+            {
+                m_bridge.pump();
+            }
         }
 
       private:
@@ -270,10 +315,18 @@ namespace
             }
         }
 
-        mark4::UdpLink m_udp;                      ///< the one link
-        mark4::Transport m_transport{GROUND_NODE}; ///< this node
-        mark4::OtaClient *m_pending = nullptr;     ///< client being fed by drain()
-        std::uint64_t m_pendingUs = 0U;            ///< instant handed to it
+        bool m_viaBridge;                             ///< through the bridge and the relay
+        mark4::UdpLink m_udp;                         ///< the LAN link: the ground node's when
+                                                      ///< straight, the relay's through a bridge
+        mark4::Transport m_transport{GROUND_NODE};    ///< this node
+        mark4::FakeBridge m_bridge;                   ///< datagram forwarder, when via bridge
+        mark4::UdpByteStream m_groundStream;          ///< ground end of the bridge
+        mark4::UartLink m_groundLink{m_groundStream}; ///< the ground node's serial link
+        mark4::UdpByteStream m_relayStream;           ///< far end of the bridge
+        mark4::UartLink m_relayLink{m_relayStream};   ///< the relay's serial link
+        mark4::Transport m_relay{RELAY_NODE};         ///< relay between the bridge and the LAN
+        mark4::OtaClient *m_pending = nullptr;        ///< client being fed by drain()
+        std::uint64_t m_pendingUs = 0U;               ///< instant handed to it
     };
 
     /// @return a UDP port nothing holds right now
@@ -608,6 +661,64 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     REQUIRE(manual.board().gitHash == "aaaaaaaa");
     REQUIRE(manual.board().slots[mark4::OTA_SLOT_A].state == mark4_OtaSlotState_BAD);
     REQUIRE(manual.board().slots[mark4::OTA_SLOT_B].state == mark4_OtaSlotState_VALID);
+    REQUIRE(sim.alive());
+
+    sim.stop();
+    std::filesystem::remove_all(runDirectory, error);
+}
+
+TEST_CASE("a hub-driven update crosses a serial-framed bridge link and a relay", "[ota][e2e]")
+{
+    // The happy path of the test above, with the ground node reaching the sim
+    // through the UART framing and a relay: what the board's link is, minus
+    // the wire. The transfer, its acknowledgements, the reboot and the
+    // self-confirmation all have to cross the framing both ways.
+    std::error_code error;
+    const std::filesystem::path runDirectory =
+        std::filesystem::temp_directory_path(error) /
+        ("mark4_ota_e2e_bridge_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(runDirectory, error);
+    REQUIRE(std::filesystem::create_directories(runDirectory, error));
+
+    const std::string otaDirectory = (runDirectory / "flash").string();
+    const std::uint32_t build = 0x66E00003U;
+    const std::string bundle = writeBundle(runDirectory / "bridged.ota", build, "cccccccc");
+
+    const std::uint16_t discoveryPort = pickFreePort();
+    const std::uint16_t simPort = pickFreePort();
+    GroundLink link(discoveryPort, true);
+    REQUIRE(link.open());
+
+    SimProcess sim;
+    REQUIRE(sim.start(runDirectory, otaDirectory, simPort, discoveryPort, SIM_NODE));
+
+    mark4::OtaClient client(testConfig());
+    client.setSink([&link](const mark4_Envelope &envelope, std::string &errorOut) {
+        if (!link.send(envelope))
+        {
+            errorOut = "the bridged link refused the frame";
+            return false;
+        }
+        return true;
+    });
+
+    REQUIRE(refreshBoard(client, link));
+    REQUIRE(client.board().mcu == mark4_Mcu_SIM);
+    REQUIRE(client.board().runningSlot == mark4::OTA_SLOT_A);
+
+    std::string startError;
+    REQUIRE(client.start(bundle, nowUs(), startError));
+    REQUIRE(driveUntil(
+        client, link, [&client] { return client.verdict() != mark4::OtaVerdict::NONE; }));
+    INFO("phase " << mark4::otaPhaseName(client.phase()) << ", error '" << client.lastError()
+                  << "'");
+    REQUIRE(client.verdict() == mark4::OtaVerdict::CONFIRMED);
+    REQUIRE(client.progress().ackedBytes == IMAGE_SIZE);
+
+    REQUIRE(refreshBoard(client, link));
+    REQUIRE(client.board().runningSlot == mark4::OTA_SLOT_B);
+    REQUIRE(client.board().buildEpoch == build);
+    REQUIRE(client.board().gitHash == "cccccccc");
     REQUIRE(sim.alive());
 
     sim.stop();

@@ -63,8 +63,6 @@ namespace mark4
     /// Counters and flags the hub publishes once per second.
     struct HubStatus
     {
-        bool serialOpen = false;   ///< the serial link is usable
-        std::string serialLink;    ///< device the link is open on, empty = none
         std::string connectionVia; ///< "udp" or "bridge", empty = none
         std::string connectionId;  ///< kind name or bridge name
         mark4_NodeKind connectionKind = mark4_NodeKind_FIRMWARE; ///< kind commands route to
@@ -101,6 +99,12 @@ namespace mark4
     /// @return one line of JSON
     std::string tuningInfoToJson(const mark4_TuningInfo &info, mark4_NodeKind source);
 
+    /// @brief Renders one console line of a node as a JSON object.
+    /// @param log message to render
+    /// @param source process the line came from
+    /// @return one line of JSON
+    std::string logToJson(const mark4_Log &log, mark4_NodeKind source);
+
     /// @brief Renders the names of the stored profiles as a JSON object.
     /// @param names profile names
     /// @return one line of JSON
@@ -113,7 +117,7 @@ namespace mark4
     std::string profileToJson(const std::string &name, const TuningValues &values);
 
     /// @brief Renders the whole discovery table as a JSON object: the live
-    ///        processes, and the WiFi bridges a serial link can be opened on.
+    ///        processes, and the WiFi bridges a board is reached through.
     /// @param processes live entries
     /// @param bridges bridges heard announcing themselves
     /// @param nowUs current time [us], turned into an age per entry

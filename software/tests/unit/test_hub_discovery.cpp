@@ -40,7 +40,6 @@ TEST_CASE("a first announce makes a process appear")
     CHECK(change->process.kind == mark4_NodeKind_DRONE_SIM);
     CHECK(change->process.nodeId == SIM_NODE);
     CHECK(change->process.lastSeenUs == 1000U);
-    CHECK(!(change->process.viaSerial));
     CHECK(change->process.name == "node");
     CHECK(change->process.mcu == mark4_Mcu_SIM);
     CHECK(!(change->process.wireMismatch));
@@ -76,25 +75,6 @@ TEST_CASE("a new node identity behind the same kind is a restart")
     CHECK(change->process.nodeId == OTHER_SIM_NODE);
     CHECK(registry.processes().size() == 1U);
     CHECK(registry.nodeIdOf(mark4_NodeKind_DRONE_SIM) == OTHER_SIM_NODE);
-}
-
-TEST_CASE("an announce over the serial link is the board")
-{
-    mark4::DiscoveryRegistry registry;
-
-    const auto change = registry.onAnnounce(0U, announce(mark4_NodeKind_FIRMWARE), 1000U);
-    REQUIRE(change.has_value());
-    CHECK(change->event == mark4::DiscoveryEvent::APPEARED);
-    CHECK(change->process.kind == mark4_NodeKind_FIRMWARE);
-    CHECK(change->process.viaSerial);
-    CHECK(change->process.nodeId == 0U);
-
-    // The serial route carries no node identity, so it never proves a
-    // restart: every later announce is a refresh.
-    CHECK(!(registry.onAnnounce(0U, announce(mark4_NodeKind_FIRMWARE), 2000U).has_value()));
-    REQUIRE(registry.processes().size() == 1U);
-    CHECK(registry.processes()[0].lastSeenUs == 2000U);
-    CHECK(registry.nodeIdOf(mark4_NodeKind_FIRMWARE) == 0U);
 }
 
 TEST_CASE("silence makes a process disappear exactly once")

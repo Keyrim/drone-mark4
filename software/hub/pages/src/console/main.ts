@@ -58,7 +58,7 @@ function applyConnection(next: Connection): void {
         widget = null;
         widgetKey = key;
         if (key !== "") {
-            widget = new DroneWidget(socket, next.kind, next.kindName, next.via !== "udp", hooks);
+            widget = new DroneWidget(socket, next.kind, next.kindName, next.via, hooks);
             droneList.appendChild(widget.root);
         }
     } else if (widget !== null && connection.live && !next.live) {

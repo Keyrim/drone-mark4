@@ -3,15 +3,16 @@
 The single process that decodes the binary protocol on behalf of humans.
 
 Everything else in the system speaks the wire of
-`software/components/protocol/mark4.proto`, one `Envelope` per datagram or
-serial frame: the desktop flight process inside transport frames
-(`software/components/transport/`), the board through the WiFi bridge that
-frames its UART onto UDP. The hub is the one place those bytes become JSON:
-it is one transport node (kind `gateway`, it beacons like the others),
-learns who is alive from the `Announce` the other nodes send, and publishes
-everything on one websocket endpoint that a browser or a script can read
-without ever touching a socket or a codec. Commands travel the other way
-through the same endpoint.
+`software/components/protocol/mark4.proto`, one `Envelope` per transport
+frame (`software/components/transport/`): the desktop flight process over
+UDP, the board over its UART, which the WiFi bridge carries inside UDP
+datagrams. The hub is the one place those bytes become JSON: it is one
+transport node (kind `gateway`, it beacons like the others) with two links,
+the LAN and the bridge, and it relays between them so the board and the LAN
+nodes see each other. It learns who is alive from the `Announce` the other
+nodes send, and publishes everything on one websocket endpoint that a
+browser or a script can read without ever touching a socket or a codec.
+Commands travel the other way through the same endpoint.
 
 That same TCP port also serves the static pages: the library dispatches on
 the `Upgrade` header, so a page loaded from the hub reaches it back with
@@ -88,14 +89,11 @@ structs in `protocol/`.
  "attitudeQuat":[1,0,0,0],"positionM":[0,0,0],"velocityMps":[0,0,0]}
 
 {"type":"discovery","processes":[
-  {"kind":2,"kindName":"drone_sim","sessionId":12345,
-   "viaSerial":false,"ageMs":120}],
+  {"kind":2,"kindName":"drone_sim","sessionId":12345,"ageMs":120}],
  "bridges":[
-  {"address":"192.168.1.31","port":47830,"name":"c19f6c",
-   "device":"udp:192.168.1.31:47830","ageMs":220}]}
+  {"address":"192.168.1.31","port":47830,"name":"c19f6c","ageMs":220}]}
 
-{"type":"status","serialOpen":true,
- "serialLink":"udp:192.168.1.31:47830",
+{"type":"status",
  "connection":{"via":"bridge","id":"c19f6c","kind":1,"kindName":"firmware",
                "live":true},
  "counts":{"telemetryRows":0,"simRawRows":0,
@@ -144,12 +142,22 @@ transport keeps them.
 
 `sessionId` in `discovery` is the transport node id of the process: a
 process draws a new one every start, so a change behind the same kind is a
-restart. A process heard over the serial link has none (0).
+restart. The board's is derived from its MCU unique id and never changes.
 
 `statusName` is one of `ok`, `unknownId`, `outOfBounds`, `lockedWhileArmed`.
-`source` is inferred from the path the answer arrived by: the serial link
-means the board, the transport means the simulator side. Tuning answers
+`source` is the kind the sending node announced itself as. Tuning answers
 share the telemetry stream and carry no source byte of their own.
+
+```json
+{"type":"log","source":"firmware","timestampUs":1234,"level":1,
+ "text":"baro: init failed, flying without the pressure channel"}
+```
+
+`log` is one console line of a node (`Log` envelope; level 0 info, 1
+warn, 2 error). The firmware sends its init failures and update state
+changes this way, so a board updated over the air with no probe attached
+still says what happened; the hub also prints the line on its stdout and
+the pages show it as a toast.
 
 A client that connects gets a `discovery` and a `status` message
 immediately; `status` is then republished once per second and whenever the
@@ -168,9 +176,14 @@ themselves to once a second (see `esp32-bridge/`). They are not processes
 and carry no telemetry of their own: a bridge is a door a board is connected
 through, by name (`connect` with `via":"bridge"`). Nobody chooses its
 address - a router does - so nothing is typed: the hub resolves the name to
-today's address, and follows it if the router hands out another one. A
-bridge silent for three seconds is dropped from `bridges`, which does not
-drop a connection through it.
+today's address, opens its bridge link (a `UartLink` over a UDP socket to
+that address) and follows it if the router hands out another one. The
+hub's own beacon is the first datagram the bridge receives, which is how
+the bridge learns where to send the board's bytes: there is no hello. The
+board then shows up in `processes` like any node, kind `firmware`, and
+`connection.live` follows its Announce. A bridge silent for three seconds
+is dropped from `bridges`, which does not drop a connection through it; a
+`disconnect` closes the bridge link.
 
 ### Sent by a client
 
@@ -219,22 +232,22 @@ hub stamps a rolling one, so two scenarios in a row are two runs.
 
 Routing: a command only goes out when its `target` is the connected drone
 (the `ack` says `no drone connected` or `connected to X, not to Y`
-otherwise). An RC message for `firmware` then goes out serial-framed on the
-board link; an RC message for any other kind is a transport unicast to the
-node whose beacon announced that kind. A scenario is routed the same way,
-to the flight process driving the plant - no port is hardwired. A reboot needs the board. `otaAbort` is
-the one exception to the gate: dropping a stuck transfer must work even
-after the drone is gone.
+otherwise). Every command is a transport unicast to the node whose beacon
+announced that kind, the board included: the transport knows it was heard
+on the bridge link and frames it for the UART. A scenario is routed the
+same way, to the flight process driving the plant - no port is hardwired. A
+reboot needs the board. `otaAbort` is the one exception to the gate:
+dropping a stuck transfer must work even after the drone is gone.
 
 A message carrying an `id` is answered with an `ack`, including when it
 failed to decode. Streams are never acknowledged.
 
 ## Firmware update
 
-An `otaStart` sends one `.ota` bundle to the board over the link that is
-already open: the updater messages are one more body of the same envelope
-on the framed serial stream, so telemetry keeps flowing between them and
-the ESP32 bridge needs to know nothing about any of it.
+An `otaStart` sends one `.ota` bundle to the board over the transport, as
+unicasts to its node: the updater messages are one more body of the same
+envelope on the same link, so telemetry keeps flowing between them and the
+ESP32 bridge needs to know nothing about any of it.
 
 The `bundle` field is optional and defaults to
 `software/build/stm32/drone_firmware/drone_firmware.ota`, resolved from the
@@ -295,8 +308,11 @@ code, never as the code.
   shared between the library threads and the poll loop.
 - The endpoint has no authentication. It binds the loopback interface, and
   it is a bench tool on a trusted network.
-- With the serial rebroadcast on, firmware telemetry is re-emitted as a
-  transport broadcast; the transport drops the hub's own echo of it.
+- The hub relays every broadcast between the LAN and the bridge link: the
+  board hears the LAN's telemetry too (a few KB/s on its UART, ignored by
+  its command path) and the LAN hears the board's. Two hubs on one LAN
+  would each relay what the other relays; the hop count and the duplicate
+  drop bound it, nothing forbids it.
 - Tuned values do not survive a simulator reset: `drone_sim` rebuilds its
   flight core on the reset (there is no state a teleport could keep) and
   does not re-announce, so the hub has no event to push a profile on. Push

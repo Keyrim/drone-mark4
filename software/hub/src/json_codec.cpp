@@ -11,8 +11,6 @@
 #include <limits>
 #include <nlohmann/json.hpp>
 
-#include "hub/serial_transport.hpp"
-
 namespace mark4
 {
     namespace
@@ -579,7 +577,6 @@ namespace mark4
             // The transport node id is what identifies one start of the
             // process, which is what this key has meant to the pages all along.
             entry["sessionId"] = process.nodeId;
-            entry["viaSerial"] = process.viaSerial;
             entry["name"] = process.name;
             entry["mcu"] = static_cast<int>(process.mcu);
             entry["buildEpoch"] = process.buildEpoch;
@@ -597,8 +594,6 @@ namespace mark4
             entry["address"] = bridge.address;
             entry["port"] = bridge.port;
             entry["name"] = bridge.name;
-            entry["device"] = std::string(SerialTransport::UDP_PREFIX) + bridge.address + ":" +
-                              std::to_string(bridge.port);
             entry["ageMs"] =
                 (nowUs > bridge.lastSeenUs ? nowUs - bridge.lastSeenUs : 0U) / US_PER_MS;
             found.push_back(entry);
@@ -643,8 +638,6 @@ namespace mark4
 
         Json message;
         message["type"] = "status";
-        message["serialOpen"] = status.serialOpen;
-        message["serialLink"] = status.serialLink;
         message["connection"] = connection;
         message["counts"] = counts;
         message["clients"] = status.clients;
@@ -762,6 +755,17 @@ namespace mark4
         message["minValue"] = static_cast<double>(info.min_value);
         message["maxValue"] = static_cast<double>(info.max_value);
         message["armedChange"] = info.armed_change;
+        return message.dump();
+    }
+
+    std::string logToJson(const mark4_Log &log, mark4_NodeKind source)
+    {
+        Json message;
+        message["type"] = "log";
+        message["source"] = nodeKindName(source);
+        message["timestampUs"] = log.timestamp_us;
+        message["level"] = static_cast<int>(log.level);
+        message["text"] = log.text;
         return message.dump();
     }
 

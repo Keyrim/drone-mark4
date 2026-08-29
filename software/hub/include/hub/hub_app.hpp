@@ -14,12 +14,13 @@
 #include "hub/discovery.hpp"
 #include "hub/json_codec.hpp"
 #include "hub/ota_client.hpp"
-#include "hub/serial_transport.hpp"
 #include "hub/tuning_profiles.hpp"
 #include "hub/udp_transport.hpp"
 #include "hub/ws_bridge.hpp"
 #include "protocol/envelope.hpp"
 #include "transport/transport.hpp"
+#include "transport/uart_link.hpp"
+#include "transport/udp_byte_stream.hpp"
 #include "transport/udp_link.hpp"
 
 namespace mark4
@@ -75,8 +76,6 @@ namespace mark4
             std::uint16_t discoveryPort = DISCOVERY_PORT;    ///< shared transport port
             std::uint32_t nodeId = 0U;                       ///< transport identity, 0 = random
             std::uint16_t bridgePort = BRIDGE_ANNOUNCE_PORT; ///< bridge announce listen port
-            bool udpRebroadcast = true;                      ///< re-emit serial telemetry as a
-                                                             ///< transport broadcast
             std::string profilesDir = "profiles";            ///< directory the profiles live in
             std::string pushProfileName;                     ///< profile pushed to every process
                                                              ///< that appears, empty = none
@@ -148,21 +147,15 @@ namespace mark4
                             const std::uint8_t *data,
                             std::size_t size);
 
-        /// @brief Handles one CRC-valid frame read from the serial link.
-        /// @param payload frame payload
-        /// @param size payload size
-        void onSerialPayload(const std::uint8_t *payload, std::size_t size);
-
-        /// @brief Routes one decoded message, whatever link it came by.
+        /// @brief Routes one decoded message.
         /// @param envelope decoded message
-        /// @param nodeId transport node it came from, 0 for the serial link
+        /// @param nodeId transport node it came from
         /// @param kind kind of the sender, when discovery knows it
         void onEnvelope(const mark4_Envelope &envelope, std::uint32_t nodeId, mark4_NodeKind kind);
 
-        /// @brief Sends one command to a process, by the route that kind of
-        ///        process is reachable on: the board is at the end of the
-        ///        serial cable, everything else is the transport node its
-        ///        beacon came from.
+        /// @brief Sends one command to a process: a transport unicast to the
+        ///        node whose beacon announced that kind, whatever link it
+        ///        was heard on.
         /// @param target kind of process to reach
         /// @param envelope message to send
         /// @param errorOut receives the reason when the target is unreachable
@@ -176,7 +169,7 @@ namespace mark4
         /// @param change event to apply
         void onDiscoveryChange(const DiscoveryChange &change);
 
-        /// @brief Makes one drone THE connected drone, opening the serial
+        /// @brief Makes one drone THE connected drone, opening the bridge
         ///        link when the route calls for one. Connecting elsewhere
         ///        replaces the previous connection.
         /// @param message decoded connect request
@@ -184,7 +177,7 @@ namespace mark4
         /// @return true when the connection is established
         bool applyConnect(const ClientMessage &message, std::string &errorOut);
 
-        /// @brief Drops the connected drone, closing the serial link when the
+        /// @brief Drops the connected drone, closing the bridge link when the
         ///        route owned one. A no-op when nothing is connected.
         void applyDisconnect();
 
@@ -194,6 +187,13 @@ namespace mark4
         /// @param errorOut receives the refusal reason
         /// @return true when the command may go out
         bool commandAllowed(mark4_NodeKind target, std::string &errorOut) const;
+
+        /// @brief Opens the bridge link to one address, closing whatever it
+        ///        was on. Idempotent on the same address.
+        /// @param address bridge IPv4 address, dotted quad
+        /// @param port bridge UDP port
+        /// @return true when the link is open
+        bool openBridge(const std::string &address, std::uint16_t port);
 
         /// @brief Recomputes whether the connected drone shows signs of life,
         ///        follows a bridge whose address changed, and tells the
@@ -245,7 +245,7 @@ namespace mark4
         /// @return true when the request was carried out
         bool applyOtaMessage(const ClientMessage &message, std::string &errorOut);
 
-        /// @brief Expiry, status message and serial reopen.
+        /// @brief Expiry, status message and connection liveness.
         /// @param nowUs current time [us]
         void housekeeping(std::uint64_t nowUs);
 
@@ -270,9 +270,14 @@ namespace mark4
         DiscoveryRegistry m_registry;                         ///< live processes
         BridgeDirectory m_bridges;                            ///< WiFi bridges heard on the network
         UdpTransport m_udp;                                   ///< raw UDP listeners
-        UdpLink m_udpLink;                                    ///< the transport's one link
-        Transport m_transport;                                ///< this hub as a transport node
-        SerialTransport m_serial;                             ///< board link, when one is open
+        UdpLink m_udpLink;                                    ///< the LAN link
+        UdpByteStream m_bridgeStream;                         ///< datagrams to the WiFi bridge,
+                                                              ///< open while connected through it
+        UartLink m_bridgeLink{m_bridgeStream};                ///< the bridge as a serial link
+        Transport m_transport;                                ///< this hub as a transport node,
+                                                              ///< relaying between its two links
+        std::string m_bridgeDevice;                           ///< "address:port" the bridge link
+                                                              ///< is open on, empty = closed
         WsBridge m_ws;                                        ///< websocket endpoint
         Connection m_connection;                              ///< the one drone commands go to
         std::atomic_bool m_stopRequested{false};              ///< set by a signal handler

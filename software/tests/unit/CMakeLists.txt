@@ -16,7 +16,7 @@ add_executable(unit_tests
     test_hub_http.cpp
     test_hub_json.cpp
     test_hub_ota.cpp
-    test_hub_serial_udp.cpp
+    test_hub_bridge_link.cpp
     test_hub_tuning_profiles.cpp
     test_ota_boot_policy.cpp
     test_ota_e2e.cpp
@@ -35,10 +35,7 @@ add_executable(unit_tests
     test_tuning.cpp
     test_transport.cpp
     test_tuning_service.cpp
-    test_vertical_estimator.cpp
-    # The transport owns a descriptor, so it stays out of hub_core; the test
-    # of its datagram link compiles it in rather than move it there.
-    ${CMAKE_SOURCE_DIR}/hub/src/serial_transport.cpp)
+    test_vertical_estimator.cpp)
 target_link_libraries(unit_tests
     PRIVATE flight_core platform_common platform_sim protocol transport hub_core
             Catch2::Catch2WithMain drone_warnings)

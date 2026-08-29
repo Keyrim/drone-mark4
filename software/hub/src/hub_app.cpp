@@ -97,11 +97,18 @@ namespace mark4
         {
             return false;
         }
-        if (!m_udpLink.init() || !m_transport.addLink(m_udpLink) || !m_transport.init())
+        // Two links from the start: the LAN, and the bridge link that stays
+        // closed (reads nothing, takes nothing) until a connect names a
+        // bridge. Relaying is what makes the board one node among the
+        // others: its broadcasts heard on the bridge link go out on the LAN,
+        // LAN broadcasts reach it, and unicasts cross in both directions.
+        if (!m_udpLink.init() || !m_transport.addLink(m_udpLink) ||
+            !m_transport.addLink(m_bridgeLink) || !m_transport.init())
         {
             static_cast<void>(std::fprintf(stderr, "hub: cannot start the transport\n"));
             return false;
         }
+        m_transport.setRelay(true);
         // The hub's own beacon: every node learns the gateway and the schema
         // it speaks, and the flight processes learn where to unicast.
         mark4_Envelope announce = mark4_Envelope_init_zero;
@@ -152,7 +159,7 @@ namespace mark4
         m_ota.setDefaultBundlePath(m_config.otaBundlePath);
         // The update client owns no socket: it sends through the same routing
         // as every other command, so an updater message reaches the board
-        // exactly like an RC frame does, framed on the serial link.
+        // exactly like an RC frame does, a transport unicast to its node.
         m_ota.setSink([this](const mark4_Envelope &envelope, std::string &errorOut) {
             return sendToTarget(m_otaTarget, envelope, errorOut);
         });
@@ -175,10 +182,10 @@ namespace mark4
                 entry.events = POLLIN;
                 fds.push_back(entry);
             }
-            if (m_serial.isOpen())
+            if (m_bridgeStream.isOpen())
             {
                 pollfd entry{};
-                entry.fd = m_serial.fd();
+                entry.fd = m_bridgeStream.fd();
                 entry.events = POLLIN;
                 fds.push_back(entry);
             }
@@ -192,9 +199,6 @@ namespace mark4
                                const std::uint8_t *data,
                                std::size_t size) { onDatagram(port, from, data, size); });
             m_transport.poll(monotonicUs(), &HubApp::OnFrame, this);
-            m_serial.drain([this](const std::uint8_t *payload, std::size_t size) {
-                onSerialPayload(payload, size);
-            });
             handleClientMessages();
             housekeeping(monotonicUs());
         }
@@ -237,22 +241,6 @@ namespace mark4
         onEnvelope(envelope, src, source);
     }
 
-    void HubApp::onSerialPayload(const std::uint8_t *payload, std::size_t size)
-    {
-        mark4_Envelope envelope;
-        if (!decodeEnvelope(payload, size, envelope))
-        {
-            ++m_badFrames;
-            return;
-        }
-        if (envelope.which_body == mark4_Envelope_telemetry_tag && m_config.udpRebroadcast)
-        {
-            // The other transport nodes know nothing about this cable.
-            static_cast<void>(m_transport.send(BROADCAST_NODE, payload, size));
-        }
-        onEnvelope(envelope, 0U, mark4_NodeKind_FIRMWARE);
-    }
-
     void HubApp::onEnvelope(const mark4_Envelope &envelope,
                             std::uint32_t nodeId,
                             mark4_NodeKind kind)
@@ -285,6 +273,14 @@ namespace mark4
             case mark4_Envelope_tuning_info_tag:
                 m_ws.broadcastText(tuningInfoToJson(envelope.body.tuning_info, kind));
                 return;
+            case mark4_Envelope_log_tag:
+                // A console line of a node without a console: the board
+                // behind the bridge, updated over the air with no probe on.
+                static_cast<void>(
+                    std::printf("%s: %s\n", nodeKindName(kind), envelope.body.log.text));
+                static_cast<void>(std::fflush(stdout));
+                m_ws.broadcastText(logToJson(envelope.body.log, kind));
+                return;
             default:
                 // Updater answers are one more body on whatever link the
                 // process being updated is reachable on. Past the updater,
@@ -305,15 +301,6 @@ namespace mark4
         {
             errorOut = "the command does not encode";
             return false;
-        }
-        if (target == mark4_NodeKind_FIRMWARE)
-        {
-            if (!m_serial.isOpen())
-            {
-                errorOut = "no serial link to the board";
-                return false;
-            }
-            return m_serial.sendPacket(bytes.data(), size);
         }
         const std::uint32_t nodeId = m_registry.nodeIdOf(target);
         if (nodeId == 0U)
@@ -601,23 +588,19 @@ namespace mark4
                 errorOut = "no bridge named '" + message.connectPeer + "' on the network";
                 return false;
             }
-            const std::string device = std::string(SerialTransport::UDP_PREFIX) + found->address +
-                                       ":" + std::to_string(found->port);
-            if (!m_serial.open(device))
+            if (!openBridge(found->address, found->port))
             {
-                // A failed open still remembers the device for the periodic
-                // retry; a refused connect must leave no such ghost behind.
-                m_serial.release();
-                errorOut = "cannot open " + device;
+                errorOut = "cannot open udp:" + found->address + ":" + std::to_string(found->port);
                 return false;
             }
             next.id = message.connectPeer;
         }
-        if (next.via == "udp" && m_serial.isOpen())
+        if (next.via == "udp")
         {
-            // Connecting is exclusive: the serial link belonged to the
+            // Connecting is exclusive: the bridge link belonged to the
             // previous connection and nobody is on it any more.
-            m_serial.release();
+            m_bridgeStream.close();
+            m_bridgeDevice.clear();
         }
         m_connection = next;
         refreshConnection();
@@ -627,12 +610,29 @@ namespace mark4
 
     void HubApp::applyDisconnect()
     {
-        if (m_connection.via == "bridge")
-        {
-            m_serial.release();
-        }
+        m_bridgeStream.close();
+        m_bridgeDevice.clear();
         m_connection = Connection{};
         broadcastStatus();
+    }
+
+    bool HubApp::openBridge(const std::string &address, std::uint16_t port)
+    {
+        const std::string device = address + ":" + std::to_string(port);
+        if (m_bridgeStream.isOpen() && m_bridgeDevice == device)
+        {
+            return true;
+        }
+        // Nothing says hello: the hub's beacon leaves on this link within
+        // the second, and any datagram teaches the bridge where the ground
+        // tool is.
+        if (!m_bridgeStream.open(address.c_str(), port))
+        {
+            m_bridgeDevice.clear();
+            return false;
+        }
+        m_bridgeDevice = device;
+        return true;
     }
 
     void HubApp::refreshConnection()
@@ -652,22 +652,16 @@ namespace mark4
                 });
             if (found != bridges.end())
             {
-                const std::string device = std::string(SerialTransport::UDP_PREFIX) +
-                                           found->address + ":" + std::to_string(found->port);
-                if (m_serial.device() != device)
-                {
-                    static_cast<void>(m_serial.open(device));
-                }
+                static_cast<void>(openBridge(found->address, found->port));
             }
         }
-        const bool viaSerial = m_connection.via != "udp";
+        // Alive = its Announce is still fresh in the registry, whatever link
+        // it came by; the registry expires it on the transport's own delay.
         const auto &processes = m_registry.processes();
-        const bool live = std::any_of(processes.begin(),
-                                      processes.end(),
-                                      [this, viaSerial](const DiscoveredProcess &process) {
-                                          return process.kind == m_connection.kind &&
-                                                 process.viaSerial == viaSerial;
-                                      });
+        const bool live = std::any_of(
+            processes.begin(), processes.end(), [this](const DiscoveredProcess &process) {
+                return process.kind == m_connection.kind;
+            });
         if (live != m_connection.live)
         {
             m_connection.live = live;
@@ -712,7 +706,6 @@ namespace mark4
         {
             broadcastDiscovery();
         }
-        m_serial.maintain(nowUs / US_PER_MS);
         refreshConnection();
         std::erase_if(m_rcSeenUs, [nowUs](const auto &entry) {
             return nowUs - entry.second > RC_PILOT_WINDOW_US;
@@ -738,8 +731,6 @@ namespace mark4
     HubStatus HubApp::status() const
     {
         HubStatus snapshot;
-        snapshot.serialOpen = m_serial.isOpen();
-        snapshot.serialLink = m_serial.isOpen() ? m_serial.device() : std::string{};
         snapshot.connectionVia = m_connection.via;
         snapshot.connectionId = m_connection.id;
         snapshot.connectionKind = m_connection.kind;

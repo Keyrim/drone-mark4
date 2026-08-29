@@ -123,7 +123,6 @@ TEST_CASE("discovery json describes every live process")
     mark4::DiscoveredProcess board;
     board.kind = mark4_NodeKind_FIRMWARE;
     board.lastSeenUs = 1'500'000U;
-    board.viaSerial = true;
     board.name = "mark4-fc";
     board.mcu = mark4_Mcu_STM32F405;
     board.buildEpoch = 0x66E00001U;
@@ -142,13 +141,11 @@ TEST_CASE("discovery json describes every live process")
     CHECK(message["processes"][0]["kind"] == 2U);
     CHECK(message["processes"][0]["kindName"] == "drone_sim");
     CHECK(message["processes"][0]["sessionId"] == 7U);
-    CHECK(message["processes"][0]["viaSerial"] == false);
     CHECK(message["processes"][0]["name"] == "drone_sim");
     CHECK(message["processes"][0]["mcu"] == 200U);
     CHECK(message["processes"][0]["wireMismatch"] == false);
     CHECK(message["processes"][0]["ageMs"] == 1000U);
     CHECK(message["processes"][1]["kindName"] == "firmware");
-    CHECK(message["processes"][1]["viaSerial"] == true);
     CHECK(message["processes"][1]["buildEpoch"] == 0x66E00001U);
     CHECK(message["processes"][1]["gitHash"] == "deadbeef");
     CHECK(message["processes"][1]["wireHash"] == "01020304");
@@ -158,16 +155,12 @@ TEST_CASE("discovery json describes every live process")
     CHECK(message["bridges"][0]["address"] == "192.168.1.31");
     CHECK(message["bridges"][0]["port"] == 47830U);
     CHECK(message["bridges"][0]["name"] == "c19f6c");
-    // The page opens a link with it as it stands, without knowing the shape.
-    CHECK(message["bridges"][0]["device"] == "udp:192.168.1.31:47830");
     CHECK(message["bridges"][0]["ageMs"] == 200U);
 }
 
 TEST_CASE("status json carries the counters")
 {
     mark4::HubStatus status;
-    status.serialOpen = true;
-    status.serialLink = "udp:192.168.1.31:47830";
     status.badFrames = 40U;
     status.rejectedAnnounces = 50U;
     status.clients = 3U;
@@ -188,8 +181,6 @@ TEST_CASE("status json carries the counters")
 
     const nlohmann::json message = parsed(mark4::statusToJson(status));
     CHECK(message["type"] == "status");
-    CHECK(message["serialOpen"] == true);
-    CHECK(message["serialLink"] == "udp:192.168.1.31:47830");
     CHECK(message["counts"]["badFrames"] == 40U);
     CHECK(message["counts"]["rejectedAnnounces"] == 50U);
     CHECK(message["clients"] == 3U);

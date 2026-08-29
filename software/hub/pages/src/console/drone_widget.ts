@@ -94,7 +94,7 @@ export class DroneWidget {
         private readonly socket: HubSocket,
         readonly kind: number,
         readonly kindName: string,
-        viaSerial: boolean,
+        via: string,
         private readonly hooks: WidgetHooks
     ) {
         this.root = document.createElement("section");
@@ -112,7 +112,7 @@ export class DroneWidget {
         head.appendChild(name);
         const transport = document.createElement("span");
         transport.className = "panel-note";
-        transport.textContent = viaSerial ? "serial" : "udp";
+        transport.textContent = via;
         head.appendChild(transport);
         const spacer = document.createElement("span");
         spacer.className = "bar-grow";
