@@ -283,24 +283,24 @@ namespace mark4
             bool live = false;                          ///< the drone shows signs of life
         };
 
-        Config m_config;                         ///< settings of this run
-        StreamHealth m_health;                   ///< sequence health of every link
-        TuningProfiles m_profiles;               ///< stored tuning profiles
-        DiscoveryRegistry m_registry;            ///< live processes
-        BridgeDirectory m_bridges;               ///< WiFi bridges heard on the network
-        UdpTransport m_udp;                      ///< every UDP socket
-        SerialTransport m_serial;                ///< board link, when one is open
-        WsBridge m_ws;                           ///< websocket endpoint
-        std::vector<PortUse> m_followedPorts;    ///< refcount behind every subscription
-        Connection m_connection;                 ///< the one drone commands go to
-        std::atomic_bool m_stopRequested{false}; ///< set by a signal handler
-        std::uint64_t m_nextStatusUs = 0U;       ///< next status message instant [us]
-        std::uint64_t m_badFrames = 0U;          ///< serial frames that decoded to
-                                                 ///< nothing
-        std::uint8_t m_foreignProtocol = 0U;     ///< last foreign version reported,
-                                                 ///< 0 = none yet
-        std::uint8_t m_scenarioSequence = 0U;    ///< rolling number stamped on a
-                                                 ///< scenario the client left at 0
+        Config m_config;                                   ///< settings of this run
+        StreamHealth m_health;                             ///< sequence health of every link
+        TuningProfiles m_profiles;                         ///< stored tuning profiles
+        DiscoveryRegistry m_registry;                      ///< live processes
+        BridgeDirectory m_bridges;                         ///< WiFi bridges heard on the network
+        UdpTransport m_udp;                                ///< every UDP socket
+        SerialTransport m_serial;                          ///< board link, when one is open
+        WsBridge m_ws;                                     ///< websocket endpoint
+        std::vector<PortUse> m_followedPorts;              ///< refcount behind every subscription
+        Connection m_connection;                           ///< the one drone commands go to
+        std::atomic_bool m_stopRequested{false};           ///< set by a signal handler
+        std::uint64_t m_nextStatusUs = 0U;                 ///< next status message instant [us]
+        std::uint64_t m_badFrames = 0U;                    ///< serial frames that decoded to
+                                                           ///< nothing
+        std::uint8_t m_foreignProtocol = 0U;               ///< last foreign version reported,
+                                                           ///< 0 = none yet
+        std::uint8_t m_scenarioSequence = 0U;              ///< rolling number stamped on a
+                                                           ///< scenario the client left at 0
         std::map<std::string, std::uint64_t> m_rcSeenUs;   ///< last RC instant per client
         OtaClient m_ota;                                   ///< firmware update session
         StreamSource m_otaTarget = StreamSource::FIRMWARE; ///< process the update packets go to

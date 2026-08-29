@@ -70,7 +70,8 @@ namespace mark4
     } // namespace
 
     HubApp::HubApp(Config config)
-        : m_config(std::move(config)), m_profiles(m_config.profilesDir)
+        : m_config(std::move(config)),
+          m_profiles(m_config.profilesDir)
     {
     }
 
