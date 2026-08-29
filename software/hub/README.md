@@ -2,13 +2,13 @@
 
 The single process that decodes the binary protocol on behalf of humans.
 
-Everything else in the system speaks `protocol/` over UDP (or over the board
-UART, framed). The hub is the one place those bytes become JSON: it watches
-the announce broadcast to find out who is alive, follows the telemetry ports
-those processes serve, records the streams to disk, and publishes everything
-on one websocket endpoint that a browser or a script can read without ever
-touching a socket or a packed struct. Commands travel the other way through
-the same endpoint.
+Everything else in the system speaks `protocol/` over UDP, the board through
+the WiFi bridge that frames its UART onto it. The hub is the one place those
+bytes become JSON: it watches the announce broadcast to find out who is
+alive, follows the telemetry ports those processes serve, and publishes
+everything on one websocket endpoint that a browser or a script can read
+without ever touching a socket or a packed struct. Commands travel the other
+way through the same endpoint.
 
 That same TCP port also serves the static pages: the library dispatches on
 the `Upgrade` header, so a page loaded from the hub reaches it back with
@@ -24,21 +24,19 @@ cmake --preset desktop && cmake --build --preset desktop
 ./software/build/desktop/hub/hub
 ```
 
-The hub takes **no arguments**. It decodes, records and serves with its
-built-in defaults (endpoint on 127.0.0.1:47810, announce 47806, telemetry
-47801, sim raw 47802, recordings in `logs/` (blackbox files in `logs/blackbox/`, stream CSV pairs in `logs/streams/`), profiles in `profiles/`, pages
-in `software/hub/pages/dist` resolved from the binary location); it watches the
-default ports from the start and follows any extra telemetry port a process
-announces for as long as that process lives. Everything operational is
-driven at runtime through the websocket by the pages: connecting to a drone
-(`connect` message, Connections panel of the control page), toggling the
-stream recording (`record` message; a CSV session opens at startup),
-replaying a blackbox (`replay` message), and the tuning profiles. A default
-worth changing is a compile-time change in `protocol/ports.hpp` or
-`HubApp::Config`, not a flag.
+The hub takes **no arguments**. It decodes and serves with its built-in
+defaults (endpoint on 127.0.0.1:47810, announce 47806, telemetry 47801, sim
+raw 47802, profiles in `profiles/`, pages in `software/hub/pages/dist`
+resolved from the binary location); it watches the default ports from the
+start and follows any extra telemetry port a process announces for as long as
+that process lives. Everything operational is driven at runtime through the
+websocket by the pages: connecting to a drone (`connect` message, Connections
+panel of the control page) and the tuning profiles. A default worth changing
+is a compile-time change in `protocol/ports.hpp` or `HubApp::Config`, not a
+flag.
 
 One drone at a time is THE connected drone. Everything the hub hears is
-still decoded, recorded and published to the clients - being connected
+still decoded and published to the clients - being connected
 decides where the commands go (RC, tuning, scenario, reboot, update) and
 which drone the control page pilots; a command aimed anywhere else is
 refused. The connection is held by the hub, so every tab sees the same
@@ -46,17 +44,15 @@ drone, and it survives losing that drone: silence flips `live` to false and
 keeps the target, the same drone coming back flips it true again on its
 own. Only a `disconnect` (or a `connect` elsewhere) lets go. The identity
 the reconnection works on is the route: a UDP process is its kind, a board
-is the door it is reached through - the UART device, or the bridge name for
-a board reached over WiFi (the bridge rides the drone, so its name is the
-drone's; a bridge whose address changes is followed by name).
+is the bridge it is reached through, by name (the bridge rides the drone, so
+its name is the drone's; a bridge whose address changes is followed by
+name).
 
 The hub never starts Godot or a flight process: both are yours to run and
 restart at will (Godot from its own terminal or the "godot sim" VS Code
 task, `drone_sim` from anywhere). The plant idles and resends until
 the sim port answers, discovery picks each incarnation up within a second,
-so the hub is the process that stays up for the whole bench session. The
-one child the hub ever spawns is `drone_replay`, on a stored blackbox, for
-the re-execute feature.
+so the hub is the process that stays up for the whole bench session.
 
 ## Pages
 
@@ -70,74 +66,6 @@ The Content-Type comes from the extension (`.html`, `.js`, `.mjs`, `.css`,
 stream), and every response carries `Cache-Control: no-store`. A URI holding
 a `..` component is refused: nothing outside the pages directory is
 reachable.
-
-## HTTP API
-
-`/api/` is the recordings, and only the recordings: files on disk, finished
-business, safe to read from any connection thread. Everything live is a
-websocket message. A handler here never touches the recorder, the discovery
-table or the counters, which is why the hub holds no lock.
-
-A recording is addressed by the exact `name` the listing gave it. That
-listing is the whole address space: a name it does not hold addresses
-nothing, so nothing a caller sends is ever turned into a path. An error is
-`{"error":"..."}` with the matching status.
-
-```
-GET /api/recordings
-  -> {"logDir":"logs","recordings":[
-       {"name":"board_20260807_150143.m4bb","kind":"blackbox","sizeBytes":N,
-        "modifiedUnixS":N,"estimatedRecords":N},
-       {"name":"streams_20260805_225701","kind":"streams","sizeBytes":N,
-        "modifiedUnixS":N,"telemetryFile":"..._telemetry.csv",
-        "simRawFile":"..._simraw.csv"}]}
-
-GET /api/recording?name=X[&from=&to=&maxPoints=]
-  streams   -> {"name","kind":"streams","window":{"fromUs":..,"toUs":..},
-                "telemetry":{"total":N,"stride":N,"count":N,
-                             "columns":[...],"rows":[[...]]},
-                "simRaw":{...}}
-  blackbox  -> {"name","kind":"blackbox","total":N,"stride":N,"count":N,
-                "skippedBytes":N,"columns":[...],"rows":[[...]]}
-
-GET /api/compare?name=X[&from=&to=&maxPoints=]        (streams only)
-  -> {"maxGapUs":30000,"alignedSamples":N,"unmatched":N,"durationS":F,
-      "metrics":[{"name":"attitude","unit":"deg","rms":F,"max":F,
-                  "worstWindows":[{"startS":F,"rms":F}]}, ...],
-      "series":{"total":N,"stride":N,"count":N,
-                "columns":["timestamp_us","attitude_deg","altitude_m","vz_mps"],
-                "rows":[[...]]}}
-
-GET /api/summary?name=X                               (blackbox only)
-  -> {"records":N,"durationS":F,"rateHz":F,
-      "accelNormG":{"min":F,"max":F},"killRecords":N,"skippedBytes":N}
-
-GET /api/file?name=X[&part=telemetry|simraw|raw|csv]
-  -> the file itself, as an attachment
-```
-
-Most recent first; `simRawFile` is empty when the pair has no exact half;
-`batch_*.log` files are not recordings. A streams recording is named by the
-prefix its two files share, a blackbox recording by its file name.
-`estimatedRecords` is the file size divided by the record size, not a count:
-a listing must stay cheap however long the run was.
-
-`columns` are the header line of the recorded CSV, verbatim, or the fields of
-a blackbox record; rows are arrays, in that column order. `from` and `to`
-are timestamps in microseconds, `maxPoints` defaults to 2000 and is capped at
-20000. A decode walks the file twice, once to count and once to emit every
-`stride`-th point, so nothing large is ever held whole; the first and the
-last point of the window are always among them.
-
-`skippedBytes` counts what framed no record: a blackbox decode resynchronizes
-on the record marker after a torn write, and a torn write costs only the
-record it tore.
-
-`/api/compare` runs the alignment and the scoring of the live `compare`
-message on the recorded pair, so the two agree by construction. `part`
-defaults to `telemetry` for a pair and to `raw` for a blackbox file;
-`part=csv` renders a blackbox file as one line per record, the columns being
-the fields of the record.
 
 ## Websocket messages
 
@@ -163,18 +91,15 @@ structs in `protocol/`.
   {"address":"192.168.1.31","port":47830,"name":"c19f6c",
    "device":"udp:192.168.1.31:47830","ageMs":220}]}
 
-{"type":"status","recording":false,"serialOpen":true,
+{"type":"status","serialOpen":true,
  "serialLink":"udp:192.168.1.31:47830",
  "connection":{"via":"bridge","id":"c19f6c","kind":1,"kindName":"firmware",
                "live":true},
- "counts":{"telemetryRows":0,"simRawRows":0,"blackboxRecords":0,
+ "counts":{"telemetryRows":0,"simRawRows":0,
            "badFrames":0,"rejectedAnnounces":0},"clients":1,"rcClients":0,
  "links":[{"stream":"telemetry","sourceId":2,"sourceName":"drone_sim",
            "received":100,"lost":0,"duplicates":0,"resyncs":0,
            "lossRate":0.0,"lastSequence":99}]}
-
-{"type":"compare","timestampUs":1234,"gapUs":-200,"attitudeErrorDeg":0.43,
- "altitudeErrorM":0.12,"verticalVelocityErrorMps":-0.05}
 
 {"type":"ack","id":7,"ok":true,"error":""}
 
@@ -203,14 +128,6 @@ structs in `protocol/`.
              "retries":0,"percent":22.5}}
 ```
 
-A `compare` message is published whenever a telemetry sample and the exact
-simulator state nearest to it can be joined: same instant within 30 ms,
-nearest sample wins, no match means no message. It is the one alignment rule
-of the system, and the same code answers `/api/compare` on a recording, so a
-number read while a session runs and the same number read afterwards are one
-number. The price is that a `compare` trails its `telemetry` by up to 30 ms:
-until then a nearer exact state could still arrive.
-
 `links` holds one entry per (stream, source) pair the hub has seen, read
 from the sequence number every stream packet carries. The number is 16 bits
 and wraps, so the distance between two packets is read in that arithmetic; a
@@ -226,14 +143,14 @@ means the board, a telemetry port means the simulator side. Tuning answers
 share the telemetry stream and carry no source byte of their own.
 
 A client that connects gets a `discovery` and a `status` message
-immediately; `status` is then republished once per second, whenever the
-recording is toggled and whenever the connection changes (target or
-liveness), `discovery` whenever a process appears, restarts or disappears,
+immediately; `status` is then republished once per second and whenever the
+connection changes (target or liveness), `discovery` whenever a process
+appears, restarts or disappears,
 and whenever the set of bridges changes.
 
-`connection` in `status` is THE connected drone: `via` is `none`, `udp`,
-`uart` or `bridge`, `id` the identity on that route (kind name, UART device
-or bridge name), `kind`/`kindName` where commands route, and `live` whether
+`connection` in `status` is THE connected drone: `via` is `none`, `udp` or
+`bridge`, `id` the identity on that route (kind name or bridge name),
+`kind`/`kindName` where commands route, and `live` whether
 the drone currently shows signs of life. A lost drone keeps its entry with
 `live` false until a `disconnect`.
 
@@ -257,7 +174,6 @@ drop a connection through it.
  "angularVelocityRadS":[0,0,0],"heldSeconds":1.5,"heldTiltRad":0.3,
  "heldAzimuthRad":0.0,"swingSeconds":0.35}
 {"type":"reboot","id":9,"target":"firmware"}
-{"type":"record","id":10,"action":"start"}
 {"type":"tuningSet","id":11,"target":"drone_sim","paramId":101,"value":0.028}
 {"type":"tuningGet","id":12,"target":"drone_sim","paramId":101}
 {"type":"tuningList","id":13,"target":"drone_sim","startIndex":0}
@@ -265,9 +181,7 @@ drop a connection through it.
 {"type":"profileSave","id":15,"name":"bench","values":{"101":0.028}}
 {"type":"profileLoad","id":16,"name":"bench"}
 {"type":"profilePush","id":17,"name":"bench","target":"drone_sim"}
-{"type":"replay","id":18,"name":"board_20260807_150143.m4bb","speed":"max"}
 {"type":"connect","id":19,"via":"udp","target":"drone_sim"}
-{"type":"connect","id":19,"via":"uart","device":"/dev/ttyUSB0","baud":921600}
 {"type":"connect","id":19,"via":"bridge","name":"c19f6c"}
 {"type":"disconnect","id":20}
 {"type":"otaStatus","id":21}
@@ -284,8 +198,7 @@ every message may carry. `startIndex` is optional and defaults to 0. The
 arrived: the descriptions follow as their own `tuningInfo` messages, one per
 flight frame as the process unrolls them.
 
-`target` is a process kind name: `firmware`, `drone_sim`, `drone_replay`,
-`sim_plant`. `kill`, `arm` and `mode` are integers, `throttle` a number in
+`target` is a process kind name: `firmware`, `drone_sim`, `sim_plant`. `kill`, `arm` and `mode` are integers, `throttle` a number in
 [0, 1]. Every field but `type` (and `scenario` / `action`) is optional and
 defaults to zero; a `simScenario` defaults its `target` to `drone_sim`.
 
@@ -296,19 +209,11 @@ generator of the run, `throwDelayUs` places the throw after the reset, and
 `sequence` byte is what makes a scenario idempotent - leave it out and the
 hub stamps a rolling one, so two scenarios in a row are two runs.
 
-A `replay` starts a `drone_replay` next to the hub on one blackbox recording
-of the log directory, addressed by the exact `name` `/api/recordings` gave
-it: a replay session without leaving the page. The child announces itself, so
-discovery names it and its telemetry joins the usual stream; the `ack` says
-it started, not that it finished. `speed` is optional, `"max"` or a positive
-number as a string, and nothing else ever reaches the command line. One
-replay at a time: starting a second one ends the first, because both would
-broadcast on the same telemetry port.
-
 Routing: a command only goes out when its `target` is the connected drone
 (the `ack` says `no drone connected` or `connected to X, not to Y`
 otherwise). An RC message for `firmware` then goes out serial-framed on the
-UART; an RC message for any other kind goes to the command port that process
+board link; an RC message for any other kind goes to the command port that
+process
 announced. A scenario is routed the same way, to the flight process driving
 the plant - no port is hardwired. A reboot needs the board. `otaAbort` is
 the one exception to the gate: dropping a stuck transfer must work even
@@ -374,35 +279,18 @@ released now rather than at its own timeout. Every refusal the board sends
 (`DENIED_ARMED`, `CRC_MISMATCH`, ...) comes back as the sentence behind the
 code, never as the code.
 
-## Recording
-
-`--record`, or a `record` message, opens a timestamped CSV pair in the log
-directory: `streams_YYYYmmdd_HHMMSS_telemetry.csv` and
-`..._simraw.csv`. Those files are what a python consumer would have written
-itself, down to the header line, the CRLF terminator and the decimal
-rendering of every value, so a python consumer reads them without knowing
-which side produced them.
-
-Blackbox records arriving over the serial link are appended verbatim to
-`board_YYYYmmdd_HHMMSS.m4bb`, which is created only once a record actually
-arrives.
-
 ## Known limitations
 
 - An RC message aimed at a kind no process has announced is refused with
   `no process of kind <kind>`; a scenario has to be up first.
 - Every announce carries `sessionId` 0 for now, so a process that restarts
   on the same ports is not seen as a new session.
-- A `replay` message next to a live flight process starts a second
-  broadcaster on the telemetry port; naming the source in each page is what
-  keeps that readable.
 - Acks are broadcast to every connected client rather than sent back to the
   one that asked: a client correlates the answer with the `id` it sent and
   ignores the rest. This keeps the endpoint free of any per-client state
   shared between the library threads and the poll loop.
-- The endpoint has no authentication. It binds the loopback interface by
-  default; `--bind` opens it wider, and it is a bench tool on a trusted
-  network either way.
+- The endpoint has no authentication. It binds the loopback interface, and
+  it is a bench tool on a trusted network.
 - With the serial rebroadcast on, the hub ignores firmware telemetry
   arriving over UDP: that copy is its own echo of what it just re-emitted.
   A second, genuinely different board reaching the hub over UDP while a
@@ -411,4 +299,4 @@ arrives.
   flight core on the reset (there is no state a teleport could keep) and
   does not re-announce, so the hub has no event to push a profile on. Push
   it again explicitly with `profilePush` after resetting the world.
-- POSIX only (`/proc/self/exe`, `posix_spawn`, `termios`, `poll`).
+- POSIX only (`/proc/self/exe`, `posix_spawn`, `poll`).

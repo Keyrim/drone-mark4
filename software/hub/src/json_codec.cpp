@@ -401,24 +401,6 @@ namespace mark4
             return true;
         }
 
-        /// @brief Fills the parameter read part of a client request.
-        /// @param object message object
-        /// @param message message being decoded
-        /// @param errorOut receives the reason on failure
-        /// @return true when every field decoded
-        bool parseTuningGet(const Json &object, ClientMessage &message, std::string &errorOut)
-        {
-            message.tuningGet.version = PROTOCOL_VERSION;
-            message.tuningGet.type = static_cast<std::uint8_t>(PacketType::TUNING_GET);
-            std::uint16_t id = 0U;
-            if (!readTarget(object, message.target, errorOut) || !readParamId(object, id, errorOut))
-            {
-                return false;
-            }
-            message.tuningGet.id = id;
-            return true;
-        }
-
         /// @brief Fills the table walk part of a client request.
         /// @param object message object
         /// @param message message being decoded
@@ -919,14 +901,6 @@ namespace mark4
         {
             message.type = ClientMessageType::TUNING_SET;
             if (!parseTuningSet(root, message, error))
-            {
-                return error;
-            }
-        }
-        else if (typeName == "tuningGet")
-        {
-            message.type = ClientMessageType::TUNING_GET;
-            if (!parseTuningGet(root, message, error))
             {
                 return error;
             }

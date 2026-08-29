@@ -513,7 +513,6 @@ namespace mark4
             case ClientMessageType::SIM_SCENARIO:
             case ClientMessageType::REBOOT:
             case ClientMessageType::TUNING_SET:
-            case ClientMessageType::TUNING_GET:
             case ClientMessageType::TUNING_LIST:
             case ClientMessageType::PROFILE_PUSH:
             case ClientMessageType::OTA_STATUS:
@@ -540,10 +539,6 @@ namespace mark4
             }
             case ClientMessageType::TUNING_SET: {
                 const auto bytes = wireBytes(message.tuningSet);
-                return sendToTarget(message.target, bytes.data(), bytes.size(), errorOut);
-            }
-            case ClientMessageType::TUNING_GET: {
-                const auto bytes = wireBytes(message.tuningGet);
                 return sendToTarget(message.target, bytes.data(), bytes.size(), errorOut);
             }
             case ClientMessageType::TUNING_LIST: {

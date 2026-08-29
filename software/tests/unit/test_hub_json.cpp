@@ -439,20 +439,8 @@ TEST_CASE("a tuning set message becomes the exact tuning set wire packet")
     CHECK(value == 0.028f);
 }
 
-TEST_CASE("a tuning get and a tuning list become their exact wire packets")
+TEST_CASE("a tuning list becomes its exact wire packet")
 {
-    const auto get = mark4::parseClientMessage(
-        R"({"type":"tuningGet","id":8,"target":"firmware","paramId":303})");
-    REQUIRE(std::holds_alternative<mark4::ClientMessage>(get));
-    const auto &getMessage = std::get<mark4::ClientMessage>(get);
-    CHECK(getMessage.type == mark4::ClientMessageType::TUNING_GET);
-    const auto getBytes = mark4::wireBytes(getMessage.tuningGet);
-    REQUIRE(getBytes.size() == mark4::TUNING_GET_PACKET_SIZE);
-    CHECK(getBytes[1] == static_cast<std::uint8_t>(mark4::PacketType::TUNING_GET));
-    std::uint16_t paramId = 0U;
-    std::memcpy(&paramId, &getBytes[2], sizeof(paramId));
-    CHECK(paramId == 303U);
-
     // startIndex is optional and defaults to the top of the table.
     const auto list =
         mark4::parseClientMessage(R"({"type":"tuningList","id":9,"target":"drone_sim"})");
@@ -615,8 +603,6 @@ TEST_CASE("a malformed client message is refused, never thrown")
         R"({"type":"tuningSet","target":"drone_sim","paramId":-1,"value":1.0})",
         R"({"type":"tuningSet","target":"drone_sim","paramId":70000,"value":1.0})",
         R"({"type":"tuningSet","paramId":101,"value":1.0})",
-        R"({"type":"tuningGet","target":"drone_sim"})",
-        R"({"type":"tuningGet","target":"ghost","paramId":101})",
         R"({"type":"tuningList"})",
         R"({"type":"tuningList","target":"drone_sim","startIndex":"first"})",
         R"({"type":"profileSave","values":{}})",

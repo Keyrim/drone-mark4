@@ -36,7 +36,6 @@ namespace mark4
         SIM_SCENARIO, ///< run to play, forwarded to a flight process
         REBOOT,       ///< reset the real board
         TUNING_SET,   ///< write one tunable parameter
-        TUNING_GET,   ///< read one tunable parameter
         TUNING_LIST,  ///< walk the parameter table
         PROFILE_LIST, ///< name the stored tuning profiles
         PROFILE_SAVE, ///< store one named set of values
@@ -62,7 +61,6 @@ namespace mark4
         SimScenarioPacket simScenario{};                ///< SIM_SCENARIO: packet to send
         RebootCommandPacket reboot{};                   ///< REBOOT: packet to send, magic included
         TuningSetPacket tuningSet{};                    ///< TUNING_SET: packet to forward
-        TuningGetPacket tuningGet{};                    ///< TUNING_GET: packet to forward
         TuningListPacket tuningList{};                  ///< TUNING_LIST: packet to forward
         std::string profileName;                        ///< PROFILE_*: profile concerned
         TuningValues profileValues;                     ///< PROFILE_SAVE: values to store
