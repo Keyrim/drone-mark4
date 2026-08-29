@@ -1,16 +1,9 @@
 /**
  * Lane viewer state: per-series sample buffers and the named view configs
  * that decide which series share a lane. No DOM access.
- *
- * There is no session concept here. A page is either following the live hub
- * stream or showing one recording the hub already holds; recording itself is
- * the hub's business, and the blackbox is the session.
  */
 
 import type { SeriesDef } from "../shared/series";
-
-/** Where the samples come from. */
-export type Mode = "live" | "replay";
 
 /** Points kept per series before the oldest ones are dropped. */
 export const RING_CAPACITY = 12000;
@@ -78,7 +71,7 @@ export interface LaneConfig {
     keys: string[];
 }
 
-/** A named set of lanes. This is a view, not a recording. */
+/** A named set of lanes. */
 export interface ViewConfig {
     name: string;
     lanes: LaneConfig[];

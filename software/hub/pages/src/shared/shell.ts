@@ -129,15 +129,10 @@ export class Shell {
 
     private setStatus(message: HubMessage): void {
         const counts = (message["counts"] ?? {}) as Record<string, number>;
-        const parts = [
-            `${counts["telemetryRows"] ?? 0} tlm`,
-            `${counts["simRawRows"] ?? 0} raw`,
-            `${counts["blackboxRecords"] ?? 0} bb`,
-        ];
+        const parts: string[] = [];
         if ((counts["badFrames"] ?? 0) > 0) {
             parts.push(`${counts["badFrames"]} bad`);
         }
-        parts.push(message["recording"] === true ? "capturing" : "not capturing");
         const rcClients = Number(message["rcClients"] ?? 0);
         if (rcClients > 1) {
             parts.push(`${rcClients} RC PILOTS`);

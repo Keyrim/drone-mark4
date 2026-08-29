@@ -1,7 +1,7 @@
 /**
  * The connection model of the control page, kept pure so the one rule of
- * the bench is testable: whatever the route (announced UDP process, WiFi
- * bridge, UART), the workflow is the same list of candidates, one of which
+ * the bench is testable: whatever the route (announced UDP process or WiFi
+ * bridge), the workflow is the same list of candidates, one of which
  * may be THE connected drone. A connected drone that goes silent keeps its
  * row with the "lost" state instead of vanishing: the hub holds on to the
  * connection and relights it when the same drone comes back.
@@ -9,7 +9,7 @@
 
 /** What the hub says about THE connected drone, inside the status message. */
 export interface Connection {
-    via: string; // "none", "udp", "uart" or "bridge"
+    via: string; // "none", "udp" or "bridge"
     id: string;
     kind: number;
     kindName: string;
@@ -54,8 +54,6 @@ export interface CandidateRow {
  * The connection list: every announced UDP process and every bridge, plus
  * the row of a connected drone that is not announced any more (that row is
  * the memory of the connection, so it must survive the disappearance).
- * The UART door is not listed here: nothing announces a cable, so the page
- * renders it as its own manual row.
  */
 export function candidateRows(
     processes: AnnouncedProcess[],
@@ -68,7 +66,7 @@ export function candidateRows(
     for (const process of processes) {
         if (process.viaSerial) {
             // Serial telemetry is the board already connected through the
-            // UART or bridge row: it is evidence, not a candidate.
+            // bridge row: it is evidence, not a candidate.
             continue;
         }
         const mine = connection.via === "udp" && connection.id === process.kindName;

@@ -7,8 +7,7 @@
  * switches, the throttle is a slider, and the widget streams the RC state
  * at TICK_MS from the first interaction on. There is no engage ritual: the
  * silence fail-safe of the drone itself covers a closed tab or a frozen
- * browser, and hiding the page flips the kill switch on. A replay drone
- * cannot be piloted: it gets the replay controls instead.
+ * browser, and hiding the page flips the kill switch on.
  *
  * The simulated drone also carries the scenario block, and both pilotable
  * natures carry the tuning table, folded until needed.
@@ -36,7 +35,6 @@ const PHASE_CUTOFF = 6;
 /** StreamSource kinds, the nature of the drone behind the widget. */
 const KIND_FIRMWARE = 1;
 const KIND_DRONE_SIM = 2;
-const KIND_DRONE_REPLAY = 3;
 
 /** How often the readout repaints: telemetry lands far faster than eyes read. */
 const READOUT_MS = 100;
@@ -60,8 +58,6 @@ const MOTOR_COUNT = 4;
 export interface WidgetHooks {
     notify(text: string, ok: boolean): void;
     ask(payload: Record<string, unknown>, what: string): void;
-    /** Recording the page last re-executed, for the replay restart. */
-    lastReplay(): { name: string } | null;
 }
 
 export class DroneWidget {
@@ -177,8 +173,6 @@ export class DroneWidget {
                 this.root.appendChild(this.scenarioBlock());
             }
             this.root.appendChild(this.tuningBlock());
-        } else if (kind === KIND_DRONE_REPLAY) {
-            this.root.appendChild(this.replayControls());
         }
 
         document.addEventListener("visibilitychange", this.onHide);
@@ -409,40 +403,6 @@ export class DroneWidget {
         });
         details.appendChild(tuning.root);
         return details;
-    }
-
-    private replayControls(): HTMLElement {
-        const block = document.createElement("div");
-        block.className = "panel-body";
-        const speed = document.createElement("select");
-        speed.className = "config-select";
-        for (const value of ["1", "4", "max"]) {
-            const option = document.createElement("option");
-            option.value = value;
-            option.textContent = value === "max" ? "as fast as possible" : `${value}x`;
-            speed.appendChild(option);
-        }
-        const restart = document.createElement("button");
-        restart.className = "btn";
-        restart.textContent = "Restart";
-        restart.addEventListener("click", () => {
-            const last = this.hooks.lastReplay();
-            if (last === null) {
-                this.hooks.notify("this replay was not started here: use Add drone", false);
-                return;
-            }
-            this.hooks.ask(
-                { type: "replay", name: last.name, speed: speed.value },
-                `replay ${last.name}`
-            );
-        });
-        block.appendChild(speed);
-        block.appendChild(restart);
-        const name = document.createElement("span");
-        name.className = "panel-note";
-        name.textContent = this.hooks.lastReplay()?.name ?? "";
-        block.appendChild(name);
-        return block;
     }
 
     /* -------------------- readout -------------------- */

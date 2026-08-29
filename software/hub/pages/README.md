@@ -26,11 +26,10 @@ pnpm test
   widget (`drone_widget.ts`), whatever its nature. Observation is the same
   for every nature (phase, throw detector, altitude, motors); the controls
   depend on it - kill/arm/mode switches and a throttle slider for a real
-  or simulated drone, replay controls for a blackbox re-execution, plus
-  the folded scenario and tuning blocks. The Connections panel lists
-  everything connectable - announced UDP processes, WiFi bridges, the
-  manual UART row - with the same click-to-connect workflow for all of
-  them (`connection.ts` is the pure list model, unit tested); nothing is
+  or simulated drone, plus the folded scenario and tuning blocks. The
+  Connections panel lists everything connectable - announced UDP
+  processes and WiFi bridges - with the same click-to-connect workflow
+  for both (`connection.ts` is the pure list model, unit tested); nothing is
   wired to the controls until connected, and a lost drone keeps its row
   and widget, marked lost, until an explicit disconnect. `rc.ts` is the
   piloting state machine, pure and unit tested. `ota_panel.ts` is the
@@ -66,26 +65,8 @@ lands, at the telemetry timestamp. This is the causal form of the hub's 30 ms
 alignment rule: a page can only ever look backwards, so it pairs each
 telemetry row with the last exact state it has seen.
 
-Two consequences worth knowing:
-
-- The error angle a page shows in live mode is computed page-side, from that
-  causal pairing, in both live and replay. It is a readout, not a score.
-- The aggregate score stays hub-side. `GET /api/compare` aligns both streams
-  offline, with the future available, and its numbers are the authority. A
-  disagreement between the two is expected, not a bug.
-
-## Replay
-
-Replay mode reads the recordings the hub already holds, over its REST API:
-`/api/recordings` to list them, `/api/recording` to open one into the same
-lanes, `/api/summary` and `/api/compare` for the cards, `/api/file` for the
-raw downloads. `?rec=NAME` opens a recording straight away and the page keeps
-that link up to date, so a run is shareable by URL.
-
-A streams recording replays through the latch rule above, so a value read in
-replay is the value that was on screen live. A blackbox recording has no
-estimate and no exact state: its series are its columns, and its lanes are
-built from the header the hub sent rather than from the catalog.
+The error angle a page shows follows from that pairing, computed page-side:
+it is a readout, not a score.
 
 ## Piloting
 
@@ -131,5 +112,4 @@ rule that says which buttons make sense) under `test/ota.test.ts`.
 
 The lane layout is a *view*: a name, and which series each lane draws. Views
 live in `localStorage` under `mark4.pages.viewConfigs`. They record nothing
-and own no data. Recording is the hub's business and the blackbox is the
-session, which is why the pages know exactly two modes: `live` and `replay`.
+and own no data.

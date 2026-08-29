@@ -101,10 +101,6 @@ body {
     white-space: nowrap;
 }
 
-input.config-title.baud {
-    width: 70px;
-}
-
 .chip {
     display: inline-flex;
     gap: 5px;
@@ -286,72 +282,6 @@ input.config-title {
 
 .u-legend {
     display: none !important;
-}
-
-/* ===== Replay panel ===== */
-
-.replay {
-    background: var(--bg-panel);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-    max-height: 45%;
-    overflow-y: auto;
-}
-
-.replay-bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
-}
-
-.replay-bar .config-select {
-    flex: 1;
-    min-width: 0;
-}
-
-.cards {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 0 10px 8px;
-}
-
-.card {
-    min-width: 220px;
-    padding: 6px 10px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-raised);
-    font-size: 11px;
-}
-
-.card.bad {
-    border-color: var(--bad);
-    color: var(--bad);
-}
-
-.card-title {
-    font-weight: 600;
-    color: var(--fg-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-bottom: 4px;
-}
-
-.card-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-}
-
-.card-row b {
-    font-family: var(--mono);
-}
-
-.card-link {
-    display: block;
-    color: var(--accent);
 }
 
 /* ===== Console ===== */

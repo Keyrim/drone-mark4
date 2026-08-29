@@ -1,12 +1,9 @@
 /**
  * Plots page: the hub telemetry drawn as a stack of lanes.
  *
- * Two modes, and no third. In live mode the viewport rides the right edge of
- * the stream over a fixed window; zooming or panning leaves follow mode and
- * the Follow button comes back to it, and Pause freezes the whole pipe,
- * ingestion included. In replay mode the same lanes are fed from one
- * recording the hub holds. There is no session in between: the hub records,
- * and the blackbox is the session.
+ * The viewport rides the right edge of the stream over a fixed window;
+ * zooming or panning leaves follow mode and the Follow button comes back to
+ * it, and Pause freezes the whole pipe, ingestion included.
  */
 
 import type uPlot from "uplot";
@@ -14,13 +11,12 @@ import type uPlot from "uplot";
 import { ConfigPanel } from "../lanes/configPanel";
 import { decimateMinMax } from "../lanes/decimate";
 import { LanesView } from "../lanes/lanes";
-import { SeriesBuffer, type LaneConfig, type Mode } from "../lanes/model";
+import { SeriesBuffer, type LaneConfig } from "../lanes/model";
 import { Ruler, RULER_H } from "../lanes/ruler";
 import { clampToData, pan, ticks, zoom, type Viewport } from "../lanes/timebase";
 import { HubSocket, type HubMessage } from "../shared/hub_socket";
 import { DEFAULT_LANES, LIVE_SERIES, LiveSampler, SOURCE_NAMES } from "../shared/series";
 import { Shell } from "../shared/shell";
-import { ReplayPanel } from "./replay_panel";
 
 const WINDOWS_S = [5, 10, 20, 60];
 const DEFAULT_WINDOW_S = 20;
@@ -29,18 +25,15 @@ const US_PER_S = 1e6;
 const socket = new HubSocket();
 const shell = new Shell(socket);
 
-const liveBuffers = new Map<string, SeriesBuffer>(
+const buffers = new Map<string, SeriesBuffer>(
     LIVE_SERIES.map((def) => [def.key, new SeriesBuffer(def)])
 );
-let buffers = liveBuffers;
 const sampler = new LiveSampler();
 
-let mode: Mode = "live";
 let originUs: number | null = null;
 let windowS = DEFAULT_WINDOW_S;
 let follow = true;
 let paused = false;
-let replayEndS = 0;
 let viewport: Viewport = { t0: 0, t1: windowS };
 let cursorT: number | null = null;
 let dirty = true;
@@ -70,27 +63,9 @@ const lanesView = new LanesView(lanesScroll, {
 });
 lanesView.decimate = (t, v) => decimateMinMax(t, v) as unknown as uPlot.AlignedData;
 
-const configPanel = new ConfigPanel(DEFAULT_LANES, (lanes) => {
-    if (mode === "live") {
-        rebuildLanes(lanes);
-    }
-});
+const configPanel = new ConfigPanel(DEFAULT_LANES, (lanes) => rebuildLanes(lanes));
 configPanel.root.hidden = true;
 
-const replayPanel = new ReplayPanel(
-    () => configPanel.currentLanes(),
-    (filled, name) => {
-        buffers = filled.buffers;
-        replayEndS = filled.durationS;
-        follow = false;
-        viewport = { t0: 0, t1: Math.max(replayEndS, 1) };
-        rebuildLanes(filled.lanes);
-        document.title = `mark4 plots - ${name}`;
-    }
-);
-replayPanel.root.hidden = true;
-
-shell.content.appendChild(replayPanel.root);
 shell.content.appendChild(viewer);
 shell.content.appendChild(configPanel.root);
 
@@ -119,7 +94,7 @@ sourceSelect.className = "config-select";
 sourceSelect.title = "telemetry source the lanes draw";
 sourceSelect.addEventListener("change", () => {
     sourceKind = Number(sourceSelect.value);
-    for (const buffer of liveBuffers.values()) {
+    for (const buffer of buffers.values()) {
         buffer.clear();
     }
     originUs = null;
@@ -144,10 +119,6 @@ function noteSource(kind: number): void {
     }
     sourceSelect.value = String(sourceKind);
 }
-
-const modeButtons: HTMLButtonElement[] = (["live", "replay"] as Mode[]).map((wanted) =>
-    toolbarButton(wanted === "live" ? "Live" : "Replay", () => void setMode(wanted))
-);
 
 const windowButtons = WINDOWS_S.map((seconds) =>
     toolbarButton(`${seconds} s`, () => {
@@ -186,43 +157,13 @@ const configButton = toolbarButton("Lanes", () => {
 });
 
 function refreshToolbar(): void {
-    modeButtons[0]?.classList.toggle("active", mode === "live");
-    modeButtons[1]?.classList.toggle("active", mode === "replay");
-    const live = mode === "live";
-    for (const button of [followButton, pauseButton, clearButton]) {
-        button.hidden = !live;
-    }
     windowButtons.forEach((button, i) => {
-        button.hidden = !live;
         button.classList.toggle("active", WINDOWS_S[i] === windowS);
     });
     followButton.classList.toggle("active", follow);
     pauseButton.classList.toggle("active", paused);
     pauseButton.textContent = paused ? "Resume" : "Pause";
     configButton.classList.toggle("active", !configPanel.root.hidden);
-}
-
-/** Switch between the live stream and a recording, rebuilding the lanes. */
-async function setMode(wanted: Mode): Promise<void> {
-    if (wanted === mode) {
-        return;
-    }
-    mode = wanted;
-    replayPanel.root.hidden = wanted !== "replay";
-    if (wanted === "live") {
-        buffers = liveBuffers;
-        follow = true;
-        document.title = "mark4 plots";
-        const url = new URL(location.href);
-        url.searchParams.delete("rec");
-        history.replaceState(null, "", url);
-        rebuildLanes(configPanel.currentLanes());
-    } else {
-        lanesView.clear();
-        await replayPanel.refresh();
-    }
-    refreshToolbar();
-    dirty = true;
 }
 
 /* -------------------- ingestion -------------------- */
@@ -235,14 +176,14 @@ function relativeS(timestampUs: number): number {
 }
 
 socket.on("simRaw", (message: HubMessage) => {
-    if (!paused && mode === "live") {
+    if (!paused) {
         // Latch only: the exact state is sampled by the next telemetry row
         sampler.latchSimRaw(message);
     }
 });
 
 socket.on("telemetry", (message: HubMessage) => {
-    if (paused || mode !== "live") {
+    if (paused) {
         return;
     }
     noteSource(Number(message["sourceId"]));
@@ -259,9 +200,6 @@ socket.on("telemetry", (message: HubMessage) => {
 
 /** Right edge of the data, in seconds. */
 function dataEndS(): number {
-    if (mode === "replay") {
-        return replayEndS;
-    }
     let end = 0;
     for (const buffer of buffers.values()) {
         end = Math.max(end, buffer.endS());
@@ -342,7 +280,7 @@ function frame(): void {
         viewport = clampToData(viewport, dataEndS());
     }
 
-    if (lanesView.isEmpty() && mode === "live") {
+    if (lanesView.isEmpty()) {
         rebuildLanes(configPanel.currentLanes());
     }
     const box = lanesView.box();
@@ -357,8 +295,3 @@ rulerCanvas.style.height = `${RULER_H}px`;
 rebuildLanes(configPanel.currentLanes());
 refreshToolbar();
 requestAnimationFrame(frame);
-
-// A ?rec= link opens straight into that recording
-if (new URLSearchParams(location.search).has("rec")) {
-    void setMode("replay");
-}

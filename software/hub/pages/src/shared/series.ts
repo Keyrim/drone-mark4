@@ -7,8 +7,7 @@
  * streams with their own timestamps, but a lane is one x axis, so the exact
  * state is resampled onto the telemetry timestamps: a simRaw message only
  * latches its values, and the latch is read when the next telemetry row
- * lands. This is the causal form of the hub's alignment rule; the hub's
- * offline compare stays the authority on the aggregate score.
+ * lands.
  */
 
 import { asQuat, errorAngleDeg, eulerDeg, type Quat } from "./quat";
@@ -32,7 +31,6 @@ export const PALETTE = [
 export const SOURCE_NAMES = new Map<number, string>([
     [1, "firmware"],
     [2, "drone_sim"],
-    [3, "drone_replay"],
     [4, "sim_plant"],
 ]);
 
@@ -44,7 +42,6 @@ export const SOURCE_NAMES = new Map<number, string>([
 export const SOURCE_COLORS = new Map<number, string>([
     [1, "#e66767"],
     [2, "#3987e5"],
-    [3, "#9085e9"],
 ]);
 
 export function sourceColor(kind: number): string {
