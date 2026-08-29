@@ -22,7 +22,7 @@
 #include "platform_stm32/ota_slots.hpp"
 #include "platform_stm32/sensor_source_stm32.hpp"
 #include "platform_stm32/telemetry_sender_stm32.hpp"
-#include "protocol/header.hpp"
+#include "protocol/envelope.hpp"
 
 namespace mark4
 {
@@ -33,7 +33,8 @@ namespace mark4
     class FirmwareApp
     {
       public:
-        /// Frames between two status lines over RTT: one per second.
+        /// Frames between two status lines over RTT, and between two
+        /// Announce messages on the UART: one per second.
         static constexpr std::uint32_t FRAMES_PER_STATUS = SensorSourceStm32::FRAME_RATE_HZ;
 
         FirmwareApp() = default;
@@ -51,15 +52,14 @@ namespace mark4
         [[noreturn]] void run();
 
       private:
-        /// @brief Hands one received packet to the update session and sends
+        /// @brief Hands one received message to the update session and sends
         ///        whatever answer comes back, over the same UART telemetry
         ///        goes out by.
-        /// @param packet received bytes
-        /// @param size received byte count
+        /// @param envelope decoded message
         /// @param nowUs monotonic time [us]
-        /// @return true when the updater claimed the packet, whatever the
+        /// @return true when the updater claimed the message, whatever the
         ///         outcome: the rest of this composition must then ignore it
-        bool serveOta(const std::uint8_t *packet, std::size_t size, std::uint64_t nowUs);
+        bool serveOta(const mark4_Envelope &envelope, std::uint64_t nowUs);
 
         /// @brief Parks the flight loop and serves the open update session:
         ///        no sensor read, no core step, no motor output at all, so
@@ -68,16 +68,22 @@ namespace mark4
         void runUpdateMode();
 
         /// @brief Refreshes the cached arming interlock from the boot
-        ///        metadata. Called once at init and after every packet the
+        ///        metadata. Called once at init and after every message the
         ///        updater consumed, because reading the metadata means
         ///        scanning both flash sectors: far too expensive per frame,
         ///        and nothing else can move the running slot's state.
         void refreshArmInterlock();
 
-        /// @param packet received bytes
-        /// @param size received byte count
-        /// @return true when this is the ground side's reboot command
-        [[nodiscard]] static bool IsRebootCommand(const std::uint8_t *packet, std::size_t size);
+        /// @brief Sends the Announce naming this board: kind, chip and the
+        ///        identity stamped in the running slot's image header.
+        void sendAnnounce();
+
+        /// @brief Drains the command uplink into the services: RC to the
+        ///        tracker, updater messages served, tuning answered.
+        /// @param nowUs instant handed to the RC fail-safe and the updater [us]
+        /// @return true when a reboot command was drained
+        bool drainCommands(std::uint64_t nowUs);
+
         // Declaration order = construction order; dependencies are
         // injected by reference, so a service may only depend on those
         // declared above it.
@@ -88,9 +94,9 @@ namespace mark4
         mark4::SensorSourceStm32 m_sensorSource{m_imu, m_baro, m_clock};
         mark4::MotorSinkNull m_motorSink;
         mark4::TelemetrySenderStm32 m_telemetrySender;
-        mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender, StreamSource::FIRMWARE};
+        mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender};
         mark4::CommandReceiverStm32 m_commandReceiver;
-        mark4::RcTracker m_rcTracker{m_commandReceiver};
+        mark4::RcTracker m_rcTracker;
         mark4::FlightCore m_core;
         mark4::TuningService m_tuningService{m_core, m_telemetrySender};
         /// The slot this image was linked for is a compile-time fact
@@ -100,7 +106,7 @@ namespace mark4
         mark4::OtaUpdater m_otaUpdater{m_firmwareStore};
 
         /// True while the running slot is on trial: arming is refused until
-        /// the ground side confirms it (docs/ota-design.md section 3.2).
+        /// the image confirms itself (docs/ota-design.md section 3.2).
         bool m_armInhibited = false;
     };
 } // namespace mark4

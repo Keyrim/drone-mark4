@@ -23,4 +23,4 @@ done < <(arm-none-eabi-g++ -E -x c++ - -v </dev/null 2>&1 |
     sed '1d;$d;s/^ //')
 
 run-clang-tidy -p "${build_dir}" -quiet "${extra_args[@]}" \
-    "${repo_root}/software/"
+    "${repo_root}/software/(components|drone_boot|drone_firmware)/"

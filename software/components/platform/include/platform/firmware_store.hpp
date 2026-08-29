@@ -11,7 +11,7 @@
 #include <array>
 #include <cstdint>
 
-#include "protocol/ota.hpp"
+#include "protocol/ota_image.hpp"
 
 namespace mark4
 {

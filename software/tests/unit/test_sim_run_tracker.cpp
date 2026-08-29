@@ -13,8 +13,7 @@
 #include "flight_core/types.hpp"
 #include "platform/telemetry_sender.hpp"
 #include "platform_sim/sim_run_tracker.hpp"
-#include "protocol/header.hpp"
-#include "protocol/sim_stats.hpp"
+#include "protocol/envelope.hpp"
 
 namespace
 {
@@ -79,7 +78,7 @@ namespace
     std::uint64_t playHash(const std::vector<Step> &run, std::uint32_t windowUs = 0U)
     {
         CapturingSender sender;
-        mark4::SimRunTracker tracker(sender, mark4::StreamSource::DRONE_SIM);
+        mark4::SimRunTracker tracker(sender);
         tracker.beginRun(1U, run.front().frame.timestampUs, windowUs);
         for (const Step &step : run)
         {
@@ -94,7 +93,7 @@ namespace
     std::uint32_t playFrames(const std::vector<Step> &run)
     {
         CapturingSender sender;
-        mark4::SimRunTracker tracker(sender, mark4::StreamSource::DRONE_SIM);
+        mark4::SimRunTracker tracker(sender);
         tracker.beginRun(1U, run.front().frame.timestampUs, 0U);
         for (const Step &step : run)
         {
@@ -178,7 +177,7 @@ TEST_CASE("the hash seals at the end of the window and stops moving")
     const auto window = static_cast<std::uint32_t>(10U * TICK_US);
 
     CapturingSender sender;
-    mark4::SimRunTracker tracker(sender, mark4::StreamSource::DRONE_SIM);
+    mark4::SimRunTracker tracker(sender);
     tracker.beginRun(1U, 0U, window);
     for (std::size_t index = 0U; index < 10U; ++index)
     {
@@ -202,7 +201,7 @@ TEST_CASE("the hash seals at the end of the window and stops moving")
 TEST_CASE("a run that lost a tick latches degraded")
 {
     CapturingSender sender;
-    mark4::SimRunTracker tracker(sender, mark4::StreamSource::DRONE_SIM);
+    mark4::SimRunTracker tracker(sender);
     tracker.beginRun(1U, 0U, 0U);
 
     // The first report is the baseline of the run, whatever it carries: the
@@ -229,10 +228,24 @@ TEST_CASE("a run that lost a tick latches degraded")
     REQUIRE(tracker.runId() == 2U);
 }
 
-TEST_CASE("the published stats packet round-trips the wire layout")
+namespace
+{
+    /// @brief Decodes one captured datagram as a SimRunStats envelope.
+    /// @param datagram bytes to decode
+    /// @return the stats it carries
+    mark4_SimRunStats decodeStats(const std::vector<std::uint8_t> &datagram)
+    {
+        mark4_Envelope envelope;
+        REQUIRE(mark4::decodeEnvelope(datagram.data(), datagram.size(), envelope));
+        REQUIRE(envelope.which_body == mark4_Envelope_sim_run_stats_tag);
+        return envelope.body.sim_run_stats;
+    }
+} // namespace
+
+TEST_CASE("the published stats message round-trips the wire")
 {
     CapturingSender sender;
-    mark4::SimRunTracker tracker(sender, mark4::StreamSource::DRONE_SIM);
+    mark4::SimRunTracker tracker(sender);
     const auto run = makeRun(1'000'000U, 4U);
     // Two frames of window, so the run seals inside this sequence.
     tracker.beginRun(42U, run.front().frame.timestampUs, static_cast<std::uint32_t>(2U * TICK_US));
@@ -242,20 +255,14 @@ TEST_CASE("the published stats packet round-trips the wire layout")
     tracker.publish();
     REQUIRE(sender.sent().size() == 1U);
 
-    const std::vector<std::uint8_t> &first = sender.sent().front();
-    REQUIRE(first.size() == mark4::SIM_RUN_STATS_PACKET_SIZE);
-    mark4::SimRunStatsPacket decoded{};
-    std::memcpy(&decoded, first.data(), first.size());
-    REQUIRE(decoded.version == mark4::PROTOCOL_VERSION);
-    REQUIRE(decoded.type == static_cast<std::uint8_t>(mark4::PacketType::SIM_RUN_STATS));
-    REQUIRE(decoded.sourceId == static_cast<std::uint8_t>(mark4::StreamSource::DRONE_SIM));
-    REQUIRE(decoded.sequence == 0U);
-    REQUIRE(decoded.runId == 42U);
-    REQUIRE(decoded.flags == 0U);
-    REQUIRE(decoded.runStartUs == 1'000'000U);
-    REQUIRE(decoded.runHash == tracker.hash());
-    REQUIRE(decoded.duplicateFrames == 3U);
-    REQUIRE(decoded.lockstepTimeouts == 7U);
+    mark4_SimRunStats decoded = decodeStats(sender.sent().front());
+    REQUIRE(decoded.run_id == 42U);
+    REQUIRE(!decoded.final);
+    REQUIRE(!decoded.degraded);
+    REQUIRE(decoded.run_start_us == 1'000'000U);
+    REQUIRE(decoded.run_hash == tracker.hash());
+    REQUIRE(decoded.duplicate_frames == 3U);
+    REQUIRE(decoded.lockstep_timeouts == 7U);
 
     // Nothing changed and the period has not elapsed: nothing goes out.
     tracker.update(run[1].frame, run[1].actuator);
@@ -269,9 +276,8 @@ TEST_CASE("the published stats packet round-trips the wire layout")
     REQUIRE(tracker.sealed());
     REQUIRE(sender.sent().size() == 2U);
 
-    std::memcpy(&decoded, sender.sent().back().data(), sender.sent().back().size());
-    REQUIRE(decoded.sequence == 1U);
-    REQUIRE(decoded.flags ==
-            (mark4::SIM_RUN_FLAG_HASH_SEALED | mark4::SIM_RUN_FLAG_LOCKSTEP_DEGRADED));
-    REQUIRE(decoded.lockstepTimeouts == 8U);
+    decoded = decodeStats(sender.sent().back());
+    REQUIRE(decoded.final);
+    REQUIRE(decoded.degraded);
+    REQUIRE(decoded.lockstep_timeouts == 8U);
 }

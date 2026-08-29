@@ -15,7 +15,7 @@
 #include "platform/firmware_store.hpp"
 #include "platform_common/crc32_mpeg2.hpp"
 #include "platform_common/ota_meta_log.hpp"
-#include "protocol/ota.hpp"
+#include "protocol/ota_image.hpp"
 
 namespace
 {

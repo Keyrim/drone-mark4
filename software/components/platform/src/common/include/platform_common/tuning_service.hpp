@@ -2,7 +2,7 @@
 
 /// @file
 /// @brief Tuning request dispatch, shared by every composition: the adapter
-///        between the tuning packets of protocol/ and the parameter registry
+///        between the tuning messages of the wire and the parameter registry
 ///        the flight core owns. flight-core never includes a wire header, so
 ///        this is where the two vocabularies meet and where they are pinned
 ///        to each other.
@@ -12,7 +12,6 @@
 /// is in effect for the whole of the next step and never changes one halfway
 /// through. The core is single-threaded and so is this: no locking, no queue.
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -20,30 +19,26 @@
 #include "flight_core/flight_core.hpp"
 #include "flight_core/tuning_table.hpp"
 #include "platform/telemetry_sender.hpp"
-#include "protocol/header.hpp"
-#include "protocol/tuning.hpp"
+#include "platform_common/envelope_io.hpp"
+#include "protocol/envelope.hpp"
 
 namespace mark4
 {
     // The statuses and the name width are the whole contract between the
     // registry and the wire. Asserting them here, one by one, is what lets
     // the two definitions stay independent without ever drifting apart.
-    static_assert(static_cast<std::uint8_t>(TuningStatus::OK) == TUNING_ACK_OK);
-    static_assert(static_cast<std::uint8_t>(TuningStatus::UNKNOWN_ID) == TUNING_ACK_UNKNOWN_ID);
-    static_assert(static_cast<std::uint8_t>(TuningStatus::OUT_OF_BOUNDS) ==
-                  TUNING_ACK_OUT_OF_BOUNDS);
-    static_assert(static_cast<std::uint8_t>(TuningStatus::LOCKED_WHILE_ARMED) ==
-                  TUNING_ACK_LOCKED_WHILE_ARMED);
-    static_assert(TuningParam::NAME_SIZE == TUNING_NAME_SIZE,
+    static_assert(static_cast<int>(TuningStatus::OK) == mark4_TuningStatus_OK);
+    static_assert(static_cast<int>(TuningStatus::UNKNOWN_ID) == mark4_TuningStatus_UNKNOWN_ID);
+    static_assert(static_cast<int>(TuningStatus::OUT_OF_BOUNDS) ==
+                  mark4_TuningStatus_OUT_OF_BOUNDS);
+    static_assert(static_cast<int>(TuningStatus::LOCKED_WHILE_ARMED) ==
+                  mark4_TuningStatus_LOCKED_WHILE_ARMED);
+    static_assert(TuningParam::NAME_SIZE + 1U == sizeof(mark4_TuningInfo::name),
                   "the parameter name width must match the wire");
 
-    /// Answers the tuning packets a composition hands it, on the telemetry
-    /// link the rest of the ground-bound traffic already uses (UDP broadcast
-    /// in the simulator, framed UART on the board). Consumers demultiplex by
-    /// header, so an ack sharing the stream with telemetry costs nothing.
-    ///
-    /// Owns no buffer of its own beyond one packet: the caller passes the
-    /// bytes it drained, and every answer is built and sent in the same call.
+    /// Answers the tuning messages a composition hands it, on the telemetry
+    /// link the rest of the ground-bound traffic already uses (transport
+    /// broadcast in the simulator, framed UART on the board).
     class TuningService
     {
       public:
@@ -63,48 +58,40 @@ namespace mark4
         {
         }
 
-        /// @brief Answers one packet, when it is a tuning request.
-        /// @param data packet bytes
-        /// @param size packet size in bytes
-        /// @return true when the packet was a tuning request and was
+        /// @brief Answers one message, when it is a tuning request.
+        /// @param envelope decoded message
+        /// @return true when the message was a tuning request and was
         ///         answered, false when it belongs to someone else
-        bool handle(const std::uint8_t *data, std::size_t size)
+        bool handle(const mark4_Envelope &envelope)
         {
-            if (data == nullptr)
+            switch (envelope.which_body)
             {
-                return false;
+                case mark4_Envelope_tuning_set_tag:
+                    ++m_requestCount;
+                    sendAck(envelope.body.tuning_set.id,
+                            m_core.setParam(static_cast<std::uint16_t>(envelope.body.tuning_set.id),
+                                            envelope.body.tuning_set.value));
+                    return true;
+                case mark4_Envelope_tuning_get_tag: {
+                    ++m_requestCount;
+                    float value = 0.0f;
+                    sendAck(envelope.body.tuning_get.id,
+                            m_core.getParam(static_cast<std::uint16_t>(envelope.body.tuning_get.id),
+                                            value));
+                    return true;
+                }
+                case mark4_Envelope_tuning_list_tag:
+                    ++m_requestCount;
+                    // Only the cursor is latched: the descriptions themselves go
+                    // out from pump(), one per call. A second list request
+                    // restarts the walk wherever it asks, which is also how a
+                    // ground station recovers from a lost frame.
+                    m_listCursor = envelope.body.tuning_list.start_index;
+                    m_listPending = true;
+                    return true;
+                default:
+                    return false;
             }
-            if (size == TUNING_SET_PACKET_SIZE && hasHeader(data, size, PacketType::TUNING_SET))
-            {
-                TuningSetPacket request{};
-                std::memcpy(&request, data, sizeof(request));
-                ++m_requestCount;
-                sendAck(request.id, m_core.setParam(request.id, request.value));
-                return true;
-            }
-            if (size == TUNING_GET_PACKET_SIZE && hasHeader(data, size, PacketType::TUNING_GET))
-            {
-                TuningGetPacket request{};
-                std::memcpy(&request, data, sizeof(request));
-                ++m_requestCount;
-                float value = 0.0f;
-                sendAck(request.id, m_core.getParam(request.id, value));
-                return true;
-            }
-            if (size == TUNING_LIST_PACKET_SIZE && hasHeader(data, size, PacketType::TUNING_LIST))
-            {
-                TuningListPacket request{};
-                std::memcpy(&request, data, sizeof(request));
-                ++m_requestCount;
-                // Only the cursor is latched: the descriptions themselves go
-                // out from pump(), one per call. A second list request
-                // restarts the walk wherever it asks, which is also how a
-                // ground station recovers from a lost frame.
-                m_listCursor = request.startIndex;
-                m_listPending = true;
-                return true;
-            }
-            return false;
         }
 
         /// @brief Emits at most INFOS_PER_PUMP parameter descriptions. Call
@@ -141,21 +128,20 @@ namespace mark4
         /// @brief Sends one acknowledgement carrying the value in effect.
         /// @param id parameter id echoed from the request
         /// @param status outcome of the request
-        void sendAck(std::uint16_t id, TuningStatus status)
+        void sendAck(std::uint32_t id, TuningStatus status)
         {
             // The value that travels is always the live one, whatever the
             // outcome: a refused write is answered with what is still flying,
             // so a ground station never has to guess what it ended up with.
             float value = 0.0f;
-            static_cast<void>(m_core.getParam(id, value));
+            static_cast<void>(m_core.getParam(static_cast<std::uint16_t>(id), value));
 
-            TuningAckPacket packet{};
-            packet.version = PROTOCOL_VERSION;
-            packet.type = static_cast<std::uint8_t>(PacketType::TUNING_ACK);
-            packet.id = id;
-            packet.value = value;
-            packet.status = static_cast<std::uint8_t>(status);
-            send(packet);
+            mark4_Envelope envelope = mark4_Envelope_init_zero;
+            envelope.which_body = mark4_Envelope_tuning_ack_tag;
+            envelope.body.tuning_ack.id = id;
+            envelope.body.tuning_ack.value = value;
+            envelope.body.tuning_ack.status = static_cast<mark4_TuningStatus>(status);
+            send(envelope);
         }
 
         /// @brief Sends one parameter description.
@@ -163,31 +149,31 @@ namespace mark4
         /// @param param entry to describe
         void sendInfo(std::size_t index, const TuningParam &param)
         {
-            TuningInfoPacket packet{};
-            packet.version = PROTOCOL_VERSION;
-            packet.type = static_cast<std::uint8_t>(PacketType::TUNING_INFO);
-            packet.index = static_cast<std::uint16_t>(index);
-            packet.count = static_cast<std::uint16_t>(FlightCore::ParamCount());
-            packet.id = param.id;
-            // Copied byte by byte rather than assigned: assigning would bind
-            // a reference to a field of a byte-packed struct.
-            std::memcpy(&packet.name, param.name.data(), TUNING_NAME_SIZE);
-            packet.value = param.value;
-            packet.minValue = param.minValue;
-            packet.maxValue = param.maxValue;
-            packet.flags = param.armedChange ? TUNING_FLAG_ARMED_CHANGE : 0U;
-            send(packet);
+            mark4_Envelope envelope = mark4_Envelope_init_zero;
+            envelope.which_body = mark4_Envelope_tuning_info_tag;
+            mark4_TuningInfo &info = envelope.body.tuning_info;
+            info.index = static_cast<std::uint32_t>(index);
+            info.count = static_cast<std::uint32_t>(FlightCore::ParamCount());
+            info.id = param.id;
+            // The registry name is zero-padded and a full-length one carries
+            // no terminator; the wire field has one byte more for it.
+            std::memcpy(info.name, param.name.data(), TuningParam::NAME_SIZE);
+            info.name[TuningParam::NAME_SIZE] = '\0';
+            info.value = param.value;
+            info.min_value = param.minValue;
+            info.max_value = param.maxValue;
+            info.armed_change = param.armedChange;
+            send(envelope);
         }
 
-        /// @brief Serializes a wire struct and hands the bytes to the link.
-        /// @tparam Packet wire struct type
-        /// @param packet packet to send
-        template <typename Packet> void send(const Packet &packet)
+        /// @brief Encodes an answer and hands the bytes to the link.
+        /// @param envelope answer to send
+        void send(const mark4_Envelope &envelope)
         {
-            std::array<std::uint8_t, sizeof(Packet)> bytes{};
-            std::memcpy(bytes.data(), &packet, sizeof(Packet));
-            m_sender.send(bytes.data(), bytes.size());
-            ++m_answerCount;
+            if (sendEnvelope(m_sender, envelope))
+            {
+                ++m_answerCount;
+            }
         }
 
         FlightCore &m_core;                ///< registry owner, not owned

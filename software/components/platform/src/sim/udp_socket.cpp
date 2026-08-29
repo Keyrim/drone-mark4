@@ -150,7 +150,15 @@ namespace mark4
         {
             m_lastReplySize = 0U;
         }
+        return sendToLastSender(data, size);
+    }
 
+    bool UdpSocket::sendToLastSender(const std::uint8_t *data, std::size_t size)
+    {
+        if (m_socketFd < 0 || !m_hasReplyTarget || data == nullptr)
+        {
+            return false;
+        }
         const ssize_t sent = ::sendto(m_socketFd,
                                       data,
                                       size,

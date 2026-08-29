@@ -21,7 +21,7 @@
 #include "platform_sim/sensor_source_sim.hpp"
 #include "platform_sim/sim_run_tracker.hpp"
 #include "platform_sim/udp_socket.hpp"
-#include "protocol/header.hpp"
+#include "protocol/envelope.hpp"
 #include "transport/transport.hpp"
 #include "transport/udp_link.hpp"
 
@@ -139,15 +139,14 @@ namespace mark4
         /// @return true when the slot may be run
         [[nodiscard]] bool imageValidates(std::uint8_t slot) const;
 
-        /// @brief Hands one received packet to the update session and
+        /// @brief Hands one received message to the update session and
         ///        broadcasts whatever answer comes back, over the same
-        ///        telemetry socket the tuning answers use.
-        /// @param packet received bytes
-        /// @param size received byte count
+        ///        telemetry route the tuning answers use.
+        /// @param envelope decoded message
         /// @param nowUs monotonic time [us]
-        /// @return true when the updater claimed the packet, whatever the
+        /// @return true when the updater claimed the message, whatever the
         ///         outcome: the rest of this composition must then ignore it
-        bool serveOta(const std::uint8_t *packet, std::size_t size, std::uint64_t nowUs);
+        bool serveOta(const mark4_Envelope &envelope, std::uint64_t nowUs);
 
         /// @brief Parks the lockstep loop and serves the open update session,
         ///        symmetrically with the firmware: no sensor wait, no core
@@ -158,28 +157,15 @@ namespace mark4
 
         /// @brief Refreshes the cached arming interlock from the boot
         ///        metadata. Reading it means scanning both metadata areas, so
-        ///        it happens once per boot and after every packet the updater
+        ///        it happens once per boot and after every message the updater
         ///        consumed rather than once per frame.
         void refreshArmInterlock();
 
-        /// @param data datagram bytes
-        /// @param size datagram size
-        /// @return true when this is the ground side's reboot command
-        [[nodiscard]] static bool IsRebootCommand(const std::uint8_t *data, std::size_t size);
-
-        /// @brief Routes one datagram drained from the command uplink. A
-        ///        scenario packet is latched onto the motor sink, which
-        ///        carries it to the plant on the next lockstep reply, and
-        ///        its hash window is kept for the run it opens. Anything
-        ///        else is not this composition's business.
-        /// @param data datagram bytes
-        /// @param size datagram size
-        void forwardScenario(const std::uint8_t *data, std::size_t size);
-
         /// @brief Drains the command uplink: RC into the tracker, scenarios
-        ///        to the plant, tuning answered. Runs on every loop wakeup,
-        ///        frames or not - the command path needs no world, so tuning
-        ///        a grounded drone works while the platform is not ready.
+        ///        to the plant, tuning answered, the updater served. Runs on
+        ///        every loop wakeup, frames or not - the command path needs no
+        ///        world, so tuning a grounded drone works while the platform
+        ///        is not ready.
         /// @param nowUs instant handed to the RC fail-safe [us]
         void drainCommands(std::uint64_t nowUs);
 
@@ -213,12 +199,12 @@ namespace mark4
         mark4::UdpLink m_udpLink;
         mark4::Transport m_transport;
         mark4::TelemetrySenderTransport m_telemetrySender{m_transport};
-        mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender, StreamSource::DRONE_SIM};
+        mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender};
         mark4::CommandReceiverTransport m_commandReceiver;
-        mark4::RcTracker m_rcTracker{m_commandReceiver};
+        mark4::RcTracker m_rcTracker;
         mark4::FlightCore m_core;
         mark4::TuningService m_tuningService{m_core, m_telemetrySender};
-        mark4::SimRunTracker m_runTracker{m_telemetrySender, StreamSource::DRONE_SIM};
+        mark4::SimRunTracker m_runTracker{m_telemetrySender};
 
         /// Emulated flash directory, declared before the store because the
         /// store keeps the pointer rather than a copy of the path.
@@ -239,7 +225,5 @@ namespace mark4
         /// Hash window asked for by the last scenario, applied to the run
         /// that scenario opens [us]; 0 means the tracker default.
         std::uint32_t m_pendingHashWindowUs = 0U;
-
-        std::uint32_t m_lastSessionId = 0U; ///< simulator session of the last frame
     };
 } // namespace mark4

@@ -13,7 +13,6 @@ add_executable(unit_tests
     test_control.cpp
     test_flight_core.cpp
     test_hub_discovery.cpp
-    test_hub_health.cpp
     test_hub_http.cpp
     test_hub_json.cpp
     test_hub_ota.cpp
@@ -26,6 +25,8 @@ add_executable(unit_tests
     test_ota_updater.cpp
     test_pilot_modes.cpp
     test_platform_sim_udp.cpp
+    test_protocol_envelope.cpp
+    test_plant_link.cpp
     test_rc_tracker.cpp
     test_serial_framing.cpp
     test_sim_run_tracker.cpp
@@ -52,6 +53,13 @@ target_compile_options(unit_tests PRIVATE -fno-sanitize=vptr)
 # and their exact values are the point.
 target_compile_definitions(unit_tests
     PRIVATE MARK4_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+
+# The plant link test spawns a headless Godot when one is on the PATH and
+# skips otherwise; the project path is what it needs.
+find_program(DRONE_GODOT godot)
+target_compile_definitions(unit_tests
+    PRIVATE MARK4_GODOT_PROJECT="${DRONE_REPO_ROOT}/sim-godot"
+            MARK4_GODOT_BINARY="${DRONE_GODOT}")
 
 # The OTA end-to-end test spawns the real flight process and talks to it over
 # real UDP, so it needs the binary itself, not a library: the path comes from

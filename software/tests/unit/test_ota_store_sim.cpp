@@ -19,7 +19,7 @@
 #include "platform/firmware_store.hpp"
 #include "platform_common/crc32_mpeg2.hpp"
 #include "platform_sim/firmware_store_sim.hpp"
-#include "protocol/ota.hpp"
+#include "protocol/ota_image.hpp"
 
 namespace
 {

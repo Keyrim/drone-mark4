@@ -19,7 +19,7 @@
 #include <cstdint>
 
 #include "platform/firmware_store.hpp"
-#include "protocol/ota.hpp"
+#include "protocol/ota_image.hpp"
 
 namespace mark4
 {

@@ -9,7 +9,7 @@ set(DRONE_FIRMWARE_SOURCES
     status_leds.cpp
     image_header.cpp)
 
-# name -> (slot id, flash origin). OTA_SLOT_A / OTA_SLOT_B of protocol/ota.hpp.
+# name -> (slot id, flash origin). OTA_SLOT_A / OTA_SLOT_B of protocol/ota_image.hpp.
 set(DRONE_FIRMWARE_A_SLOT_ID 0)
 set(DRONE_FIRMWARE_B_SLOT_ID 1)
 set(DRONE_FIRMWARE_A_ORIGIN ${DRONE_STM32_SLOT_A_ORIGIN})
@@ -50,6 +50,7 @@ if(DRONE_PYTHON3 AND DRONE_ARM_OBJCOPY)
                 --slot-a $<TARGET_FILE:drone_firmware_a>
                 --slot-b $<TARGET_FILE:drone_firmware_b>
                 --objcopy ${DRONE_ARM_OBJCOPY}
+                --wire-hash ${DRONE_WIRE_HASH_HEX}
                 --outdir ${CMAKE_CURRENT_BINARY_DIR}
         DEPENDS drone_firmware_a drone_firmware_b ${DRONE_REPO_ROOT}/scripts/make_ota.py
         COMMENT "packaging drone_firmware.ota"

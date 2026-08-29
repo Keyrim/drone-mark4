@@ -1,13 +1,13 @@
 #pragma once
 
 /// @file
-/// @brief Stream framing for protocol/ packets over serial links. UDP
-///        preserves datagram boundaries, a UART does not: each packet
-///        travels as SYNC0 SYNC1 length payload crc16, and a receiver
-///        can resynchronize on the sync pair after any byte loss. The
-///        CRC covers the length byte and the payload, so a corrupted
-///        length cannot swallow the stream or synthesize a plausible
-///        frame; XOR-class checksums are not enough for the
+/// @brief Stream framing for payloads over serial links. UDP preserves
+///        datagram boundaries, a UART does not: each payload travels as
+///        SYNC0 SYNC1 length payload crc16, with a two-byte little-endian
+///        length, and a receiver can resynchronize on the sync pair after
+///        any byte loss. The CRC covers the length bytes and the payload,
+///        so a corrupted length cannot swallow the stream or synthesize a
+///        plausible frame; XOR-class checksums are not enough for the
 ///        stream, which is the forensic record.
 
 #include <cstddef>
@@ -18,11 +18,19 @@ namespace mark4
     inline constexpr std::uint8_t SERIAL_SYNC0 = 0xA5U;
     inline constexpr std::uint8_t SERIAL_SYNC1 = 0x5AU;
 
-    /// Sync pair + length byte + trailing CRC-16.
-    inline constexpr std::size_t SERIAL_FRAME_OVERHEAD = 5U;
+    /// Sync pair + two length bytes + trailing CRC-16.
+    inline constexpr std::size_t SERIAL_FRAME_OVERHEAD = 6U;
 
-    /// The length travels in one byte.
-    inline constexpr std::size_t SERIAL_MAX_PAYLOAD = 255U;
+    /// Offset of the length bytes in a frame, right behind the sync pair.
+    inline constexpr std::size_t SERIAL_LENGTH_OFFSET = 2U;
+
+    /// Offset of the first payload byte in a frame.
+    inline constexpr std::size_t SERIAL_PAYLOAD_OFFSET = 4U;
+
+    /// Largest payload one frame carries: the transport's MAX_PAYLOAD, so a
+    /// whole transport frame (header included, minus the header bytes) or a
+    /// bare Envelope always fits.
+    inline constexpr std::size_t SERIAL_MAX_PAYLOAD = 512U;
 
     /// Initial value of the CRC-16 computation.
     inline constexpr std::uint16_t CRC16_INIT = 0xFFFFU;
@@ -36,7 +44,7 @@ namespace mark4
     /// Bits shifted to move a byte into the high half of the CRC register.
     inline constexpr unsigned CRC16_BYTE_SHIFT = 8U;
 
-    /// Mask extracting the low byte of the CRC for the wire.
+    /// Mask extracting the low byte of a 16-bit word for the wire.
     inline constexpr std::uint16_t CRC16_LOW_MASK = 0xFFU;
 
     /// @brief Feeds bytes into a running CRC-16/CCITT-FALSE computation
@@ -62,10 +70,10 @@ namespace mark4
         return crc;
     }
 
-    /// @brief Encodes one frame around a payload. The CRC covers the
-    ///        length byte and the payload, and travels little-endian.
-    /// @param payload packet bytes
-    /// @param size packet size, at most SERIAL_MAX_PAYLOAD
+    /// @brief Encodes one frame around a payload. The CRC covers the two
+    ///        length bytes and the payload, and travels little-endian.
+    /// @param payload payload bytes
+    /// @param size payload size, at most SERIAL_MAX_PAYLOAD
     /// @param out receives the frame; must hold size + SERIAL_FRAME_OVERHEAD
     /// @return bytes written to out, 0 when the payload is too large or empty
     inline std::size_t encodeSerialFrame(const std::uint8_t *payload,
@@ -78,20 +86,24 @@ namespace mark4
         }
         out[0] = SERIAL_SYNC0;
         out[1] = SERIAL_SYNC1;
-        out[2] = static_cast<std::uint8_t>(size);
+        out[SERIAL_LENGTH_OFFSET] = static_cast<std::uint8_t>(size & CRC16_LOW_MASK);
+        out[SERIAL_LENGTH_OFFSET + 1U] = static_cast<std::uint8_t>(size >> CRC16_BYTE_SHIFT);
         for (std::size_t index = 0U; index < size; ++index)
         {
-            out[3U + index] = payload[index];
+            out[SERIAL_PAYLOAD_OFFSET + index] = payload[index];
         }
-        const std::uint16_t crc = crc16(CRC16_INIT, &out[2], size + 1U);
-        out[3U + size] = static_cast<std::uint8_t>(crc & CRC16_LOW_MASK);
-        out[4U + size] = static_cast<std::uint8_t>(crc >> CRC16_BYTE_SHIFT);
+        const std::uint16_t crc = crc16(CRC16_INIT,
+                                        &out[SERIAL_LENGTH_OFFSET],
+                                        size + (SERIAL_PAYLOAD_OFFSET - SERIAL_LENGTH_OFFSET));
+        out[SERIAL_PAYLOAD_OFFSET + size] = static_cast<std::uint8_t>(crc & CRC16_LOW_MASK);
+        out[SERIAL_PAYLOAD_OFFSET + size + 1U] = static_cast<std::uint8_t>(crc >> CRC16_BYTE_SHIFT);
         return size + SERIAL_FRAME_OVERHEAD;
     }
 
     /// Incremental frame decoder: feed the stream byte by byte, complete
     /// payloads come out. Garbage between frames is skipped by hunting for
-    /// the sync pair; a CRC mismatch drops the frame silently.
+    /// the sync pair; a CRC mismatch or an impossible length drops the frame
+    /// silently.
     class SerialFrameParser
     {
       public:
@@ -109,19 +121,24 @@ namespace mark4
                     break;
                 case State::SYNC1:
                     // A repeated SYNC0 keeps the first byte of the pair valid.
-                    m_state = (byte == SERIAL_SYNC1)   ? State::LENGTH
+                    m_state = (byte == SERIAL_SYNC1)   ? State::LENGTH_LOW
                               : (byte == SERIAL_SYNC0) ? State::SYNC1
                                                        : State::SYNC0;
                     break;
-                case State::LENGTH:
-                    if (byte == 0U)
+                case State::LENGTH_LOW:
+                    m_expected = byte;
+                    m_crc = crc16(CRC16_INIT, &byte, 1U);
+                    m_state = State::LENGTH_HIGH;
+                    break;
+                case State::LENGTH_HIGH:
+                    m_expected |= static_cast<std::size_t>(byte) << CRC16_BYTE_SHIFT;
+                    m_crc = crc16(m_crc, &byte, 1U);
+                    if (m_expected == 0U || m_expected > SERIAL_MAX_PAYLOAD)
                     {
                         m_state = State::SYNC0;
                         break;
                     }
-                    m_expected = byte;
                     m_received = 0U;
-                    m_crc = crc16(CRC16_INIT, &byte, 1U);
                     m_state = State::PAYLOAD;
                     break;
                 case State::PAYLOAD:
@@ -160,12 +177,13 @@ namespace mark4
         /// Position in the frame being decoded.
         enum class State : std::uint8_t
         {
-            SYNC0,    ///< hunting for the first sync byte
-            SYNC1,    ///< first sync byte seen
-            LENGTH,   ///< sync pair seen, next byte is the length
-            PAYLOAD,  ///< accumulating payload bytes
-            CRC_LOW,  ///< payload complete, next byte is the CRC low byte
-            CRC_HIGH, ///< next byte is the CRC high byte
+            SYNC0,       ///< hunting for the first sync byte
+            SYNC1,       ///< first sync byte seen
+            LENGTH_LOW,  ///< sync pair seen, next byte is the low length byte
+            LENGTH_HIGH, ///< next byte is the high length byte
+            PAYLOAD,     ///< accumulating payload bytes
+            CRC_LOW,     ///< payload complete, next byte is the CRC low byte
+            CRC_HIGH,    ///< next byte is the CRC high byte
         };
 
         std::uint8_t m_payload[SERIAL_MAX_PAYLOAD] = {}; ///< frame being decoded

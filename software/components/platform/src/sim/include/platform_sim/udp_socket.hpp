@@ -23,8 +23,8 @@ namespace mark4
     class UdpSocket
     {
       public:
-        /// Largest reply the repeat cache can hold [bytes]. Every reply of
-        /// the protocol fits inside it with room to spare.
+        /// Largest reply the repeat cache can hold [bytes]: a SimActuator
+        /// envelope is a few tens of bytes.
         static constexpr std::size_t MAX_REPLY_SIZE = 128U;
 
         UdpSocket() = default;
@@ -74,6 +74,15 @@ namespace mark4
         /// @param size number of bytes to send
         /// @return true when the whole datagram was handed to the stack
         bool replyToLastSender(const std::uint8_t *data, std::size_t size);
+
+        /// @brief Sends one datagram to the last accepted sender without
+        ///        touching the repeat cache: for messages that ride the link
+        ///        next to the lockstep replies (a scenario) and must never
+        ///        replace the reply a resent tick expects.
+        /// @param data bytes to send
+        /// @param size number of bytes to send
+        /// @return true when the whole datagram was handed to the stack
+        bool sendToLastSender(const std::uint8_t *data, std::size_t size);
 
         /// @brief Sends the last reply again, byte for byte. The lockstep
         ///        handshake makes a repeat legitimate: a peer that resends a

@@ -36,16 +36,13 @@ import time
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OTA_HPP = os.path.join(
-    REPO_ROOT, "software", "components", "protocol", "include", "protocol", "ota.hpp"
-)
-VERSION_HPP = os.path.join(
-    REPO_ROOT, "software", "components", "protocol", "include", "protocol", "version.hpp"
+    REPO_ROOT, "software", "components", "protocol", "include", "protocol", "ota_image.hpp"
 )
 
 # OtaImageHeader field offsets, pinned by the static_asserts of
-# software/components/protocol/include/protocol/ota.hpp. That header is the
-# source of truth; these constants exist because a python tool cannot include
-# it, and they are checked against it by --verify and by the golden fixtures.
+# software/components/protocol/include/protocol/ota_image.hpp. That header is
+# the source of truth; these constants exist because a python tool cannot
+# include it, and check_layout() checks them against it.
 HEADER_SIZE = 512
 OFF_MAGIC = 0
 OFF_HEADER_VERSION = 4
@@ -60,8 +57,9 @@ GIT_HASH_SIZE = 8
 
 IMAGE_MAGIC = 0x5746344D  # "M4FW" read as a little-endian word
 IMAGE_HEADER_VERSION = 1
-MCU_STM32F405 = 1
+MCU_STM32F405 = 1  # mark4.Mcu.STM32F405
 UNSTAMPED = 0xFFFFFFFF
+WIRE_HASH_SIZE = 8  # hex characters of the mark4.proto hash
 
 # The .ota container, little-endian throughout: magic, then a length-prefixed
 # ASCII JSON manifest, then one length-prefixed image per slot in slot order.
@@ -148,7 +146,6 @@ def check_layout() -> None:
         "OTA_IMAGE_MAGIC": IMAGE_MAGIC,
         "OTA_IMAGE_HEADER_VERSION": IMAGE_HEADER_VERSION,
         "OTA_IMAGE_HEADER_SIZE": HEADER_SIZE,
-        "OTA_MCU_STM32F405": MCU_STM32F405,
         "OTA_IMAGE_UNSTAMPED": UNSTAMPED,
         "OTA_GIT_HASH_SIZE": GIT_HASH_SIZE,
     }
@@ -156,7 +153,7 @@ def check_layout() -> None:
         found = read_cpp_constant(OTA_HPP, name)
         if found != value:
             print(
-                f"make_ota: {name} is {found:#x} in protocol/ota.hpp but {value:#x} here",
+                f"make_ota: {name} is {found:#x} in protocol/ota_image.hpp but {value:#x} here",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -226,15 +223,20 @@ def verify_image(image: bytes, slot: int) -> bool:
     return ok
 
 
-def build_bundle(name: str, images: list, git_hash: str) -> bytes:
-    """Serializes the pinned .ota container around a JSON manifest."""
+def build_bundle(name: str, images: list, git_hash: str, wire_hash: str) -> bytes:
+    """Serializes the pinned .ota container around a JSON manifest.
+
+    wire_hash is the 8 hex characters the build computed from mark4.proto
+    (DRONE_WIRE_HASH_HEX): the hub refuses a bundle built on another schema,
+    since a board flashed with it would go silent on the bench.
+    """
     first = images[0]
     manifest = {
         "name": name,
         "mcuId": first[OFF_MCU_ID],
         "buildEpoch": u32(first, OFF_BUILD_EPOCH),
         "gitHash": git_hash,
-        "protocolVersion": read_cpp_constant(VERSION_HPP, "PROTOCOL_VERSION"),
+        "wireHash": wire_hash,
         "images": [
             # The manifest crc32 covers the WHOLE image, header included:
             # it is the value OtaBeginPacket announces and the value the
@@ -294,7 +296,7 @@ def verify_bundle(path: str) -> int:
     built = datetime.datetime.fromtimestamp(manifest["buildEpoch"], datetime.timezone.utc)
     print(f"make_ota: {os.path.basename(path)} verified - {manifest['name']} "
           f"built {built:%Y-%m-%d %H:%M:%S} UTC "
-          f"({manifest['gitHash']}), protocol v{manifest['protocolVersion']}, "
+          f"({manifest['gitHash']}), wire {manifest['wireHash']}, "
           f"slots {', '.join(str(len(image)) + ' B' for image in images)}")
     return 0
 
@@ -308,6 +310,9 @@ def main() -> int:
     parser.add_argument("--outdir", help="directory the artifacts are written to")
     parser.add_argument("--name", default="drone_firmware", help="bundle name in the manifest")
     parser.add_argument("--git-hash", help=f"{GIT_HASH_SIZE} hex characters, default: git HEAD")
+    parser.add_argument("--wire-hash",
+                        help=f"{WIRE_HASH_SIZE} hex characters of the mark4.proto hash the "
+                             "images were built with (the build passes DRONE_WIRE_HASH_HEX)")
     parser.add_argument("--build-epoch", type=int,
                         help="unix seconds stamped as the build identity, default: now")
     parser.add_argument("--objcopy", default="arm-none-eabi-objcopy",
@@ -317,8 +322,10 @@ def main() -> int:
 
     if args.verify:
         return verify_bundle(args.verify)
-    if not (args.slot_a and args.slot_b and args.outdir):
-        parser.error("--slot-a, --slot-b and --outdir are required")
+    if not (args.slot_a and args.slot_b and args.outdir and args.wire_hash):
+        parser.error("--slot-a, --slot-b, --outdir and --wire-hash are required")
+    if len(args.wire_hash) != WIRE_HASH_SIZE:
+        parser.error(f"--wire-hash must be {WIRE_HASH_SIZE} characters")
 
     check_layout()
     git_hash = args.git_hash or git_short_hash()
@@ -339,7 +346,7 @@ def main() -> int:
             file.write(image)
     bundle = os.path.join(args.outdir, f"{args.name}.ota")
     with open(bundle, "wb") as file:
-        file.write(build_bundle(args.name, images, git_hash))
+        file.write(build_bundle(args.name, images, git_hash, args.wire_hash))
 
     for slot, image in enumerate(images):
         print(f"make_ota: slot {SLOT_NAMES[slot].upper()} {len(image)} bytes, "

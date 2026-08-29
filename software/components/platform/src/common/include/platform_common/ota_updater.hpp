@@ -2,7 +2,7 @@
 
 /// @file
 /// @brief The board-side firmware update session, per docs/ota-design.md
-///        sections 4.5 and 5: one packet in, at most one packet out, an
+///        sections 4.5 and 5: one message in, at most one message out, an
 ///        AbsFirmwareStore underneath and nothing else. It owns the whole
 ///        session state (nonce, target slot, next expected offset) and the
 ///        refusal policy, so the guarantees of the design are testable on a
@@ -16,7 +16,7 @@
 ///        platform_common/ota_meta_log.hpp), which is what makes a power cut
 ///        at any byte harmless.
 ///
-///        Board-safe: no allocation, no exceptions, one packet worth of
+///        Board-safe: no allocation, no exceptions, one message worth of
 ///        stack per call.
 
 #include <array>
@@ -25,19 +25,19 @@
 #include <cstring>
 
 #include "platform/firmware_store.hpp"
-#include "protocol/header.hpp"
-#include "protocol/ota.hpp"
+#include "protocol/envelope.hpp"
+#include "protocol/ota_image.hpp"
 
 namespace mark4
 {
-    /// Consumes the OTA packets of protocol/ota.hpp and answers them. The
-    /// surrounding app owns the transport: it hands over received bytes with
+    /// Consumes the Ota* messages of the wire and answers them. The
+    /// surrounding app owns the link: it hands over decoded messages with
     /// the facts only it knows (armed, battery, clock) and sends back
     /// whatever reply comes out.
     class OtaUpdater
     {
       public:
-        /// A session with no packet for this long is dropped. Long enough to
+        /// A session with no message for this long is dropped. Long enough to
         /// ride out a retransmission round trip on a lossy WiFi link, short
         /// enough that a hub that walked away never leaves the board sitting
         /// in update mode.
@@ -45,7 +45,7 @@ namespace mark4
 
         /// Bytes of OtaImageHeader the updater ever reads: magic through git
         /// hash. Reading the prefix instead of the whole 512-byte header
-        /// keeps one packet worth of stack the largest thing here.
+        /// keeps one message worth of stack the largest thing here.
         static constexpr std::uint32_t HEADER_PREFIX_SIZE = 28U;
 
         static_assert(HEADER_PREFIX_SIZE == offsetof(OtaImageHeader, reserved),
@@ -73,40 +73,19 @@ namespace mark4
         {
         }
 
-        /// @brief Feeds one received packet. At most one reply comes back.
-        /// @param packet received bytes
-        /// @param size received byte count
+        /// @brief Feeds one received message. At most one reply comes back.
+        /// @param request decoded message
         /// @param in facts of the moment (armed, battery, clock)
-        /// @param[out] replyOut buffer the reply is serialized into
-        /// @param replyCapacity bytes available in replyOut
-        /// @param[out] consumedOut true when the packet was an OTA packet,
-        ///             whatever the outcome; false leaves it to the next
-        ///             consumer of the same stream
-        /// @return reply size written to replyOut, or 0 when there is none
-        std::size_t handle(const std::uint8_t *packet,
-                           std::size_t size,
-                           const Inputs &in,
-                           std::uint8_t *replyOut,
-                           std::size_t replyCapacity,
-                           bool &consumedOut)
+        /// @param[out] replyOut the reply, zeroed first; which_body stays 0
+        ///             when there is none
+        /// @return true when the message was an updater message, whatever the
+        ///         outcome; false leaves it to the next consumer of the stream
+        bool handle(const mark4_Envelope &request, const Inputs &in, mark4_Envelope &replyOut)
         {
-            consumedOut = false;
-            if (packet == nullptr || size < 2U || packet[0] != PROTOCOL_VERSION)
+            replyOut = mark4_Envelope_init_zero;
+            switch (request.which_body)
             {
-                return 0U;
-            }
-
-            // A packet shorter than its struct is not an OTA packet: it is
-            // left unconsumed rather than answered, so a truncated frame
-            // never looks like a refusal to the sender.
-            switch (static_cast<PacketType>(packet[1]))
-            {
-                case PacketType::OTA_STATUS_REQUEST:
-                    if (size < OTA_STATUS_REQUEST_PACKET_SIZE)
-                    {
-                        return 0U;
-                    }
-                    consumedOut = true;
+                case mark4_Envelope_ota_status_request_tag:
                     // A trial image confirms itself on its first ground
                     // contact: serving this request proves boot, loop and
                     // radio reception, the checkpoint that matters for the
@@ -115,58 +94,25 @@ namespace mark4
                     {
                         selfConfirmTrial();
                     }
-                    return sendStatus(replyOut, replyCapacity);
-
-                case PacketType::OTA_BEGIN:
-                    if (size < OTA_BEGIN_PACKET_SIZE)
-                    {
-                        return 0U;
-                    }
-                    consumedOut = true;
-                    return handleBegin(packet, in, replyOut, replyCapacity);
-
-                case PacketType::OTA_CHUNK:
-                    if (size < OTA_CHUNK_PACKET_SIZE)
-                    {
-                        return 0U;
-                    }
-                    consumedOut = true;
-                    return handleChunk(packet, in, replyOut, replyCapacity);
-
-                case PacketType::OTA_FINISH:
-                    if (size < OTA_FINISH_PACKET_SIZE)
-                    {
-                        return 0U;
-                    }
-                    consumedOut = true;
-                    return handleFinish(packet, in, replyOut, replyCapacity);
-
-                case PacketType::OTA_CONFIRM:
-                    if (size < OTA_CONFIRM_PACKET_SIZE)
-                    {
-                        return 0U;
-                    }
-                    consumedOut = true;
-                    return handleConfirm(replyOut, replyCapacity);
-
-                case PacketType::OTA_REVERT:
-                    if (size < OTA_REVERT_PACKET_SIZE)
-                    {
-                        return 0U;
-                    }
-                    consumedOut = true;
-                    return handleRevert(replyOut, replyCapacity);
-
-                case PacketType::OTA_ABORT:
-                    if (size < OTA_ABORT_PACKET_SIZE)
-                    {
-                        return 0U;
-                    }
-                    consumedOut = true;
-                    return handleAbort(packet, replyOut, replyCapacity);
-
+                    sendStatus(replyOut);
+                    return true;
+                case mark4_Envelope_ota_begin_tag:
+                    handleBegin(request.body.ota_begin, in, replyOut);
+                    return true;
+                case mark4_Envelope_ota_chunk_tag:
+                    handleChunk(request.body.ota_chunk, in, replyOut);
+                    return true;
+                case mark4_Envelope_ota_finish_tag:
+                    handleFinish(request.body.ota_finish, in, replyOut);
+                    return true;
+                case mark4_Envelope_ota_revert_tag:
+                    handleRevert(replyOut);
+                    return true;
+                case mark4_Envelope_ota_abort_tag:
+                    handleAbort(request.body.ota_abort, replyOut);
+                    return true;
                 default:
-                    return 0U;
+                    return false;
             }
         }
 
@@ -224,66 +170,34 @@ namespace mark4
             return (runningSlot() == OTA_SLOT_A) ? OTA_SLOT_B : OTA_SLOT_A;
         }
 
-        /// @brief Serializes one wire struct into the reply buffer.
-        /// @tparam Packet wire struct type
-        /// @param packet packet to send
-        /// @param[out] replyOut destination buffer
-        /// @param replyCapacity bytes available in replyOut
-        /// @return bytes written, 0 when the buffer cannot hold the packet
-        template <typename Packet>
-        static std::size_t Emit(const Packet &packet,
-                                std::uint8_t *replyOut,
-                                std::size_t replyCapacity)
-        {
-            if (replyOut == nullptr || replyCapacity < sizeof(Packet))
-            {
-                return 0U;
-            }
-            std::memcpy(replyOut, &packet, sizeof(Packet));
-            return sizeof(Packet);
-        }
-
-        /// @brief Answers one request with the single ack packet of the
-        ///        updater.
-        /// @param ackedType request being answered
+        /// @brief Fills the single ack message of the updater.
+        /// @param op request being answered
         /// @param session session nonce, 0 when none applies
-        /// @param result OTA_RESULT_*
-        /// @param[out] replyOut destination buffer
-        /// @param replyCapacity bytes available in replyOut
-        /// @return reply size in bytes
-        static std::size_t Ack(PacketType ackedType,
-                               std::uint32_t session,
-                               std::uint8_t result,
-                               std::uint8_t *replyOut,
-                               std::size_t replyCapacity)
+        /// @param result outcome
+        /// @param[out] replyOut message to fill
+        static void Ack(mark4_OtaOp op,
+                        std::uint32_t session,
+                        mark4_OtaResult result,
+                        mark4_Envelope &replyOut)
         {
-            OtaAckPacket packet{};
-            packet.version = PROTOCOL_VERSION;
-            packet.type = static_cast<std::uint8_t>(PacketType::OTA_ACK);
-            packet.session = session;
-            packet.ackedType = static_cast<std::uint8_t>(ackedType);
-            packet.result = result;
-            return Emit(packet, replyOut, replyCapacity);
+            replyOut.which_body = mark4_Envelope_ota_ack_tag;
+            replyOut.body.ota_ack.session = session;
+            replyOut.body.ota_ack.op = op;
+            replyOut.body.ota_ack.result = result;
         }
 
-        /// @brief Answers with the cumulative chunk acknowledgement, which
-        ///        doubles as the go-back-N resume point.
+        /// @brief Fills the cumulative chunk acknowledgement, which doubles
+        ///        as the go-back-N resume point.
         /// @param session session nonce
         /// @param nextOffset first image byte still missing
-        /// @param[out] replyOut destination buffer
-        /// @param replyCapacity bytes available in replyOut
-        /// @return reply size in bytes
-        static std::size_t ChunkAck(std::uint32_t session,
-                                    std::uint32_t nextOffset,
-                                    std::uint8_t *replyOut,
-                                    std::size_t replyCapacity)
+        /// @param[out] replyOut message to fill
+        static void ChunkAck(std::uint32_t session,
+                             std::uint32_t nextOffset,
+                             mark4_Envelope &replyOut)
         {
-            OtaChunkAckPacket packet{};
-            packet.version = PROTOCOL_VERSION;
-            packet.type = static_cast<std::uint8_t>(PacketType::OTA_CHUNK_ACK);
-            packet.session = session;
-            packet.nextOffset = nextOffset;
-            return Emit(packet, replyOut, replyCapacity);
+            replyOut.which_body = mark4_Envelope_ota_chunk_ack_tag;
+            replyOut.body.ota_chunk_ack.session = session;
+            replyOut.body.ota_chunk_ack.next_offset = nextOffset;
         }
 
         /// @brief Reads the image header prefix of a slot.
@@ -304,19 +218,16 @@ namespace mark4
 
         /// @brief Answers a status request; legal at any time, session or
         ///        not, and never refused.
-        /// @param[out] replyOut destination buffer
-        /// @param replyCapacity bytes available in replyOut
-        /// @return reply size in bytes
-        std::size_t sendStatus(std::uint8_t *replyOut, std::size_t replyCapacity) const
+        /// @param[out] replyOut message to fill
+        void sendStatus(mark4_Envelope &replyOut) const
         {
-            OtaStatusPacket packet{};
-            packet.version = PROTOCOL_VERSION;
-            packet.type = static_cast<std::uint8_t>(PacketType::OTA_STATUS);
-            packet.mcuId = m_store.mcuId();
-            packet.runningSlot = runningSlot();
-            packet.updaterBusy = m_sessionActive ? 1U : 0U;
-            packet.slotSize = m_store.slotSize();
-            packet.maxChunkData = static_cast<std::uint16_t>(OTA_CHUNK_DATA_SIZE);
+            replyOut.which_body = mark4_Envelope_ota_status_tag;
+            mark4_OtaStatus &status = replyOut.body.ota_status;
+            status.mcu = static_cast<mark4_Mcu>(m_store.mcuId());
+            status.running_slot = runningSlot();
+            status.updater_busy = m_sessionActive;
+            status.slot_size = m_store.slotSize();
+            status.max_chunk_data = static_cast<std::uint32_t>(OTA_CHUNK_DATA_SIZE);
 
             // The slot states come from the metadata and are reported raw,
             // running slot included: a TESTING running slot is exactly how
@@ -327,12 +238,12 @@ namespace mark4
             // The active slot differs from the running one during a trial
             // boot and after a revert; an unreadable store falls back to
             // the one fact that needs no metadata.
-            packet.activeSlot = metaRead ? meta.activeSlot : packet.runningSlot;
+            status.active_slot = metaRead ? meta.activeSlot : status.running_slot;
 
             for (std::uint8_t slot = 0U; slot < OTA_SLOT_COUNT; ++slot)
             {
-                OtaSlotStatus &out = packet.slot[slot];
-                out.state = metaRead ? meta.slotState[slot] : OTA_SLOT_EMPTY;
+                mark4_OtaSlotStatus &out = status.slots[slot];
+                out.state = otaSlotStateToWire(metaRead ? meta.slotState[slot] : OTA_SLOT_EMPTY);
                 // The identity is reported raw out of each slot's image
                 // header, stamped or not (an unstamped image says
                 // OTA_IMAGE_UNSTAMPED); a slot with no header at all (or
@@ -340,36 +251,29 @@ namespace mark4
                 OtaImageHeader header{};
                 if (readImageHeader(slot, header) && header.magic == OTA_IMAGE_MAGIC)
                 {
-                    out.buildEpoch = header.buildEpoch;
-                    std::memcpy(&out.gitHash, header.gitHash.data(), OTA_GIT_HASH_SIZE);
+                    out.build_epoch = header.buildEpoch;
+                    std::array<char, OTA_GIT_HASH_SIZE> hash{};
+                    std::memcpy(hash.data(), &header.gitHash, OTA_GIT_HASH_SIZE);
+                    otaGitHashToWire(hash, out.git_hash);
                 }
             }
-            return Emit(packet, replyOut, replyCapacity);
         }
 
         /// @brief Opens a session into the target slot, erasing it first.
-        /// @param packet received bytes, at least OTA_BEGIN_PACKET_SIZE
+        /// @param request decoded begin
         /// @param in facts of the moment
-        /// @param[out] replyOut destination buffer
-        /// @param replyCapacity bytes available in replyOut
-        /// @return reply size in bytes
-        std::size_t handleBegin(const std::uint8_t *packet,
-                                const Inputs &in,
-                                std::uint8_t *replyOut,
-                                std::size_t replyCapacity)
+        /// @param[out] replyOut message to fill
+        void handleBegin(const mark4_OtaBegin &request, const Inputs &in, mark4_Envelope &replyOut)
         {
-            OtaBeginPacket request{};
-            std::memcpy(&request, packet, sizeof(request));
-
             if (in.armed)
             {
-                return Ack(
-                    PacketType::OTA_BEGIN, 0U, OTA_RESULT_DENIED_ARMED, replyOut, replyCapacity);
+                Ack(mark4_OtaOp_BEGIN, 0U, mark4_OtaResult_DENIED_ARMED, replyOut);
+                return;
             }
             if (!in.voltageOk)
             {
-                return Ack(
-                    PacketType::OTA_BEGIN, 0U, OTA_RESULT_DENIED_VOLTAGE, replyOut, replyCapacity);
+                Ack(mark4_OtaOp_BEGIN, 0U, mark4_OtaResult_DENIED_VOLTAGE, replyOut);
+                return;
             }
             // A retry of the same begin restarts the same session from
             // scratch: the sender that lost the first ack must be able to
@@ -377,13 +281,14 @@ namespace mark4
             // stepping on itself and is refused.
             if (m_sessionActive && request.session != m_session)
             {
-                return Ack(
-                    PacketType::OTA_BEGIN, 0U, OTA_RESULT_DENIED_BUSY, replyOut, replyCapacity);
+                Ack(mark4_OtaOp_BEGIN, 0U, mark4_OtaResult_DENIED_BUSY, replyOut);
+                return;
             }
-            if (request.imageSize < OTA_IMAGE_HEADER_SIZE || request.imageSize > m_store.slotSize())
+            if (request.image_size < OTA_IMAGE_HEADER_SIZE ||
+                request.image_size > m_store.slotSize())
             {
-                return Ack(
-                    PacketType::OTA_BEGIN, 0U, OTA_RESULT_BAD_IMAGE, replyOut, replyCapacity);
+                Ack(mark4_OtaOp_BEGIN, 0U, mark4_OtaResult_BAD_IMAGE, replyOut);
+                return;
             }
 
             // Anything below can fail halfway: the session is dropped first
@@ -399,52 +304,45 @@ namespace mark4
             OtaMetaState meta;
             if (!m_store.readMeta(meta))
             {
-                return Ack(
-                    PacketType::OTA_BEGIN, 0U, OTA_RESULT_STORE_FAILURE, replyOut, replyCapacity);
+                Ack(mark4_OtaOp_BEGIN, 0U, mark4_OtaResult_STORE_FAILURE, replyOut);
+                return;
             }
             meta.slotState[target] = OTA_SLOT_EMPTY;
             if (!m_store.writeMeta(meta) || !m_store.eraseSlot(target))
             {
-                return Ack(
-                    PacketType::OTA_BEGIN, 0U, OTA_RESULT_STORE_FAILURE, replyOut, replyCapacity);
+                Ack(mark4_OtaOp_BEGIN, 0U, mark4_OtaResult_STORE_FAILURE, replyOut);
+                return;
             }
 
             m_sessionActive = true;
             m_sessionFresh = true;
             m_session = request.session;
             m_targetSlot = target;
-            m_imageSize = request.imageSize;
-            m_imageCrc = request.imageCrc;
+            m_imageSize = request.image_size;
+            m_imageCrc = request.image_crc;
             m_nextOffset = 0U;
             m_chunksSinceAck = 0U;
             m_lastPacketUs = in.nowUs;
-            return Ack(PacketType::OTA_BEGIN, m_session, OTA_RESULT_OK, replyOut, replyCapacity);
+            Ack(mark4_OtaOp_BEGIN, m_session, mark4_OtaResult_OTA_OK, replyOut);
         }
 
         /// @brief Programs one in-order chunk, or repeats what is expected.
-        /// @param packet received bytes, at least OTA_CHUNK_PACKET_SIZE
+        /// @param request decoded chunk
         /// @param in facts of the moment
-        /// @param[out] replyOut destination buffer
-        /// @param replyCapacity bytes available in replyOut
-        /// @return reply size in bytes, 0 when the chunk is simply absorbed
-        std::size_t handleChunk(const std::uint8_t *packet,
-                                const Inputs &in,
-                                std::uint8_t *replyOut,
-                                std::size_t replyCapacity)
+        /// @param[out] replyOut message to fill, left empty when the chunk
+        ///             is simply absorbed
+        void handleChunk(const mark4_OtaChunk &request, const Inputs &in, mark4_Envelope &replyOut)
         {
-            OtaChunkPacket request{};
-            std::memcpy(&request, packet, sizeof(request));
-
             // A chunk of an abandoned session is dropped in silence: the
             // sender has no session to be told about, and answering would
             // let stale traffic drive the current one.
             if (!m_sessionActive || request.session != m_session)
             {
-                return 0U;
+                return;
             }
             m_lastPacketUs = in.nowUs;
 
-            const std::uint32_t length = request.length;
+            const std::uint32_t length = request.data.size;
             const bool sane = length > 0U && length <= OTA_CHUNK_DATA_SIZE &&
                               request.offset <= m_imageSize &&
                               (m_imageSize - request.offset) >= length;
@@ -452,18 +350,16 @@ namespace mark4
             {
                 // Duplicate, out of order or out of bounds: repeating the
                 // expected offset is the whole retransmission protocol.
-                return ChunkAck(m_session, m_nextOffset, replyOut, replyCapacity);
+                ChunkAck(m_session, m_nextOffset, replyOut);
+                return;
             }
 
-            if (!m_store.program(m_targetSlot, request.offset, request.data.data(), length))
+            if (!m_store.program(m_targetSlot, request.offset, request.data.bytes, length))
             {
                 const std::uint32_t session = m_session;
                 closeSession();
-                return Ack(PacketType::OTA_CHUNK,
-                           session,
-                           OTA_RESULT_STORE_FAILURE,
-                           replyOut,
-                           replyCapacity);
+                Ack(mark4_OtaOp_CHUNK, session, mark4_OtaResult_STORE_FAILURE, replyOut);
+                return;
             }
             m_nextOffset += length;
             ++m_chunksSinceAck;
@@ -473,32 +369,22 @@ namespace mark4
             if (m_nextOffset >= m_imageSize || m_chunksSinceAck >= OTA_CHUNK_ACK_WINDOW)
             {
                 m_chunksSinceAck = 0U;
-                return ChunkAck(m_session, m_nextOffset, replyOut, replyCapacity);
+                ChunkAck(m_session, m_nextOffset, replyOut);
             }
-            return 0U;
         }
 
         /// @brief Verifies the transferred image and stages it.
-        /// @param packet received bytes, at least OTA_FINISH_PACKET_SIZE
+        /// @param request decoded finish
         /// @param in facts of the moment
-        /// @param[out] replyOut destination buffer
-        /// @param replyCapacity bytes available in replyOut
-        /// @return reply size in bytes
-        std::size_t handleFinish(const std::uint8_t *packet,
-                                 const Inputs &in,
-                                 std::uint8_t *replyOut,
-                                 std::size_t replyCapacity)
+        /// @param[out] replyOut message to fill
+        void handleFinish(const mark4_OtaFinish &request,
+                          const Inputs &in,
+                          mark4_Envelope &replyOut)
         {
-            OtaFinishPacket request{};
-            std::memcpy(&request, packet, sizeof(request));
-
             if (!m_sessionActive || request.session != m_session)
             {
-                return Ack(PacketType::OTA_FINISH,
-                           request.session,
-                           OTA_RESULT_BAD_SESSION,
-                           replyOut,
-                           replyCapacity);
+                Ack(mark4_OtaOp_FINISH, request.session, mark4_OtaResult_BAD_SESSION, replyOut);
+                return;
             }
             m_lastPacketUs = in.nowUs;
 
@@ -507,7 +393,8 @@ namespace mark4
             // of restarting the transfer.
             if (m_nextOffset < m_imageSize)
             {
-                return ChunkAck(m_session, m_nextOffset, replyOut, replyCapacity);
+                ChunkAck(m_session, m_nextOffset, replyOut);
+                return;
             }
 
             const std::uint32_t session = m_session;
@@ -516,11 +403,8 @@ namespace mark4
                 // The slot keeps whatever it holds and stays untrusted: no
                 // metadata record means the bootloader ignores it.
                 closeSession();
-                return Ack(PacketType::OTA_FINISH,
-                           session,
-                           OTA_RESULT_CRC_MISMATCH,
-                           replyOut,
-                           replyCapacity);
+                Ack(mark4_OtaOp_FINISH, session, mark4_OtaResult_CRC_MISMATCH, replyOut);
+                return;
             }
 
             OtaImageHeader header{};
@@ -530,8 +414,8 @@ namespace mark4
                 header.imageSize != m_imageSize)
             {
                 closeSession();
-                return Ack(
-                    PacketType::OTA_FINISH, session, OTA_RESULT_BAD_IMAGE, replyOut, replyCapacity);
+                Ack(mark4_OtaOp_FINISH, session, mark4_OtaResult_BAD_IMAGE, replyOut);
+                return;
             }
 
             // Staging is one record: the target becomes STAGED, the active
@@ -540,11 +424,8 @@ namespace mark4
             OtaMetaState meta;
             if (!m_store.readMeta(meta))
             {
-                return Ack(PacketType::OTA_FINISH,
-                           session,
-                           OTA_RESULT_STORE_FAILURE,
-                           replyOut,
-                           replyCapacity);
+                Ack(mark4_OtaOp_FINISH, session, mark4_OtaResult_STORE_FAILURE, replyOut);
+                return;
             }
             meta.slotState[m_targetSlot] = OTA_SLOT_STAGED;
             meta.trialAttempted = false;
@@ -552,21 +433,14 @@ namespace mark4
             {
                 // The session stays open on purpose: every byte is in flash
                 // and verified, so a retried finish can still stage it.
-                return Ack(PacketType::OTA_FINISH,
-                           session,
-                           OTA_RESULT_STORE_FAILURE,
-                           replyOut,
-                           replyCapacity);
+                Ack(mark4_OtaOp_FINISH, session, mark4_OtaResult_STORE_FAILURE, replyOut);
+                return;
             }
 
             closeSession();
-            return Ack(PacketType::OTA_FINISH, session, OTA_RESULT_OK, replyOut, replyCapacity);
+            Ack(mark4_OtaOp_FINISH, session, mark4_OtaResult_OTA_OK, replyOut);
         }
 
-        /// @brief Confirms the running trial image, sessionless.
-        /// @param[out] replyOut destination buffer
-        /// @param replyCapacity bytes available in replyOut
-        /// @return reply size in bytes
         /// @brief Marks a running trial VALID, the firmware vouching for
         ///        itself. A failed meta read or write changes nothing: the
         ///        trial stays pending and the next request tries again.
@@ -583,43 +457,15 @@ namespace mark4
             static_cast<void>(m_store.writeMeta(meta));
         }
 
-        std::size_t handleConfirm(std::uint8_t *replyOut, std::size_t replyCapacity) const
-        {
-            OtaMetaState meta;
-            if (!m_store.readMeta(meta))
-            {
-                return Ack(
-                    PacketType::OTA_CONFIRM, 0U, OTA_RESULT_STORE_FAILURE, replyOut, replyCapacity);
-            }
-            // Only a trial can be confirmed: confirming anything else would
-            // be the ground side claiming something it never observed.
-            if (meta.slotState[runningSlot()] != OTA_SLOT_TESTING)
-            {
-                return Ack(
-                    PacketType::OTA_CONFIRM, 0U, OTA_RESULT_BAD_STATE, replyOut, replyCapacity);
-            }
-            meta.slotState[runningSlot()] = OTA_SLOT_VALID;
-            meta.activeSlot = runningSlot();
-            meta.trialAttempted = false;
-            if (!m_store.writeMeta(meta))
-            {
-                return Ack(
-                    PacketType::OTA_CONFIRM, 0U, OTA_RESULT_STORE_FAILURE, replyOut, replyCapacity);
-            }
-            return Ack(PacketType::OTA_CONFIRM, 0U, OTA_RESULT_OK, replyOut, replyCapacity);
-        }
-
         /// @brief Points the bootloader back at the other slot, sessionless.
-        /// @param[out] replyOut destination buffer
-        /// @param replyCapacity bytes available in replyOut
-        /// @return reply size in bytes
-        std::size_t handleRevert(std::uint8_t *replyOut, std::size_t replyCapacity) const
+        /// @param[out] replyOut message to fill
+        void handleRevert(mark4_Envelope &replyOut) const
         {
             OtaMetaState meta;
             if (!m_store.readMeta(meta))
             {
-                return Ack(
-                    PacketType::OTA_REVERT, 0U, OTA_RESULT_STORE_FAILURE, replyOut, replyCapacity);
+                Ack(mark4_OtaOp_REVERT, 0U, mark4_OtaResult_STORE_FAILURE, replyOut);
+                return;
             }
             // The rollback target is the slot that is not running, and
             // reverting onto anything but a VALID image would hand the
@@ -627,41 +473,31 @@ namespace mark4
             const std::uint8_t rollback = targetSlot();
             if (meta.slotState[rollback] != OTA_SLOT_VALID)
             {
-                return Ack(
-                    PacketType::OTA_REVERT, 0U, OTA_RESULT_BAD_STATE, replyOut, replyCapacity);
+                Ack(mark4_OtaOp_REVERT, 0U, mark4_OtaResult_BAD_STATE, replyOut);
+                return;
             }
             meta.activeSlot = rollback;
             if (!m_store.writeMeta(meta))
             {
-                return Ack(
-                    PacketType::OTA_REVERT, 0U, OTA_RESULT_STORE_FAILURE, replyOut, replyCapacity);
+                Ack(mark4_OtaOp_REVERT, 0U, mark4_OtaResult_STORE_FAILURE, replyOut);
+                return;
             }
-            return Ack(PacketType::OTA_REVERT, 0U, OTA_RESULT_OK, replyOut, replyCapacity);
+            Ack(mark4_OtaOp_REVERT, 0U, mark4_OtaResult_OTA_OK, replyOut);
         }
 
         /// @brief Drops the matching session; the slot is left as it is.
-        /// @param packet received bytes, at least OTA_ABORT_PACKET_SIZE
-        /// @param[out] replyOut destination buffer
-        /// @param replyCapacity bytes available in replyOut
-        /// @return reply size in bytes
-        std::size_t handleAbort(const std::uint8_t *packet,
-                                std::uint8_t *replyOut,
-                                std::size_t replyCapacity)
+        /// @param request decoded abort
+        /// @param[out] replyOut message to fill
+        void handleAbort(const mark4_OtaAbort &request, mark4_Envelope &replyOut)
         {
-            OtaAbortPacket request{};
-            std::memcpy(&request, packet, sizeof(request));
-
             if (!m_sessionActive || request.session != m_session)
             {
-                return Ack(PacketType::OTA_ABORT,
-                           request.session,
-                           OTA_RESULT_BAD_SESSION,
-                           replyOut,
-                           replyCapacity);
+                Ack(mark4_OtaOp_ABORT, request.session, mark4_OtaResult_BAD_SESSION, replyOut);
+                return;
             }
             const std::uint32_t session = m_session;
             closeSession();
-            return Ack(PacketType::OTA_ABORT, session, OTA_RESULT_OK, replyOut, replyCapacity);
+            Ack(mark4_OtaOp_ABORT, session, mark4_OtaResult_OTA_OK, replyOut);
         }
 
         /// @brief Forgets the session. The target slot is left exactly as it
@@ -686,6 +522,6 @@ namespace mark4
         std::uint32_t m_imageCrc = 0U;       ///< image CRC announced at begin
         std::uint32_t m_nextOffset = 0U;     ///< first image byte still missing
         std::uint32_t m_chunksSinceAck = 0U; ///< in-order chunks since the last ack
-        std::uint64_t m_lastPacketUs = 0U;   ///< arrival time of the last session packet [us]
+        std::uint64_t m_lastPacketUs = 0U;   ///< arrival time of the last session message [us]
     };
 } // namespace mark4

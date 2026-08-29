@@ -12,8 +12,8 @@
 
 #include "flight_core/types.hpp"
 #include "platform/telemetry_sender.hpp"
-#include "protocol/header.hpp"
-#include "protocol/sim_stats.hpp"
+#include "platform_common/envelope_io.hpp"
+#include "protocol/envelope.hpp"
 
 namespace mark4
 {
@@ -49,7 +49,7 @@ namespace mark4
         /// + gyro (12) + accel (12) + baro (4) + motors (16).
         static constexpr std::size_t HASHED_BYTES_PER_FRAME = 52U;
 
-        /// Frames between two stats packets when nothing changed: a consumer
+        /// Frames between two stats messages when nothing changed: a consumer
         /// that joined late still learns where the run stands, without the
         /// stream becoming a second telemetry.
         static constexpr std::uint32_t PUBLISH_PERIOD_FRAMES = 50U;
@@ -58,10 +58,8 @@ namespace mark4
                       "the hash is defined over little-endian bytes");
 
         /// @param sender output the run stats are broadcast on
-        /// @param source stream identity stamped on every packet
-        SimRunTracker(AbsTelemetrySender &sender, StreamSource source)
-            : m_sender(sender),
-              m_source(source)
+        explicit SimRunTracker(AbsTelemetrySender &sender)
+            : m_sender(sender)
         {
         }
 
@@ -69,7 +67,7 @@ namespace mark4
         /// @param runId reset counter of the run being measured
         /// @param startUs simulated time of the first frame of the run [us]
         /// @param hashWindowUs simulated time to hash, 0 for the default
-        void beginRun(std::uint8_t runId, std::uint64_t startUs, std::uint32_t hashWindowUs)
+        void beginRun(std::uint32_t runId, std::uint64_t startUs, std::uint32_t hashWindowUs)
         {
             m_runId = runId;
             m_runStartUs = startUs;
@@ -146,38 +144,33 @@ namespace mark4
         void publish()
         {
             ++m_framesSincePublish;
-            const std::uint8_t flags = currentFlags();
-            const bool changed =
-                !m_everPublished || flags != m_publishedFlags || m_runId != m_publishedRunId;
+            const bool changed = !m_everPublished || m_sealed != m_publishedSealed ||
+                                 m_degraded != m_publishedDegraded || m_runId != m_publishedRunId;
             if (!changed && m_framesSincePublish < PUBLISH_PERIOD_FRAMES)
             {
                 return;
             }
             m_framesSincePublish = 0U;
-            m_publishedFlags = flags;
+            m_publishedSealed = m_sealed;
+            m_publishedDegraded = m_degraded;
             m_publishedRunId = m_runId;
             m_everPublished = true;
 
-            SimRunStatsPacket packet{};
-            packet.version = PROTOCOL_VERSION;
-            packet.type = static_cast<std::uint8_t>(PacketType::SIM_RUN_STATS);
-            packet.sourceId = static_cast<std::uint8_t>(m_source);
-            packet.sequence = m_sequence;
-            packet.runId = m_runId;
-            packet.flags = flags;
-            packet.runStartUs = m_runStartUs;
-            packet.runHash = m_hash;
-            packet.duplicateFrames = m_duplicateFrames;
-            packet.lockstepTimeouts = m_lockstepTimeouts;
-            ++m_sequence;
-
-            std::array<std::uint8_t, SIM_RUN_STATS_PACKET_SIZE> bytes{};
-            std::memcpy(bytes.data(), &packet, sizeof(packet));
-            m_sender.send(bytes.data(), bytes.size());
+            mark4_Envelope envelope = mark4_Envelope_init_zero;
+            envelope.which_body = mark4_Envelope_sim_run_stats_tag;
+            mark4_SimRunStats &stats = envelope.body.sim_run_stats;
+            stats.run_id = m_runId;
+            stats.final = m_sealed;
+            stats.degraded = m_degraded;
+            stats.run_start_us = m_runStartUs;
+            stats.run_hash = m_hash;
+            stats.duplicate_frames = m_duplicateFrames;
+            stats.lockstep_timeouts = m_lockstepTimeouts;
+            static_cast<void>(sendEnvelope(m_sender, envelope));
         }
 
         /// @return reset counter of the run being measured
-        [[nodiscard]] std::uint8_t runId() const
+        [[nodiscard]] std::uint32_t runId() const
         {
             return m_runId;
         }
@@ -225,38 +218,22 @@ namespace mark4
         }
 
       private:
-        /// @return the SIM_RUN_FLAG_* bits describing the run right now
-        [[nodiscard]] std::uint8_t currentFlags() const
-        {
-            std::uint8_t flags = 0U;
-            if (m_degraded)
-            {
-                flags |= SIM_RUN_FLAG_LOCKSTEP_DEGRADED;
-            }
-            if (m_sealed)
-            {
-                flags |= SIM_RUN_FLAG_HASH_SEALED;
-            }
-            return flags;
-        }
-
         AbsTelemetrySender &m_sender;                          ///< output link, not owned
-        StreamSource m_source;                                 ///< identity stamped on the stream
         std::uint64_t m_hash = FNV_OFFSET_BASIS;               ///< running trajectory hash
         std::uint64_t m_runStartUs = 0U;                       ///< simulated start of the run [us]
         std::uint32_t m_hashWindowUs = DEFAULT_HASH_WINDOW_US; ///< hashed window [us]
         std::uint32_t m_hashedFrames = 0U;                     ///< frames folded in
         std::uint32_t m_lockstepTimeouts = 0U;                 ///< last plant timeout count
         std::uint32_t m_duplicateFrames = 0U;                  ///< last resend count
-        std::uint32_t m_framesSincePublish = 0U;               ///< frames since the last packet
-        std::uint16_t m_sequence = 0U;                         ///< wire sequence of the next packet
-        std::uint8_t m_runId = 0U;                             ///< reset counter of the run
-        std::uint8_t m_publishedRunId = 0U;                    ///< run id of the last packet
-        std::uint8_t m_publishedFlags = 0U;                    ///< flags of the last packet
-        bool m_everPublished = false;                          ///< a packet has gone out
-        bool m_running = false;                                ///< a run is open
-        bool m_sealed = false;                                 ///< the window elapsed
-        bool m_degraded = false;                               ///< the link lost a tick
-        bool m_linkSeen = false;                               ///< a link report was taken
+        std::uint32_t m_framesSincePublish = 0U;               ///< frames since the last message
+        std::uint32_t m_runId = 0U;                            ///< reset counter of the run
+        std::uint32_t m_publishedRunId = 0U;                   ///< run id of the last message
+        bool m_publishedSealed = false;                        ///< seal flag of the last message
+        bool m_publishedDegraded = false; ///< degraded flag of the last message
+        bool m_everPublished = false;     ///< a message has gone out
+        bool m_running = false;           ///< a run is open
+        bool m_sealed = false;            ///< the window elapsed
+        bool m_degraded = false;          ///< the link lost a tick
+        bool m_linkSeen = false;          ///< a link report was taken
     };
 } // namespace mark4

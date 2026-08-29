@@ -7,33 +7,15 @@
 #include <cstring>
 
 #include "flight_core/throw_detector.hpp"
+#include "platform_common/envelope_io.hpp"
 #include "platform_common/ota_boot_policy.hpp"
-#include "protocol/announce.hpp"
-#include "protocol/commands.hpp"
-#include "protocol/header.hpp"
-#include "protocol/ota.hpp"
+#include "protocol/envelope.hpp"
+#include "protocol/ota_image.hpp"
 
 namespace
 {
     constexpr double US_PER_S = 1e6;
     constexpr long NS_PER_US = 1000L;
-
-    /// Larger than any command packet, so an oversized datagram comes out
-    /// with its real size instead of being truncated into a valid one - and
-    /// large enough that a whole scenario packet comes out intact. The OTA
-    /// chunk is by far the largest packet on this link, so it sets the size.
-    constexpr std::size_t RC_BUFFER_SIZE = 256U;
-    static_assert(RC_BUFFER_SIZE > mark4::OTA_CHUNK_PACKET_SIZE,
-                  "a chunk must come out of the uplink whole");
-
-    /// Room for the largest answer the updater emits, which is the status
-    /// packet; the chunk acknowledgement and the single ack packet are both
-    /// shorter.
-    constexpr std::size_t OTA_REPLY_SIZE = mark4::OTA_STATUS_PACKET_SIZE;
-
-    static_assert(OTA_REPLY_SIZE >= mark4::OTA_CHUNK_ACK_PACKET_SIZE &&
-                      OTA_REPLY_SIZE >= mark4::OTA_ACK_PACKET_SIZE,
-                  "every updater answer must fit the reply buffer");
 
     /// Payload prefix of a fake image that boots but never reaches the
     /// checkpoint where a trial confirms itself (see bootFirmware).
@@ -115,19 +97,23 @@ namespace mark4
             return false;
         }
         // The announce is the beacon: the transport broadcasts it once per
-        // second and hands it to every node the moment it appears. The two
-        // port fields are meaningless now that everything travels through
-        // the transport: they stay at 0 until the packet is retired.
-        AnnouncePacket announce{};
-        announce.version = PROTOCOL_VERSION;
-        announce.type = static_cast<std::uint8_t>(PacketType::ANNOUNCE);
-        announce.kind = static_cast<std::uint8_t>(StreamSource::DRONE_SIM);
-        announce.sessionId = m_transport.nodeId();
-        announce.telemetryPort = 0U;
-        announce.commandPort = 0U;
-        std::array<std::uint8_t, ANNOUNCE_PACKET_SIZE> beacon{};
-        std::memcpy(beacon.data(), &announce, beacon.size());
-        m_transport.setBeacon(beacon.data(), beacon.size());
+        // second and hands it to every node the moment it appears.
+        mark4_Envelope announce = mark4_Envelope_init_zero;
+        announce.which_body = mark4_Envelope_announce_tag;
+        announce.body.announce.kind = mark4_NodeKind_DRONE_SIM;
+        static_cast<void>(std::snprintf(
+            announce.body.announce.name, sizeof(announce.body.announce.name), "drone_sim"));
+        announce.body.announce.mcu = mark4_Mcu_SIM;
+        announce.body.announce.wire_hash = WIRE_HASH;
+        std::array<std::uint8_t, Transport::MAX_BEACON_SIZE> beacon{};
+        std::size_t beaconSize = 0U;
+        if (!encodeEnvelope(announce, beacon.data(), beacon.size(), beaconSize))
+        {
+            static_cast<void>(
+                std::fprintf(stderr, "drone_sim: the announce does not fit a beacon\n"));
+            return false;
+        }
+        m_transport.setBeacon(beacon.data(), beaconSize);
         return bootFirmware();
     }
 
@@ -300,14 +286,7 @@ namespace mark4
                          otaTrialUnconfirmed(meta, m_firmwareStore->runningSlot());
     }
 
-    bool DroneSimApp::IsRebootCommand(const std::uint8_t *data, std::size_t size)
-    {
-        return size == mark4::REBOOT_COMMAND_PACKET_SIZE &&
-               mark4::hasHeader(data, size, mark4::PacketType::REBOOT_COMMAND) &&
-               data[2] == mark4::BOARD_REBOOT_MAGIC;
-    }
-
-    bool DroneSimApp::serveOta(const std::uint8_t *packet, std::size_t size, std::uint64_t nowUs)
+    bool DroneSimApp::serveOta(const mark4_Envelope &envelope, std::uint64_t nowUs)
     {
         if (!m_otaUpdater.has_value())
         {
@@ -322,21 +301,19 @@ namespace mark4
         inputs.voltageOk = true;
         inputs.nowUs = nowUs;
 
-        std::array<std::uint8_t, OTA_REPLY_SIZE> reply{};
-        bool consumed = false;
-        const std::size_t replySize =
-            m_otaUpdater->handle(packet, size, inputs, reply.data(), reply.size(), consumed);
-        if (replySize != 0U)
+        mark4_Envelope reply;
+        const bool consumed = m_otaUpdater->handle(envelope, inputs, reply);
+        if (reply.which_body != 0U)
         {
-            // Broadcast on the telemetry socket, the same route the tuning
-            // answers take: the ground side reads every board-to-hub packet
-            // off that one port.
-            m_telemetrySender.send(reply.data(), replySize);
+            // Broadcast on the telemetry route, the same one the tuning
+            // answers take: the ground side reads every board-to-hub message
+            // off that one stream.
+            static_cast<void>(sendEnvelope(m_telemetrySender, reply));
         }
         if (consumed)
         {
-            // A confirm or a staging record may just have moved the running
-            // slot's state, which is what the arming interlock reads.
+            // A staging record may just have moved the running slot's state,
+            // which is what the arming interlock reads.
             refreshArmInterlock();
         }
         return consumed;
@@ -350,7 +327,7 @@ namespace mark4
         // Nothing is pushed to the motor sink for as long as this loop runs,
         // so the plant gets no actuator frame and the motors are silent -
         // symmetrically with the firmware, which stops driving its ESCs.
-        std::array<std::uint8_t, RC_BUFFER_SIZE> command{};
+        std::array<std::uint8_t, MAX_PAYLOAD> command{};
         bool reboot = false;
         while (m_otaUpdater.has_value() && m_otaUpdater->sessionActive())
         {
@@ -365,7 +342,12 @@ namespace mark4
                 {
                     break;
                 }
-                if (!serveOta(command.data(), size, nowUs) && IsRebootCommand(command.data(), size))
+                mark4_Envelope envelope;
+                if (!decodeEnvelope(command.data(), size, envelope))
+                {
+                    continue;
+                }
+                if (!serveOta(envelope, nowUs) && envelope.which_body == mark4_Envelope_reboot_tag)
                 {
                     reboot = true;
                     break;
@@ -389,60 +371,58 @@ namespace mark4
 
     void DroneSimApp::drainCommands(std::uint64_t nowUs)
     {
-        // The tracker consumes the RC packets and hands back everything
-        // else; the updater gets first look at the rest, then a scenario goes
-        // on to the plant and the tuning service claims what it recognizes.
         pollTransport();
-        std::array<std::uint8_t, RC_BUFFER_SIZE> command{};
+        std::array<std::uint8_t, MAX_PAYLOAD> command{};
         bool reboot = false;
         for (;;)
         {
-            const std::size_t size = m_rcTracker.pump(command.data(), command.size(), nowUs);
+            const std::size_t size = m_commandReceiver.poll(command.data(), command.size());
             if (size == 0U)
             {
                 break;
             }
-            if (serveOta(command.data(), size, m_clock.nowUs()))
+            mark4_Envelope envelope;
+            if (!decodeEnvelope(command.data(), size, envelope))
             {
-                continue; // the updater claimed it, whatever it answered
+                continue;
             }
-            if (IsRebootCommand(command.data(), size))
+            // The updater gets first look, then each message goes to the one
+            // service that owns it; whatever nobody owns (a beacon of the
+            // ground side, a message this build does not know) is dropped.
+            if (serveOta(envelope, m_clock.nowUs()))
             {
-                // Handled after the drain, and the drain stops here: what
-                // arrived behind the reset is for the image that comes back,
-                // exactly as on a board, and answering it first would show
-                // the ground side a status the reset is about to erase.
-                reboot = true;
+                continue;
+            }
+            switch (envelope.which_body)
+            {
+                case mark4_Envelope_rc_tag:
+                    m_rcTracker.onRc(envelope.body.rc, nowUs);
+                    break;
+                case mark4_Envelope_reboot_tag:
+                    // Handled after the drain, and the drain stops here: what
+                    // arrived behind the reset is for the image that comes
+                    // back, exactly as on a board.
+                    reboot = true;
+                    break;
+                case mark4_Envelope_sim_scenario_tag:
+                    // The plant plays it; the hash window is addressed to this
+                    // process and applies to the run the reset is about to open.
+                    m_motorSink.sendScenario(envelope.body.sim_scenario);
+                    m_pendingHashWindowUs = envelope.body.sim_scenario.hash_window_us;
+                    break;
+                default:
+                    static_cast<void>(m_tuningService.handle(envelope));
+                    break;
+            }
+            if (reboot)
+            {
                 break;
             }
-            forwardScenario(command.data(), size);
-            static_cast<void>(m_tuningService.handle(command.data(), size));
         }
         if (reboot)
         {
             rebootFirmware();
         }
-    }
-
-    void DroneSimApp::forwardScenario(const std::uint8_t *data, std::size_t size)
-    {
-        if (size != mark4::SIM_SCENARIO_PACKET_SIZE ||
-            !mark4::hasHeader(data, size, mark4::PacketType::SIM_SCENARIO))
-        {
-            return;
-        }
-        /* The block is packed and sits at an odd offset: it is copied out as
-           bytes, never read through a reference to one of its fields. */
-        mark4::SimScenario scenario{};
-        std::memcpy(
-            &scenario, data + offsetof(mark4::SimScenarioPacket, scenario), sizeof(scenario));
-        m_motorSink.attachScenario(scenario);
-        // The window is addressed to this process, not to the plant: it is
-        // applied to the run the reset of this scenario is about to open.
-        std::memcpy(&m_pendingHashWindowUs,
-                    data + offsetof(mark4::SimScenarioPacket, scenario) +
-                        offsetof(mark4::SimScenario, hashWindowUs),
-                    sizeof(m_pendingHashWindowUs));
     }
 
     std::uint32_t DroneSimApp::run()
@@ -453,7 +433,8 @@ namespace mark4
         std::uint32_t steps = 0U;
         std::uint32_t announcedThrows = 0U;
         mark4::FlightPhase previousPhase = mark4::FlightPhase::IDLE;
-        std::uint8_t lastResetCount = 0U;
+        std::uint32_t lastResetCount = 0U;
+        std::uint32_t lastPlantRestarts = 0U;
         bool resetCountSeen = false;
         bool runSealed = false;
         // Starts true so the very first silent wait says "not ready" once
@@ -500,19 +481,18 @@ namespace mark4
             // (or should) track that, so the flight core restarts from
             // scratch, exactly like a power cycle on the bench. Tuned
             // parameters return to their defaults with it, like flash-less
-            // hardware.
-            const bool newSession = m_sensorSource.sessionId() != m_lastSessionId;
-            if (newSession && resetCountSeen)
+            // hardware. A plant that restarted (its clock went backwards) is
+            // the same event.
+            const bool newPlant = m_sensorSource.plantRestarts() != lastPlantRestarts;
+            if (newPlant)
             {
-                std::printf("drone_sim: simulator session %u -> %u: a new plant is driving\n",
-                            static_cast<unsigned>(m_lastSessionId),
-                            static_cast<unsigned>(m_sensorSource.sessionId()));
+                std::printf("drone_sim: a new plant is driving (simulated clock restarted)\n");
                 static_cast<void>(std::fflush(stdout));
             }
-            m_lastSessionId = m_sensorSource.sessionId();
+            lastPlantRestarts = m_sensorSource.plantRestarts();
 
             const bool worldReset =
-                resetCountSeen && (m_sensorSource.resetCount() != lastResetCount || newSession);
+                resetCountSeen && (m_sensorSource.resetCount() != lastResetCount || newPlant);
             if (worldReset)
             {
                 m_core = mark4::FlightCore{};
@@ -540,11 +520,11 @@ namespace mark4
             drainCommands(frame.timestampUs);
             if (m_otaUpdater.has_value() && m_otaUpdater->sessionActive())
             {
-                // An accepted OTA_BEGIN arrived in that drain: this frame is
+                // An accepted OtaBegin arrived in that drain: this frame is
                 // dropped on the floor and the parked loop takes over.
                 continue;
             }
-            // Grafted on every frame, not only when a packet arrived: the
+            // Grafted on every frame, not only when a message arrived: the
             // frame is reused across iterations, so skipping this would leave
             // the previous iteration's RC on it and hide the fail-safe.
             m_rcTracker.graft(frame);
@@ -561,7 +541,9 @@ namespace mark4
             ++steps;
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);
-            m_telemetryPublisher.publish(frame, actuators, m_core);
+            // The plant's exact state rides next to the estimate, so a ground
+            // tool compares the two sample by sample.
+            m_telemetryPublisher.publish(frame, actuators, m_core, &m_sensorSource.truth());
             // Paced answers to a list request: one description per frame, so
             // a table dump never bursts ahead of the telemetry it shares the
             // link with.

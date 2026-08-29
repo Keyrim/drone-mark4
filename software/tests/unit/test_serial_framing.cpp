@@ -84,7 +84,7 @@ TEST_CASE("serial framing rejects a corrupted checksum")
     REQUIRE(feedAll(parser, frame.data(), frame.size(), sizes) == 0U);
 }
 
-TEST_CASE("serial framing rejects a corrupted length byte")
+TEST_CASE("serial framing rejects a corrupted length")
 {
     // The CRC covers the length: a shorter announced length must not let
     // payload bytes pass as a valid smaller frame.
@@ -98,10 +98,29 @@ TEST_CASE("serial framing rejects a corrupted length byte")
     REQUIRE(feedAll(parser, frame.data(), frame.size(), sizes) == 0U);
 }
 
+TEST_CASE("serial framing carries a payload wider than one length byte")
+{
+    std::array<std::uint8_t, 300> payload{};
+    for (std::size_t index = 0U; index < payload.size(); ++index)
+    {
+        payload[index] = static_cast<std::uint8_t>(index);
+    }
+    std::array<std::uint8_t, payload.size() + mark4::SERIAL_FRAME_OVERHEAD> frame{};
+    REQUIRE(mark4::encodeSerialFrame(payload.data(), payload.size(), frame.data()) == frame.size());
+    REQUIRE(frame[2] == 300U % 256U);
+    REQUIRE(frame[3] == 300U / 256U);
+
+    mark4::SerialFrameParser parser;
+    std::array<std::size_t, 8> sizes{};
+    REQUIRE(feedAll(parser, frame.data(), frame.size(), sizes) == 1U);
+    REQUIRE(sizes[0] == payload.size());
+    REQUIRE(std::memcmp(parser.payload(), payload.data(), payload.size()) == 0);
+}
+
 TEST_CASE("serial framing refuses empty and oversized payloads")
 {
-    std::array<std::uint8_t, 300> big{};
-    std::array<std::uint8_t, 320> out{};
+    std::array<std::uint8_t, mark4::SERIAL_MAX_PAYLOAD + 1U> big{};
+    std::array<std::uint8_t, mark4::SERIAL_MAX_PAYLOAD + 32U> out{};
     REQUIRE(mark4::encodeSerialFrame(big.data(), 0U, out.data()) == 0U);
     REQUIRE(mark4::encodeSerialFrame(big.data(), big.size(), out.data()) == 0U);
 }

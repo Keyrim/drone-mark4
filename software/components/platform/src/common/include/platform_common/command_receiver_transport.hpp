@@ -12,10 +12,13 @@
 #include <cstring>
 
 #include "platform/command_receiver.hpp"
+#include "protocol/envelope.hpp"
 #include "transport/frame.hpp"
 
 namespace mark4
 {
+    static_assert(MAX_ENVELOPE_SIZE <= MAX_PAYLOAD, "every Envelope must fit one transport frame");
+
     class CommandReceiverTransport final : public AbsCommandReceiver
     {
       public:

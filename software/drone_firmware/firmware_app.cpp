@@ -1,15 +1,17 @@
 #include "firmware_app.hpp"
 
+#include <array>
 #include <cstdint>
+#include <cstring>
 
 #include "flight_core/types.hpp"
+#include "platform_common/envelope_io.hpp"
 #include "platform_common/ota_boot_policy.hpp"
 #include "platform_stm32/board.hpp"
 #include "platform_stm32/rtt.hpp"
 #include "platform_stm32/uart1.hpp"
-#include "protocol/commands.hpp"
-#include "protocol/header.hpp"
-#include "protocol/ota.hpp"
+#include "protocol/envelope.hpp"
+#include "protocol/ota_image.hpp"
 #include "status_leds.hpp"
 #include "transport/serial_framing.hpp"
 
@@ -34,18 +36,9 @@ namespace
     /// Scale from a unit quantity to its milli multiple.
     constexpr float MILLI_PER_UNIT = 1000.0f;
 
-    /// Room for the largest answer the updater emits, which is the status
-    /// packet; the chunk acknowledgement and the single ack packet are both
-    /// shorter.
-    constexpr std::size_t OTA_REPLY_SIZE = mark4::OTA_STATUS_PACKET_SIZE;
-    static_assert(OTA_REPLY_SIZE >= mark4::OTA_CHUNK_ACK_PACKET_SIZE &&
-                      OTA_REPLY_SIZE >= mark4::OTA_ACK_PACKET_SIZE,
-                  "every updater answer must fit the reply buffer");
-
-    /// The whole chunk packet must fit one serial frame payload, which is
-    /// what the command receiver hands out at most.
-    static_assert(mark4::OTA_CHUNK_PACKET_SIZE <= mark4::SERIAL_MAX_PAYLOAD,
-                  "a chunk must survive the framing on the way in");
+    /// Every Envelope must survive the framing on the way in and out.
+    static_assert(mark4::MAX_ENVELOPE_SIZE <= mark4::SERIAL_MAX_PAYLOAD,
+                  "an Envelope must fit one serial frame");
 
     /// @brief Millis of a float for integer-only printf: "%d.%03d".
     /// @param value converted value
@@ -101,7 +94,7 @@ namespace mark4
             rttWrite("rc: uart init failed\n");
             return false;
         }
-        rttPrintf("loop: %lu Hz, timer paced; telemetry: %lu baud, 1 packet / %lu frames; "
+        rttPrintf("loop: %lu Hz, timer paced; telemetry: %lu baud, 1 message / %lu frames; "
                   "rc uplink armed with %lu ms fail-safe\n",
                   static_cast<unsigned long>(SensorSourceStm32::FRAME_RATE_HZ),
                   static_cast<unsigned long>(UART1_BAUD_RATE),
@@ -113,6 +106,7 @@ namespace mark4
                   m_firmwareStore.runningSlot() == OTA_SLOT_B ? 'B' : 'A',
                   static_cast<unsigned long>(m_firmwareStore.slotSize()),
                   m_armInhibited ? ", ON TRIAL: arming refused until confirmed" : "");
+        sendAnnounce();
         return true;
     }
 
@@ -126,14 +120,35 @@ namespace mark4
                          otaTrialUnconfirmed(meta, m_firmwareStore.runningSlot());
     }
 
-    bool FirmwareApp::IsRebootCommand(const std::uint8_t *packet, std::size_t size)
+    void FirmwareApp::sendAnnounce()
     {
-        return size == REBOOT_COMMAND_PACKET_SIZE &&
-               hasHeader(packet, size, PacketType::REBOOT_COMMAND) &&
-               packet[2] == BOARD_REBOOT_MAGIC;
+        mark4_Envelope envelope = mark4_Envelope_init_zero;
+        envelope.which_body = mark4_Envelope_announce_tag;
+        mark4_Announce &announce = envelope.body.announce;
+        announce.kind = mark4_NodeKind_FIRMWARE;
+        std::strncpy(announce.name, "mark4-fc", sizeof(announce.name) - 1U);
+        announce.mcu = static_cast<mark4_Mcu>(m_firmwareStore.mcuId());
+        announce.wire_hash = WIRE_HASH;
+        // The identity is whatever the packaging script stamped into this
+        // slot's image header: unstamped (SWD-flashed) images carry erased
+        // bytes, reported as 0xFFFFFFFF and an empty hash.
+        std::array<std::uint8_t, OtaUpdater::HEADER_PREFIX_SIZE> bytes{};
+        if (m_firmwareStore.read(m_firmwareStore.runningSlot(), 0U, bytes.data(), bytes.size()))
+        {
+            OtaImageHeader header{};
+            std::memcpy(&header, bytes.data(), bytes.size());
+            if (header.magic == OTA_IMAGE_MAGIC)
+            {
+                announce.build_epoch = header.buildEpoch;
+                std::array<char, OTA_GIT_HASH_SIZE> hash{};
+                std::memcpy(hash.data(), &header.gitHash, OTA_GIT_HASH_SIZE);
+                otaGitHashToWire(hash, announce.git_hash);
+            }
+        }
+        static_cast<void>(sendEnvelope(m_telemetrySender, envelope));
     }
 
-    bool FirmwareApp::serveOta(const std::uint8_t *packet, std::size_t size, std::uint64_t nowUs)
+    bool FirmwareApp::serveOta(const mark4_Envelope &envelope, std::uint64_t nowUs)
     {
         OtaUpdater::Inputs inputs;
         inputs.armed = m_core.armed();
@@ -144,23 +159,57 @@ namespace mark4
         inputs.voltageOk = true;
         inputs.nowUs = nowUs;
 
-        std::uint8_t reply[OTA_REPLY_SIZE];
-        bool consumed = false;
-        const std::size_t replySize =
-            m_otaUpdater.handle(packet, size, inputs, reply, sizeof(reply), consumed);
-        if (replySize != 0U)
+        mark4_Envelope reply;
+        const bool consumed = m_otaUpdater.handle(envelope, inputs, reply);
+        if (reply.which_body != 0U)
         {
-            // The same UART telemetry and the tuning answers go out by: OTA
-            // is one more packet type on the one link this board has.
-            m_telemetrySender.send(reply, replySize);
+            // The same UART telemetry and the tuning answers go out by: the
+            // updater is one more message type on the one link this board has.
+            static_cast<void>(sendEnvelope(m_telemetrySender, reply));
         }
         if (consumed)
         {
-            // A confirm or a staging record may just have moved the running
-            // slot's state, which is what the arming interlock reads.
+            // A staging record may just have moved the running slot's state,
+            // which is what the arming interlock reads.
             refreshArmInterlock();
         }
         return consumed;
+    }
+
+    bool FirmwareApp::drainCommands(std::uint64_t nowUs)
+    {
+        std::uint8_t packet[SERIAL_MAX_PAYLOAD];
+        for (;;)
+        {
+            const std::size_t size = m_commandReceiver.poll(packet, sizeof(packet));
+            if (size == 0U)
+            {
+                return false;
+            }
+            mark4_Envelope envelope;
+            if (!decodeEnvelope(packet, size, envelope))
+            {
+                continue;
+            }
+            if (serveOta(envelope, nowUs))
+            {
+                continue; // the updater claimed it, whatever it answered
+            }
+            switch (envelope.which_body)
+            {
+                case mark4_Envelope_rc_tag:
+                    m_rcTracker.onRc(envelope.body.rc, nowUs);
+                    break;
+                case mark4_Envelope_reboot_tag:
+                    return true;
+                default:
+                    // Answered here, before the step, so a value written from
+                    // the bench is in effect for the whole of the next step
+                    // and never changes one halfway through.
+                    static_cast<void>(m_tuningService.handle(envelope));
+                    break;
+            }
+        }
     }
 
     void FirmwareApp::runUpdateMode()
@@ -173,22 +222,12 @@ namespace mark4
         // operation entirely. RC is deliberately ignored too - the fail-safe
         // is already the safe state, and it will have engaged by the time the
         // flight loop resumes.
-        std::uint8_t packet[SERIAL_MAX_PAYLOAD];
         while (m_otaUpdater.sessionActive())
         {
-            const std::uint64_t nowUs = m_clock.nowUs();
-            for (;;)
+            if (drainCommands(m_clock.nowUs()))
             {
-                const std::size_t size = m_commandReceiver.poll(packet, sizeof(packet));
-                if (size == 0U)
-                {
-                    break;
-                }
-                if (!serveOta(packet, size, nowUs) && IsRebootCommand(packet, size))
-                {
-                    rttWrite("ota: reboot command during a session, resetting\n");
-                    systemReset();
-                }
+                rttWrite("ota: reboot command during a session, resetting\n");
+                systemReset();
             }
             m_otaUpdater.tick(m_clock.nowUs());
             // TODO(tmagne): refresh the independent watchdog here, and before
@@ -218,35 +257,12 @@ namespace mark4
                 continue; // the timer-paced source only ever produces FRAME
             }
 
-            // The tracker consumes the RC packets and hands back everything
-            // else, which this composition answers itself.
-            std::uint8_t packet[SERIAL_MAX_PAYLOAD];
-            for (;;)
+            if (drainCommands(frame.timestampUs))
             {
-                const std::size_t size =
-                    m_rcTracker.pump(packet, sizeof(packet), frame.timestampUs);
-                if (size == 0U)
-                {
-                    break;
-                }
-                if (serveOta(packet, size, frame.timestampUs))
-                {
-                    continue; // the updater claimed it, whatever it answered
-                }
-                if (IsRebootCommand(packet, size))
-                {
-                    rttWrite("rc: reboot command, resetting\n");
-                    systemReset();
-                }
-                else
-                {
-                    // Answered here, before the step below, so a value
-                    // written from the bench is in effect for the whole of
-                    // the next step and never changes one halfway through.
-                    static_cast<void>(m_tuningService.handle(packet, size));
-                }
+                rttWrite("rc: reboot command, resetting\n");
+                systemReset();
             }
-            // An accepted OTA_BEGIN parks everything below until the session
+            // An accepted OtaBegin parks everything below until the session
             // ends: this frame is dropped on the floor, which is exactly what
             // suspending normal operation means.
             if (m_otaUpdater.sessionActive())
@@ -277,6 +293,9 @@ namespace mark4
             m_tuningService.pump();
             if ((frames % FRAMES_PER_STATUS) == 0U)
             {
+                // One per second: the hub lists this board with its identity
+                // and forgets it three missed announces later.
+                sendAnnounce();
                 // A health counter that moved during the last window keeps
                 // LED1 on the degraded pattern for the next one.
                 const std::uint32_t failureCount =

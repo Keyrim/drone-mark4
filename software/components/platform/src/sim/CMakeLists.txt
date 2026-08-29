@@ -8,9 +8,9 @@ add_library(platform_sim STATIC
     motor_sink_sim.cpp
     firmware_store_sim.cpp)
 target_include_directories(platform_sim PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-# protocol is PUBLIC: the run tracker is a header of this library and carries
-# the wire struct it broadcasts. platform_common is PRIVATE: the firmware
-# store uses the shared metadata log inside its own translation unit only.
+# protocol and platform_common are PUBLIC: the sensor source and the motor
+# sink expose wire structs, the run tracker is a header of this library and
+# sends through the shared envelope helper.
 target_link_libraries(platform_sim
-    PUBLIC platform protocol
-    PRIVATE platform_common drone_warnings drone_strict)
+    PUBLIC platform protocol platform_common
+    PRIVATE drone_warnings drone_strict)

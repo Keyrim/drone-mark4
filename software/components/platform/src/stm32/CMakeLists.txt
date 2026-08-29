@@ -17,9 +17,8 @@ add_library(platform_stm32 STATIC
     ota_meta_flash.cpp
     firmware_store_stm32.cpp)
 target_include_directories(platform_stm32 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-# protocol is public: command_receiver_stm32.hpp exposes the framing parser.
-# platform_common is public too: the firmware store is an OtaMetaLog over a
-# flash backend, and drone_boot reuses the same log.
+# protocol and platform_common are public: the firmware store is an
+# OtaMetaLog over a flash backend, and drone_boot reuses the same log.
 target_link_libraries(platform_stm32
     PUBLIC platform platform_common protocol
     PRIVATE drone_warnings drone_strict)
@@ -33,7 +32,7 @@ set(DRONE_STM32_BOOT_LENGTH 32K CACHE INTERNAL "drone_boot flash window")
 set(DRONE_STM32_SLOT_A_ORIGIN 0x08020000 CACHE INTERNAL "firmware slot A flash base")
 set(DRONE_STM32_SLOT_B_ORIGIN 0x08080000 CACHE INTERNAL "firmware slot B flash base")
 set(DRONE_STM32_SLOT_LENGTH 384K CACHE INTERNAL "firmware slot flash window")
-set(DRONE_STM32_IMAGE_HEADER_SIZE 512 CACHE INTERNAL "OTA_IMAGE_HEADER_SIZE of protocol/ota.hpp")
+set(DRONE_STM32_IMAGE_HEADER_SIZE 512 CACHE INTERNAL "OTA_IMAGE_HEADER_SIZE of protocol/ota_image.hpp")
 set(DRONE_STM32_LD_TEMPLATE "${CMAKE_CURRENT_SOURCE_DIR}/stm32f405_image.ld.in"
     CACHE INTERNAL "STM32F405 image layout template")
 

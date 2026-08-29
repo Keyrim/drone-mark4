@@ -5,8 +5,7 @@
 #include <cstdint>
 #include <cstring>
 
-#include "protocol/header.hpp"
-#include "protocol/sim_link.hpp"
+#include "protocol/envelope.hpp"
 
 namespace mark4
 {
@@ -15,25 +14,40 @@ namespace mark4
         m_last = frame;
         ++m_pushCount;
 
-        mark4::SimActuatorPacket packet{};
-        packet.version = mark4::PROTOCOL_VERSION;
-        packet.type = static_cast<std::uint8_t>(mark4::PacketType::SIM_ACTUATOR);
-        packet.echoTimestampUs = frame.timestampUs;
+        if (m_scenarioPending && emitScenario(m_pendingScenario))
+        {
+            m_scenarioPending = false;
+        }
 
-        std::array<std::uint8_t, sizeof(packet)> wire{};
-        std::memcpy(wire.data(), &packet, sizeof(packet));
-        /* The motor array sits at an odd offset in the packed struct: writing
-           it through the struct would bind a reference to a misaligned
-           address, so it goes straight into the datagram bytes. */
-        std::memcpy(wire.data() + offsetof(mark4::SimActuatorPacket, motor),
+        mark4_Envelope envelope = mark4_Envelope_init_zero;
+        envelope.which_body = mark4_Envelope_sim_actuator_tag;
+        envelope.body.sim_actuator.echo_timestamp_us = frame.timestampUs;
+        std::memcpy(envelope.body.sim_actuator.motor,
                     frame.motor.data(),
-                    sizeof(frame.motor));
-        /* Same reason for the scenario block: it is a packed struct sitting
-           at an odd offset, so it goes in as bytes and never through a
-           reference to one of its fields. */
-        std::memcpy(wire.data() + offsetof(mark4::SimActuatorPacket, scenario),
-                    &m_scenario,
-                    sizeof(m_scenario));
-        static_cast<void>(m_link.replyToLastSender(wire.data(), wire.size()));
+                    sizeof(envelope.body.sim_actuator.motor));
+
+        std::array<std::uint8_t, MAX_ENVELOPE_SIZE> wire{};
+        std::size_t size = 0U;
+        if (encodeEnvelope(envelope, wire.data(), wire.size(), size))
+        {
+            static_cast<void>(m_link.replyToLastSender(wire.data(), size));
+        }
+    }
+
+    void MotorSinkSim::sendScenario(const mark4_SimScenario &scenario)
+    {
+        m_pendingScenario = scenario;
+        m_scenarioPending = !emitScenario(scenario);
+    }
+
+    bool MotorSinkSim::emitScenario(const mark4_SimScenario &scenario)
+    {
+        mark4_Envelope envelope = mark4_Envelope_init_zero;
+        envelope.which_body = mark4_Envelope_sim_scenario_tag;
+        envelope.body.sim_scenario = scenario;
+        std::array<std::uint8_t, MAX_ENVELOPE_SIZE> wire{};
+        std::size_t size = 0U;
+        return encodeEnvelope(envelope, wire.data(), wire.size(), size) &&
+               m_link.sendToLastSender(wire.data(), size);
     }
 } // namespace mark4

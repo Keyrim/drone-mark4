@@ -20,7 +20,7 @@
 #include <cstdint>
 
 #include "platform_stm32/ota_slots.hpp"
-#include "protocol/ota.hpp"
+#include "protocol/ota_image.hpp"
 
 namespace mark4
 {
