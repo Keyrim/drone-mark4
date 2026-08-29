@@ -159,7 +159,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: cmake --preset desktop
         working-directory: software
-      - run: run-clang-tidy -p software/build/desktop -quiet "$(pwd)/software/(components|drone_sim|drone_replay|drone_firmware|hub|tests)/"
+      - run: run-clang-tidy -p software/build/desktop -quiet "$(pwd)/software/(components|drone_sim|drone_firmware|hub|tests)/"
       - run: cmake --preset stm32
         working-directory: software
       - run: ./scripts/tidy_stm32.sh

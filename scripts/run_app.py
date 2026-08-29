@@ -4,7 +4,7 @@
 The app and its run command line come from software/apps.json; the
 build goes through build_app.py so run and build agree on the (preset,
 target) pair. The run command replaces this process, so Ctrl-C reaches the
-app directly. An app with no "run" field (drone_firmware, drone_replay) is
+app directly. An app with no "run" field (drone_firmware) is
 launched from its debug configuration instead.
 
     scripts/run_app.py hub

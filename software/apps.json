@@ -13,11 +13,6 @@
             "run": ["software/build/desktop/hub/hub"]
         },
         {
-            "name": "drone_replay",
-            "cmakePreset": "desktop",
-            "target": "drone_replay"
-        },
-        {
             "name": "drone_firmware",
             "cmakePreset": "stm32",
             "target": "drone_firmware"
