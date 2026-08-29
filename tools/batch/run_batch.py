@@ -155,8 +155,6 @@ class Instance:
                 str(self.sim_port),
                 "--raw-port",
                 str(self.raw_port),
-                "--rc-port",
-                str(self.rc_port),
                 "--lockstep",
                 "--time-scale",
                 str(args.time_scale),
