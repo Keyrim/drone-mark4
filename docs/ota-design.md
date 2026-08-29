@@ -29,12 +29,16 @@ hub (desktop) --UDP/WiFi--> ESP32 bridge --UART 921600--> flight controller
 ```
 
 - **The bridge stays a cable.** It carries bytes and never looks at them,
-  so OTA needs zero bridge changes: the hub sends wire envelopes in
-  the existing serial framing, the bridge forwards them, the frame parser
-  on the board picks them up. This is the payoff of the "it is a cable"
-  decision and the proposal keeps it intact.
-- **The serial framing caps a packet at 255 payload bytes** (one length
-  byte) and discards corrupted frames by CRC-16. WiFi loses datagrams.
+  so OTA needs zero bridge changes: the hub sends wire envelopes as
+  transport unicasts to the board's node, the transport frames them for
+  the bridge link in the serial framing (transport header, then the
+  envelope), the bridge forwards the bytes, the board's `UartLink` picks
+  them up. The board is a transport node like `drone_sim`; the hub has no
+  special serial path and sends no hello byte (its beacon teaches the
+  bridge its peer). This is the payoff of the "it is a cable" decision and
+  the proposal keeps it intact.
+- **The serial framing caps a frame at 512 payload bytes** (two length
+  bytes) and discards corrupted frames by CRC-16. WiFi loses datagrams.
   The transfer protocol must therefore retransmit, and must pace itself:
   the receiver's acknowledgements are the flow control that keeps the hub
   from overrunning the bridge's UART transmit side (the UART is the

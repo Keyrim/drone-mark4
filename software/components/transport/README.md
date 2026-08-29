@@ -10,11 +10,14 @@ alone). The core and
 the UART link build for every preset, the F405 included, with no heap and
 fixed-size tables; the UDP link is POSIX and desktop only.
 
-Adopted today between `drone_sim` and the `hub`, and by the batch campaign
-(`tools/batch/run_batch.py`, through the frame codec of
-`tools/telemetry_wire.py`). The firmware, the ESP32 bridge and the hub's
-bridge/serial path still carry bare envelopes in the serial framing, with
-no transport header.
+Adopted by every node: `drone_sim` and the `hub` over UDP, the batch
+campaign (`tools/batch/run_batch.py`, through the frame codec of
+`tools/telemetry_wire.py`), and the board over its UART: the firmware is a
+node with one `UartLink` on USART1, and the hub reaches it through a second
+`UartLink` whose byte stream is the UDP socket to the ESP32 bridge
+(`UdpByteStream`). The bridge stays a transparent byte pipe and never sees
+a frame boundary. The hub relays between its two links, so the board's
+broadcasts reach the LAN and LAN broadcasts reach the board.
 
 ## Frame
 
@@ -111,7 +114,17 @@ ESP32 bridge (UART on one side, WiFi on the other); nothing relays yet.
   `AbsByteStream` (`read`, `write`) and applies the serial framing;
   resynchronizes on the sync pair after garbage or a torn frame (a torn
   frame swallows the next one up to its announced length, then the CRC
-  fails and hunting resumes).
+  fails and hunting resumes). Two byte streams exist: `Uart1Stream`
+  (platform_stm32, the USART1 rings: `write` refuses a frame the transmit
+  ring cannot hold whole, so the transport counts a drop instead of
+  blocking the flight loop) and `UdpByteStream` (`transport/udp_byte_stream.hpp`,
+  POSIX): a connected UDP socket whose every write is one datagram and
+  whose reads hand out the last datagram byte by byte, the way the hub
+  reaches the board through the bridge. Closed, it reads nothing and
+  refuses writes.
+- `UdpLink` drops the echo of its own broadcasts (own data port, one of
+  the host's addresses) before the transport sees them: a relay would
+  otherwise count every frame it forwards as a duplicate of its source.
 
 ## Ports
 
@@ -121,16 +134,24 @@ ESP32 bridge (UART on one side, WiFi on the other); nothing relays yet.
 | ephemeral | every transport node | data socket: unicast frames (commands, beacon on first sight) |
 | udp/47800 | drone_sim <-> Godot | lockstep sim link, bare envelopes (`protocol/ports.hpp`) |
 | udp/47810 | hub | HTTP + WebSocket for the pages |
-| udp/47830, 47831 | ESP32 bridge | pseudo-serial stream and bridge announce |
+| udp/47830, 47831 | ESP32 bridge | transport frames in the serial framing (the board's UART), and the bridge announce |
 
-`drone_sim` sends telemetry and every answer (tuning, OTA, run stats) as
-broadcast frames, so the hub, a batch campaign and any other node read the
-same stream; commands reach it as unicasts to its node. Its beacon is the
-`Announce` envelope (kind, name, mcu, build identity, wire hash).
+`drone_sim` and the firmware send telemetry, log lines and every answer
+(tuning, OTA, run stats) as broadcast frames, so the hub, a batch campaign
+and any other node read the same stream; commands reach them as unicasts to
+their node. Their beacon is the `Announce` envelope (kind, name, mcu, build
+identity, wire hash). The board's node id is `hashNodeId()` of the 96-bit
+MCU unique id (`boardNodeId()`), so it survives resets and reflashes; the
+hub knows a board is a board from the `kind` of its Announce, not from the
+link it arrived on.
 
 ## Open points
 
 - No retransmission, no acknowledgement, no fragmentation: what the
   application needs it does itself (the OTA client already does).
-- Unicast replies are not used by `drone_sim`: every answer is a broadcast,
-  which is the simpler option and what the ground tools expect today.
+- Unicast replies are not used by `drone_sim` nor by the firmware: every
+  answer is a broadcast, which is the simpler option and what the ground
+  tools expect today (the hub relays them onto the LAN).
+- The board's transport keeps the full `MAX_NODES` = 32 table (about
+  1.3 KB) although it only ever sees a handful of nodes; RAM is not tight
+  on the F405 so nothing shrinks it.

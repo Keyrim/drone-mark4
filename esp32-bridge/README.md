@@ -23,16 +23,19 @@ set(BRIDGE_STA_PASSWORD "my-password")
 
 Without that file the bridge is an access point and nothing else, and boots
 straight into it. It sends the downlink to whoever last sent it a datagram, so the
-ground tool speaks first; the hub does that on its own, every second, from
-`SerialTransport`. One ground tool at a time, then: two of them keepaliving
-the same bridge steal the stream from each other every second, and each sees
+ground tool speaks first: any datagram teaches the bridge its peer, and the
+hub's transport beacon (one broadcast frame per second on the bridge link,
+from the moment a connect names the bridge) is that datagram; there is no
+hello byte any more. One ground tool at a time, then: two of them beaconing
+at the same bridge steal the stream from each other every second, and each sees
 what looks exactly like a lossy radio link. Bytes read on UART1 are gathered until 1024 of them are in or
 10 ms have passed, whichever comes first, then leave as one datagram: a client
 that lets its radio sleep only receives what the access point could hold for
 it, which is a number of datagrams, not a number of bytes. Datagrams
-coming the other way are written on the UART as they arrive, keepalives
-included: the bridge cannot tell one from a command, and the frame parser on
-the board skips whatever is not a frame.
+coming the other way are written on the UART as they arrive: the bridge
+cannot tell a beacon from a command, and the frame parser on the board
+skips whatever is not a frame. What travels in both directions is transport
+frames (`software/components/transport/`) in the serial framing.
 
 Every second the bridge says it is there, in one broadcast datagram on
 udp/47831: the fixed word `mark4-bridge` then a name taken from its MAC

@@ -126,19 +126,24 @@ Incremental, one observable win per step:
    scan printing the addresses found on the breakout.
 2. **IMU driver**: MPU6050 over I2C, timer-paced sampling into
    SensorFrames; barometer driver for whatever the scan identified.
-3. **Telemetry**: SensorFrames streamed over UART1 to the PC. Done: a
-   50 Hz `Telemetry` envelope stream at 921600 baud (plus one `Announce`
-   per second naming the board, its chip, its build and its wire hash),
-   each envelope wrapped in the serial framing of
-   `transport/serial_framing.hpp` (a UART has no datagram boundaries),
-   interrupt-driven behind a ring buffer. The `hub` (the board reached through the
-   ESP32 WiFi bridge, connected from the Connections panel of the
-   control page) is the single consumer of that link in a session: it
-   re-broadcasts telemetry over UDP and serves the web pages that plot
-   it. The uplink carries the pilot state
+3. **Telemetry**: SensorFrames streamed over UART1 to the PC. Done: the
+   board is a transport node (`software/components/transport/`) with one
+   `UartLink` on USART1 at 921600 baud, node id hashed from the MCU unique
+   id. Its beacon is the `Announce` naming the board, its chip, its build
+   and its wire hash; it broadcasts a 50 Hz `Telemetry` envelope stream,
+   its tuning and updater answers, and `Log` lines (init failures, update
+   state changes; at most 20 per second) so a bench without a probe reads
+   them in the hub. Every frame is the transport header then the envelope,
+   inside the serial framing of `transport/serial_framing.hpp` (a UART has
+   no datagram boundaries), interrupt-driven behind a ring buffer; a frame
+   the transmit ring cannot hold is dropped whole and counted. The `hub`
+   (the board reached through the ESP32 WiFi bridge, connected from the
+   Connections panel of the control page) holds the other end as a second
+   transport link and relays: the board's broadcasts reach the LAN and the
+   LAN's reach the board. The uplink carries the pilot state
    (`Rc`: kill, arm, mode, throttle): an `rc` message aimed at
-   `firmware` on the hub websocket endpoint is framed onto the UART
-   verbatim, and 500 ms of silence trips the fail-safe (kill engaged,
+   `firmware` on the hub websocket endpoint is a transport unicast to the
+   board's node, and 500 ms of silence trips the fail-safe (kill engaged,
    disarmed), so closing the sender is itself a safe action. A simulated
    flight is flown the same way: an `rc` message aimed at `drone_sim`
    is a transport unicast to that process's node, so the RC path and its
