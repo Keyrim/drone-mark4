@@ -2,7 +2,7 @@ FormatStyle: file
 WarningsAsErrors: "*"
 # Diagnostics located in project headers must surface too; without this,
 # header-only code (protocol/ above all) is never analyzed at all.
-HeaderFilterRegex: "software/(components|drone_sim|drone_replay|drone_firmware|hub|tests)/"
+HeaderFilterRegex: "software/(components|drone_sim|drone_firmware|hub|tests)/"
 HeaderFileExtensions: ["hpp"]
 ImplementationFileExtensions: ["cpp"]
 Checks: >

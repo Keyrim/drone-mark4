@@ -16,7 +16,7 @@ namespace mark4
         TIMEOUT = 1U,   ///< transient: nothing arrived within the source's own
                         ///< wait window; retrying may well succeed
         EXHAUSTED = 2U, ///< permanent: the source will never produce again
-                        ///< (end of a replay file, shutdown)
+                        ///< (link closed, shutdown)
     };
 
     /// Produces sensor frames, blocking until one is available.
