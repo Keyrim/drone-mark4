@@ -35,7 +35,8 @@ namespace mark4
         /// Header line of the telemetry CSV.
         static constexpr const char *TELEMETRY_CSV_HEADER =
             "timestamp_us,gyro_x,gyro_y,gyro_z,quat_w,quat_x,quat_y,quat_z,"
-            "bias_x,bias_y,bias_z,motor_0,motor_1,motor_2,motor_3,altitude_m,vz_mps";
+            "bias_x,bias_y,bias_z,motor_0,motor_1,motor_2,motor_3,altitude_m,vz_mps,"
+            "baro_altitude_m";
 
         /// Header line of the sim raw CSV.
         static constexpr const char *SIM_RAW_CSV_HEADER =

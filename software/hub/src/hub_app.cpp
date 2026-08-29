@@ -204,13 +204,36 @@ namespace mark4
             // datagram landing on a UDP telemetry port came from the
             // simulator side, never from the board.
         }
-        else
+        else if (!m_ota.onPacket(data, size, nowUs))
         {
             // Updater answers are one more packet type on whatever link the
             // process being updated is reachable on: a desktop flight process
-            // answers over UDP, the board over the framed serial link.
-            static_cast<void>(m_ota.onPacket(data, size, nowUs));
+            // answers over UDP, the board over the framed serial link. Past
+            // the updater, nothing here knows these bytes.
+            noteForeignProtocol(data, size);
         }
+    }
+
+    void HubApp::noteForeignProtocol(const std::uint8_t *data, std::size_t size)
+    {
+        if (size < 2U || data[0] == PROTOCOL_VERSION || data[0] == m_foreignProtocol)
+        {
+            return;
+        }
+        // A type byte in range is what separates a version mismatch from
+        // unrelated traffic that happened to land on the port.
+        if (data[1] == 0U || data[1] > static_cast<std::uint8_t>(PacketType::OTA_ACK))
+        {
+            return;
+        }
+        m_foreignProtocol = data[0];
+        static_cast<void>(std::fprintf(
+            stderr,
+            "hub: dropping type %u packets, protocol %u != %u - a board flashed with another "
+            "protocol version? it cannot be reached or updated from here (docs/ota-design.md)\n",
+            static_cast<unsigned>(data[1]),
+            static_cast<unsigned>(data[0]),
+            static_cast<unsigned>(PROTOCOL_VERSION)));
     }
 
     void HubApp::onSerialPayload(const std::uint8_t *payload, std::size_t size)
@@ -245,6 +268,7 @@ namespace mark4
         {
             return;
         }
+        noteForeignProtocol(payload, size);
         m_recorder.countBadFrame();
     }
 

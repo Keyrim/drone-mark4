@@ -55,6 +55,12 @@ TEST_CASE("packTelemetry carries the estimated attitude next to the raw frame")
     std::memcpy(motor.data(), wire.data() + offsetof(mark4::TelemetryPacket, motor), sizeof(motor));
     REQUIRE(motor == actuators.motor);
 
+    float baroAltitudeM = 0.0f;
+    std::memcpy(&baroAltitudeM,
+                wire.data() + offsetof(mark4::TelemetryPacket, baroAltitudeM),
+                sizeof(baroAltitudeM));
+    REQUIRE(baroAltitudeM == core.baroAltitudeM());
+
     // Armed, manual, stick down: the core is in direct-thrust flight, and
     // this one byte is what tells a ground station which mode is flying.
     REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);

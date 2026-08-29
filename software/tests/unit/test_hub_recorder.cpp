@@ -20,7 +20,8 @@ namespace
     /// Header line of the telemetry CSV, as a python consumer reads it.
     constexpr const char *PYTHON_TELEMETRY_HEADER =
         "timestamp_us,gyro_x,gyro_y,gyro_z,quat_w,quat_x,quat_y,quat_z,"
-        "bias_x,bias_y,bias_z,motor_0,motor_1,motor_2,motor_3,altitude_m,vz_mps";
+        "bias_x,bias_y,bias_z,motor_0,motor_1,motor_2,motor_3,altitude_m,vz_mps,"
+        "baro_altitude_m";
 
     /// Header line of the sim raw CSV, as a python consumer reads it.
     constexpr const char *PYTHON_SIM_RAW_HEADER =
@@ -76,7 +77,7 @@ namespace
         mark4::BlackboxRecord record;
         record.sync0 = mark4::BLACKBOX_SYNC0;
         record.sync1 = mark4::BLACKBOX_SYNC1;
-        record.version = mark4::PROTOCOL_VERSION;
+        record.version = mark4::BLACKBOX_VERSION;
         record.type = static_cast<std::uint8_t>(mark4::PacketType::BLACKBOX_RECORD);
         record.length = mark4::BLACKBOX_RECORD_PAYLOAD_SIZE;
         record.timestampUs = timestampUs;
@@ -147,6 +148,7 @@ TEST_CASE("a telemetry row holds the columns the python reader expects")
     packet.motor = {0.0f, 0.25f, 0.5f, 1.0f};
     packet.altitudeM = 12.5f;
     packet.verticalVelocityMps = -3.25f;
+    packet.baroAltitudeM = 11.75f;
     recorder.onTelemetry(packet);
     recorder.onTelemetry(packet);
     recorder.stopCsvSession();
@@ -156,7 +158,7 @@ TEST_CASE("a telemetry row holds the columns the python reader expects")
     CHECK(lines[0] == PYTHON_TELEMETRY_HEADER);
     CHECK(lines[1] == "1234567,0.25,-0.5,0.75,1.0,0.0,0.0,0.0,"
                       "0.10000000149011612,0.0,-0.10000000149011612,"
-                      "0.0,0.25,0.5,1.0,12.5,-3.25");
+                      "0.0,0.25,0.5,1.0,12.5,-3.25,11.75");
     CHECK(lines[2] == lines[1]);
     CHECK(recorder.stats().telemetryRows == 2U);
 }

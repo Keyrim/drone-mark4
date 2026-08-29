@@ -35,6 +35,9 @@ namespace mark4
         std::uint64_t apexTimestampUs;     ///< last predicted apex instant [us]
         float apexAltitudeM;               ///< last predicted apex altitude [m]
         std::uint8_t flightPhase;          ///< FlightPhase of the state machine
+        float baroAltitudeM;               ///< last plausible pressure altitude above
+                                           ///< the startup reference [m]: the raw
+                                           ///< channel that corrects altitudeM
     };
 #pragma pack(pop)
 
@@ -42,8 +45,8 @@ namespace mark4
     /// + timestamp (8) + gyro (12) + attitude quaternion (16) + gyro bias
     /// (12) + motors (16) + altitude (4) + vertical velocity (4) + throw
     /// state (1) + throw count (4) + release velocity (4) + apex timestamp
-    /// (8) + apex altitude (4) + flight phase (1).
-    inline constexpr std::size_t TELEMETRY_PACKET_SIZE = 99U;
+    /// (8) + apex altitude (4) + flight phase (1) + baro altitude (4).
+    inline constexpr std::size_t TELEMETRY_PACKET_SIZE = 103U;
 
     static_assert(sizeof(TelemetryPacket) == TELEMETRY_PACKET_SIZE, "wire layout must be packed");
     static_assert(std::is_trivially_copyable_v<TelemetryPacket>);
@@ -67,5 +70,6 @@ namespace mark4
     static_assert(offsetof(TelemetryPacket, apexTimestampUs) == 86U);
     static_assert(offsetof(TelemetryPacket, apexAltitudeM) == 94U);
     static_assert(offsetof(TelemetryPacket, flightPhase) == 98U);
+    static_assert(offsetof(TelemetryPacket, baroAltitudeM) == 99U);
     // NOLINTEND(readability-magic-numbers)
 } // namespace mark4

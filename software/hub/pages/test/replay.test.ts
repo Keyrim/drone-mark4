@@ -58,7 +58,7 @@ const SIM_RAW: Table = {
     ],
 };
 
-const LANES = [{ title: "vertical", keys: ["alt.est", "alt.exact"] }];
+const LANES = [{ title: "vertical", keys: ["alt.est", "alt.baro", "alt.exact"] }];
 
 test("fillFromStreams puts every series on the telemetry timestamps", () => {
     const filled = fillFromStreams(TELEMETRY, SIM_RAW, LANES);
@@ -101,6 +101,9 @@ test("fillFromStreams empties the series a streams recording cannot carry", () =
     // The streams CSV has no flight phase column: the series stays holes
     const filled = fillFromStreams(TELEMETRY, SIM_RAW, LANES);
     assert.deepEqual(filled.buffers.get("flightPhase")?.v, [null, null, null]);
+    // TELEMETRY above is a recording made before baro_altitude_m existed.
+    // It must still open, with that one series empty rather than an error.
+    assert.deepEqual(filled.buffers.get("alt.baro")?.v, [null, null, null]);
 });
 
 const BLACKBOX: Table = {

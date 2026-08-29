@@ -120,6 +120,14 @@ namespace mark4
             return m_verticalEstimator.altitudeM();
         }
 
+        /// @return last plausible pressure altitude above the startup
+        ///         reference [m], the raw channel altitudeM() is corrected
+        ///         toward
+        [[nodiscard]] float baroAltitudeM() const
+        {
+            return m_verticalEstimator.baroAltitudeM();
+        }
+
         /// @return estimated vertical velocity, positive up [m/s]
         [[nodiscard]] float verticalVelocityMps() const
         {

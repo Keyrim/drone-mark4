@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 #: First byte of every packet, must match mark4::PROTOCOL_VERSION.
-PROTOCOL_VERSION = 14
+PROTOCOL_VERSION = 15
 
 # Packet types, the second byte of every packet (mark4::PacketType).
 TYPE_SIM_SENSOR = 1
@@ -102,10 +102,12 @@ ANNOUNCE_PORT = 47806
 #   uint64  apexTimestampUs  last predicted apex instant [us]
 #   float   apexAltitudeM    last predicted apex altitude [m]
 #   uint8   flightPhase      FlightPhase of the state machine
-TELEMETRY_STRUCT = struct.Struct("<BBBHQ3f4f3f4f2fBIfQfB")
+#   float   baroAltitudeM    last plausible pressure altitude above the
+#                            startup reference [m], the raw channel
+TELEMETRY_STRUCT = struct.Struct("<BBBHQ3f4f3f4f2fBIfQfBf")
 
 #: Packed wire size, mirroring mark4::TELEMETRY_PACKET_SIZE.
-TELEMETRY_PACKET_SIZE = 99
+TELEMETRY_PACKET_SIZE = 103
 
 # Wire format mirroring mark4::SimRawPacket, the exact simulator state:
 #   uint8   version, uint8 type = TYPE_SIM_RAW
@@ -307,6 +309,10 @@ BLACKBOX_SYNC0 = 0x4D
 BLACKBOX_SYNC1 = 0x34
 BLACKBOX_RECORD_STRUCT = struct.Struct("<BBBBBQ3f3ffBfB4fH")
 BLACKBOX_RECORD_SIZE = 65
+#: Version byte of a blackbox record, mirroring mark4::BLACKBOX_VERSION.
+#: Deliberately NOT PROTOCOL_VERSION: a stored format outlives the session
+#: that wrote it, so it moves only when the record layout moves.
+BLACKBOX_VERSION = 14
 BLACKBOX_RECORD_PAYLOAD_SIZE = 58
 
 # Serial framing (serial_framing.hpp): SYNC0 SYNC1 length payload crc16,
@@ -360,7 +366,7 @@ def valid_blackbox_record(record: bytes) -> bool:
         return False
     if record[0] != BLACKBOX_SYNC0 or record[1] != BLACKBOX_SYNC1:
         return False
-    if (record[2] != PROTOCOL_VERSION or record[3] != TYPE_BLACKBOX_RECORD
+    if (record[2] != BLACKBOX_VERSION or record[3] != TYPE_BLACKBOX_RECORD
             or record[4] != BLACKBOX_RECORD_PAYLOAD_SIZE):
         return False
     carried = record[-2] | record[-1] << 8
@@ -402,6 +408,7 @@ class TelemetrySample:
     apex_timestamp_us: int
     apex_altitude_m: float
     flight_phase: int
+    baro_altitude_m: float
 
     @property
     def timestamp_s(self) -> float:
@@ -569,6 +576,7 @@ def decode_telemetry(datagram: bytes) -> Optional[TelemetrySample]:
         apex_timestamp_us=fields[24],
         apex_altitude_m=fields[25],
         flight_phase=fields[26],
+        baro_altitude_m=fields[27],
     )
 
 
@@ -668,6 +676,7 @@ def encode_telemetry(sample: TelemetrySample, version: int = PROTOCOL_VERSION) -
         sample.apex_timestamp_us,
         sample.apex_altitude_m,
         sample.flight_phase,
+        sample.baro_altitude_m,
     )
 
 

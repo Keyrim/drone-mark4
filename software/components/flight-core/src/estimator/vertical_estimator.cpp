@@ -56,6 +56,16 @@ namespace mark4
             return;
         }
 
+        // The raw baro channel, exposed so the ground can plot it against
+        // the fused altitude. It is the exact quantity the correction below
+        // compares against, needs no integration step, and holds its last
+        // plausible value: a faulty frame flattens this curve instead of
+        // spiking it, which is what makes the two curves readable together.
+        if (baroPlausible)
+        {
+            m_baroAltitudeM = baroAltitudeM - m_referenceAltitudeM;
+        }
+
         if (dtS <= 0.0f)
         {
             return; // first frame or gap: nothing may integrate

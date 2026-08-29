@@ -12,7 +12,7 @@ class_name Protocol
 ## packets (telemetry, sim raw) follow with a source id byte and a u16
 ## sequence number.
 
-const VERSION := 14
+const VERSION := 15
 
 ## Packet types, the second byte of every packet (header.hpp).
 const TYPE_SIM_SENSOR := 1

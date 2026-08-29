@@ -280,6 +280,29 @@ sequenceDiagram
     B->>H: OTA_STATUS (new build, slot B, VALID)
 ```
 
+### 5.1 What a PROTOCOL_VERSION bump costs
+
+Every packet is demultiplexed on its version byte, OTA packets included, so
+a bump strands the board that is already flashed. The new hub drops the
+running board's telemetry (it logs the mismatch once, look for "a board
+flashed with another protocol version"), the running board drops the new
+hub's OTA packets, and the old hub refuses the new bundle on the version
+check in `ota_bundle.cpp`. Nothing is broken and nothing works: the board
+cannot be reached by the new hub, nor updated by the old one.
+
+There are two ways out. The blunt one is a single SWD flash of the new
+firmware, which needs the board on the bench. The other is a temporary
+migration hub, built with `PROTOCOL_VERSION` reverted to the version the
+board runs and the bundle version check bypassed: it speaks the old
+protocol on the wire while pushing the new-protocol image, and the update
+is an ordinary OTA exchange from there. The trial slot protects it as
+usual - if the new image never reaches ground contact, the auto-revert puts
+the old protocol back.
+
+A bump is therefore a bench operation, not a field one. Plan it when the
+board is reachable, and flash before shipping a hub that no longer speaks
+to it.
+
 ## 6. Software architecture
 
 The pieces, placed by the dependency rule (flight-core depends on

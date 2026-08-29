@@ -37,6 +37,7 @@ namespace
         packet.apexTimestampUs = 1'234'567'890U;
         packet.apexAltitudeM = 8.5f;
         packet.flightPhase = 4U;
+        packet.baroAltitudeM = 11.75f;
         return packet;
     }
 
@@ -91,7 +92,8 @@ TEST_CASE("telemetry json carries every field of the packet")
     CHECK(message["apexTimestampUs"] == 1'234'567'890U);
     CHECK(message["apexAltitudeM"] == 8.5);
     CHECK(message["flightPhase"] == 4U);
-    CHECK(message.size() == 16U);
+    CHECK(message["baroAltitudeM"] == 11.75);
+    CHECK(message.size() == 17U);
 }
 
 TEST_CASE("sim raw json carries every field of the packet")

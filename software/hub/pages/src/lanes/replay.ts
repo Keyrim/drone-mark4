@@ -48,6 +48,7 @@ function telemetryRow(row: number[], index: Map<string, number>): TelemetryRow {
         attitudeQuat: triple(row, index, ["quat_w", "quat_x", "quat_y", "quat_z"]),
         motor: triple(row, index, ["motor_0", "motor_1", "motor_2", "motor_3"]),
         altitudeM: cell(row, index, "altitude_m"),
+        baroAltitudeM: cell(row, index, "baro_altitude_m"),
         verticalVelocityMps: cell(row, index, "vz_mps"),
         flightPhase: cell(row, index, "flight_phase"),
         throwState: cell(row, index, "throw_state"),

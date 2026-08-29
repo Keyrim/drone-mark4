@@ -76,6 +76,7 @@ namespace
         packet.apexTimestampUs = 987654321ULL;
         packet.apexAltitudeM = 6.25f;
         packet.flightPhase = 5U;
+        packet.baroAltitudeM = 11.75f;
         auto bytes = toBytes(packet);
         patch(bytes,
               offsetof(mark4::TelemetryPacket, gyroRadS),
@@ -451,7 +452,7 @@ namespace
         mark4::BlackboxRecord record{};
         record.sync0 = mark4::BLACKBOX_SYNC0;
         record.sync1 = mark4::BLACKBOX_SYNC1;
-        record.version = mark4::PROTOCOL_VERSION;
+        record.version = mark4::BLACKBOX_VERSION;
         record.type = static_cast<std::uint8_t>(mark4::PacketType::BLACKBOX_RECORD);
         record.length = mark4::BLACKBOX_RECORD_PAYLOAD_SIZE;
         record.timestampUs = 987654321ULL;

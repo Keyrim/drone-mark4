@@ -102,7 +102,7 @@ TEST_CASE("recording one step writes exactly one valid record carrying both fram
     REQUIRE(mark4::validBlackboxRecord(sink.bytes().data()));
     REQUIRE(sink.bytes()[0] == mark4::BLACKBOX_SYNC0);
     REQUIRE(sink.bytes()[1] == mark4::BLACKBOX_SYNC1);
-    REQUIRE(sink.bytes()[2] == mark4::PROTOCOL_VERSION);
+    REQUIRE(sink.bytes()[2] == mark4::BLACKBOX_VERSION);
     REQUIRE(sink.bytes()[3] == static_cast<std::uint8_t>(mark4::PacketType::BLACKBOX_RECORD));
     REQUIRE(sink.bytes()[4] == mark4::BLACKBOX_RECORD_PAYLOAD_SIZE);
 
@@ -154,7 +154,7 @@ TEST_CASE("a corrupted record fails the framing check")
     SECTION("a wrong version is rejected before the CRC")
     {
         bytes[offsetof(mark4::BlackboxRecord, version)] =
-            static_cast<std::uint8_t>(mark4::PROTOCOL_VERSION + 1U);
+            static_cast<std::uint8_t>(mark4::BLACKBOX_VERSION + 1U);
         REQUIRE(!mark4::validBlackboxRecord(bytes.data()));
     }
 }

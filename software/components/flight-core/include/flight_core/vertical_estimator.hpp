@@ -26,8 +26,9 @@ namespace mark4
     /// the capture simply completes once the drone is back at rest, and
     /// ready() stays false until then.
     ///
-    /// The baro channel is gated, because an MS5611 over I2C will produce
-    /// garbage eventually: a pressure outside the plausible window is a
+    /// The baro channel is gated, because a barometer over I2C will
+    /// produce garbage eventually, and a dead one produces nothing at
+    /// all: a pressure outside the plausible window is a
     /// sensor fault and contributes nothing (the estimate coasts on the
     /// accelerometer), and the innovation of a plausible sample is clamped,
     /// so one glitched frame moves the estimate by millimeters instead of
@@ -133,6 +134,20 @@ namespace mark4
             return m_altitudeM;
         }
 
+        /// @return last plausible pressure altitude above the startup
+        ///         reference [m], the raw channel altitudeM() is corrected
+        ///         toward. Held at its last plausible value while the baro
+        ///         is faulty: the fused estimate coasts, this one simply
+        ///         stops moving. Three different situations read 0, and
+        ///         nothing here tells them apart - the reference is not
+        ///         captured yet, no frame was ever plausible (a dead
+        ///         barometer reads 0 for the whole flight), or the drone
+        ///         really is at the altitude it started from.
+        [[nodiscard]] float baroAltitudeM() const
+        {
+            return m_baroAltitudeM;
+        }
+
         /// @return vertical velocity, positive up [m/s]
         [[nodiscard]] float verticalVelocityMps() const
         {
@@ -154,6 +169,7 @@ namespace mark4
         float m_altitudeGain;                   ///< altitude correction gain [1/s]
         float m_velocityGain;                   ///< velocity correction gain [1/s^2]
         float m_altitudeM = 0.0f;               ///< estimate, relative to the reference [m]
+        float m_baroAltitudeM = 0.0f;           ///< raw baro channel, same reference [m]
         float m_velocityMps = 0.0f;             ///< estimate, positive up [m/s]
         std::array<float, 2> m_horizontalMps{}; ///< dead reckoned world velocity [m/s]
         float m_referenceAltitudeM = 0.0f;      ///< baro altitude averaged at startup [m]

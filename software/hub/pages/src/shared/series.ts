@@ -72,6 +72,7 @@ export interface TelemetryRow {
     attitudeQuat: number[];
     motor: number[];
     altitudeM: number;
+    baroAltitudeM: number;
     verticalVelocityMps: number;
     flightPhase: number;
     throwState: number;
@@ -148,6 +149,16 @@ export const LIVE_SERIES: SeriesDef[] = [
         value: (row) => row.altitudeM,
     },
     {
+        // The raw pressure channel the estimate is corrected toward, on the
+        // same lane and the same unit as alt.est: the gap between the two
+        // curves IS what the baro contributes.
+        key: "alt.baro",
+        label: "altitude baro",
+        unit: "m",
+        color: PALETTE[2],
+        value: (row) => row.baroAltitudeM,
+    },
+    {
         key: "alt.exact",
         label: "altitude exact",
         unit: "m",
@@ -212,7 +223,7 @@ export const DEFAULT_LANES: { title: string; keys: string[] }[] = [
         ],
     },
     { title: "attitude error", keys: ["attitude.error"] },
-    { title: "vertical", keys: ["alt.est", "alt.exact", "vz.est", "vz.exact"] },
+    { title: "vertical", keys: ["alt.est", "alt.baro", "alt.exact", "vz.est", "vz.exact"] },
 ];
 
 /** One aligned sample: a timestamp and the value of every catalog series. */
@@ -254,6 +265,7 @@ export class LiveSampler {
             attitudeQuat: (message["attitudeQuat"] as number[]) ?? [],
             motor: (message["motor"] as number[]) ?? [],
             altitudeM: Number(message["altitudeM"]),
+            baroAltitudeM: Number(message["baroAltitudeM"]),
             verticalVelocityMps: Number(message["verticalVelocityMps"]),
             flightPhase: Number(message["flightPhase"]),
             throwState: Number(message["throwState"]),

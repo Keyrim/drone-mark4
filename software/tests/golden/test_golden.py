@@ -50,6 +50,7 @@ class GoldenTelemetry(unittest.TestCase):
         self.assertEqual(sample.apex_timestamp_us, 987654321)
         self.assertEqual(sample.apex_altitude_m, 6.25)
         self.assertEqual(sample.flight_phase, 5)
+        self.assertEqual(sample.baro_altitude_m, 11.75)
 
 
 class GoldenSimRaw(unittest.TestCase):

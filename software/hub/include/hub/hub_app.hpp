@@ -161,6 +161,16 @@ namespace mark4
         /// @param data packet bytes
         void onSimRawPacket(const std::uint8_t *data);
 
+        /// @brief Names the one silent failure a protocol bump causes: a
+        ///        board still running another PROTOCOL_VERSION keeps sending
+        ///        well formed packets that every demultiplexer above refuses
+        ///        on the version byte alone, so the bench looks connected and
+        ///        stays empty. Logged once per foreign version seen, because
+        ///        the stream that triggers it runs at 500 Hz.
+        /// @param data packet bytes that nothing above claimed
+        /// @param size packet size in bytes
+        void noteForeignProtocol(const std::uint8_t *data, std::size_t size);
+
         /// @brief Renders one tuning answer to the clients.
         /// @param data packet bytes
         /// @param size packet size in bytes
@@ -318,6 +328,8 @@ namespace mark4
         LiveAligner m_aligner;                   ///< live half of the stream comparison
         std::atomic_bool m_stopRequested{false}; ///< set by a signal handler
         std::uint64_t m_nextStatusUs = 0U;       ///< next status message instant [us]
+        std::uint8_t m_foreignProtocol = 0U;     ///< last foreign version reported,
+                                                 ///< 0 = none yet
         std::uint8_t m_scenarioSequence = 0U;    ///< rolling number stamped on a
                                                  ///< scenario the client left at 0
         ProcessGroup m_replays;                  ///< drone_replay children a client asked for

@@ -39,7 +39,7 @@ namespace
         mark4::BlackboxRecord record;
         record.sync0 = mark4::BLACKBOX_SYNC0;
         record.sync1 = mark4::BLACKBOX_SYNC1;
-        record.version = mark4::PROTOCOL_VERSION;
+        record.version = mark4::BLACKBOX_VERSION;
         record.type = static_cast<std::uint8_t>(mark4::PacketType::BLACKBOX_RECORD);
         record.length = mark4::BLACKBOX_RECORD_PAYLOAD_SIZE;
         record.timestampUs = timestampUs;

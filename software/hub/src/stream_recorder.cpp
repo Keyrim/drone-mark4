@@ -205,6 +205,7 @@ namespace mark4
         appendCells(row, readPackedField(&packet.motor));
         appendCell(row, packet.altitudeM);
         appendCell(row, packet.verticalVelocityMps);
+        appendCell(row, packet.baroAltitudeM);
         m_telemetryCsv << row << CSV_LINE_END;
         ++m_stats.telemetryRows;
     }

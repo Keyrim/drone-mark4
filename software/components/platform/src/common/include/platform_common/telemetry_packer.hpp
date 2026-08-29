@@ -39,6 +39,7 @@ namespace mark4
         packet.sequence = sequence;
         packet.timestampUs = frame.timestampUs;
         packet.altitudeM = core.altitudeM();
+        packet.baroAltitudeM = core.baroAltitudeM();
         packet.verticalVelocityMps = core.verticalVelocityMps();
         const ThrowDetector &detector = core.throwDetector();
         packet.throwState = static_cast<std::uint8_t>(detector.state());

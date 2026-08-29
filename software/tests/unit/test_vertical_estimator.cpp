@@ -265,3 +265,34 @@ TEST_CASE("a sideways push is dead reckoned and leaks back toward zero")
     REQUIRE(estimator.horizontalVelocityMps()[0] < 0.85f * pushed);
     REQUIRE(estimator.horizontalVelocityMps()[0] > 0.0f);
 }
+
+TEST_CASE("the raw baro channel is exposed next to the fused altitude")
+{
+    mark4::VerticalEstimator estimator;
+
+    // Nothing to be relative to before the reference exists: a perfectly
+    // plausible frame still leaves the channel at 0, because subtracting a
+    // reference that has not been averaged yet would be meaningless.
+    estimator.update(makeFrame(0U, 100.0f, mark4::GRAVITY_MPS2), STEP_S, {});
+    REQUIRE(!estimator.ready());
+    REQUIRE(estimator.baroAltitudeM() == 0.0f);
+
+    std::uint64_t timestamp = captureReference(estimator, 100.0f);
+    estimator.update(makeFrame(timestamp, 105.0f, mark4::GRAVITY_MPS2), STEP_S, {});
+    timestamp += STEP_US;
+
+    // The raw channel answers the pressure alone: it is already at the
+    // full 5 m the baro reads, while the clamped correction has barely
+    // started pulling the fused estimate off zero. Plotting the two
+    // together is the whole point of exposing this one.
+    REQUIRE(std::fabs(estimator.baroAltitudeM() - 5.0f) < 0.5f);
+    REQUIRE(estimator.altitudeM() < 1.0f);
+
+    // A faulty frame holds the last plausible value: the fused estimate
+    // coasts on the accelerometer, this one simply stops moving.
+    const float held = estimator.baroAltitudeM();
+    mark4::SensorFrame glitch = makeFrame(timestamp, 105.0f, mark4::GRAVITY_MPS2);
+    glitch.baroPa = 0.0f;
+    estimator.update(glitch, STEP_S, {});
+    REQUIRE(estimator.baroAltitudeM() == held);
+}

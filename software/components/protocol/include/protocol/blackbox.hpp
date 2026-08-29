@@ -3,8 +3,8 @@
 /// @file
 /// @brief Blackbox record wire format. The record crosses process
 ///        boundaries (UART stream today, SD dump later) and is stored in
-///        .m4bb files, so it lives in protocol/ and is versioned with
-///        everything else. Each record carries its own sync marker, type
+///        .m4bb files, so it lives in protocol/ and carries its own
+///        version byte. Each record carries its own sync marker, type
 ///        byte, length and CRC: a decoder resynchronizes after a torn
 ///        write (power loss on impact) at the cost of the damaged record
 ///        only, skips record types it does not know, and old logs stay
@@ -24,6 +24,15 @@ namespace mark4
     inline constexpr std::uint8_t BLACKBOX_SYNC0 = 0x4DU;
     inline constexpr std::uint8_t BLACKBOX_SYNC1 = 0x34U;
 
+    /// Version byte of the record below, and the only thing a decoder
+    /// accepts in that position. It is deliberately NOT PROTOCOL_VERSION:
+    /// a stored format outlives the session that wrote it, and the promise
+    /// above ("old logs stay readable forever") cannot hold if a change to
+    /// an unrelated live packet invalidates every file on disk. It moves
+    /// only when the record layout below moves, which is what a reader
+    /// actually needs to know.
+    inline constexpr std::uint8_t BLACKBOX_VERSION = 14U;
+
     /// Bytes between the length byte and the CRC of a sensor-step record.
     inline constexpr std::uint8_t BLACKBOX_RECORD_PAYLOAD_SIZE = 58U;
 
@@ -37,7 +46,7 @@ namespace mark4
     {
         std::uint8_t sync0 = 0U;          ///< = BLACKBOX_SYNC0
         std::uint8_t sync1 = 0U;          ///< = BLACKBOX_SYNC1
-        std::uint8_t version = 0U;        ///< = PROTOCOL_VERSION
+        std::uint8_t version = 0U;        ///< = BLACKBOX_VERSION
         std::uint8_t type = 0U;           ///< = PacketType::BLACKBOX_RECORD
         std::uint8_t length = 0U;         ///< = BLACKBOX_RECORD_PAYLOAD_SIZE;
                                           ///< lets a decoder skip a record
@@ -65,6 +74,16 @@ namespace mark4
     inline constexpr std::size_t BLACKBOX_CRC_OFFSET = BLACKBOX_RECORD_SIZE - 2U;
 
     static_assert(sizeof(BlackboxRecord) == BLACKBOX_RECORD_SIZE, "record layout must be packed");
+    // The size alone cannot catch a field reinterpreted in place (same
+    // bytes, new meaning), which is exactly the change that must move the
+    // version a decoder trusts. Touching either number below is the moment
+    // to ask whether old files can still be read.
+    // Both literals ARE the named facts here: repeating them is what makes
+    // this assert fire when either constant moves alone.
+    // NOLINTBEGIN(readability-magic-numbers)
+    static_assert(BLACKBOX_RECORD_SIZE == 65U && BLACKBOX_VERSION == 14U,
+                  "the record layout moved: bump BLACKBOX_VERSION and update this assert");
+    // NOLINTEND(readability-magic-numbers)
     static_assert(std::is_trivially_copyable_v<BlackboxRecord>);
     static_assert(offsetof(BlackboxRecord, sync0) == 0U,
                   "the sync marker must come first, it is what a decoder hunts for");
@@ -93,7 +112,7 @@ namespace mark4
         {
             return false;
         }
-        if (record[2] != PROTOCOL_VERSION ||
+        if (record[2] != BLACKBOX_VERSION ||
             record[3] != static_cast<std::uint8_t>(PacketType::BLACKBOX_RECORD) ||
             record[4] != BLACKBOX_RECORD_PAYLOAD_SIZE)
         {

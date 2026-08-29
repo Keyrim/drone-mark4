@@ -81,7 +81,7 @@ TEST_CASE("a torn write in the middle of a log costs only the damaged record")
         std::array<std::uint8_t, mark4::BLACKBOX_RECORD_SIZE> torn{};
         torn[0] = mark4::BLACKBOX_SYNC0;
         torn[1] = mark4::BLACKBOX_SYNC1;
-        torn[2] = mark4::PROTOCOL_VERSION;
+        torn[2] = mark4::BLACKBOX_VERSION;
         sink.write(torn.data(), torn.size() / 2U);
 
         blackbox.record(makeFrame(2U), mark4::ActuatorFrame{});

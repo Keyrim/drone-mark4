@@ -695,6 +695,7 @@ namespace mark4
         message["gyroBiasRadS"] = floatsToJson(readPackedField(&packet.gyroBiasRadS));
         message["motor"] = floatsToJson(readPackedField(&packet.motor));
         message["altitudeM"] = static_cast<double>(packet.altitudeM);
+        message["baroAltitudeM"] = static_cast<double>(packet.baroAltitudeM);
         message["verticalVelocityMps"] = static_cast<double>(packet.verticalVelocityMps);
         message["throwState"] = packet.throwState;
         message["throwCount"] = throwCount;

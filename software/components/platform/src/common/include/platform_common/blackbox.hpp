@@ -36,7 +36,7 @@ namespace mark4
             BlackboxRecord entry{};
             entry.sync0 = BLACKBOX_SYNC0;
             entry.sync1 = BLACKBOX_SYNC1;
-            entry.version = PROTOCOL_VERSION;
+            entry.version = BLACKBOX_VERSION;
             entry.type = static_cast<std::uint8_t>(PacketType::BLACKBOX_RECORD);
             entry.length = BLACKBOX_RECORD_PAYLOAD_SIZE;
             entry.timestampUs = sensors.timestampUs;
