@@ -84,7 +84,7 @@ export class Shell {
         });
         socket.on("status", (message: HubMessage) => this.setStatus(message));
         // A console line of a node that has no console on this desk: the
-        // board behind the bridge. Level 0 is INFO; anything above is bad.
+        // board behind its relay. Level 0 is INFO; anything above is bad.
         socket.on("log", (message: HubMessage) => {
             const level = typeof message["level"] === "number" ? (message["level"] as number) : 0;
             this.notify(`${String(message["source"])}: ${String(message["text"])}`, level === 0);

@@ -39,14 +39,13 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "fake_bridge.hpp"
+#include "byte_pipe.hpp"
 #include "hub/ota_bundle.hpp"
 #include "hub/ota_client.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
 #include "transport/transport.hpp"
 #include "transport/uart_link.hpp"
-#include "transport/udp_byte_stream.hpp"
 #include "transport/udp_link.hpp"
 
 namespace
@@ -216,25 +215,46 @@ namespace
     /// address it before it ever announced anything but its beacon.
     constexpr std::uint32_t SIM_NODE = 0x51300001U;
 
+    /// The ESP32's outbound rule on its UART link (index 0 of its
+    /// transport): a broadcast only goes down the wire when it is an
+    /// Announce; a unicast routed there is for the board by construction.
+    bool uartFilter(void *context,
+                    std::size_t linkIndex,
+                    const mark4::FrameHeader &header,
+                    const std::uint8_t *payload,
+                    std::size_t size)
+    {
+        static_cast<void>(context);
+        return linkIndex != 0U || header.dst != mark4::BROADCAST_NODE ||
+               mark4::envelopeIsAnnounce(payload, size);
+    }
+
     /// The ground side of the link, exactly what the hub is: one transport
     /// node addressing the sim by the node id it was started with. Two
     /// shapes: straight on the LAN (one UDP link on a private discovery
-    /// port), or through a bridge: the ground node's only link is then a
-    /// UartLink over datagrams to a FakeBridge, and a relay node on the far
-    /// side (UartLink to the bridge, UDP link on the LAN) stands where the
-    /// board's transport stands, so every updater message crosses the serial
-    /// framing and the relay both ways.
+    /// port), or through a relay: the ground node stays on its LAN, an
+    /// ESP32-like relay (UDP link on that LAN, UartLink on an in-memory
+    /// wire, relay on, no beacon, the UART filter) stands where the ESP32
+    /// stands, and a second relay on the far end of the wire (UartLink, UDP
+    /// link on a second private LAN, no filter) stands where the board's
+    /// transport stands with the sim behind it, so every updater message
+    /// crosses the serial framing, the filter and two relays both ways.
     class GroundLink
     {
       public:
-        /// Node the relay behind the bridge takes.
+        /// Node the ESP32-like relay takes.
         static constexpr std::uint32_t RELAY_NODE = 0x4E1A4000U;
 
-        /// @param discoveryPort shared port of this test's private deployment
-        /// @param viaBridge true to go through the bridge and the relay
-        explicit GroundLink(std::uint16_t discoveryPort, bool viaBridge = false)
-            : m_viaBridge(viaBridge),
-              m_udp(discoveryPort)
+        /// Node the far relay (the board's side of the wire) takes.
+        static constexpr std::uint32_t FAR_RELAY_NODE = 0x4E1A4001U;
+
+        /// @param discoveryPort shared port of the ground LAN
+        /// @param farPort shared port of the far LAN, 0 to go straight
+        explicit GroundLink(std::uint16_t discoveryPort, std::uint16_t farPort = 0U)
+            : m_viaRelay(farPort != 0U),
+              m_udp(discoveryPort),
+              m_relayUdp(discoveryPort),
+              m_farUdp(farPort)
         {
         }
 
@@ -242,28 +262,45 @@ namespace
         /// @return true when frames can flow
         bool open()
         {
-            if (!m_udp.init())
+            if (!m_udp.init() || !m_transport.addLink(m_udp) || !m_transport.init())
             {
                 return false;
             }
-            if (!m_viaBridge)
+            if (!m_viaRelay)
             {
-                return m_transport.addLink(m_udp) && m_transport.init();
+                return true;
             }
-            if (!m_bridge.ok() || !m_groundStream.open("127.0.0.1", m_bridge.groundPort()) ||
-                !m_relayStream.open("127.0.0.1", m_bridge.boardPort()))
+            // The ground beacons like the hub does, a real Announce: the
+            // relay's filter lets that one broadcast down the wire and
+            // nothing else. The relays beacon nothing.
+            mark4_Envelope announce = mark4_Envelope_init_zero;
+            announce.which_body = mark4_Envelope_announce_tag;
+            announce.body.announce.kind = mark4_NodeKind_GATEWAY;
+            std::array<std::uint8_t, mark4::MAX_ENVELOPE_SIZE> beacon{};
+            std::size_t beaconSize = 0U;
+            if (!mark4::encodeEnvelope(announce, beacon.data(), beacon.size(), beaconSize))
             {
                 return false;
             }
-            // Both nodes beacon: that is what teaches the bridge its two
-            // peers, and what lets each side learn the other.
-            static constexpr std::array<std::uint8_t, 2U> GROUND_BEACON = {'g', 'w'};
-            static constexpr std::array<std::uint8_t, 2U> RELAY_BEACON = {'r', 'l'};
-            m_transport.setBeacon(GROUND_BEACON.data(), GROUND_BEACON.size());
-            m_relay.setBeacon(RELAY_BEACON.data(), RELAY_BEACON.size());
+            m_transport.setBeacon(beacon.data(), beaconSize);
             m_relay.setRelay(true);
-            return m_transport.addLink(m_groundLink) && m_transport.init() &&
-                   m_relay.addLink(m_relayLink) && m_relay.addLink(m_udp) && m_relay.init();
+            m_relay.setRelayFilter(&uartFilter, nullptr);
+            m_farRelay.setRelay(true);
+            return m_relay.addLink(m_relayUart) && m_relay.addLink(m_relayUdp) &&
+                   m_relayUdp.init() && m_relay.init() && m_farRelay.addLink(m_farUart) &&
+                   m_farUdp.init() && m_farRelay.addLink(m_farUdp) && m_farRelay.init();
+        }
+
+        /// @return bytes the ESP32-like relay wrote down the wire so far
+        [[nodiscard]] std::size_t wireBytesToBoard() const
+        {
+            return m_relayEnd.written();
+        }
+
+        /// @return relayed frames the filter kept off the wire
+        [[nodiscard]] std::uint32_t filtered() const
+        {
+            return m_relay.filtered();
         }
 
         /// @brief Sends one message to the sim, by node id.
@@ -286,17 +323,19 @@ namespace
         {
             m_pending = &client;
             m_pendingUs = instantUs;
-            if (m_viaBridge)
+            if (m_viaRelay)
             {
                 // The far side first, so what the sim answered this step is
-                // already on the bridge when the ground node polls.
+                // already on the wire when the near relay polls, and on the
+                // ground LAN when the ground node does.
+                m_farRelay.poll(instantUs, nullptr, nullptr);
                 m_relay.poll(instantUs, nullptr, nullptr);
-                m_bridge.pump();
             }
             m_transport.poll(instantUs, &GroundLink::Deliver, this);
-            if (m_viaBridge)
+            if (m_viaRelay)
             {
-                m_bridge.pump();
+                m_relay.poll(instantUs, nullptr, nullptr);
+                m_farRelay.poll(instantUs, nullptr, nullptr);
             }
         }
 
@@ -315,18 +354,21 @@ namespace
             }
         }
 
-        bool m_viaBridge;                             ///< through the bridge and the relay
-        mark4::UdpLink m_udp;                         ///< the LAN link: the ground node's when
-                                                      ///< straight, the relay's through a bridge
-        mark4::Transport m_transport{GROUND_NODE};    ///< this node
-        mark4::FakeBridge m_bridge;                   ///< datagram forwarder, when via bridge
-        mark4::UdpByteStream m_groundStream;          ///< ground end of the bridge
-        mark4::UartLink m_groundLink{m_groundStream}; ///< the ground node's serial link
-        mark4::UdpByteStream m_relayStream;           ///< far end of the bridge
-        mark4::UartLink m_relayLink{m_relayStream};   ///< the relay's serial link
-        mark4::Transport m_relay{RELAY_NODE};         ///< relay between the bridge and the LAN
-        mark4::OtaClient *m_pending = nullptr;        ///< client being fed by drain()
-        std::uint64_t m_pendingUs = 0U;               ///< instant handed to it
+        bool m_viaRelay;                                   ///< through the wire and two relays
+        mark4::UdpLink m_udp;                              ///< the ground node's LAN link
+        mark4::Transport m_transport{GROUND_NODE};         ///< this node
+        mark4::BytePipe m_wire;                            ///< the UART between the relays
+        mark4::PipeEnd m_relayEnd{m_wire.toA, m_wire.toB}; ///< ESP32 side of the wire
+        mark4::PipeEnd m_farEnd{m_wire.toB, m_wire.toA};   ///< board side of the wire
+        mark4::UartLink m_relayUart{m_relayEnd};           ///< the ESP32's UART link (index 0)
+        mark4::UdpLink m_relayUdp;                         ///< the ESP32's LAN link, the
+                                                           ///< ground's discovery port
+        mark4::Transport m_relay{RELAY_NODE};              ///< the ESP32: relay + filter
+        mark4::UartLink m_farUart{m_farEnd};               ///< far relay's UART link
+        mark4::UdpLink m_farUdp;                           ///< far relay's link to the sim
+        mark4::Transport m_farRelay{FAR_RELAY_NODE};       ///< the board's side of the wire
+        mark4::OtaClient *m_pending = nullptr;             ///< client being fed by drain()
+        std::uint64_t m_pendingUs = 0U;                    ///< instant handed to it
     };
 
     /// @return a UDP port nothing holds right now
@@ -529,7 +571,7 @@ namespace
         config.boardReturnTimeoutMs = 30000U;
         config.chunkAckTimeoutMs = 3000U;
         config.ackTimeoutMs = 4000U;
-        // No pacing: the bridge UART this delay protects is not in the path.
+        // No pacing: the UART this delay protects is not in the path.
         config.chunkDelayUs = 0U;
         return config;
     }
@@ -667,36 +709,40 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     std::filesystem::remove_all(runDirectory, error);
 }
 
-TEST_CASE("a hub-driven update crosses a serial-framed bridge link and a relay", "[ota][e2e]")
+TEST_CASE("a hub-driven update crosses the esp32 relay, its filter and the serial framing",
+          "[ota][e2e]")
 {
     // The happy path of the test above, with the ground node reaching the sim
-    // through the UART framing and a relay: what the board's link is, minus
-    // the wire. The transfer, its acknowledgements, the reboot and the
-    // self-confirmation all have to cross the framing both ways.
+    // through the ESP32-like relay, its UART filter, the serial framing and
+    // a far relay standing for the board's transport. The transfer, its
+    // acknowledgements, the reboot and the self-confirmation all have to
+    // cross the framing both ways.
     std::error_code error;
     const std::filesystem::path runDirectory =
         std::filesystem::temp_directory_path(error) /
-        ("mark4_ota_e2e_bridge_" + std::to_string(::getpid()));
+        ("mark4_ota_e2e_relay_" + std::to_string(::getpid()));
     std::filesystem::remove_all(runDirectory, error);
     REQUIRE(std::filesystem::create_directories(runDirectory, error));
 
     const std::string otaDirectory = (runDirectory / "flash").string();
     const std::uint32_t build = 0x66E00003U;
-    const std::string bundle = writeBundle(runDirectory / "bridged.ota", build, "cccccccc");
+    const std::string bundle = writeBundle(runDirectory / "relayed.ota", build, "cccccccc");
 
     const std::uint16_t discoveryPort = pickFreePort();
+    const std::uint16_t farPort = pickFreePort();
     const std::uint16_t simPort = pickFreePort();
-    GroundLink link(discoveryPort, true);
+    GroundLink link(discoveryPort, farPort);
     REQUIRE(link.open());
 
+    // The sim lives on the far LAN, behind the wire: where the board is.
     SimProcess sim;
-    REQUIRE(sim.start(runDirectory, otaDirectory, simPort, discoveryPort, SIM_NODE));
+    REQUIRE(sim.start(runDirectory, otaDirectory, simPort, farPort, SIM_NODE));
 
     mark4::OtaClient client(testConfig());
     client.setSink([&link](const mark4_Envelope &envelope, std::string &errorOut) {
         if (!link.send(envelope))
         {
-            errorOut = "the bridged link refused the frame";
+            errorOut = "the relayed link refused the frame";
             return false;
         }
         return true;
@@ -720,6 +766,12 @@ TEST_CASE("a hub-driven update crosses a serial-framed bridge link and a relay",
     REQUIRE(client.board().buildEpoch == build);
     REQUIRE(client.board().gitHash == "cccccccc");
     REQUIRE(sim.alive());
+
+    // The whole transfer went down the wire: what the ground unicast to the
+    // sim plus its own beacons, and nothing the filter had to refuse (the
+    // ground never broadcast anything but its Announce).
+    CHECK(link.wireBytesToBoard() > IMAGE_SIZE);
+    CHECK(link.filtered() == 0U);
 
     sim.stop();
     std::filesystem::remove_all(runDirectory, error);

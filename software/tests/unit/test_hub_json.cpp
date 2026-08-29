@@ -131,10 +131,7 @@ TEST_CASE("discovery json describes every live process")
     board.wireMismatch = true;
     processes.push_back(board);
 
-    std::vector<mark4::DiscoveredBridge> bridges;
-    bridges.push_back({"192.168.1.31", 47830U, "c19f6c", 1'800'000U});
-
-    const nlohmann::json message = parsed(mark4::discoveryToJson(processes, bridges, 2'000'000U));
+    const nlohmann::json message = parsed(mark4::discoveryToJson(processes, 2'000'000U));
     CHECK(message["type"] == "discovery");
     CHECK(message["wireHash"].get<std::string>().size() == 8U);
     REQUIRE(message["processes"].size() == 2U);
@@ -151,11 +148,7 @@ TEST_CASE("discovery json describes every live process")
     CHECK(message["processes"][1]["wireHash"] == "01020304");
     CHECK(message["processes"][1]["wireMismatch"] == true);
     CHECK(message["processes"][1]["ageMs"] == 500U);
-    REQUIRE(message["bridges"].size() == 1U);
-    CHECK(message["bridges"][0]["address"] == "192.168.1.31");
-    CHECK(message["bridges"][0]["port"] == 47830U);
-    CHECK(message["bridges"][0]["name"] == "c19f6c");
-    CHECK(message["bridges"][0]["ageMs"] == 200U);
+    CHECK(!message.contains("bridges"));
 }
 
 TEST_CASE("status json carries the counters")
@@ -165,8 +158,8 @@ TEST_CASE("status json carries the counters")
     status.rejectedAnnounces = 50U;
     status.clients = 3U;
     status.rcClients = 2U;
-    status.connectionVia = "bridge";
-    status.connectionId = "c19f6c";
+    status.connectionVia = "udp";
+    status.connectionId = "firmware";
     status.connectionKind = mark4_NodeKind_FIRMWARE;
     status.connectionLive = true;
 
@@ -185,8 +178,8 @@ TEST_CASE("status json carries the counters")
     CHECK(message["counts"]["rejectedAnnounces"] == 50U);
     CHECK(message["clients"] == 3U);
     CHECK(message["rcClients"] == 2U);
-    CHECK(message["connection"]["via"] == "bridge");
-    CHECK(message["connection"]["id"] == "c19f6c");
+    CHECK(message["connection"]["via"] == "udp");
+    CHECK(message["connection"]["id"] == "firmware");
     CHECK(message["connection"]["kind"] == 1U);
     CHECK(message["connection"]["kindName"] == "firmware");
     CHECK(message["connection"]["live"] == true);
@@ -319,20 +312,21 @@ TEST_CASE("a connect message names one drone by its route")
     CHECK(udp.connectVia == "udp");
     CHECK(udp.target == mark4_NodeKind_DRONE_SIM);
 
-    const mark4::ClientMessage bridge =
-        decoded(R"({"type":"connect","via":"bridge","name":"c19f6c"})");
-    CHECK(bridge.connectVia == "bridge");
-    CHECK(bridge.connectPeer == "c19f6c");
+    // The board is one more node of the LAN: same route, its own kind.
+    const mark4::ClientMessage board =
+        decoded(R"({"type":"connect","via":"udp","target":"firmware"})");
+    CHECK(board.connectVia == "udp");
+    CHECK(board.target == mark4_NodeKind_FIRMWARE);
 
     const mark4::ClientMessage disconnect = decoded(R"({"type":"disconnect"})");
     CHECK(disconnect.type == mark4::ClientMessageType::DISCONNECT);
 
-    // Each route requires its identity: no name and no target means there
-    // is nothing to connect to
+    // The route requires its identity: no target means there is nothing to
+    // connect to, and there is no other route.
     CHECK(std::holds_alternative<std::string>(
         mark4::parseClientMessage(R"({"type":"connect","via":"udp"})")));
     CHECK(std::holds_alternative<std::string>(
-        mark4::parseClientMessage(R"({"type":"connect","via":"bridge"})")));
+        mark4::parseClientMessage(R"({"type":"connect","via":"bridge","name":"c19f6c"})")));
     CHECK(std::holds_alternative<std::string>(
         mark4::parseClientMessage(R"({"type":"connect","via":"carrier-pigeon"})")));
 }

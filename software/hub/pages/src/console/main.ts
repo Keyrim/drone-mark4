@@ -1,10 +1,10 @@
 /**
  * Control page: one connected drone, its widget, and the 3D view.
  *
- * Whatever the route (announced UDP process or WiFi bridge), the
- * workflow is the same: everything connectable is a row of the Connections
- * panel, and nothing is wired to the controls until the operator clicks
- * Connect. The hub holds the connection, so every tab shows the same drone.
+ * Whatever the drone (desktop flight process, the board through its
+ * relay), the workflow is the same: every announced node is a row of the
+ * Connections panel, and nothing is wired to the controls until the
+ * operator clicks Connect. The hub holds the connection, so every tab shows the same drone.
  * A connected drone that goes silent keeps its widget and its row, marked
  * lost; the hub reconnects on its own when the same drone comes back, and
  * the transmitter is parked safe in between.
@@ -20,7 +20,6 @@ import { AttitudePanel } from "./attitude_panel";
 import {
     NO_CONNECTION,
     candidateRows,
-    type AnnouncedBridge,
     type AnnouncedProcess,
     type Connection,
 } from "./connection";
@@ -81,7 +80,6 @@ socket.on("telemetry", (message: HubMessage) => {
 /* -------------------- connections -------------------- */
 
 let processes: AnnouncedProcess[] = [];
-let bridges: AnnouncedBridge[] = [];
 
 const connectBlock = document.createElement("section");
 connectBlock.className = "panel";
@@ -92,7 +90,7 @@ connectTitle.textContent = "Connections";
 connectBar.appendChild(connectTitle);
 const connectHint = document.createElement("span");
 connectHint.className = "panel-note";
-connectHint.textContent = "drones and bridges announce themselves here";
+connectHint.textContent = "drones announce themselves here";
 connectBar.appendChild(connectHint);
 connectBlock.appendChild(connectBar);
 
@@ -116,13 +114,13 @@ function disconnectButton(): HTMLButtonElement {
 
 function renderConnections(): void {
     candidateList.replaceChildren();
-    const rows = candidateRows(processes, bridges, connection);
+    const rows = candidateRows(processes, connection);
     if (rows.length === 0) {
         const note = document.createElement("div");
         note.className = "panel-body";
         const text = document.createElement("span");
         text.className = "panel-note";
-        text.textContent = "nothing on the network: start a drone or power a bridge";
+        text.textContent = "nothing on the network: start a drone or power the board";
         note.appendChild(text);
         candidateList.appendChild(note);
     }
@@ -153,7 +151,6 @@ function renderConnections(): void {
 
 socket.on("discovery", (message: HubMessage) => {
     processes = (message["processes"] as AnnouncedProcess[]) ?? [];
-    bridges = (message["bridges"] as AnnouncedBridge[]) ?? [];
     renderConnections();
 });
 

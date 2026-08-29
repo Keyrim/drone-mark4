@@ -54,8 +54,7 @@ namespace mark4
                                                            ///< TUNING_*: message to forward
         std::string profileName;                           ///< PROFILE_*: profile concerned
         TuningValues profileValues;                        ///< PROFILE_SAVE: values to store
-        std::string connectVia;                            ///< CONNECT: "udp" or "bridge"
-        std::string connectPeer;                           ///< CONNECT: bridge name
+        std::string connectVia;                            ///< CONNECT: "udp"
         std::string otaBundlePath;                         ///< OTA_START: bundle to send, empty
                                                            ///< for the standard build output
     };
@@ -63,8 +62,8 @@ namespace mark4
     /// Counters and flags the hub publishes once per second.
     struct HubStatus
     {
-        std::string connectionVia; ///< "udp" or "bridge", empty = none
-        std::string connectionId;  ///< kind name or bridge name
+        std::string connectionVia;                               ///< "udp", empty = none
+        std::string connectionId;                                ///< kind name
         mark4_NodeKind connectionKind = mark4_NodeKind_FIRMWARE; ///< kind commands route to
         bool connectionLive = false;          ///< the connected drone shows signs of life
         std::uint64_t badFrames = 0U;         ///< payloads that decoded to nothing
@@ -117,13 +116,11 @@ namespace mark4
     std::string profileToJson(const std::string &name, const TuningValues &values);
 
     /// @brief Renders the whole discovery table as a JSON object: the live
-    ///        processes, and the WiFi bridges a board is reached through.
+    ///        processes, the board included.
     /// @param processes live entries
-    /// @param bridges bridges heard announcing themselves
     /// @param nowUs current time [us], turned into an age per entry
     /// @return one line of JSON
     std::string discoveryToJson(const std::vector<DiscoveredProcess> &processes,
-                                const std::vector<DiscoveredBridge> &bridges,
                                 std::uint64_t nowUs);
 
     /// @brief Renders the whole state of the update client as a JSON object:

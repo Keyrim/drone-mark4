@@ -15,12 +15,9 @@
 #include "hub/json_codec.hpp"
 #include "hub/ota_client.hpp"
 #include "hub/tuning_profiles.hpp"
-#include "hub/udp_transport.hpp"
 #include "hub/ws_bridge.hpp"
 #include "protocol/envelope.hpp"
 #include "transport/transport.hpp"
-#include "transport/uart_link.hpp"
-#include "transport/udp_byte_stream.hpp"
 #include "transport/udp_link.hpp"
 
 namespace mark4
@@ -36,12 +33,6 @@ namespace mark4
         /// protocol/ports.hpp: that file describes the UDP boundaries between
         /// processes speaking the binary wire, and this is neither.
         static constexpr std::uint16_t WS_PORT = 47810U;
-
-        /// UDP port the WiFi bridges announce themselves to. Deliberately
-        /// not in protocol/ports.hpp for the same reason as WS_PORT above:
-        /// that file describes the boundaries between processes speaking the
-        /// binary wire, and a bridge speaks no wire at all.
-        static constexpr std::uint16_t BRIDGE_ANNOUNCE_PORT = 47831U;
 
         /// How long the poll loop sleeps when nothing is happening [ms].
         static constexpr int POLL_TIMEOUT_MS = 20;
@@ -72,20 +63,19 @@ namespace mark4
         /// Everything main() decides before the hub starts.
         struct Config
         {
-            std::uint16_t wsPort = WS_PORT;                  ///< websocket endpoint port
-            std::uint16_t discoveryPort = DISCOVERY_PORT;    ///< shared transport port
-            std::uint32_t nodeId = 0U;                       ///< transport identity, 0 = random
-            std::uint16_t bridgePort = BRIDGE_ANNOUNCE_PORT; ///< bridge announce listen port
-            std::string profilesDir = "profiles";            ///< directory the profiles live in
-            std::string pushProfileName;                     ///< profile pushed to every process
-                                                             ///< that appears, empty = none
-            std::string pagesDir;                            ///< directory the static pages are
-                                                             ///< read from, empty = the built-in
-                                                             ///< default resolved at init
-            std::string bindAddress = "127.0.0.1";           ///< address the endpoint binds to
-            std::string otaBundlePath;                       ///< bundle an update with no path of
-                                                             ///< its own sends, empty = the
-                                                             ///< built-in default resolved at init
+            std::uint16_t wsPort = WS_PORT;               ///< websocket endpoint port
+            std::uint16_t discoveryPort = DISCOVERY_PORT; ///< shared transport port
+            std::uint32_t nodeId = 0U;                    ///< transport identity, 0 = random
+            std::string profilesDir = "profiles";         ///< directory the profiles live in
+            std::string pushProfileName;                  ///< profile pushed to every process
+                                                          ///< that appears, empty = none
+            std::string pagesDir;                         ///< directory the static pages are
+                                                          ///< read from, empty = the built-in
+                                                          ///< default resolved at init
+            std::string bindAddress = "127.0.0.1";        ///< address the endpoint binds to
+            std::string otaBundlePath;                    ///< bundle an update with no path of
+                                                          ///< its own sends, empty = the
+                                                          ///< built-in default resolved at init
         };
 
         /// Directory the pages are read from when nothing else is asked for,
@@ -101,9 +91,9 @@ namespace mark4
         /// @param config settings of this run
         explicit HubApp(Config config);
 
-        /// @brief Initializes services in declaration order: opens the bridge
-        ///        announce listener, the transport and the websocket. The
-        ///        first failure is logged and returns false immediately.
+        /// @brief Initializes services in declaration order: the transport,
+        ///        then the websocket. The first failure is logged and returns
+        ///        false immediately.
         /// @return true when every service is ready
         bool init();
 
@@ -120,17 +110,6 @@ namespace mark4
         }
 
       private:
-        /// @brief Handles one datagram read from a raw listening socket: a
-        ///        bridge announce.
-        /// @param localPort port the datagram landed on
-        /// @param from where the datagram came from
-        /// @param data datagram bytes
-        /// @param size datagram size
-        void onDatagram(std::uint16_t localPort,
-                        const UdpTransport::Source &from,
-                        const std::uint8_t *data,
-                        std::size_t size);
-
         /// @brief Handles one payload the transport delivered.
         /// @param src transport node the payload came from
         /// @param data payload bytes
@@ -169,16 +148,15 @@ namespace mark4
         /// @param change event to apply
         void onDiscoveryChange(const DiscoveryChange &change);
 
-        /// @brief Makes one drone THE connected drone, opening the bridge
-        ///        link when the route calls for one. Connecting elsewhere
+        /// @brief Makes one drone THE connected drone. Connecting elsewhere
         ///        replaces the previous connection.
         /// @param message decoded connect request
         /// @param errorOut receives the reason when it cannot be
         /// @return true when the connection is established
         bool applyConnect(const ClientMessage &message, std::string &errorOut);
 
-        /// @brief Drops the connected drone, closing the bridge link when the
-        ///        route owned one. A no-op when nothing is connected.
+        /// @brief Drops the connected drone. A no-op when nothing is
+        ///        connected.
         void applyDisconnect();
 
         /// @brief Says whether a command aimed at one kind may go out: only
@@ -188,18 +166,11 @@ namespace mark4
         /// @return true when the command may go out
         bool commandAllowed(mark4_NodeKind target, std::string &errorOut) const;
 
-        /// @brief Opens the bridge link to one address, closing whatever it
-        ///        was on. Idempotent on the same address.
-        /// @param address bridge IPv4 address, dotted quad
-        /// @param port bridge UDP port
-        /// @return true when the link is open
-        bool openBridge(const std::string &address, std::uint16_t port);
-
-        /// @brief Recomputes whether the connected drone shows signs of life,
-        ///        follows a bridge whose address changed, and tells the
-        ///        clients when the answer changed. The connection itself is
-        ///        never dropped here: losing the drone and letting it go are
-        ///        two different things, and only the operator does the second.
+        /// @brief Recomputes whether the connected drone shows signs of life
+        ///        and tells the clients when the answer changed. The
+        ///        connection itself is never dropped here: losing the drone
+        ///        and letting it go are two different things, and only the
+        ///        operator does the second.
         void refreshConnection();
 
         /// @brief Decodes and routes everything the clients have sent.
@@ -259,8 +230,8 @@ namespace mark4
         /// and the same drone coming back turns live true again on its own.
         struct Connection
         {
-            std::string via;                               ///< "udp" or "bridge", empty = none
-            std::string id;                                ///< kind name or bridge name
+            std::string via;                               ///< "udp", empty = none
+            std::string id;                                ///< kind name
             mark4_NodeKind kind = mark4_NodeKind_FIRMWARE; ///< kind commands route to
             bool live = false;                             ///< the drone shows signs of life
         };
@@ -268,16 +239,8 @@ namespace mark4
         Config m_config;                                      ///< settings of this run
         TuningProfiles m_profiles;                            ///< stored tuning profiles
         DiscoveryRegistry m_registry;                         ///< live processes
-        BridgeDirectory m_bridges;                            ///< WiFi bridges heard on the network
-        UdpTransport m_udp;                                   ///< raw UDP listeners
-        UdpLink m_udpLink;                                    ///< the LAN link
-        UdpByteStream m_bridgeStream;                         ///< datagrams to the WiFi bridge,
-                                                              ///< open while connected through it
-        UartLink m_bridgeLink{m_bridgeStream};                ///< the bridge as a serial link
-        Transport m_transport;                                ///< this hub as a transport node,
-                                                              ///< relaying between its two links
-        std::string m_bridgeDevice;                           ///< "address:port" the bridge link
-                                                              ///< is open on, empty = closed
+        UdpLink m_udpLink;                                    ///< the LAN link, the only one
+        Transport m_transport;                                ///< this hub as a transport node
         WsBridge m_ws;                                        ///< websocket endpoint
         Connection m_connection;                              ///< the one drone commands go to
         std::atomic_bool m_stopRequested{false};              ///< set by a signal handler

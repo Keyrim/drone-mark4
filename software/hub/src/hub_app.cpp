@@ -90,25 +90,14 @@ namespace mark4
 
     bool HubApp::init()
     {
-        // A bridge announces itself whether or not anyone listens, so the
-        // port is bound for the whole run: the network tab of the pages then
-        // has its list ready instead of building it after a click.
-        if (!m_udp.subscribe(m_config.bridgePort))
-        {
-            return false;
-        }
-        // Two links from the start: the LAN, and the bridge link that stays
-        // closed (reads nothing, takes nothing) until a connect names a
-        // bridge. Relaying is what makes the board one node among the
-        // others: its broadcasts heard on the bridge link go out on the LAN,
-        // LAN broadcasts reach it, and unicasts cross in both directions.
-        if (!m_udpLink.init() || !m_transport.addLink(m_udpLink) ||
-            !m_transport.addLink(m_bridgeLink) || !m_transport.init())
+        // One link, the LAN: every drone is a node on it, the board through
+        // the relay riding it (esp32-bridge/), so there is nothing to relay
+        // here and no second path to open.
+        if (!m_udpLink.init() || !m_transport.addLink(m_udpLink) || !m_transport.init())
         {
             static_cast<void>(std::fprintf(stderr, "hub: cannot start the transport\n"));
             return false;
         }
-        m_transport.setRelay(true);
         // The hub's own beacon: every node learns the gateway and the schema
         // it speaks, and the flight processes learn where to unicast.
         mark4_Envelope announce = mark4_Envelope_init_zero;
@@ -174,18 +163,10 @@ namespace mark4
         while (!m_stopRequested.load() && (!keepRunning || keepRunning()))
         {
             fds.clear();
-            m_udp.appendPollFds(fds);
             for (const int fd : {m_udpLink.discoveryFd(), m_udpLink.dataFd()})
             {
                 pollfd entry{};
                 entry.fd = fd;
-                entry.events = POLLIN;
-                fds.push_back(entry);
-            }
-            if (m_bridgeStream.isOpen())
-            {
-                pollfd entry{};
-                entry.fd = m_bridgeStream.fd();
                 entry.events = POLLIN;
                 fds.push_back(entry);
             }
@@ -194,27 +175,11 @@ namespace mark4
             static_cast<void>(::poll(
                 fds.data(), fds.size(), m_ota.busy() ? OTA_POLL_TIMEOUT_MS : POLL_TIMEOUT_MS));
 
-            m_udp.drain([this](std::uint16_t port,
-                               const UdpTransport::Source &from,
-                               const std::uint8_t *data,
-                               std::size_t size) { onDatagram(port, from, data, size); });
             m_transport.poll(monotonicUs(), &HubApp::OnFrame, this);
             handleClientMessages();
             housekeeping(monotonicUs());
         }
         return 0;
-    }
-
-    void HubApp::onDatagram(std::uint16_t localPort,
-                            const UdpTransport::Source &from,
-                            const std::uint8_t *data,
-                            std::size_t size)
-    {
-        if (localPort == m_config.bridgePort &&
-            m_bridges.onAnnounce(from.address, from.port, data, size, monotonicUs()))
-        {
-            broadcastDiscovery();
-        }
     }
 
     void HubApp::OnFrame(void *context,
@@ -275,7 +240,7 @@ namespace mark4
                 return;
             case mark4_Envelope_log_tag:
                 // A console line of a node without a console: the board
-                // behind the bridge, updated over the air with no probe on.
+                // behind its relay, updated over the air with no probe on.
                 static_cast<void>(
                     std::printf("%s: %s\n", nodeKindName(kind), envelope.body.log.text));
                 static_cast<void>(std::fflush(stdout));
@@ -561,47 +526,13 @@ namespace mark4
 
     bool HubApp::applyConnect(const ClientMessage &message, std::string &errorOut)
     {
+        // Every drone is a node of the LAN, the board included (its relay
+        // carries its frames): the identity of a connection is the kind.
+        static_cast<void>(errorOut);
         Connection next;
         next.via = message.connectVia;
-        if (message.connectVia == "udp")
-        {
-            if (message.target == mark4_NodeKind_FIRMWARE)
-            {
-                errorOut = "the board is reached over a bridge, not udp";
-                return false;
-            }
-            next.id = nodeKindName(message.target);
-            next.kind = message.target;
-        }
-        else
-        {
-            // The bridge told the network where it is; the operator only
-            // ever names it. Its address is resolved here and re-resolved
-            // by refreshConnection() if the router later hands out another.
-            const std::vector<DiscoveredBridge> &bridges = m_bridges.bridges();
-            const auto found = std::find_if(
-                bridges.begin(), bridges.end(), [&message](const DiscoveredBridge &bridge) {
-                    return bridge.name == message.connectPeer;
-                });
-            if (found == bridges.end())
-            {
-                errorOut = "no bridge named '" + message.connectPeer + "' on the network";
-                return false;
-            }
-            if (!openBridge(found->address, found->port))
-            {
-                errorOut = "cannot open udp:" + found->address + ":" + std::to_string(found->port);
-                return false;
-            }
-            next.id = message.connectPeer;
-        }
-        if (next.via == "udp")
-        {
-            // Connecting is exclusive: the bridge link belonged to the
-            // previous connection and nobody is on it any more.
-            m_bridgeStream.close();
-            m_bridgeDevice.clear();
-        }
+        next.id = nodeKindName(message.target);
+        next.kind = message.target;
         m_connection = next;
         refreshConnection();
         broadcastStatus();
@@ -610,29 +541,8 @@ namespace mark4
 
     void HubApp::applyDisconnect()
     {
-        m_bridgeStream.close();
-        m_bridgeDevice.clear();
         m_connection = Connection{};
         broadcastStatus();
-    }
-
-    bool HubApp::openBridge(const std::string &address, std::uint16_t port)
-    {
-        const std::string device = address + ":" + std::to_string(port);
-        if (m_bridgeStream.isOpen() && m_bridgeDevice == device)
-        {
-            return true;
-        }
-        // Nothing says hello: the hub's beacon leaves on this link within
-        // the second, and any datagram teaches the bridge where the ground
-        // tool is.
-        if (!m_bridgeStream.open(address.c_str(), port))
-        {
-            m_bridgeDevice.clear();
-            return false;
-        }
-        m_bridgeDevice = device;
-        return true;
     }
 
     void HubApp::refreshConnection()
@@ -641,22 +551,8 @@ namespace mark4
         {
             return;
         }
-        if (m_connection.via == "bridge")
-        {
-            // Follow a bridge whose router handed out a new address: the
-            // name is the identity, the address is just today's route to it.
-            const std::vector<DiscoveredBridge> &bridges = m_bridges.bridges();
-            const auto found = std::find_if(
-                bridges.begin(), bridges.end(), [this](const DiscoveredBridge &bridge) {
-                    return bridge.name == m_connection.id;
-                });
-            if (found != bridges.end())
-            {
-                static_cast<void>(openBridge(found->address, found->port));
-            }
-        }
-        // Alive = its Announce is still fresh in the registry, whatever link
-        // it came by; the registry expires it on the transport's own delay.
+        // Alive = its Announce is still fresh in the registry; the registry
+        // expires it on the transport's own delay.
         const auto &processes = m_registry.processes();
         const bool live = std::any_of(
             processes.begin(), processes.end(), [this](const DiscoveredProcess &process) {
@@ -682,8 +578,7 @@ namespace mark4
 
     void HubApp::broadcastDiscovery()
     {
-        m_ws.broadcastText(
-            discoveryToJson(m_registry.processes(), m_bridges.bridges(), monotonicUs()));
+        m_ws.broadcastText(discoveryToJson(m_registry.processes(), monotonicUs()));
     }
 
     void HubApp::broadcastStatus()
@@ -701,10 +596,6 @@ namespace mark4
         for (const DiscoveryChange &change : m_registry.expire(nowUs, DISCOVERY_EXPIRY_US))
         {
             onDiscoveryChange(change);
-        }
-        if (m_bridges.expire(nowUs, DISCOVERY_EXPIRY_US) > 0U)
-        {
-            broadcastDiscovery();
         }
         refreshConnection();
         std::erase_if(m_rcSeenUs, [nowUs](const auto &entry) {

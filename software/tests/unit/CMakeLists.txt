@@ -16,7 +16,6 @@ add_executable(unit_tests
     test_hub_http.cpp
     test_hub_json.cpp
     test_hub_ota.cpp
-    test_hub_bridge_link.cpp
     test_hub_tuning_profiles.cpp
     test_ota_boot_policy.cpp
     test_ota_e2e.cpp

@@ -440,10 +440,9 @@ namespace mark4
             return true;
         }
 
-        /// @brief Fills the connect part of a client request. The route names
-        ///        what identifies the drone: a UDP process is its kind, a
-        ///        board is the bridge it is reached through, because the
-        ///        board itself never announces.
+        /// @brief Fills the connect part of a client request. One route,
+        ///        "udp": every drone is a transport node reached on the LAN,
+        ///        the board through its relay, and its identity is its kind.
         /// @param object message object
         /// @param message message being decoded
         /// @param errorOut receives the reason on failure
@@ -451,29 +450,13 @@ namespace mark4
         bool parseConnect(const Json &object, ClientMessage &message, std::string &errorOut)
         {
             const auto via = object.find("via");
-            if (via == object.end() || !via->is_string())
+            if (via == object.end() || !via->is_string() || via->get<std::string>() != "udp")
             {
-                errorOut = R"(field 'via' must be "udp" or "bridge")";
+                errorOut = R"(field 'via' must be "udp")";
                 return false;
             }
             message.connectVia = via->get<std::string>();
-            if (message.connectVia == "udp")
-            {
-                return readTarget(object, message.target, errorOut);
-            }
-            if (message.connectVia == "bridge")
-            {
-                const auto name = object.find("name");
-                if (name == object.end() || !name->is_string() || name->get<std::string>().empty())
-                {
-                    errorOut = "field 'name' must name the bridge to reach";
-                    return false;
-                }
-                message.connectPeer = name->get<std::string>();
-                return true;
-            }
-            errorOut = R"(field 'via' must be "udp" or "bridge")";
-            return false;
+            return readTarget(object, message.target, errorOut);
         }
 
         /// @brief Fills the update-start part of a client request. The bundle
@@ -564,7 +547,6 @@ namespace mark4
     }
 
     std::string discoveryToJson(const std::vector<DiscoveredProcess> &processes,
-                                const std::vector<DiscoveredBridge> &bridges,
                                 std::uint64_t nowUs)
     {
         static constexpr std::uint64_t US_PER_MS = 1000U;
@@ -587,22 +569,10 @@ namespace mark4
                 (nowUs > process.lastSeenUs ? nowUs - process.lastSeenUs : 0U) / US_PER_MS;
             entries.push_back(entry);
         }
-        Json found = Json::array();
-        for (const DiscoveredBridge &bridge : bridges)
-        {
-            Json entry;
-            entry["address"] = bridge.address;
-            entry["port"] = bridge.port;
-            entry["name"] = bridge.name;
-            entry["ageMs"] =
-                (nowUs > bridge.lastSeenUs ? nowUs - bridge.lastSeenUs : 0U) / US_PER_MS;
-            found.push_back(entry);
-        }
         Json message;
         message["type"] = "discovery";
         message["wireHash"] = wireHashText(WIRE_HASH);
         message["processes"] = entries;
-        message["bridges"] = found;
         return message.dump();
     }
 

@@ -27,9 +27,9 @@ pnpm test
   for every nature (phase, throw detector, altitude, motors); the controls
   depend on it - kill/arm/mode switches and a throttle slider for a real
   or simulated drone, plus the folded scenario and tuning blocks. The
-  Connections panel lists everything connectable - announced UDP
-  processes and WiFi bridges - with the same click-to-connect workflow
-  for both (`connection.ts` is the pure list model, unit tested); nothing is
+  Connections panel lists everything connectable - every announced node,
+  the board through its relay included - with one click-to-connect
+  workflow (`connection.ts` is the pure list model, unit tested); nothing is
   wired to the controls until connected, and a lost drone keeps its row
   and widget, marked lost, until an explicit disconnect. `rc.ts` is the
   piloting state machine, pure and unit tested. `ota_panel.ts` is the

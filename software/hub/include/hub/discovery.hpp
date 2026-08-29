@@ -61,62 +61,6 @@ namespace mark4
     /// @return true when the name is a known kind
     bool parseNodeKindName(const std::string &name, mark4_NodeKind &kindOut);
 
-    /// One WiFi bridge that told the network it is there. A bridge is not a
-    /// node and carries no telemetry of its own: it is the address the
-    /// board's link is opened on.
-    struct DiscoveredBridge
-    {
-        std::string address;           ///< where it announced from, dotted quad
-        std::uint16_t port = 0U;       ///< port it carries the board stream on
-        std::string name;              ///< what it calls itself
-        std::uint64_t lastSeenUs = 0U; ///< time of the last announce [us]
-    };
-
-    /// Bridges heard on the bridge announce port. Pure logic, like the
-    /// registry above: the caller passes the datagrams and the time.
-    /// Nobody chooses the address of a bridge (a router hands it out), so
-    /// this is what spares the operator from having to know it.
-    class BridgeDirectory
-    {
-      public:
-        /// Word every announce opens with, followed by a space and the name.
-        static constexpr const char *WORD = "mark4-bridge";
-
-        /// Longest name kept from an announce. A name comes from the network
-        /// and reaches a web page: what is not a letter, a digit or a dash is
-        /// dropped, and what is left is cut to this length.
-        static constexpr std::size_t MAX_NAME = 16U;
-
-        /// @brief Feeds one datagram received on the bridge announce port.
-        /// @param address address the datagram came from, dotted quad
-        /// @param port port the datagram came from, which is the port the
-        ///        bridge carries the board stream on
-        /// @param data datagram bytes
-        /// @param size datagram size in bytes
-        /// @param nowUs current time [us], the entry's freshness reference
-        /// @return true when a bridge nobody had seen yet was added
-        bool onAnnounce(const char *address,
-                        std::uint16_t port,
-                        const std::uint8_t *data,
-                        std::size_t size,
-                        std::uint64_t nowUs);
-
-        /// @brief Drops the bridges nothing has been heard from for too long.
-        /// @param nowUs current time [us]
-        /// @param expiryUs silence after which a bridge is declared gone [us]
-        /// @return number of bridges dropped
-        std::size_t expire(std::uint64_t nowUs, std::uint64_t expiryUs);
-
-        /// @return live bridges, in the order they were first seen
-        [[nodiscard]] const std::vector<DiscoveredBridge> &bridges() const
-        {
-            return m_bridges;
-        }
-
-      private:
-        std::vector<DiscoveredBridge> m_bridges; ///< live bridges, insertion order
-    };
-
     /// Set of live nodes, keyed by kind: one drone_sim, one firmware. The
     /// node identity behind an entry is what tells a restart from a
     /// refresh, since a process draws a new one every time it starts.

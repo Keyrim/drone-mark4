@@ -5,12 +5,12 @@ The single process that decodes the binary protocol on behalf of humans.
 Everything else in the system speaks the wire of
 `software/components/protocol/mark4.proto`, one `Envelope` per transport
 frame (`software/components/transport/`): the desktop flight process over
-UDP, the board over its UART, which the WiFi bridge carries inside UDP
-datagrams. The hub is the one place those bytes become JSON: it is one
-transport node (kind `gateway`, it beacons like the others) with two links,
-the LAN and the bridge, and it relays between them so the board and the LAN
-nodes see each other. It learns who is alive from the `Announce` the other
-nodes send, and publishes everything on one websocket endpoint that a
+UDP, the board over its UART, which the ESP32 relay riding the drone
+(`esp32-bridge/`) forwards onto the same LAN. The hub is the one place
+those bytes become JSON: it is one transport node (kind `gateway`, it
+beacons like the others) with one link, the LAN, and it relays nothing.
+It learns who is alive from the `Announce` the other nodes send, the board
+included, and publishes everything on one websocket endpoint that a
 browser or a script can read without ever touching a socket or a codec.
 Commands travel the other way through the same endpoint.
 
@@ -30,7 +30,7 @@ cmake --preset desktop && cmake --build --preset desktop
 
 The hub takes **no arguments**. It decodes and serves with its built-in
 defaults (endpoint on 127.0.0.1:47810, transport discovery port 47820,
-bridge announces 47831, profiles in `profiles/`, pages in
+profiles in `profiles/`, pages in
 `software/hub/pages/dist` resolved from the binary location). A flight
 process reaches it by beaconing on the discovery port; nothing is wired by
 hand. Everything operational is driven at runtime through the websocket by
@@ -47,10 +47,9 @@ refused. The connection is held by the hub, so every tab sees the same
 drone, and it survives losing that drone: silence flips `live` to false and
 keeps the target, the same drone coming back flips it true again on its
 own. Only a `disconnect` (or a `connect` elsewhere) lets go. The identity
-the reconnection works on is the route: a UDP process is its kind, a board
-is the bridge it is reached through, by name (the bridge rides the drone, so
-its name is the drone's; a bridge whose address changes is followed by
-name).
+the reconnection works on is the kind: `drone_sim`, `firmware`; the address
+behind it is whatever the transport last heard the node at (the board's is
+its relay's, and follows the relay).
 
 The hub never starts Godot or a flight process: both are yours to run and
 restart at will (Godot from its own terminal or the "godot sim" VS Code
@@ -89,12 +88,12 @@ structs in `protocol/`.
  "attitudeQuat":[1,0,0,0],"positionM":[0,0,0],"velocityMps":[0,0,0]}
 
 {"type":"discovery","processes":[
-  {"kind":2,"kindName":"drone_sim","sessionId":12345,"ageMs":120}],
- "bridges":[
-  {"address":"192.168.1.31","port":47830,"name":"c19f6c","ageMs":220}]}
+  {"kind":2,"kindName":"drone_sim","sessionId":12345,"ageMs":120},
+  {"kind":1,"kindName":"firmware","sessionId":3050941797,"name":"mark4-fc",
+   "mcu":1,"buildEpoch":1756400000,"gitHash":"7be37461","ageMs":300}]}
 
 {"type":"status",
- "connection":{"via":"bridge","id":"c19f6c","kind":1,"kindName":"firmware",
+ "connection":{"via":"udp","id":"firmware","kind":1,"kindName":"firmware",
                "live":true},
  "counts":{"telemetryRows":0,"simRawRows":0,
            "badFrames":0,"rejectedAnnounces":0},"clients":1,"rcClients":0,
@@ -162,28 +161,18 @@ the pages show it as a toast.
 A client that connects gets a `discovery` and a `status` message
 immediately; `status` is then republished once per second and whenever the
 connection changes (target or liveness), `discovery` whenever a process
-appears, restarts or disappears,
-and whenever the set of bridges changes.
+appears, restarts or disappears.
 
-`connection` in `status` is THE connected drone: `via` is `none`, `udp` or
-`bridge`, `id` the identity on that route (kind name or bridge name),
-`kind`/`kindName` where commands route, and `live` whether
-the drone currently shows signs of life. A lost drone keeps its entry with
-`live` false until a `disconnect`.
+`connection` in `status` is THE connected drone: `via` is `none` or `udp`,
+`id` the kind name, `kind`/`kindName` where commands route, and `live`
+whether the drone currently shows signs of life. A lost drone keeps its
+entry with `live` false until a `disconnect`.
 
-`bridges` are the WiFi bridges heard on udp/47831, which they announce
-themselves to once a second (see `esp32-bridge/`). They are not processes
-and carry no telemetry of their own: a bridge is a door a board is connected
-through, by name (`connect` with `via":"bridge"`). Nobody chooses its
-address - a router does - so nothing is typed: the hub resolves the name to
-today's address, opens its bridge link (a `UartLink` over a UDP socket to
-that address) and follows it if the router hands out another one. The
-hub's own beacon is the first datagram the bridge receives, which is how
-the bridge learns where to send the board's bytes: there is no hello. The
-board then shows up in `processes` like any node, kind `firmware`, and
-`connection.live` follows its Announce. A bridge silent for three seconds
-is dropped from `bridges`, which does not drop a connection through it; a
-`disconnect` closes the bridge link.
+The board is one entry of `processes` like any node, kind `firmware`: its
+Announce reaches the LAN through the ESP32 relay riding it, and the
+transport remembers it at the relay's address, where the hub's unicasts go.
+Nothing about the relay is visible or configurable here; it never announces
+itself.
 
 ### Sent by a client
 
@@ -203,7 +192,7 @@ is dropped from `bridges`, which does not drop a connection through it; a
 {"type":"profileLoad","id":16,"name":"bench"}
 {"type":"profilePush","id":17,"name":"bench","target":"drone_sim"}
 {"type":"connect","id":19,"via":"udp","target":"drone_sim"}
-{"type":"connect","id":19,"via":"bridge","name":"c19f6c"}
+{"type":"connect","id":19,"via":"udp","target":"firmware"}
 {"type":"disconnect","id":20}
 {"type":"otaStatus","id":21}
 {"type":"otaStart","id":22,"bundle":"software/build/stm32/drone_firmware/drone_firmware.ota"}
@@ -233,8 +222,8 @@ hub stamps a rolling one, so two scenarios in a row are two runs.
 Routing: a command only goes out when its `target` is the connected drone
 (the `ack` says `no drone connected` or `connected to X, not to Y`
 otherwise). Every command is a transport unicast to the node whose beacon
-announced that kind, the board included: the transport knows it was heard
-on the bridge link and frames it for the UART. A scenario is routed the
+announced that kind, the board included: its node was heard at the
+relay's address, and the relay frames the unicast for the UART. A scenario is routed the
 same way, to the flight process driving the plant - no port is hardwired. A
 reboot needs the board. `otaAbort` is the one exception to the gate:
 dropping a stuck transfer must work even after the drone is gone.
@@ -247,7 +236,7 @@ failed to decode. Streams are never acknowledged.
 An `otaStart` sends one `.ota` bundle to the board over the transport, as
 unicasts to its node: the updater messages are one more body of the same
 envelope on the same link, so telemetry keeps flowing between them and the
-ESP32 bridge needs to know nothing about any of it.
+ESP32 relay forwards them like any other unicast for the board.
 
 The `bundle` field is optional and defaults to
 `software/build/stm32/drone_firmware/drone_firmware.ota`, resolved from the
@@ -308,11 +297,9 @@ code, never as the code.
   shared between the library threads and the poll loop.
 - The endpoint has no authentication. It binds the loopback interface, and
   it is a bench tool on a trusted network.
-- The hub relays every broadcast between the LAN and the bridge link: the
-  board hears the LAN's telemetry too (a few KB/s on its UART, ignored by
-  its command path) and the LAN hears the board's. Two hubs on one LAN
-  would each relay what the other relays; the hop count and the duplicate
-  drop bound it, nothing forbids it.
+- The hub relays nothing: with one link there is nothing to relay between.
+  Two hubs on one LAN both hear every broadcast and both beacon; the board
+  learns both through its relay.
 - Tuned values do not survive a simulator reset: `drone_sim` rebuilds its
   flight core on the reset (there is no state a teleport could keep) and
   does not re-announce, so the hub has no event to push a profile on. Push

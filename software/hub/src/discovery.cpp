@@ -4,7 +4,6 @@
 #include "hub/discovery.hpp"
 
 #include <algorithm>
-#include <string_view>
 
 namespace mark4
 {
@@ -107,56 +106,6 @@ namespace mark4
             }
         }
         return changes;
-    }
-
-    bool BridgeDirectory::onAnnounce(const char *address,
-                                     std::uint16_t port,
-                                     const std::uint8_t *data,
-                                     std::size_t size,
-                                     std::uint64_t nowUs)
-    {
-        if (address == nullptr)
-        {
-            return false;
-        }
-        const std::string_view text(reinterpret_cast<const char *>(data), size);
-        const std::string_view word(WORD);
-        if (!text.starts_with(word))
-        {
-            return false;
-        }
-        std::string name;
-        for (const char letter : text.substr(word.size()))
-        {
-            const bool keep = (letter >= '0' && letter <= '9') ||
-                              (letter >= 'a' && letter <= 'z') ||
-                              (letter >= 'A' && letter <= 'Z') || letter == '-';
-            if (keep && name.size() < MAX_NAME)
-            {
-                name.push_back(letter);
-            }
-        }
-
-        for (DiscoveredBridge &known : m_bridges)
-        {
-            if (known.address == address && known.port == port)
-            {
-                known.name = name;
-                known.lastSeenUs = nowUs;
-                return false;
-            }
-        }
-        m_bridges.push_back(DiscoveredBridge{address, port, name, nowUs});
-        return true;
-    }
-
-    std::size_t BridgeDirectory::expire(std::uint64_t nowUs, std::uint64_t expiryUs)
-    {
-        const std::size_t before = m_bridges.size();
-        std::erase_if(m_bridges, [nowUs, expiryUs](const DiscoveredBridge &known) {
-            return nowUs >= known.lastSeenUs && nowUs - known.lastSeenUs >= expiryUs;
-        });
-        return before - m_bridges.size();
     }
 
     std::uint32_t DiscoveryRegistry::nodeIdOf(mark4_NodeKind kind) const

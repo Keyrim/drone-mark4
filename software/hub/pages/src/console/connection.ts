@@ -1,15 +1,15 @@
 /**
  * The connection model of the control page, kept pure so the one rule of
- * the bench is testable: whatever the route (announced UDP process or WiFi
- * bridge), the workflow is the same list of candidates, one of which
- * may be THE connected drone. A connected drone that goes silent keeps its
- * row with the "lost" state instead of vanishing: the hub holds on to the
- * connection and relights it when the same drone comes back.
+ * the bench is testable: every announced node (a desktop flight process,
+ * the board through its relay) is one candidate of the same list, one of
+ * which may be THE connected drone. A connected drone that goes silent
+ * keeps its row with the "lost" state instead of vanishing: the hub holds
+ * on to the connection and relights it when the same drone comes back.
  */
 
 /** What the hub says about THE connected drone, inside the status message. */
 export interface Connection {
-    via: string; // "none", "udp" or "bridge"
+    via: string; // "none" or "udp"
     id: string;
     kind: number;
     kindName: string;
@@ -31,16 +31,6 @@ export interface AnnouncedProcess {
     kindName: string;
 }
 
-/** Kind of the board, the one process reached through a bridge, never by udp. */
-const KIND_FIRMWARE = 1;
-
-/** One WiFi bridge, as the discovery message lists it. */
-export interface AnnouncedBridge {
-    address: string;
-    port: number;
-    name: string;
-}
-
 export type RowState = "connected" | "lost" | "available";
 
 /** One row of the connection list. */
@@ -53,24 +43,18 @@ export interface CandidateRow {
 }
 
 /**
- * The connection list: every announced UDP process and every bridge, plus
- * the row of a connected drone that is not announced any more (that row is
- * the memory of the connection, so it must survive the disappearance).
+ * The connection list: every announced process, plus the row of a
+ * connected drone that is not announced any more (that row is the memory
+ * of the connection, so it must survive the disappearance).
  */
 export function candidateRows(
     processes: AnnouncedProcess[],
-    bridges: AnnouncedBridge[],
     connection: Connection,
 ): CandidateRow[] {
     const rows: CandidateRow[] = [];
     let connectionListed = false;
 
     for (const process of processes) {
-        if (process.kind === KIND_FIRMWARE) {
-            // The board announces like every node but is reached through a
-            // bridge row: it is evidence, not a candidate.
-            continue;
-        }
         const mine = connection.via === "udp" && connection.id === process.kindName;
         connectionListed ||= mine;
         rows.push({
@@ -81,23 +65,7 @@ export function candidateRows(
         });
     }
 
-    for (const bridge of bridges) {
-        const mine = connection.via === "bridge" && connection.id === bridge.name;
-        connectionListed ||= mine;
-        rows.push({
-            label: bridge.name === "" ? "unnamed bridge" : bridge.name,
-            detail: `${bridge.address}:${bridge.port}`,
-            state: mine ? (connection.live ? "connected" : "lost") : "available",
-            // A nameless bridge cannot be a connection target: the name is
-            // the identity the hub reconnects on.
-            connect:
-                mine || bridge.name === ""
-                    ? null
-                    : { type: "connect", via: "bridge", name: bridge.name },
-        });
-    }
-
-    if ((connection.via === "udp" || connection.via === "bridge") && !connectionListed) {
+    if (connection.via === "udp" && !connectionListed) {
         rows.push({
             label: connection.id,
             detail: connection.via,

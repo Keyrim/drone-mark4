@@ -4,7 +4,7 @@
 # the warning set: protocol/ is payload to it, never a dependency.
 #
 # The core and the UART link build for every preset, the F405 included; the
-# socket link is POSIX and desktop only.
+# socket link needs BSD sockets: desktop here, lwIP in esp32-bridge/.
 add_library(transport STATIC
     src/transport.cpp
     src/uart_link.cpp)
@@ -14,6 +14,5 @@ target_link_libraries(transport PRIVATE drone_warnings drone_strict)
 if(DRONE_PLATFORM STREQUAL "desktop")
     target_sources(transport PRIVATE
         src/posix/udp_link.cpp
-        src/posix/udp_byte_stream.cpp
         src/posix/node_id.cpp)
 endif()
