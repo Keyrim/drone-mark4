@@ -112,7 +112,6 @@ var _rng := RandomNumberGenerator.new()
 
 @onready var sensors: DroneSensors = $Sensors
 @onready var sim_link: SimLink = $SimLink
-@onready var sim_raw: SimRawLink = $SimRawLink
 @onready var pilot: PilotInput = $PilotInput
 @onready var hand: SimHand = $Hand
 
@@ -165,9 +164,11 @@ func _physics_process(delta: float) -> void:
 		sensors.gyro_rad_s,
 		sensors.accel_mps2,
 		sensors.baro_pa,
-		_reset_count
+		_reset_count,
+		body_basis,
+		global_position,
+		velocity
 	)
-	sim_raw.publish(simulated_time_us(), body_basis, global_position, velocity)
 
 	_update_motor_speeds(sim_link.motor_commands, delta)
 	_apply_motor_forces(body_basis)
@@ -200,7 +201,6 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 	sensors.reseed(_pending_seed)
 	_rng.seed = _pending_seed
 	hand.reset()
-	sim_raw.reset()
 	_run_start_tick = _tick_count
 	_schedule(_pending_scenario)
 	_pending_scenario = {}
@@ -209,7 +209,7 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 ## Schedule what a scenario owes after its reset, on this plant's tick grid.
 func _schedule(scenario: Dictionary) -> void:
 	_scheduled = Scheduled.NONE
-	if scenario.is_empty() or scenario["scenario"] == Protocol.SIM_SCENARIO_RESET:
+	if scenario.is_empty() or scenario["kind"] == SimLink.Mark4.SimScenarioKind.RESET:
 		return
 	var delay_ticks := int(round(float(scenario["throw_delay_us"]) * _tick_rate_hz / 1000000.0))
 	_scheduled_tick = _run_start_tick + delay_ticks
@@ -218,7 +218,7 @@ func _schedule(scenario: Dictionary) -> void:
 	_scheduled_held_basis = scenario["held_basis"]
 	_scheduled_held_s = scenario["held_s"]
 	_scheduled_swing_s = scenario["swing_s"]
-	if scenario["scenario"] == Protocol.SIM_SCENARIO_HAND_THROW:
+	if scenario["kind"] == SimLink.Mark4.SimScenarioKind.HAND_THROW:
 		_scheduled = Scheduled.HAND_THROW
 	else:
 		_scheduled = Scheduled.THROW

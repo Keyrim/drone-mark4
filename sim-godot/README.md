@@ -3,8 +3,9 @@
 Standalone Godot 4.4 project (GDScript only) that plays the role of the drone
 and its environment: a rigid body with a motor model, realistic sensor models,
 and a UDP link to the flight process. It runs on the HOST, not in the
-devcontainer, and it never links flight-core: it only speaks the wire structs
-defined in `protocol/`.
+devcontainer, and it never links flight-core: it only speaks the wire of
+`software/components/protocol/mark4.proto`, through the GDScript codec the
+desktop build generates into `scripts/gen/` (see "UDP contract").
 
 The simulator sends what an IMU and a barometer would measure, receives the
 four motor commands the flight process decides, and applies them as forces.
@@ -38,17 +39,18 @@ Nothing else crosses the boundary.
    godot -e --path sim-godot     # open the project in the editor (F5 to run)
    ```
 
-The overlay in the top left corner shows the simulated time, the session id,
-the motor commands coming back from the flight process, the accelerometer
-magnitude in g, the altitude and the packet counters. If the counters for
-received packets stay at zero, the flight process is not answering.
+The overlay in the top left corner shows the simulated time, the wire hash
+this build speaks, the motor commands coming back from the flight process,
+the accelerometer magnitude in g, the altitude and the packet counters. If
+the counters for received packets stay at zero, the flight process is not
+answering.
 
-The simulator also broadcasts its exact state (attitude, position, velocity,
-no sensor model) as `SimRawPacket` on udp/47802, so the attitude page served
-by the hub can draw the estimated attitude against the exact one. Wire
-vectors use the drone frame convention of `protocol/` (body x forward, y
-left, z up); the remap from the Godot axes happens in `sim_link.gd` and
-`sim_raw_link.gd`.
+Every sensor frame also carries the exact state (attitude, position,
+velocity, no sensor model) as `PlantTruth`; the flight process forwards it
+inside its telemetry, so the attitude page served by the hub draws the
+estimated attitude against the exact one. Wire vectors use the drone frame
+convention of the wire (body x forward, y left, z up); the remap from the
+Godot axes happens in `sim_link.gd`.
 
 ## Controls
 
@@ -76,11 +78,11 @@ already flying simply adds another push.
 
 ## Scenarios
 
-A scripted run arrives as a scenario block inside the lockstep reply: the
-flight process receives a `SimScenarioPacket` on its command receiver and
-forwards the 58 byte block on its next actuator packet. One block is one
-run. It opens with a reset - teleport, reseed every generator, clear the
-hand and the raw-stream decimation - and everything it asks for afterwards
+A scripted run arrives as a `SimScenario` envelope on the lockstep link:
+the flight process receives it on its command receiver and forwards it to
+this plant as its own message. One scenario is one run. It opens with a
+reset - teleport, reseed every generator, clear the hand - and everything
+it asks for afterwards
 (the throw, or the grab and the swing) is scheduled from that reset tick, on
 this project's own tick grid. Nothing outside has to agree on which absolute
 tick a run began at, and nothing carries over from the run before.
@@ -133,24 +135,27 @@ once at startup, so the same seed replays the same sensor stream.
 
 ## UDP contract
 
-The layout is defined by `software/components/protocol/include/protocol/sim_link.hpp`, which is
-the source of truth; `scripts/protocol.gd` is the single GDScript copy of
-its constants and `scripts/sim_link.gd` packs with them. Both packets are
-packed, little endian, version byte then type byte:
+The wire is `software/components/protocol/mark4.proto`, the source of
+truth for every consumer. The GDScript codec is generated from it by the
+desktop build (target `proto_gd`, run by `cmake --build --preset desktop`;
+`godot` must be on the PATH) into `scripts/gen/mark4.gd` and
+`scripts/gen/wire_hash.gd`, both gitignored: a fresh checkout has to run the
+desktop build once before this project can talk to anything. `scripts/sim_link.gd`
+is the only script that touches the codec. Every datagram is one
+`Envelope`:
 
-- sensor packet, 45 bytes, simulator to flight process: `u8` version, `u8`
-  type, `u64` timestamp in microseconds, 3 `f32` gyro [rad/s], 3 `f32`
-  accelerometer [m/s^2], `f32` pressure [Pa], `u8` reset count, `u32`
-  session id, `u16` lockstep timeouts. Sensors only: the pilot state is not
-  a sensor reading and travels out-of-band. The session id is drawn once per
-  process start, so a restarted simulator is recognized as a new plant whose
-  simulated clock starts over.
-- actuator packet, 84 bytes, flight process to simulator: `u8` version,
-  `u8` type, `u64` echoed timestamp, 4 `f32` motor commands in [0, 1], then
-  the 58 byte scenario block at offset 26, repeated on every reply.
+- `SimSensor`, simulator to flight process: timestamp in microseconds, gyro
+  [rad/s], accelerometer [m/s^2], pressure [Pa], reset count, lockstep
+  timeouts, and the exact state as `PlantTruth`. Sensors only: the pilot
+  state is not a sensor reading and travels out-of-band. A restarted
+  simulator is recognized by its clock starting over.
+- `SimActuator`, flight process to simulator: echoed timestamp and the 4
+  motor commands in [0, 1].
+- `SimScenario`, flight process to simulator: the run to play, once per
+  scenario, taken once per change of its `sequence`.
 
-Datagrams with another size or another version byte are counted as dropped and
-ignored. Motor commands are clamped to [0, 1] on arrival.
+Datagrams that decode to anything else are counted as dropped and ignored.
+Motor commands are clamped to [0, 1] on arrival.
 
 The simulator sends to `127.0.0.1:47800` by default (exported on the `SimLink`
 node) and listens on the same socket, whose local port the operating system

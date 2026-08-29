@@ -7,7 +7,6 @@
 [ext_resource type="Script" uid="uid://cbvnjkijf21mx" path="res://scripts/camera_follow.gd" id="5_camera"]
 [ext_resource type="Script" uid="uid://dy04qmk16a81u" path="res://scripts/hud.gd" id="6_hud"]
 [ext_resource type="Shader" uid="uid://c5twv73xgqfvg" path="res://shaders/ground_grid.gdshader" id="7_grid"]
-[ext_resource type="Script" uid="uid://bq76fgxbwppll" path="res://scripts/sim_raw_link.gd" id="8_sim_raw"]
 [ext_resource type="Script" uid="uid://d2i3x0xebgka7" path="res://scripts/arena.gd" id="11_arena"]
 [ext_resource type="Script" path="res://scripts/hand.gd" id="12_hand"]
 
@@ -205,9 +204,6 @@ script = ExtResource("2_sensors")
 
 [node name="SimLink" type="Node" parent="Drone" unique_id=590690689]
 script = ExtResource("3_sim_link")
-
-[node name="SimRawLink" type="Node" parent="Drone" unique_id=781247854]
-script = ExtResource("8_sim_raw")
 
 [node name="PilotInput" type="Node" parent="Drone" unique_id=743785965]
 script = ExtResource("4_pilot")

@@ -41,7 +41,7 @@ func _refresh() -> void:
 	var link := _drone.sim_link
 	var lines := PackedStringArray()
 	lines.append("sim time   %8.3f s" % _drone.simulated_time_s())
-	lines.append("session    %d" % link.session_id)
+	lines.append("wire       %08x" % WireHash.VALUE)
 	lines.append("motors     %s" % link.motor_commands_text())
 	lines.append("accel      %6.2f g" % _drone.sensors.accel_magnitude_g())
 	lines.append("altitude   %6.2f m" % _drone.altitude_m())
