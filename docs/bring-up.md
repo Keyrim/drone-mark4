@@ -136,11 +136,14 @@ Incremental, one observable win per step:
    them in the hub. Every frame is the transport header then the envelope,
    inside the serial framing of `transport/serial_framing.hpp` (a UART has
    no datagram boundaries), interrupt-driven behind a ring buffer; a frame
-   the transmit ring cannot hold is dropped whole and counted. The `hub`
-   (the board reached through the ESP32 WiFi bridge, connected from the
-   Connections panel of the control page) holds the other end as a second
-   transport link and relays: the board's broadcasts reach the LAN and the
-   LAN's reach the board. The uplink carries the pilot state
+   the transmit ring cannot hold is dropped whole and counted. The other
+   end of the UART is the ESP32 relay riding the drone (`esp32-bridge/`):
+   a transport node with no beacon that forwards the board's broadcasts
+   onto the WiFi LAN and, down the UART, the unicasts for the board plus
+   the LAN's Announces only. The `hub` sees the board as one more node of
+   the LAN (kind `firmware`, its Announce, at the relay's address) and the
+   Connections panel of the control page connects to it with the same
+   click as to `drone_sim`. The uplink carries the pilot state
    (`Rc`: kill, arm, mode, throttle): an `rc` message aimed at
    `firmware` on the hub websocket endpoint is a transport unicast to the
    board's node, and 500 ms of silence trips the fail-safe (kill engaged,

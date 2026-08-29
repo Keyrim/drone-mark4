@@ -167,7 +167,7 @@ namespace mark4
 
         /// Delay between two chunk sends [us]. The hub reaches the board
         /// over WiFi and the board over a 921600 baud UART: the pacing
-        /// must stay under that wire's ~92 KB/s or the bridge's transmit
+        /// must stay under that wire's ~92 KB/s or the relay's transmit
         /// side overflows. A 256-byte chunk frame takes ~2.8 ms on the
         /// UART; at 2 ms the bench lost about one chunk per window to the
         /// overflow (go-back-N absorbed it, at ~14 retries per image).

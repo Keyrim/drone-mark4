@@ -13,7 +13,7 @@ flowchart LR
         DS["drone_sim<br/>desktop (and target)"]
     end
 
-    ESP["ESP32 bridge<br/>UART <-> UDP WiFi"]
+    ESP["ESP32 relay<br/>transport node: UART <-> UDP WiFi"]
     GODOT["Godot simulator<br/>(plant only)"]
     HUB["hub<br/>discovery, decoding, web pages"]
     PAGES["web pages<br/>control, plots"]
@@ -31,8 +31,8 @@ flowchart LR
   carries every packet between the flight processes and the ground tools as
   a frame with a source and destination node; telemetry is a broadcast
   frame any number of nodes read simultaneously, commands are unicasts to
-  the node that beaconed. The board still reaches the hub as bare packets
-  through the ESP32 bridge until it migrates.
+  the node that beaconed. The board is a node too: the ESP32 riding it
+  relays its frames between the UART and the WiFi LAN.
 - **Godot and the hub never link flight-core**: they only know the wire of
   `protocol/mark4.proto`, through codecs generated at build time (nanopb,
   godobuf). The web pages only know the hub's JSON over WebSocket/HTTP,

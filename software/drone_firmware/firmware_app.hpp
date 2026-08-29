@@ -36,10 +36,10 @@ namespace mark4
     /// service may only depend on those declared above it. Built by
     /// main(), passed by reference: no singleton.
     ///
-    /// The board is one transport node with one link, USART1 through the
-    /// WiFi bridge. Everything it emits (telemetry, tuning and updater
-    /// answers, log lines, its Announce beacon) is a broadcast, like
-    /// drone_sim: the ground side relays and nobody has to know who asked.
+    /// The board is one transport node with one link, USART1 to the ESP32
+    /// relay. Everything it emits (telemetry, tuning and updater answers,
+    /// log lines, its Announce beacon) is a broadcast, like drone_sim: the
+    /// relay puts it on the LAN and nobody has to know who asked.
     /// Commands reach it as unicasts to its node id, or as broadcasts.
     class FirmwareApp
     {

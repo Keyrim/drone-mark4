@@ -140,7 +140,7 @@ Everything C++ lives under `software/`: the executables at its top level
   version byte, a 32-bit hash of the schema (`WIRE_HASH`, computed by
   CMake) travels in every `Announce` and the hub flags `wireMismatch`.
   `protocol/ota_image.hpp` keeps what is not wire (the on-flash image
-  header). External processes (Godot sim, hub, ESP32 bridge) speak ONLY
+  header). External processes (Godot sim, hub, ESP32 relay) speak ONLY
   the wire and never link flight-core; the web pages
   (`software/hub/pages/`) speak only the hub's JSON over WebSocket/HTTP
   and never the wire. protocol/ is payload only: it names no address and
@@ -152,22 +152,27 @@ Everything C++ lives under `software/`: the executables at its top level
   between links when asked. Depends on nothing but `drone_warnings`
   (`transport/serial_framing.hpp` lives here, the one CRC-16 of the
   project). The core and `UartLink` build for stm32 (no heap, fixed
-  tables, function pointer callbacks); `UdpLink` is POSIX only: one shared
-  discovery port (47820) for broadcasts, one ephemeral data socket per
-  node for unicasts. Node ids are self-assigned `uint32_t` (random on
-  desktop, `hashNodeId()` of the MCU UID on a board), never configured.
+  tables, function pointer callbacks); `UdpLink` needs BSD sockets
+  (desktop, and lwIP on the ESP32): one shared discovery port (47820) for
+  broadcasts, one ephemeral data socket per node for unicasts. Node ids
+  are self-assigned `uint32_t` (random on desktop, `hashNodeId()` of the
+  MCU UID on a board, of the MAC on the ESP32), never configured.
   Adopted by every node: drone_sim and the hub over UDP, the batch
   campaign, and the firmware as a node with one `UartLink` on USART1
   (`Uart1Stream` over the uart1 rings; frames travel in the serial
-  framing `A5 5A len_lo len_hi payload crc16`, 512 bytes at most, through
-  the transparent ESP32 bridge). The hub holds the bridge end as a second
-  `UartLink` over `UdpByteStream` (a connected UDP socket to the bridge),
-  opened by `connect{via:"bridge"}`, and relays between its two links; no
-  hello byte, its beacon teaches the bridge its peer. The firmware
-  broadcasts everything it emits (telemetry, answers, `Log` lines through
-  `LogSinkTransport`) and takes commands through
-  `CommandReceiverTransport` fed by `Transport::poll()` once per flight
-  frame.
+  framing `A5 5A len_lo len_hi payload crc16`, 512 bytes at most). The
+  ESP32 riding the drone (`esp32-bridge/`) is a transport relay: two
+  links (`UartLink` to the board, the shared `UdpLink` on lwIP),
+  `setRelay(true)`, no beacon, and a `setRelayFilter()` towards the UART
+  that lets unicasts and `Announce` broadcasts through and keeps every
+  other LAN broadcast off the line; it compiles `transport.cpp`,
+  `uart_link.cpp`, `posix/udp_link.cpp` and the nanopb codec straight
+  from `software/components/`. The hub holds one `UdpLink`, relays
+  nothing, and sees the board as one more node (kind `firmware`, its own
+  Announce, at the relay's address). The firmware broadcasts everything
+  it emits (telemetry, answers, `Log` lines through `LogSinkTransport`)
+  and takes commands through `CommandReceiverTransport` fed by
+  `Transport::poll()` once per flight frame.
 
 Each executable is flight-core plus one composition of platform services,
 assembled in an App class (see `software/drone_sim/drone_sim_app.hpp`): services

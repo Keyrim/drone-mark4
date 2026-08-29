@@ -2,7 +2,7 @@
 
 Status: implemented (hub, wire v12, web pages all delivered). Companion to
 `docs/architecture.md` (which describes the flight system itself); this
-document covers the ground tooling around it: simulator, bridges and
+document covers the ground tooling around it: simulator, relay and
 process orchestration.
 
 ## Why a hub
@@ -31,7 +31,7 @@ flowchart LR
     GODOT["Godot<br/>physics only<br/>(viz/input scripts deleted)"]
 
     subgraph hub["hub daemon - links protocol/ directly, zero duplication"]
-        TR["transport node (UDP),<br/>board through<br/>the WiFi bridge"]
+        TR["transport node (UDP),<br/>board through<br/>the ESP32 relay"]
         DISC["discovery<br/>from the beacons the<br/>transport hears, no port wiring"]
         SVC["commands / rc<br/>tuning profiles"]
         WS["single WebSocket + JSON<br/>endpoint"]
@@ -47,7 +47,7 @@ flowchart LR
 
     GODOT <-->|"binary sim link kept direct<br/>(lockstep, latency-critical)"| DS
     DS <-->|"transport frames over UDP<br/>(beacon, telemetry, commands)"| TR
-    FW <-->|"framed binary over the WiFi bridge"| TR
+    FW <-->|"transport frames, UART then<br/>WiFi through the ESP32 relay"| TR
     WS <--> P1
     WS <--> P2
     ui --- BROWSER
@@ -74,7 +74,7 @@ Structural improvements, one by one:
 - Roles untangled: Godot is a plant model again; decoding and routing are
   hub features instead of separate processes.
 - VSCode becomes packaging, not architecture: the same pages render in a
-  browser, in the editor, or on a field laptop through the ESP32 bridge.
+  browser, in the editor, or on a field laptop on the drone's WiFi.
 
 ## Composition rule: one composition = one CMake target
 

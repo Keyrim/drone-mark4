@@ -72,7 +72,7 @@ namespace mark4
 
     /// The board acknowledges every this-many in-order chunks (and any
     /// out-of-order one immediately); the sender keeps at most one window
-    /// in flight, which is also the flow control protecting the bridge's
+    /// in flight, which is also the flow control protecting the relay's
     /// UART transmit side.
     inline constexpr std::uint32_t OTA_CHUNK_ACK_WINDOW = 16U;
 

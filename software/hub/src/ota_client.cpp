@@ -597,7 +597,7 @@ namespace mark4
         // One chunk per pass at most, then the pacing delay: the loop only
         // repeats when the delay is zero, which is how a test drains a whole
         // window in one tick. The window itself is the real flow control -
-        // this delay only keeps a WiFi burst from outrunning the bridge UART.
+        // this delay only keeps a WiFi burst from outrunning the relay's UART.
         while (m_progress.sentBytes < m_progress.totalBytes &&
                m_progress.sentBytes - m_progress.ackedBytes < windowBytes && nowUs >= m_nextChunkUs)
         {

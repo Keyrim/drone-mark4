@@ -54,7 +54,7 @@ value by value in `platform_common/telemetry_packer.hpp` and
 
 - `Telemetry`, `SimRunStats`, `TuningAck`, `TuningInfo`, the `Ota*`
   answers and the `Announce` beacon: flight process to ground, as transport
-  broadcasts (drone_sim) or serial frames (the board through the bridge).
+  broadcasts (drone_sim, and the board through the ESP32 relay).
   `Telemetry.truth` is the plant's exact state when the sender has one; the
   hub renders it as the `simRaw` JSON message.
 - `Rc`, `Reboot`, `SimScenario`, `Tuning{Set,Get,List}`, the `Ota*`

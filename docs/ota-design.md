@@ -19,30 +19,32 @@ a small bootloader that picks between them.
 
 In scope: the STM32 flight firmware, on both boards (mark1 F405 today,
 AIO F722 next). Out of scope for v1, listed with reasons in section 7:
-updating the bootloader itself, updating the ESP32 bridge, image signing,
+updating the bootloader itself, updating the ESP32 relay, image signing,
 resuming an interrupted transfer, delta updates.
 
 ## 2. The path the bytes take, and what it imposes
 
 ```
-hub (desktop) --UDP/WiFi--> ESP32 bridge --UART 921600--> flight controller
+hub (desktop) --UDP/WiFi--> ESP32 relay --UART 921600--> flight controller
 ```
 
-- **The bridge stays a cable.** It carries bytes and never looks at them,
-  so OTA needs zero bridge changes: the hub sends wire envelopes as
-  transport unicasts to the board's node, the transport frames them for
-  the bridge link in the serial framing (transport header, then the
-  envelope), the bridge forwards the bytes, the board's `UartLink` picks
-  them up. The board is a transport node like `drone_sim`; the hub has no
-  special serial path and sends no hello byte (its beacon teaches the
-  bridge its peer). This is the payoff of the "it is a cable" decision and
-  the proposal keeps it intact.
+- **The relay never looks inside.** The ESP32 is a transport relay
+  (`esp32-bridge/`): the hub sends wire envelopes as transport unicasts
+  to the board's node, they land at the relay's address, the relay
+  forwards them down the UART in the serial framing (transport header,
+  then the envelope) and the board's `UartLink` picks them up; the
+  board's answers are broadcasts the relay forwards onto the LAN. The
+  updater messages are unicasts for the board like RC is, so the relay's
+  filter (which only keeps LAN broadcasts off the UART) never sees them.
+  The board is a transport node like `drone_sim`; the hub has no special
+  path for it. OTA needs no relay change.
 - **The serial framing caps a frame at 512 payload bytes** (two length
   bytes) and discards corrupted frames by CRC-16. WiFi loses datagrams.
   The transfer protocol must therefore retransmit, and must pace itself:
   the receiver's acknowledgements are the flow control that keeps the hub
-  from overrunning the bridge's UART transmit side (the UART is the
-  bottleneck at roughly 92 KB/s).
+  from overrunning the relay's UART transmit side (the UART is the
+  bottleneck at roughly 92 KB/s; the relay refuses a frame its transmit
+  ring cannot hold whole and counts it).
 - **Flash on both MCUs is single-bank at the silicon level**: programming
   or erasing stalls every code fetch from flash. So the update runs in a
   dedicated update mode with the flight loop stopped, and UART reception
@@ -62,7 +64,7 @@ hub (desktop) --UDP/WiFi--> ESP32 bridge --UART 921600--> flight controller
    A, the image linked for slot B, and a manifest (build epoch, git
    hash, target MCU). The build epoch is the identity of a build: unlike
    the git hash it tells two packagings of the same dirty tree apart.
-2. **Connect.** The drone sits on the bench, disarmed, bridge powered. The
+2. **Connect.** The drone sits on the bench, disarmed, relay powered. The
    hub control page already shows the board; it now also shows the running
    build and which slot it runs from (one status request).
 3. **Start.** The operator picks the bundle (the hub offers the most
@@ -373,7 +375,7 @@ nothing; platform speaks protocol; humans speak to the hub):
 - **Pages** - an update panel on the control page: running build
   against bundle build, phase and progress, the confirmed-or-rolled-back
   verdict, a revert button.
-- **ESP32 bridge** - no change, by construction.
+- **ESP32 relay** - no change, by construction.
 
 Verification, in the spirit of everything else in this repo: unit tests
 on OtaUpdater and the metadata module (torn-record recovery above all), a
@@ -385,7 +387,7 @@ roll back.
 ## 7. Deliberately not in v1
 
 - **Image signing.** The CRC is integrity, not authenticity; the security
-  boundary today is the WPA2 network the bridge raises or joins. Worth
+  boundary today is the WPA2 network the relay raises or joins. Worth
   revisiting the day the drone updates over anything but its own bench
   network; the header reserves room for it.
 - **Transfer resume.** A restart costs a few seconds; resume costs state
@@ -393,8 +395,8 @@ roll back.
 - **Bootloader recovery over UART.** It would double the bootloader to
   cover a state (both slots dead) the update path cannot produce. SWD is
   the recovery of last resort, exactly as it is today.
-- **Bootloader self-update and ESP32 bridge OTA.** Both are SWD/USB
+- **Bootloader self-update and ESP32 relay OTA.** Both are SWD/USB
   flashes on the bench today and neither blocks the drone loop. The
-  bridge has ESP-IDF's own OTA machinery the day it matters.
+  relay has ESP-IDF's own OTA machinery the day it matters.
 - **Delta updates and compression.** At 128 KB over a 92 KB/s link, the
   problem they solve does not exist here.
