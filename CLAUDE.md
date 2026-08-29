@@ -59,13 +59,15 @@ python3 scripts/build_app.py drone_sim
 
 # Run the flight process (no frame limit by default; a finite budget is the
 # DRONE_SIM_FRAME_LIMIT cmake cache variable, never a runtime argument)
-./software/build/desktop/drone_sim/drone_sim [--sim-port N] [--discovery-port N] [--node-id N]
+./software/build/desktop/drone_sim/drone_sim [--discovery-port N] [--node-id N]
 
-# Start a bench session: the hub takes no arguments, serves the pages and
-# websocket on http://127.0.0.1:47810 and stays up; everything operational
-# (board link, tuning profiles) is driven from the pages.
-# Godot (own terminal or the "godot sim" VS Code task) and drone_sim are
-# started and restarted by hand, discovery picks them up.
+# Start a bench session: no port to pass anywhere, every process is a
+# transport node on udp/47820 and finds the others by their beacons. The hub
+# takes no arguments, serves the pages and websocket on http://127.0.0.1:47810
+# and stays up; everything operational (board link, tuning profiles) is driven
+# from the pages. Godot (own terminal or the "godot sim" VS Code task) hosts
+# one virtual drone per drone_sim it hears; drone_sim processes are started
+# and restarted by hand, in any order, as many as wanted.
 ./software/build/desktop/hub/hub
 godot --path sim-godot
 ./software/build/desktop/drone_sim/drone_sim
@@ -140,8 +142,8 @@ Everything C++ lives under `software/`: the executables at its top level
   version byte, a 32-bit hash of the schema (`WIRE_HASH`, computed by
   CMake) travels in every `Announce` and the hub flags `wireMismatch`.
   `protocol/ota_image.hpp` keeps what is not wire (the on-flash image
-  header). External processes (Godot sim, hub, ESP32 relay) speak ONLY
-  the wire and never link flight-core; the web pages
+  header). External processes (Godot plant, hub, ESP32 relay) speak ONLY
+  the wire, inside transport frames, and never link flight-core; the web pages
   (`software/hub/pages/`) speak only the hub's JSON over WebSocket/HTTP
   and never the wire. protocol/ is payload only: it names no address and
   no route. See `software/components/protocol/README.md`.
@@ -158,7 +160,11 @@ Everything C++ lives under `software/`: the executables at its top level
   are self-assigned `uint32_t` (random on desktop, `hashNodeId()` of the
   MCU UID on a board, of the MAC on the ESP32), never configured.
   Adopted by every node: drone_sim and the hub over UDP, the batch
-  campaign, and the firmware as a node with one `UartLink` on USART1
+  campaign, the Godot plant (a GDScript port,
+  `sim-godot/scripts/transport/transport.gd`, kind `plant`: it hosts one
+  virtual drone per `drone_sim` node it hears and the lockstep sensor /
+  actuator exchange is unicast frames between the two node ids, no port
+  of its own), and the firmware as a node with one `UartLink` on USART1
   (`Uart1Stream` over the uart1 rings; frames travel in the serial
   framing `A5 5A len_lo len_hi payload crc16`, 512 bytes at most). The
   ESP32 riding the drone (`esp32-bridge/`) is a transport relay: two

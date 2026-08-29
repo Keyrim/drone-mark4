@@ -67,13 +67,14 @@ run-clang-tidy -p software/build/desktop "$(pwd)/(apps|flight-core|platform|prot
 
 ## Simulation chain
 
-Three processes speak the wire over UDP on localhost: the Godot plant
-feeds `drone_sim` sensor frames in lockstep, `drone_sim` answers with
-actuator frames and broadcasts telemetry to any transport node, the hub
-decodes it for the pages.
+Three processes are transport nodes on udp/47820 and find each other by
+their beacons: the Godot plant spawns one virtual drone per `drone_sim`
+it hears and feeds it sensor frames in lockstep, `drone_sim` answers with
+actuator frames and broadcasts telemetry to any node, the hub decodes it
+for the pages. Nothing is configured, start them in any order.
 
 ```sh
-# Terminal 1 - flight process (listens on udp/47800)
+# Terminal 1 - flight process (one per virtual drone wanted)
 ./software/build/desktop/drone_sim/drone_sim
 
 # Terminal 2 - the plant (the desktop build generated its codec)

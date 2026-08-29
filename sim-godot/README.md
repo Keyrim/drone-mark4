@@ -1,25 +1,33 @@
 # Godot simulator
 
-Standalone Godot 4.4 project (GDScript only) that plays the role of the drone
-and its environment: a rigid body with a motor model, realistic sensor models,
-and a UDP link to the flight process. It runs on the HOST, not in the
-devcontainer, and it never links flight-core: it only speaks the wire of
-`software/components/protocol/mark4.proto`, through the GDScript codec the
-desktop build generates into `scripts/gen/` (see "UDP contract").
+Standalone Godot 4.4 project (GDScript only) that plays the role of the
+drones and their environment: rigid bodies with a motor model, realistic
+sensor models, and a transport node that talks to the flight processes. It
+runs on the HOST, not in the devcontainer, and it never links flight-core:
+it only speaks the wire of `software/components/protocol/mark4.proto`,
+through the GDScript codec the desktop build generates into `scripts/gen/`,
+inside the frames of `software/components/transport/` (see "Transport").
 
-The simulator sends what an IMU and a barometer would measure, receives the
-four motor commands the flight process decides, and applies them as forces.
-Nothing else crosses the boundary.
+The plant is one node of the LAN, kind `plant`, and hosts **one virtual
+drone per `drone_sim` node it hears**: a flight process that starts is
+found by its beacon and gets a drone spawned on the ground for it, a flight
+process that dies has its drone removed once its node expires. Each virtual
+drone sends what an IMU and a barometer would measure to its own flight
+process, receives the four motor commands that process decides, and
+applies them as forces. Nothing else crosses the boundary.
 
 ## Run
 
 1. Install Godot 4.4 or newer (standard build, no C# needed). The project
    already selects Jolt Physics and a 500 Hz physics tick, there is nothing to
    configure.
-2. Start the flight process in the container, listening on UDP 47800:
+2. Start one flight process per drone wanted, in the container, in any
+   order relative to this project (each one is a transport node on
+   udp/47820 and beacons once per second):
 
    ```sh
-   ./software/build/desktop/drone_sim/drone_sim 2000000
+   ./software/build/desktop/drone_sim/drone_sim
+   ./software/build/desktop/drone_sim/drone_sim   # a second drone, optional
    ```
 
 3. On a fresh clone, import the project once so Godot generates its cache
@@ -39,26 +47,28 @@ Nothing else crosses the boundary.
    godot -e --path sim-godot     # open the project in the editor (F5 to run)
    ```
 
-The overlay in the top left corner shows the simulated time, the wire hash
-this build speaks, the motor commands coming back from the flight process,
-the accelerometer magnitude in g, the altitude and the packet counters. If
-the counters for received packets stay at zero, the flight process is not
-answering.
+The overlay in the top left corner shows this plant's node id, the wire
+hash this build speaks, how many drones it hosts, and for the followed
+drone (the first one spawned, then the oldest survivor): the node id of its
+flight process, the simulated time, the motor commands coming back, the
+accelerometer magnitude in g, the altitude and the packet counters. With no
+flight process on the LAN the world is empty and the overlay says so. The
+camera, the arena fade and the world keys follow the same drone.
 
 Every sensor frame also carries the exact state (attitude, position,
 velocity, no sensor model) as `PlantTruth`; the flight process forwards it
 inside its telemetry, so the attitude page served by the hub draws the
-estimated attitude against the exact one. Wire vectors use the drone frame
-convention of the wire (body x forward, y left, z up); the remap from the
-Godot axes happens in `sim_link.gd`.
+estimated attitude against the exact one, per drone. Wire vectors use the
+drone frame convention of the wire (body x forward, y left, z up); the
+remap from the Godot axes happens in `sim_link.gd`.
 
 ## Controls
 
 | Key        | Effect                                                        |
 | ---------- | ------------------------------------------------------------- |
-| `H`        | pick the drone up in the simulated hand                        |
-| `SPACE`    | throw the drone (a hand throw when it is held)                 |
-| `R`        | reset the world to its start pose, at rest, motors stopped     |
+| `H`        | pick the followed drone up in the simulated hand               |
+| `SPACE`    | throw the followed drone (a hand throw when it is held)        |
+| `R`        | reset the followed drone to its start pose, at rest, motors stopped |
 | `ESC`      | quit                                                           |
 
 These are world keys, not piloting. This project is the plant, and it holds
@@ -78,9 +88,9 @@ already flying simply adds another push.
 
 ## Scenarios
 
-A scripted run arrives as a `SimScenario` envelope on the lockstep link:
-the flight process receives it on its command receiver and forwards it to
-this plant as its own message. One scenario is one run. It opens with a
+A scripted run arrives as a `SimScenario` envelope, unicast by the flight
+process to this plant: it receives it on its command receiver and forwards
+it to the virtual drone that belongs to it, as its own message. One scenario is one run. It opens with a
 reset - teleport, reseed every generator, clear the hand - and everything
 it asks for afterwards
 (the throw, or the grab and the swing) is scheduled from that reset tick, on
@@ -133,34 +143,77 @@ Noise standard deviations, bias spread and the generator seed are exported on
 the `Sensors` node. The generator is seeded explicitly and the biases are drawn
 once at startup, so the same seed replays the same sensor stream.
 
-## UDP contract
+## Transport
+
+`scripts/transport/transport.gd` (`Mark4Transport`) is the GDScript port
+of `software/components/transport/`, the same frames and the same rules:
+an 11-byte little-endian header (`src u32, dst u32, seq u16, hops u8`)
+in front of every payload, a node table learnt from every frame heard
+(address, last sequence, received / lost / duplicate counters, 3 s
+expiry, `node_up` / `node_down` signals), a beacon broadcast every second
+and unicast once to every newcomer, duplicates dropped by `(src, seq)`.
+No relay. The node id is a random nonzero `u32` drawn at start.
+
+Sockets, as in the C++ `UdpLink`: one shared discovery socket on
+udp/47820 (`--discovery-port N` after `--` for a batch pair) that receives
+the broadcasts of the LAN, and one ephemeral data socket every frame
+leaves from, so its source port is this node's unicast address. Godot's
+`PacketPeerUDP.bind()` sets no reuse option and refuses a port another
+process already holds, so the discovery socket is a `UDPServer`: its
+`listen()` sets `SO_REUSEADDR`, which Linux honours for UDP next to the
+`SO_REUSEADDR + SO_REUSEPORT` pair the C++ link sets, and the hub, the
+flight processes and this plant share udp/47820 on one host. The server
+hands datagrams out as one `PacketPeerUDP` per remote address; the
+transport keeps them and drains them all on every poll. Broadcasts go to
+`255.255.255.255`, and to `127.255.255.255` when the host has no route
+for the former, like the C++ link.
+
+`scripts/transport/announce.gd` builds this plant's beacon (an `Announce`
+of kind `PLANT`, name `godot-plant`, mcu `SIM`, the wire hash of the
+generated codec) and reads the kind out of everyone else's, after one look
+at the first byte: the plant hears every broadcast of the LAN, the
+telemetry of every flight process included, and never runs the codec on
+a frame it does not want.
+
+`scripts/drone_manager.gd` (`DroneManager`, the `Drones` node of the main
+scene) owns the transport and polls it once per physics tick, before the
+drones run. A payload announcing a `DRONE_SIM` node from an unknown
+sender spawns `scenes/drone.tscn` for that node, on a 1 m grid (four per
+row); every payload from a known node goes to that drone's `SimLink`; a
+node that expired has its drone freed 3 s later, unless it comes back
+before. A flight process that restarts draws a new node id, so it gets a
+new drone next to the old one's spot while the old one leaves. The plant
+only ever decides on the `Announce` kind, never on an address.
 
 The wire is `software/components/protocol/mark4.proto`, the source of
 truth for every consumer. The GDScript codec is generated from it by the
 desktop build (target `proto_gd`, run by `cmake --build --preset desktop`;
 `godot` must be on the PATH) into `scripts/gen/mark4.gd` and
 `scripts/gen/wire_hash.gd`, both gitignored: a fresh checkout has to run the
-desktop build once before this project can talk to anything. `scripts/sim_link.gd`
-is the only script that touches the codec. Every datagram is one
-`Envelope`:
+desktop build once before this project can talk to anything.
+`scripts/sim_link.gd` (one per virtual drone) and `announce.gd` are the
+only scripts that touch the codec. Every payload is one `Envelope`:
 
-- `SimSensor`, simulator to flight process: timestamp in microseconds, gyro
-  [rad/s], accelerometer [m/s^2], pressure [Pa], reset count, lockstep
-  timeouts, and the exact state as `PlantTruth`. Sensors only: the pilot
-  state is not a sensor reading and travels out-of-band. A restarted
-  simulator is recognized by its clock starting over.
-- `SimActuator`, flight process to simulator: echoed timestamp and the 4
-  motor commands in [0, 1].
-- `SimScenario`, flight process to simulator: the run to play, once per
-  scenario, taken once per change of its `sequence`.
+- `SimSensor`, virtual drone to its flight process, unicast: timestamp in
+  microseconds, gyro [rad/s], accelerometer [m/s^2], pressure [Pa], reset
+  count, lockstep timeouts, and the exact state as `PlantTruth`. Sensors
+  only: the pilot state is not a sensor reading and travels out-of-band. A
+  restarted plant is recognized by its clock starting over, and by its new
+  node id.
+- `SimActuator`, flight process to its virtual drone, unicast: echoed
+  timestamp and the 4 motor commands in [0, 1].
+- `SimScenario`, flight process to its virtual drone, unicast: the run to
+  play, once per scenario, taken once per change of its `sequence`.
 
-Datagrams that decode to anything else are counted as dropped and ignored.
-Motor commands are clamped to [0, 1] on arrival.
+Payloads that decode to anything else are counted as dropped and ignored;
+the flight process's own beacon, unicast on first contact, is not counted.
+Motor commands are clamped to [0, 1] on arrival. No port is configured
+anywhere: the flight process answers to the node the sensor frame came
+from, and the plant found the flight process by its beacon.
 
-The simulator sends to `127.0.0.1:47800` by default (exported on the `SimLink`
-node) and listens on the same socket, whose local port the operating system
-picks. The flight process answers to the address the sensor packet came from,
-so no port needs to be reserved on the simulator side.
+Cost: one exchange (codec plus header plus send) is about 230 us of
+GDScript per drone per tick on a desktop core, the codec being nearly all
+of it; the transport header and the node table add a few microseconds.
 
 The timestamp comes from the physics tick counter divided by the tick rate,
 never from a wall clock. If the host cannot keep up with 500 Hz the stream
@@ -168,11 +221,14 @@ slows down but stays continuous and reproducible.
 
 ## Lockstep
 
-`SimLink` has a `lockstep` flag, off by default. When it is on, the physics
-tick sends its sensor packet and then busy polls the socket, sleeping 20 us
-between polls, until the actuator packet arrives or `lockstep_timeout_ms`
-(default 50 ms) expires; on timeout the previous motor commands are reused and
-the counter shown in the overlay increases.
+`SimLink` has a `lockstep` flag, off by default (`--lockstep` after `--`
+turns it on for every drone). When it is on, the physics tick sends its
+sensor frame and then pumps the transport, sleeping 20 us between polls,
+until the actuator frame echoing that very timestamp arrives or
+`lockstep_timeout_ms` (default 50 ms) expires, resending the frame up to 20
+times; then the previous motor commands are reused and the counter shown
+in the overlay increases. With several drones the ticks are serialized:
+each one waits for its own flight process in turn.
 
 This blocks the main thread, so the window stops repainting while it waits. It
 is meant for deterministic runs and for stepping through the flight process in
@@ -186,7 +242,7 @@ In the container:
 
 ```sh
 cmake --build --preset desktop
-./software/build/desktop/drone_sim/drone_sim 2000000
+./software/build/desktop/drone_sim/drone_sim
 ```
 
 In another terminal, the telemetry viewer:
@@ -199,7 +255,10 @@ then open `http://127.0.0.1:47810` for the plots.
 
 On the host, run the Godot project, then:
 
-1. Check that the overlay counters for sent and received packets both climb.
+1. Check that the overlay shows one drone and that its counters for sent
+   and received packets both climb. Start a second `drone_sim`: a second
+   drone appears on the ground next to the first; stop it: the drone is
+   removed about 6 s later (3 s of node expiry, 3 s of grace).
 2. At rest on the ground the accelerometer reads about 1.00 g.
 3. Press `SPACE`. During the throw the accelerometer jumps for about 120 ms,
    then drops to nearly 0 g for the whole ballistic phase, and the gyro shows
@@ -219,14 +278,22 @@ on the ground material.
 
 ```
 project.godot          engine configuration, Jolt, 500 Hz, key bindings
-scenes/main.tscn        ground, pylons, light, camera, drone, overlay
+scenes/main.tscn        ground, pylons, light, camera, drone manager, overlay
+scenes/drone.tscn       one virtual drone: body, meshes, sensors, sim link, hand
 shaders/ground_grid.gdshader  metric grid ground material
+scripts/transport/transport.gd  the transport node: frames, node table, beacon
+scripts/transport/announce.gd   this plant's beacon, the kind of everyone else's
+scripts/drone_manager.gd  one virtual drone per flight process heard
 scripts/drone.gd        rigid body, motor model, drag, throw, tick loop
 scripts/sensors.gd      accelerometer, gyro, barometer models
-scripts/sim_link.gd     UDP packets in and out, scenario decode
+scripts/sim_link.gd     sensor frames out, actuator frames and scenarios in
+scripts/hand.gd         the simulated hand: hold, sway, swing, release
 scripts/pilot_input.gd  keyboard world keys: hold, throw, reset, quit
 scripts/camera_follow.gd  chase camera
 scripts/hud.gd          on screen overlay
+scripts/sim_args.gd     command line flags after --
+tests/transport_check.gd   ctest smoke of the transport, no peer needed
+tests/plant_link_check.gd  cross-language check driven by the C++ unit tests
 ```
 
 godot-tools LSP: port 6005 is forwarded by the devcontainer.
