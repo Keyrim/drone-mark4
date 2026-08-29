@@ -7,10 +7,17 @@
 #include <initializer_list>
 
 #include <arpa/inet.h>
-#include <ifaddrs.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+// lwIP has no getifaddrs(): the ESP32 relay names its address itself.
+#if __has_include(<ifaddrs.h>)
+#include <ifaddrs.h>
+#define MARK4_HAVE_IFADDRS 1
+#else
+#define MARK4_HAVE_IFADDRS 0
+#endif
 
 namespace mark4
 {
@@ -103,6 +110,7 @@ namespace mark4
             return false;
         }
         m_dataPort = ntohs(bound.sin_port);
+#if MARK4_HAVE_IFADDRS
         // Every address a broadcast of ours can come back from. Best
         // effort: without the list an echo is merely counted as a duplicate.
         ifaddrs *interfaces = nullptr;
@@ -118,6 +126,7 @@ namespace mark4
             }
             ::freeifaddrs(interfaces);
         }
+#endif
         return true;
     }
 
@@ -128,16 +137,19 @@ namespace mark4
 
     bool UdpLink::broadcast(const std::uint8_t *data, std::size_t size)
     {
-        if (!m_loopbackOnly)
+        if (sendTo(data, size, GLOBAL_BROADCAST, m_discoveryPort))
         {
-            if (sendTo(data, size, GLOBAL_BROADCAST, m_discoveryPort))
-            {
-                return true;
-            }
-            m_loopbackOnly = true;
+            return true;
+        }
+        // Tried again on every send: a network that comes back (a WiFi
+        // link, a host that was briefly offline) must not leave the node
+        // talking to itself for the rest of its run.
+        if (!m_loopbackWarned)
+        {
+            m_loopbackWarned = true;
             static_cast<void>(std::fprintf(stderr,
                                            "UdpLink: no route for 255.255.255.255 (%s): "
-                                           "broadcasting on the loopback only\n",
+                                           "broadcasting on the loopback until one appears\n",
                                            std::strerror(errno)));
         }
         return sendTo(data, size, LOOPBACK_BROADCAST, m_discoveryPort);

@@ -208,9 +208,10 @@ namespace mark4
         {
             for (std::size_t index = 0U; index < m_linkCount; ++index)
             {
-                if (index != arrivalLink)
+                if (index != arrivalLink && relayAllowed(index, header, size))
                 {
                     static_cast<void>(m_links[index]->broadcast(m_rxBuffer.data(), size));
+                    ++m_relayed;
                 }
             }
             return;
@@ -223,7 +224,26 @@ namespace mark4
             ++m_dropped;
             return;
         }
+        if (!relayAllowed(target->link, header, size))
+        {
+            return;
+        }
         static_cast<void>(m_links[target->link]->send(m_rxBuffer.data(), size, target->address));
+        ++m_relayed;
+    }
+
+    bool Transport::relayAllowed(std::size_t linkIndex, const FrameHeader &header, std::size_t size)
+    {
+        if (m_filter == nullptr || m_filter(m_filterContext,
+                                            linkIndex,
+                                            header,
+                                            m_rxBuffer.data() + FRAME_HEADER_SIZE,
+                                            size - FRAME_HEADER_SIZE))
+        {
+            return true;
+        }
+        ++m_filtered;
+        return false;
     }
 
     void Transport::expire(std::uint64_t nowUs)

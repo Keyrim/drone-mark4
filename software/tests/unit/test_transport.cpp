@@ -1,7 +1,8 @@
 /// @file
 /// @brief Transport core over fake links: header codec, node table, beacon,
-///        sequence accounting, relay; the UART link over an in-memory byte
-///        pipe; the UDP link between two nodes on one host.
+///        sequence accounting, relay and its outbound filter; the UART link
+///        over an in-memory byte pipe; the UDP link between two nodes on one
+///        host.
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>
@@ -12,6 +13,8 @@
 
 #include <unistd.h>
 
+#include "byte_pipe.hpp"
+#include "protocol/envelope.hpp"
 #include "transport/frame.hpp"
 #include "transport/node_id.hpp"
 #include "transport/transport.hpp"
@@ -438,21 +441,22 @@ TEST_CASE("a relay in a line forwards towards the destination and no further")
     CHECK(linkR2.broadcasts() == 1U);
 }
 
-TEST_CASE("a hub relays a board broadcast to the lan exactly once and ignores its echo")
+TEST_CASE("a relay forwards a board broadcast to the lan exactly once and ignores its echo")
 {
-    // board --bus1 (the bridge)-- hub --bus2 (the LAN)-- sim. The hub relays;
-    // the LAN echoes every broadcast back to its sender, the bridge does not.
-    FakeBus bridge;
+    // board --bus1 (the UART)-- hub --bus2 (the LAN)-- sim. The hub relays
+    // here (no filter): the LAN echoes every broadcast back to its sender,
+    // the UART does not.
+    FakeBus uart;
     FakeBus lan;
-    FakeLink linkBoard(bridge);
-    FakeLink linkHubBridge(bridge);
+    FakeLink linkBoard(uart);
+    FakeLink linkHubUart(uart);
     FakeLink linkHubLan(lan);
     FakeLink linkSim(lan);
     mark4::Transport board(NODE_A);
     mark4::Transport hub(0x4B000000U);
     mark4::Transport sim(NODE_C);
     REQUIRE(board.addLink(linkBoard));
-    REQUIRE(hub.addLink(linkHubBridge));
+    REQUIRE(hub.addLink(linkHubUart));
     REQUIRE(hub.addLink(linkHubLan));
     REQUIRE(sim.addLink(linkSim));
     hub.setRelay(true);
@@ -466,7 +470,7 @@ TEST_CASE("a hub relays a board broadcast to the lan exactly once and ignores it
     seenByHub.poll(hub, T0_US);
     REQUIRE(seenByHub.delivered.size() == 1U);
     CHECK(linkHubLan.broadcasts() == 1U);
-    CHECK(linkHubBridge.broadcasts() == 0U);
+    CHECK(linkHubUart.broadcasts() == 0U);
     seenBySim.poll(sim, T0_US);
     REQUIRE(seenBySim.delivered.size() == 1U);
     CHECK(seenBySim.delivered[0].first == NODE_A);
@@ -481,20 +485,20 @@ TEST_CASE("a hub relays a board broadcast to the lan exactly once and ignores it
     CHECK(hub.findNode(NODE_A)->duplicates == 1U);
     CHECK(hub.findNode(NODE_A)->received == 1U);
 
-    // The other way: a LAN broadcast reaches the board through the bridge.
+    // The other way: a LAN broadcast reaches the board through the UART.
     REQUIRE(sim.send(mark4::BROADCAST_NODE, HELLO.data(), HELLO.size()));
     seenByHub.poll(hub, T0_US);
     CHECK(seenByHub.delivered.size() == 2U);
-    CHECK(linkHubBridge.broadcasts() == 1U);
+    CHECK(linkHubUart.broadcasts() == 1U);
     seenByBoard.poll(board, T0_US);
     REQUIRE(seenByBoard.delivered.size() == 1U);
     CHECK(seenByBoard.delivered[0].first == NODE_C);
 
-    // A command from the sim to the board crosses to the bridge; the board's
+    // A command from the sim to the board crosses to the UART; the board's
     // unicast answer crosses back.
     REQUIRE(sim.send(NODE_A, HELLO.data(), HELLO.size()));
     seenByHub.poll(hub, T0_US);
-    CHECK(linkHubBridge.sent() == 1U);
+    CHECK(linkHubUart.sent() == 1U);
     seenByBoard.poll(board, T0_US);
     REQUIRE(seenByBoard.delivered.size() == 2U);
     REQUIRE(board.send(NODE_C, HELLO.data(), HELLO.size()));
@@ -503,6 +507,175 @@ TEST_CASE("a hub relays a board broadcast to the lan exactly once and ignores it
     seenBySim.poll(sim, T0_US);
     REQUIRE(seenBySim.delivered.size() == 2U);
     CHECK(seenBySim.delivered[1].first == NODE_A);
+}
+
+namespace
+{
+    /// @brief Encodes one Envelope holding the named body, zeroed.
+    std::vector<std::uint8_t> envelopeBytes(pb_size_t whichBody)
+    {
+        mark4_Envelope envelope = mark4_Envelope_init_zero;
+        envelope.which_body = whichBody;
+        std::vector<std::uint8_t> bytes(mark4::MAX_ENVELOPE_SIZE);
+        std::size_t size = 0U;
+        REQUIRE(mark4::encodeEnvelope(envelope, bytes.data(), bytes.size(), size));
+        bytes.resize(size);
+        return bytes;
+    }
+
+    /// Index of the UART link on the relay under test.
+    constexpr std::size_t UART_LINK = 0U;
+
+    /// The ESP32's rule: a broadcast only reaches the UART when it is an
+    /// Announce; unicasts routed there are for the board by construction.
+    bool uartFilter(void *context,
+                    std::size_t linkIndex,
+                    const mark4::FrameHeader &header,
+                    const std::uint8_t *payload,
+                    std::size_t size)
+    {
+        static_cast<void>(context);
+        return linkIndex != UART_LINK || header.dst != mark4::BROADCAST_NODE ||
+               mark4::envelopeIsAnnounce(payload, size);
+    }
+} // namespace
+
+TEST_CASE("the announce check reads one byte of the envelope")
+{
+    CHECK(mark4::envelopeIsAnnounce(envelopeBytes(mark4_Envelope_announce_tag).data(),
+                                    envelopeBytes(mark4_Envelope_announce_tag).size()));
+    for (const pb_size_t other : {mark4_Envelope_telemetry_tag,
+                                  mark4_Envelope_rc_tag,
+                                  mark4_Envelope_log_tag,
+                                  mark4_Envelope_ota_chunk_tag,
+                                  mark4_Envelope_sim_run_stats_tag})
+    {
+        const std::vector<std::uint8_t> bytes = envelopeBytes(other);
+        CHECK(!mark4::envelopeIsAnnounce(bytes.data(), bytes.size()));
+    }
+    CHECK(!mark4::envelopeIsAnnounce(nullptr, 1U));
+    CHECK(!mark4::envelopeIsAnnounce(HELLO.data(), 0U));
+}
+
+TEST_CASE(
+    "a relay filter keeps lan broadcasts off the uart and lets commands and announces through")
+{
+    // board --uart-- relay (ESP32: relays, no beacon, filter) --lan-- hub, sim.
+    FakeBus uart;
+    FakeBus lan;
+    FakeLink linkBoard(uart);
+    FakeLink linkRelayUart(uart);
+    FakeLink linkRelayLan(lan);
+    FakeLink linkHub(lan);
+    FakeLink linkSim(lan);
+    mark4::Transport board(NODE_A);
+    mark4::Transport relay(0xE5320000U);
+    mark4::Transport hub(NODE_B);
+    mark4::Transport sim(NODE_C);
+    REQUIRE(board.addLink(linkBoard));
+    REQUIRE(relay.addLink(linkRelayUart)); // UART_LINK
+    REQUIRE(relay.addLink(linkRelayLan));
+    REQUIRE(hub.addLink(linkHub));
+    REQUIRE(sim.addLink(linkSim));
+    relay.setRelay(true);
+    relay.setRelayFilter(&uartFilter, nullptr);
+    Observer seenByBoard;
+    Observer seenByRelay;
+    Observer seenByHub;
+    Observer seenBySim;
+
+    const std::vector<std::uint8_t> announce = envelopeBytes(mark4_Envelope_announce_tag);
+    const std::vector<std::uint8_t> telemetry = envelopeBytes(mark4_Envelope_telemetry_tag);
+    const std::vector<std::uint8_t> command = envelopeBytes(mark4_Envelope_rc_tag);
+    board.setBeacon(announce.data(), announce.size());
+    hub.setBeacon(announce.data(), announce.size());
+    sim.setBeacon(announce.data(), announce.size());
+
+    // Beacons: every node's Announce crosses the relay in both directions.
+    seenByBoard.poll(board, T0_US);
+    seenByHub.poll(hub, T0_US);
+    seenBySim.poll(sim, T0_US);
+    seenByRelay.poll(relay, T0_US);
+    CHECK(linkRelayLan.broadcasts() == 1U);  // the board's announce, once
+    CHECK(linkRelayUart.broadcasts() == 2U); // the hub's and the sim's
+    CHECK(relay.relayed() == 3U);
+    CHECK(relay.filtered() == 0U);
+    // Everyone learns the board from the relayed frame, and the board
+    // learns everyone; the relay itself, silent, is known to nobody.
+    seenByBoard.poll(board, T0_US);
+    seenByHub.poll(hub, T0_US);
+    seenBySim.poll(sim, T0_US);
+    CHECK(hub.isAlive(NODE_A));
+    CHECK(sim.isAlive(NODE_A));
+    CHECK(board.isAlive(NODE_B));
+    CHECK(board.isAlive(NODE_C));
+    CHECK(!hub.isAlive(relay.nodeId()));
+    CHECK(hub.nodeCount() == 2U);
+    // The learners unicast their beacon to the newcomer: the hub's and the
+    // sim's are frames for the board and cross the UART; the board's two
+    // cross the other way and land on the LAN nodes exactly once each.
+    seenByRelay.poll(relay, T0_US);
+    seenByBoard.poll(board, T0_US);
+    seenByHub.poll(hub, T0_US);
+    seenBySim.poll(sim, T0_US);
+    CHECK(linkRelayUart.sent() == 2U);
+    CHECK(linkRelayLan.sent() == 2U);
+    CHECK(seenByBoard.delivered.size() == 4U);
+    CHECK(seenByHub.delivered.back().first == NODE_A);
+    CHECK(seenBySim.delivered.back().first == NODE_A);
+    CHECK(relay.filtered() == 0U);
+    // The echo of its own forwarding of the board's announce is a duplicate
+    // for the relay (this fake LAN echoes; a UdpLink drops its own echoes).
+    REQUIRE(relay.findNode(NODE_A) != nullptr);
+    const std::uint32_t duplicatesBefore = relay.findNode(NODE_A)->duplicates;
+
+    // The sim's telemetry broadcast reaches the hub and stops at the relay:
+    // the board's UART never sees it.
+    const std::uint32_t uartBefore = linkRelayUart.broadcasts();
+    const std::size_t boardBefore = seenByBoard.delivered.size();
+    REQUIRE(sim.send(mark4::BROADCAST_NODE, telemetry.data(), telemetry.size()));
+    seenByRelay.poll(relay, T0_US);
+    seenByHub.poll(hub, T0_US);
+    seenByBoard.poll(board, T0_US);
+    CHECK(seenByHub.delivered.back().second == telemetry);
+    CHECK(linkRelayUart.broadcasts() == uartBefore);
+    CHECK(seenByBoard.delivered.size() == boardBefore);
+    CHECK(relay.filtered() == 1U);
+    CHECK(relay.dropped() == 0U);
+
+    // A command from the hub to the board is a unicast: it crosses.
+    REQUIRE(hub.send(NODE_A, command.data(), command.size()));
+    seenByRelay.poll(relay, T0_US);
+    seenByBoard.poll(board, T0_US);
+    REQUIRE(seenByBoard.delivered.size() == boardBefore + 1U);
+    CHECK(seenByBoard.delivered.back().first == NODE_B);
+    CHECK(seenByBoard.delivered.back().second == command);
+    CHECK(relay.filtered() == 1U);
+
+    // The board's telemetry broadcast reaches the LAN exactly once, with
+    // one hop less, and both LAN nodes get it once.
+    const std::uint32_t lanBefore = linkRelayLan.broadcasts();
+    const std::size_t hubBefore = seenByHub.delivered.size();
+    const std::size_t simBefore = seenBySim.delivered.size();
+    REQUIRE(board.send(mark4::BROADCAST_NODE, telemetry.data(), telemetry.size()));
+    seenByRelay.poll(relay, T0_US);
+    CHECK(linkRelayLan.broadcasts() == lanBefore + 1U);
+    // The copy waiting in the hub's inbox (LAN endpoint 1) has one hop less.
+    mark4::FrameHeader forwarded;
+    REQUIRE(!lan.inbox[1].empty());
+    REQUIRE(mark4::decodeFrameHeader(
+        lan.inbox[1].back().bytes.data(), lan.inbox[1].back().bytes.size(), forwarded));
+    CHECK(forwarded.hops == mark4::Transport::INITIAL_HOPS - 1U);
+    seenByHub.poll(hub, T0_US);
+    seenBySim.poll(sim, T0_US);
+    CHECK(seenByHub.delivered.size() == hubBefore + 1U);
+    CHECK(seenBySim.delivered.size() == simBefore + 1U);
+    CHECK(seenByHub.delivered.back().second == telemetry);
+    // The echo of its own forwarding is one more duplicate for the relay,
+    // and it is not forwarded back onto the UART.
+    seenByRelay.poll(relay, T0_US);
+    CHECK(linkRelayUart.broadcasts() == uartBefore);
+    CHECK(relay.findNode(NODE_A)->duplicates == duplicatesBefore + 1U);
 }
 
 TEST_CASE("relays in a triangle never loop a broadcast")
@@ -566,56 +739,11 @@ TEST_CASE("relays in a triangle never loop a broadcast")
     CHECK(cOnCA.broadcasts() == 1U);
 }
 
-namespace
-{
-    /// Byte pipe with a separate direction each way: what one end writes
-    /// the other end reads.
-    class BytePipe
-    {
-      public:
-        std::deque<std::uint8_t> toB; ///< bytes written by A, read by B
-        std::deque<std::uint8_t> toA; ///< bytes written by B, read by A
-    };
-
-    /// One end of a BytePipe.
-    class PipeEnd final : public mark4::AbsByteStream
-    {
-      public:
-        PipeEnd(std::deque<std::uint8_t> &in, std::deque<std::uint8_t> &out)
-            : m_in(in),
-              m_out(out)
-        {
-        }
-
-        std::size_t read(std::uint8_t *bufferOut, std::size_t capacity) override
-        {
-            std::size_t count = 0U;
-            while (count < capacity && !m_in.empty())
-            {
-                bufferOut[count] = m_in.front();
-                m_in.pop_front();
-                ++count;
-            }
-            return count;
-        }
-
-        bool write(const std::uint8_t *data, std::size_t size) override
-        {
-            m_out.insert(m_out.end(), data, data + size);
-            return true;
-        }
-
-      private:
-        std::deque<std::uint8_t> &m_in;  ///< read side
-        std::deque<std::uint8_t> &m_out; ///< write side
-    };
-} // namespace
-
 TEST_CASE("the uart link frames payloads and resynchronizes after garbage and a torn frame")
 {
-    BytePipe pipe;
-    PipeEnd endA(pipe.toA, pipe.toB);
-    PipeEnd endB(pipe.toB, pipe.toA);
+    mark4::BytePipe pipe;
+    mark4::PipeEnd endA(pipe.toA, pipe.toB);
+    mark4::PipeEnd endB(pipe.toB, pipe.toA);
     mark4::UartLink linkA(endA);
     mark4::UartLink linkB(endB);
 

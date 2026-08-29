@@ -5,8 +5,9 @@
 ///        physical links, then sends payloads to node ids; the transport
 ///        remembers on which link and at which address every node was last
 ///        heard, keeps them alive with a periodic beacon and, when asked,
-///        relays frames between its links. It never reads a clock: every
-///        instant comes from the caller.
+///        relays frames between its links (through an optional per-link
+///        filter). It never reads a clock: every instant comes from the
+///        caller.
 
 #include <array>
 #include <cstddef>
@@ -64,6 +65,14 @@ namespace mark4
         /// Receives a node that just appeared or just expired.
         using NodeFn = void (*)(void *context, const Node &node);
 
+        /// Decides whether a relayed frame may leave on one link. Consulted
+        /// for relayed frames only, never for this node's own sends.
+        using FilterFn = bool (*)(void *context,
+                                  std::size_t linkIndex,
+                                  const FrameHeader &header,
+                                  const std::uint8_t *payload,
+                                  std::size_t size);
+
         /// @param nodeId identity of this node, never 0 (see node_id.hpp)
         explicit Transport(std::uint32_t nodeId)
             : m_nodeId(nodeId)
@@ -92,6 +101,17 @@ namespace mark4
         void setRelay(bool enabled)
         {
             m_relay = enabled;
+        }
+
+        /// @brief Installs the outbound relay filter (none by default: every
+        ///        relayed frame leaves). A frame the filter refuses on a link
+        ///        is counted in filtered(), not in dropped().
+        /// @param filter predicate, nullptr to remove it
+        /// @param context handed back to it, unchanged
+        void setRelayFilter(FilterFn filter, void *context)
+        {
+            m_filter = filter;
+            m_filterContext = context;
         }
 
         /// @brief Registers the presence callbacks.
@@ -157,6 +177,19 @@ namespace mark4
             return m_dropped;
         }
 
+        /// @return frames forwarded onto another link (one per link for a
+        ///         broadcast)
+        [[nodiscard]] std::uint32_t relayed() const
+        {
+            return m_relayed;
+        }
+
+        /// @return relayed frames the filter kept off a link
+        [[nodiscard]] std::uint32_t filtered() const
+        {
+            return m_filtered;
+        }
+
       private:
         /// @brief Handles one frame read from one link.
         /// @param linkIndex link it arrived on
@@ -191,6 +224,13 @@ namespace mark4
         /// @param size frame size
         void relay(const FrameHeader &header, std::size_t arrivalLink, std::size_t size);
 
+        /// @brief Asks the filter, if any, whether a relayed frame may leave.
+        /// @param linkIndex link it would leave on
+        /// @param header its header
+        /// @param size frame size, in m_rxBuffer
+        /// @return true when it may
+        bool relayAllowed(std::size_t linkIndex, const FrameHeader &header, std::size_t size);
+
         /// @brief Forgets every node silent for NODE_EXPIRY_US.
         /// @param nowUs current instant [us]
         void expire(std::uint64_t nowUs);
@@ -213,7 +253,11 @@ namespace mark4
         NodeFn m_onNodeUp = nullptr;                           ///< presence callback
         NodeFn m_onNodeDown = nullptr;                         ///< presence callback
         void *m_nodeContext = nullptr;                         ///< handed to both callbacks
+        FilterFn m_filter = nullptr;                           ///< outbound relay filter
+        void *m_filterContext = nullptr;                       ///< handed to the filter
         std::uint32_t m_dropped = 0U;                          ///< frames dropped
+        std::uint32_t m_relayed = 0U;                          ///< frames forwarded
+        std::uint32_t m_filtered = 0U;                         ///< forwards the filter refused
         std::array<std::uint8_t, MAX_FRAME_SIZE> m_rxBuffer{}; ///< frame being handled
         std::array<std::uint8_t, MAX_FRAME_SIZE> m_txBuffer{}; ///< frame being sent
     };

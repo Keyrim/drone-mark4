@@ -1,7 +1,8 @@
 #pragma once
 
 /// @file
-/// @brief Transport link over IPv4 UDP, POSIX sockets. Two sockets: one
+/// @brief Transport link over IPv4 UDP, BSD sockets (POSIX, or lwIP on
+///        the ESP32: the same calls). Two sockets: one
 ///        shared discovery port every node binds (SO_REUSEADDR +
 ///        SO_REUSEPORT) and only ever receives broadcasts on, and one
 ///        ephemeral data socket every frame leaves from, so the source
@@ -35,17 +36,30 @@ namespace mark4
         UdpLink(UdpLink &&) = delete;
         UdpLink &operator=(UdpLink &&) = delete;
 
-        /// @brief Opens and binds both sockets. Logs the first failure.
+        /// @brief Opens and binds both sockets. Logs the first failure. The
+        ///        host's own addresses are listed for echo detection where
+        ///        getifaddrs() exists; elsewhere (lwIP) the caller names
+        ///        them with addLocalHost().
         /// @return true when frames can flow
         bool init();
+
+        /// @brief Declares one address of this host, so a broadcast coming
+        ///        back from it is dropped as an echo instead of counted as a
+        ///        duplicate.
+        /// @param host IPv4 address, host byte order
+        void addLocalHost(std::uint32_t host)
+        {
+            m_localHosts.push_back(host);
+        }
 
         bool send(const std::uint8_t *data, std::size_t size, const LinkAddress &address) override;
 
         /// @brief Sends to 255.255.255.255:discoveryPort, and to the loopback
         ///        broadcast address instead when the host has no route for
-        ///        the former (an isolated container). Linux delivers a
-        ///        broadcast to every local socket bound to the port, this
-        ///        node's own discovery socket included.
+        ///        the former right now (an isolated container, a network
+        ///        that is down). Linux delivers a broadcast to every local
+        ///        socket bound to the port, this node's own discovery socket
+        ///        included.
         bool broadcast(const std::uint8_t *data, std::size_t size) override;
 
         /// @brief Takes one pending datagram, unicast first. A broadcast
@@ -112,11 +126,11 @@ namespace mark4
         /// @brief Closes whatever is open.
         void closeSockets();
 
-        std::uint16_t m_discoveryPort; ///< shared broadcast port
-        int m_discoveryFd = -1;        ///< bound to m_discoveryPort, -1 when closed
-        int m_dataFd = -1;             ///< bound to m_dataPort, -1 when closed
-        std::uint16_t m_dataPort = 0U; ///< ephemeral port the kernel picked
-        bool m_loopbackOnly = false;   ///< 255.255.255.255 failed once: use 127.255.255.255
+        std::uint16_t m_discoveryPort;           ///< shared broadcast port
+        int m_discoveryFd = -1;                  ///< bound to m_discoveryPort, -1 when closed
+        int m_dataFd = -1;                       ///< bound to m_dataPort, -1 when closed
+        std::uint16_t m_dataPort = 0U;           ///< ephemeral port the kernel picked
+        bool m_loopbackWarned = false;           ///< the loopback fallback was logged once
         std::vector<std::uint32_t> m_localHosts; ///< this host's IPv4 addresses at init(),
                                                  ///< host byte order, echo detection
     };
