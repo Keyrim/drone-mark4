@@ -160,8 +160,9 @@ class GoldenAnnounce(unittest.TestCase):
         fields = tw.ANNOUNCE_STRUCT.unpack(data)
         self.assertEqual(fields[2], tw.SOURCE_DRONE_SIM)
         self.assertEqual(fields[3], 0xCAFEBABE)
-        self.assertEqual(fields[4], tw.TELEMETRY_PORT)
-        self.assertEqual(fields[5], tw.RC_COMMAND_PORT)
+        # Both ports are 0 since the transport carries the announce.
+        self.assertEqual(fields[4], 0)
+        self.assertEqual(fields[5], 0)
 
 
 class GoldenSimRunStats(unittest.TestCase):

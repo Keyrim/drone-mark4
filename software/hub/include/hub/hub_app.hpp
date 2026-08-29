@@ -20,6 +20,8 @@
 #include "hub/udp_transport.hpp"
 #include "hub/ws_bridge.hpp"
 #include "protocol/ports.hpp"
+#include "transport/transport.hpp"
+#include "transport/udp_link.hpp"
 
 namespace mark4
 {
@@ -49,9 +51,10 @@ namespace mark4
         /// enough for that pacing to be the throttle rather than the sleep.
         static constexpr int OTA_POLL_TIMEOUT_MS = 1;
 
-        /// Silence after which an announced process is declared gone [us].
-        /// The announce cadence contract is one per second, first one
-        /// immediate, so this is three missed announces.
+        /// Silence after which a discovered process is declared gone [us].
+        /// The beacon cadence is one per second, first one immediate, so
+        /// this is three missed beacons, the same figure the transport uses
+        /// for its own node table.
         static constexpr std::uint64_t DISCOVERY_EXPIRY_US = 3'000'000U;
 
         /// Period of the status message [ms].
@@ -70,11 +73,12 @@ namespace mark4
         struct Config
         {
             std::uint16_t wsPort = WS_PORT;                  ///< websocket endpoint port
-            std::uint16_t announcePort = ANNOUNCE_PORT;      ///< announce listen port
+            std::uint16_t discoveryPort = DISCOVERY_PORT;    ///< shared transport port
+            std::uint32_t nodeId = 0U;                       ///< transport identity, 0 = random
             std::uint16_t bridgePort = BRIDGE_ANNOUNCE_PORT; ///< bridge announce listen port
-            std::uint16_t telemetryPort = TELEMETRY_PORT;    ///< telemetry port watched by default
             std::uint16_t simRawPort = SIM_RAW_PORT;         ///< sim raw port watched by default
-            bool udpRebroadcast = true;                      ///< re-emit serial telemetry on UDP
+            bool udpRebroadcast = true;                      ///< re-emit serial telemetry as a
+                                                             ///< transport broadcast
             std::string profilesDir = "profiles";            ///< directory the profiles live in
             std::string pushProfileName;                     ///< profile pushed to every process
                                                              ///< that appears, empty = none
@@ -100,9 +104,9 @@ namespace mark4
         /// @param config settings of this run
         explicit HubApp(Config config);
 
-        /// @brief Initializes services in declaration order: opens the UDP
-        ///        sockets and the serial port. The first failure is logged
-        ///        and returns false immediately.
+        /// @brief Initializes services in declaration order: opens the raw
+        ///        UDP listeners, the transport and the websocket. The first
+        ///        failure is logged and returns false immediately.
         /// @return true when every service is ready
         bool init();
 
@@ -119,7 +123,8 @@ namespace mark4
         }
 
       private:
-        /// @brief Handles one datagram read from a listening socket.
+        /// @brief Handles one datagram read from a raw listening socket: the
+        ///        simulator's raw state or a bridge announce.
         /// @param localPort port the datagram landed on
         /// @param from where the datagram came from
         /// @param data datagram bytes
@@ -128,6 +133,24 @@ namespace mark4
                         const UdpTransport::Source &from,
                         const std::uint8_t *data,
                         std::size_t size);
+
+        /// @brief Handles one payload the transport delivered: a beacon feeds
+        ///        discovery, everything else is a protocol/ packet from the
+        ///        node that sent it.
+        /// @param src transport node the payload came from
+        /// @param data payload bytes
+        /// @param size payload size
+        void onFrame(std::uint32_t src, const std::uint8_t *data, std::size_t size);
+
+        /// @brief Transport delivery callback, forwards to onFrame().
+        /// @param context the HubApp
+        /// @param src transport node the payload came from
+        /// @param data payload bytes
+        /// @param size payload size
+        static void OnFrame(void *context,
+                            std::uint32_t src,
+                            const std::uint8_t *data,
+                            std::size_t size);
 
         /// @brief Handles one CRC-valid frame read from the serial link.
         /// @param payload frame payload
@@ -162,8 +185,8 @@ namespace mark4
 
         /// @brief Sends one command packet to a process, by the route that
         ///        kind of process is reachable on: the board is at the end of
-        ///        the serial cable, everything else at the command port it
-        ///        announced.
+        ///        the serial cable, everything else is the transport node its
+        ///        beacon came from.
         /// @param target kind of process to reach
         /// @param data packet bytes
         /// @param size packet size in bytes
@@ -174,18 +197,10 @@ namespace mark4
                           std::size_t size,
                           std::string &errorOut);
 
-        /// @brief Applies one discovery event: follows the telemetry port the
-        ///        process serves, and tells the clients what changed.
+        /// @brief Applies one discovery event: logs it, pushes the configured
+        ///        profile, and tells the clients what changed.
         /// @param change event to apply
         void onDiscoveryChange(const DiscoveryChange &change);
-
-        /// @brief Starts listening on a telemetry port one more process needs.
-        /// @param port port to follow, 0 to do nothing
-        void retainPort(std::uint16_t port);
-
-        /// @brief Stops listening on a telemetry port nobody needs any more.
-        /// @param port port to release, 0 to do nothing
-        void releasePort(std::uint16_t port);
 
         /// @brief Makes one drone THE connected drone, opening the serial
         ///        link when the route calls for one. Connecting elsewhere
@@ -263,13 +278,6 @@ namespace mark4
         /// @return the counters and flags the status message carries
         [[nodiscard]] HubStatus status() const;
 
-        /// One telemetry port and the number of live processes serving it.
-        struct PortUse
-        {
-            std::uint16_t port = 0U; ///< followed port
-            unsigned users = 0U;     ///< live processes needing it, 0 = pinned by the config
-        };
-
         /// The one drone the operator is connected to. Everything the hub
         /// hears is still decoded, recorded and published; being connected
         /// decides where the commands go and which drone the control page
@@ -288,10 +296,11 @@ namespace mark4
         TuningProfiles m_profiles;                         ///< stored tuning profiles
         DiscoveryRegistry m_registry;                      ///< live processes
         BridgeDirectory m_bridges;                         ///< WiFi bridges heard on the network
-        UdpTransport m_udp;                                ///< every UDP socket
+        UdpTransport m_udp;                                ///< raw UDP listeners
+        UdpLink m_udpLink;                                 ///< the transport's one link
+        Transport m_transport;                             ///< this hub as a transport node
         SerialTransport m_serial;                          ///< board link, when one is open
         WsBridge m_ws;                                     ///< websocket endpoint
-        std::vector<PortUse> m_followedPorts;              ///< refcount behind every subscription
         Connection m_connection;                           ///< the one drone commands go to
         std::atomic_bool m_stopRequested{false};           ///< set by a signal handler
         std::uint64_t m_nextStatusUs = 0U;                 ///< next status message instant [us]

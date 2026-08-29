@@ -9,7 +9,16 @@ namespace mark4
 {
     const char *streamKindName(StreamKind stream)
     {
-        return (stream == StreamKind::SIM_RAW) ? "simRaw" : "telemetry";
+        switch (stream)
+        {
+            case StreamKind::SIM_RAW:
+                return "simRaw";
+            case StreamKind::TRANSPORT:
+                return "transport";
+            case StreamKind::TELEMETRY:
+                break;
+        }
+        return "telemetry";
     }
 
     void StreamHealth::onPacket(StreamKind stream, std::uint8_t sourceId, std::uint16_t sequence)

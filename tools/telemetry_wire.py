@@ -71,16 +71,26 @@ RC_MODE_ALTITUDE_AUTO = 1
 # Third byte of RebootCommandPacket (commands.hpp).
 BOARD_REBOOT_MAGIC = 0xB7
 
-# Default UDP ports (ports.hpp).
+# Default UDP ports (ports.hpp): the two boundaries still carrying a bare
+# packet. 47801 and 47803-47806 are unassigned since the transport.
 SIM_LINK_PORT = 47800
-TELEMETRY_PORT = 47801
 SIM_RAW_PORT = 47802
-# 47803 is unassigned: it used to mirror the telemetry broadcast for the
-# one consumer whose socket stack could not share a bound port.
-# 47804 is unassigned: the simulator binds no listening port any more, and
-# scenarios reach it inside the lockstep reply.
-RC_COMMAND_PORT = 47805
-ANNOUNCE_PORT = 47806
+
+# The transport (software/components/transport/): every packet between the
+# flight processes and the ground tools travels inside a frame, on one
+# shared discovery port for broadcasts (transport/udp_link.hpp) and on the
+# sender's ephemeral data socket for unicasts.
+DISCOVERY_PORT = 47820
+#: Destination meaning "every node".
+BROADCAST_NODE = 0
+#: Relays a frame may cross (mark4::Transport::INITIAL_HOPS).
+TRANSPORT_INITIAL_HOPS = 4
+# Frame header (transport/frame.hpp): src u32, dst u32, seq u16, hops u8,
+# little-endian, then the opaque payload.
+TRANSPORT_HEADER_STRUCT = struct.Struct("<IIHB")
+TRANSPORT_HEADER_SIZE = 11
+#: Largest payload one frame carries (mark4::MAX_PAYLOAD).
+TRANSPORT_MAX_PAYLOAD = 512
 
 # Wire format, little-endian and packed, mirroring mark4::TelemetryPacket:
 #   uint8   version          = PROTOCOL_VERSION
@@ -157,8 +167,10 @@ REBOOT_COMMAND_STRUCT = struct.Struct("<BBB")
 REBOOT_COMMAND_PACKET_SIZE = 3
 
 # Wire format mirroring mark4::AnnouncePacket (announce.hpp): version,
-# type, kind, session id, telemetry port, command port. Reserved: nothing
-# emits it yet.
+# type, kind, session id, telemetry port, command port. It is the beacon
+# every flight process hands to the transport: session id = its node id,
+# both ports 0 (meaningless since the transport, kept until the packet is
+# retired).
 ANNOUNCE_STRUCT = struct.Struct("<BBBIHH")
 ANNOUNCE_PACKET_SIZE = 11
 
@@ -333,6 +345,33 @@ def crc32_mpeg2(data: bytes) -> int:
         for _ in range(32):
             crc = ((crc << 1) ^ 0x04C11DB7 if crc & 0x80000000 else crc << 1) & 0xFFFFFFFF
     return crc
+
+
+@dataclass(frozen=True)
+class TransportFrame:
+    """One decoded transport frame: header fields and the opaque payload."""
+
+    src: int
+    dst: int
+    seq: int
+    hops: int
+    payload: bytes
+
+
+def encode_transport_frame(
+    src: int, dst: int, seq: int, payload: bytes, hops: int = TRANSPORT_INITIAL_HOPS
+) -> bytes:
+    """Put the transport header in front of a payload, mark4::encodeFrameHeader."""
+    assert 0 < len(payload) <= TRANSPORT_MAX_PAYLOAD
+    return TRANSPORT_HEADER_STRUCT.pack(src, dst, seq & 0xFFFF, hops) + payload
+
+
+def decode_transport_frame(datagram: bytes) -> Optional[TransportFrame]:
+    """Split one datagram into header and payload, None when too short."""
+    if len(datagram) <= TRANSPORT_HEADER_SIZE:
+        return None
+    src, dst, seq, hops = TRANSPORT_HEADER_STRUCT.unpack_from(datagram)
+    return TransportFrame(src, dst, seq, hops, datagram[TRANSPORT_HEADER_SIZE:])
 
 
 def encode_serial_frame(payload: bytes) -> bytes:

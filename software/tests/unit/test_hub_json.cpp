@@ -176,8 +176,8 @@ TEST_CASE("a packet whose fields are misaligned encodes like any other")
 TEST_CASE("discovery json describes every live process")
 {
     std::vector<mark4::DiscoveredProcess> processes;
-    processes.push_back({mark4::StreamSource::DRONE_SIM, 7U, 47801U, 47804U, 1'000'000U, false});
-    processes.push_back({mark4::StreamSource::FIRMWARE, 0U, 0U, 0U, 1'500'000U, true});
+    processes.push_back({mark4::StreamSource::DRONE_SIM, 7U, 1'000'000U, false});
+    processes.push_back({mark4::StreamSource::FIRMWARE, 0U, 1'500'000U, true});
 
     std::vector<mark4::DiscoveredBridge> bridges;
     bridges.push_back({"192.168.1.31", 47830U, "c19f6c", 1'800'000U});
@@ -188,8 +188,6 @@ TEST_CASE("discovery json describes every live process")
     CHECK(message["processes"][0]["kind"] == 2U);
     CHECK(message["processes"][0]["kindName"] == "drone_sim");
     CHECK(message["processes"][0]["sessionId"] == 7U);
-    CHECK(message["processes"][0]["telemetryPort"] == 47801U);
-    CHECK(message["processes"][0]["commandPort"] == 47804U);
     CHECK(message["processes"][0]["viaSerial"] == false);
     CHECK(message["processes"][0]["ageMs"] == 1000U);
     CHECK(message["processes"][1]["kindName"] == "firmware");

@@ -13,7 +13,6 @@ import type { Ack, HubMessage, HubSocket } from "./hub_socket";
 interface DiscoveredProcess {
     kindName: string;
     sessionId: number;
-    telemetryPort: number;
     viaSerial: boolean;
     ageMs: number;
 }
@@ -119,8 +118,8 @@ export class Shell {
             chip.appendChild(name);
             const detail = document.createElement("span");
             detail.textContent =
-                ` session ${process.sessionId}` +
-                ` ${process.viaSerial ? "serial" : `udp/${process.telemetryPort}`}` +
+                ` node ${process.sessionId}` +
+                ` ${process.viaSerial ? "serial" : "udp"}` +
                 ` ${(process.ageMs / 1000).toFixed(1)} s ago`;
             chip.appendChild(detail);
             this.discovery.appendChild(chip);

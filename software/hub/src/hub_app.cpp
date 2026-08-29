@@ -19,7 +19,9 @@
 #include <variant>
 
 #include "hub/packed_field.hpp"
+#include "protocol/announce.hpp"
 #include "protocol/tuning.hpp"
+#include "transport/node_id.hpp"
 
 namespace mark4
 {
@@ -71,21 +73,26 @@ namespace mark4
 
     HubApp::HubApp(Config config)
         : m_config(std::move(config)),
-          m_profiles(m_config.profilesDir)
+          m_profiles(m_config.profilesDir),
+          m_udpLink(m_config.discoveryPort),
+          m_transport(m_config.nodeId != 0U ? m_config.nodeId : randomNodeId())
     {
     }
 
     bool HubApp::init()
     {
-        if (!m_udp.init(m_config.announcePort))
-        {
-            return false;
-        }
         // A bridge announces itself whether or not anyone listens, so the
         // port is bound for the whole run: the network tab of the pages then
         // has its list ready instead of building it after a click.
         if (!m_udp.subscribe(m_config.bridgePort))
         {
+            return false;
+        }
+        // The hub sets no beacon: it learns every node from that node's own
+        // beacon and is learnt in return from the first command it sends.
+        if (!m_udpLink.init() || !m_transport.addLink(m_udpLink) || !m_transport.init())
+        {
+            static_cast<void>(std::fprintf(stderr, "hub: cannot start the transport\n"));
             return false;
         }
         if (m_config.pagesDir.empty())
@@ -106,21 +113,11 @@ namespace mark4
         {
             return false;
         }
-        // The configured stream ports are watched from the start and never
-        // released: the hub has to be useful before any announce arrives,
-        // and a process that never announces itself still gets decoded.
-        for (const std::uint16_t port : {m_config.telemetryPort, m_config.simRawPort})
+        // The plant's raw state is the one stream still outside the
+        // transport: a plain broadcast port, watched for the whole run.
+        if (!m_udp.subscribe(m_config.simRawPort))
         {
-            if (!m_udp.subscribe(port))
-            {
-                return false;
-            }
-            if (std::none_of(m_followedPorts.begin(),
-                             m_followedPorts.end(),
-                             [port](const PortUse &use) { return use.port == port; }))
-            {
-                m_followedPorts.push_back(PortUse{port, 0U});
-            }
+            return false;
         }
 
         if (m_config.otaBundlePath.empty())
@@ -154,6 +151,13 @@ namespace mark4
         {
             fds.clear();
             m_udp.appendPollFds(fds);
+            for (const int fd : {m_udpLink.discoveryFd(), m_udpLink.dataFd()})
+            {
+                pollfd entry{};
+                entry.fd = fd;
+                entry.events = POLLIN;
+                fds.push_back(entry);
+            }
             if (m_serial.isOpen())
             {
                 pollfd entry{};
@@ -170,6 +174,7 @@ namespace mark4
                                const UdpTransport::Source &from,
                                const std::uint8_t *data,
                                std::size_t size) { onDatagram(port, from, data, size); });
+            m_transport.poll(monotonicUs(), &HubApp::OnFrame, this);
             m_serial.drain([this](const std::uint8_t *payload, std::size_t size) {
                 onSerialPayload(payload, size);
             });
@@ -193,46 +198,56 @@ namespace mark4
             }
             return;
         }
-        if (localPort == m_config.announcePort)
+        // Demultiplexing is by header, never by size: a packet whose version
+        // or type byte does not match is simply not ours.
+        if (hasHeader(data, size, PacketType::SIM_RAW) && size == SIM_RAW_PACKET_SIZE)
         {
-            const auto change = m_registry.onAnnounce(data, size, nowUs);
+            onSimRawPacket(data);
+        }
+        else
+        {
+            noteForeignProtocol(data, size);
+        }
+    }
+
+    void HubApp::OnFrame(void *context,
+                         std::uint32_t src,
+                         const std::uint8_t *data,
+                         std::size_t size)
+    {
+        static_cast<HubApp *>(context)->onFrame(src, data, size);
+    }
+
+    void HubApp::onFrame(std::uint32_t src, const std::uint8_t *data, std::size_t size)
+    {
+        const std::uint64_t nowUs = monotonicUs();
+        if (hasHeader(data, size, PacketType::ANNOUNCE))
+        {
+            // The beacon of a flight process: the node it came from is the
+            // address every command to that process goes to.
+            const auto change = m_registry.onAnnounce(src, data, size, nowUs);
             if (change.has_value())
             {
                 onDiscoveryChange(*change);
             }
             return;
         }
-
-        // Demultiplexing is by header, never by size: a packet whose version
-        // or type byte does not match is simply not ours.
         if (hasHeader(data, size, PacketType::TELEMETRY) && size == TELEMETRY_PACKET_SIZE)
         {
-            // With the serial rebroadcast on, the board telemetry arriving
-            // over UDP is the hub's own echo of what it just re-emitted.
-            if (m_config.udpRebroadcast && m_serial.isOpen() &&
-                data[2] == static_cast<std::uint8_t>(StreamSource::FIRMWARE))
-            {
-                return;
-            }
             onTelemetryPacket(data);
-        }
-        else if (hasHeader(data, size, PacketType::SIM_RAW) && size == SIM_RAW_PACKET_SIZE)
-        {
-            onSimRawPacket(data);
         }
         else if (onTuningAnswer(data, size, StreamSource::DRONE_SIM))
         {
-            // Tuning answers ride the telemetry stream: they carry no source
-            // byte of their own, so the arrival path is what names them. A
-            // datagram landing on a UDP telemetry port came from the
-            // simulator side, never from the board.
+            // Tuning answers carry no source byte of their own, so the
+            // arrival path is what names them: a payload from the transport
+            // came from the simulator side, never from the board.
         }
         else if (!m_ota.onPacket(data, size, nowUs))
         {
             // Updater answers are one more packet type on whatever link the
             // process being updated is reachable on: a desktop flight process
-            // answers over UDP, the board over the framed serial link. Past
-            // the updater, nothing here knows these bytes.
+            // answers over the transport, the board over the framed serial
+            // link. Past the updater, nothing here knows these bytes.
             noteForeignProtocol(data, size);
         }
     }
@@ -271,8 +286,8 @@ namespace mark4
             onTelemetryPacket(payload);
             if (m_config.udpRebroadcast)
             {
-                // UDP listeners know nothing about this cable.
-                static_cast<void>(m_udp.broadcast(payload, size, m_config.telemetryPort));
+                // The other transport nodes know nothing about this cable.
+                static_cast<void>(m_transport.send(BROADCAST_NODE, payload, size));
             }
             return;
         }
@@ -323,13 +338,19 @@ namespace mark4
             }
             return m_serial.sendPacket(data, size);
         }
-        const std::uint16_t port = m_registry.commandPortOf(target);
-        if (port == 0U)
+        const std::uint32_t nodeId = m_registry.nodeIdOf(target);
+        if (nodeId == 0U)
         {
             errorOut = std::string("no process of kind ") + streamSourceName(target);
             return false;
         }
-        return m_udp.sendTo(data, size, "127.0.0.1", port);
+        if (!m_transport.send(nodeId, data, size))
+        {
+            errorOut =
+                std::string("transport node of ") + streamSourceName(target) + " is not reachable";
+            return false;
+        }
+        return true;
     }
 
     void HubApp::onTelemetryPacket(const std::uint8_t *data)
@@ -355,20 +376,16 @@ namespace mark4
         switch (change.event)
         {
             case DiscoveryEvent::APPEARED:
-                retainPort(change.process.telemetryPort);
-                static_cast<void>(
-                    std::printf("hub: %s appeared (telemetry udp/%u, command udp/%u)\n",
-                                streamSourceName(change.process.kind),
-                                static_cast<unsigned>(change.process.telemetryPort),
-                                static_cast<unsigned>(change.process.commandPort)));
+                static_cast<void>(std::printf("hub: %s appeared (node %u)\n",
+                                              streamSourceName(change.process.kind),
+                                              change.process.nodeId));
                 break;
             case DiscoveryEvent::RESTARTED:
-                static_cast<void>(std::printf("hub: %s restarted (session %u)\n",
+                static_cast<void>(std::printf("hub: %s restarted (node %u)\n",
                                               streamSourceName(change.process.kind),
-                                              change.process.sessionId));
+                                              change.process.nodeId));
                 break;
             case DiscoveryEvent::DISAPPEARED:
-                releasePort(change.process.telemetryPort);
                 static_cast<void>(
                     std::printf("hub: %s disappeared\n", streamSourceName(change.process.kind)));
                 break;
@@ -419,49 +436,6 @@ namespace mark4
             }
         }
         return true;
-    }
-
-    void HubApp::retainPort(std::uint16_t port)
-    {
-        if (port == 0U)
-        {
-            return;
-        }
-        const auto found = std::find_if(m_followedPorts.begin(),
-                                        m_followedPorts.end(),
-                                        [port](const PortUse &use) { return use.port == port; });
-        if (found != m_followedPorts.end())
-        {
-            ++found->users;
-            return;
-        }
-        if (m_udp.subscribe(port))
-        {
-            m_followedPorts.push_back(PortUse{port, 1U});
-        }
-    }
-
-    void HubApp::releasePort(std::uint16_t port)
-    {
-        if (port == 0U)
-        {
-            return;
-        }
-        const auto found = std::find_if(m_followedPorts.begin(),
-                                        m_followedPorts.end(),
-                                        [port](const PortUse &use) { return use.port == port; });
-        if (found == m_followedPorts.end() || found->users == 0U)
-        {
-            // Either unknown, or one of the ports the configuration pinned:
-            // those stay subscribed for the whole run.
-            return;
-        }
-        --found->users;
-        if (found->users == 0U)
-        {
-            m_udp.unsubscribe(port);
-            static_cast<void>(m_followedPorts.erase(found));
-        }
     }
 
     void HubApp::handleClientMessages()
@@ -838,6 +812,25 @@ namespace mark4
             {
                 link.sourceName = streamSourceName(found->kind);
             }
+        }
+        // One more entry per process reached over the transport: the frame
+        // counters of its node, every payload type included.
+        for (const DiscoveredProcess &process : m_registry.processes())
+        {
+            const Transport::Node *node = m_transport.findNode(process.nodeId);
+            if (node == nullptr)
+            {
+                continue;
+            }
+            LinkHealth link;
+            link.stream = StreamKind::TRANSPORT;
+            link.sourceId = static_cast<std::uint8_t>(process.kind);
+            link.sourceName = streamSourceName(process.kind);
+            link.received = node->received;
+            link.lost = node->lost;
+            link.duplicates = node->duplicates;
+            link.lastSequence = node->lastSeq;
+            snapshot.links.push_back(link);
         }
         return snapshot;
     }

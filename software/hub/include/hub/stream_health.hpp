@@ -15,7 +15,8 @@ namespace mark4
     enum class StreamKind : std::uint8_t
     {
         TELEMETRY, ///< estimated state published by a flight process
-        SIM_RAW    ///< exact state published by the simulator plant
+        SIM_RAW,   ///< exact state published by the simulator plant
+        TRANSPORT  ///< frames of one transport node, counted by the transport
     };
 
     /// @brief Name of a stream kind, as the status message spells it.

@@ -19,22 +19,15 @@ namespace mark4
 {
     namespace
     {
-        /// @brief Fills a v4 address for the given host and port.
-        /// @param host dotted quad, nullptr for "any"
+        /// @brief Fills a v4 wildcard address for the given port.
         /// @param port port number
         /// @param addressOut receives the address
-        /// @return true when the host text parsed
-        bool fillAddress(const char *host, std::uint16_t port, sockaddr_in &addressOut)
+        void fillAddress(std::uint16_t port, sockaddr_in &addressOut)
         {
             addressOut = {};
             addressOut.sin_family = AF_INET;
             addressOut.sin_port = htons(port);
-            if (host == nullptr)
-            {
-                addressOut.sin_addr.s_addr = htonl(INADDR_ANY);
-                return true;
-            }
-            return inet_pton(AF_INET, host, &addressOut.sin_addr) == 1;
+            addressOut.sin_addr.s_addr = htonl(INADDR_ANY);
         }
     } // namespace
 
@@ -44,29 +37,6 @@ namespace mark4
         {
             static_cast<void>(::close(listener.fd));
         }
-        if (m_sendFd >= 0)
-        {
-            static_cast<void>(::close(m_sendFd));
-        }
-    }
-
-    bool UdpTransport::init(std::uint16_t announcePort)
-    {
-        m_sendFd = ::socket(AF_INET, SOCK_DGRAM, 0);
-        if (m_sendFd < 0)
-        {
-            static_cast<void>(std::fprintf(
-                stderr, "hub: cannot open the sending socket: %s\n", std::strerror(errno)));
-            return false;
-        }
-        const int enabled = 1;
-        if (::setsockopt(m_sendFd, SOL_SOCKET, SO_BROADCAST, &enabled, sizeof(enabled)) < 0)
-        {
-            static_cast<void>(
-                std::fprintf(stderr, "hub: cannot enable broadcast: %s\n", std::strerror(errno)));
-            return false;
-        }
-        return subscribe(announcePort);
     }
 
     bool UdpTransport::subscribed(std::uint16_t port) const
@@ -98,7 +68,7 @@ namespace mark4
         static_cast<void>(::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled)));
 
         sockaddr_in address{};
-        static_cast<void>(fillAddress(nullptr, port, address));
+        fillAddress(port, address);
         if (::bind(fd, reinterpret_cast<const sockaddr *>(&address), sizeof(address)) < 0)
         {
             static_cast<void>(std::fprintf(stderr,
@@ -172,25 +142,4 @@ namespace mark4
         }
     }
 
-    bool UdpTransport::sendTo(const std::uint8_t *data,
-                              std::size_t size,
-                              const char *host,
-                              std::uint16_t port) const
-    {
-        sockaddr_in address{};
-        if (m_sendFd < 0 || !fillAddress(host, port, address))
-        {
-            return false;
-        }
-        const ssize_t sent = ::sendto(
-            m_sendFd, data, size, 0, reinterpret_cast<const sockaddr *>(&address), sizeof(address));
-        return sent == static_cast<ssize_t>(size);
-    }
-
-    bool UdpTransport::broadcast(const std::uint8_t *data,
-                                 std::size_t size,
-                                 std::uint16_t port) const
-    {
-        return sendTo(data, size, "255.255.255.255", port);
-    }
 } // namespace mark4

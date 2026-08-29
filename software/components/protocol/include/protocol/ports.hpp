@@ -1,10 +1,13 @@
 #pragma once
 
 /// @file
-/// @brief Default UDP ports of every process boundary, in one place. A
-///        deployment may override them (batch campaigns stride their own
-///        ranges), but every default and every port relationship is
-///        defined here and nowhere else.
+/// @brief Default UDP ports of the boundaries that still carry a bare
+///        protocol/ packet: the lockstep link and the raw state stream of
+///        the simulator. Everything between the flight processes and the
+///        hub travels through the transport, whose one shared port is
+///        transport/udp_link.hpp (DISCOVERY_PORT). A deployment may
+///        override these (batch campaigns stride their own ranges), but
+///        every default is defined here and nowhere else.
 
 #include <cstdint>
 
@@ -15,34 +18,16 @@ namespace mark4
     /// came from, so the simulator needs no listening port of its own.
     inline constexpr std::uint16_t SIM_LINK_PORT = 47800U;
 
-    /// UDP port telemetry is broadcast to; any number of consumers may listen,
-    /// provided their socket sets SO_REUSEADDR so the port can be shared.
-    inline constexpr std::uint16_t TELEMETRY_PORT = 47801U;
+    // 47801 is unassigned: telemetry used to be broadcast to it, and now
+    // travels as a transport broadcast frame.
 
-    /// UDP port the simulator broadcasts its raw state to. Distinct from the
-    /// telemetry port so consumers can compare the estimated state (telemetry)
-    /// with the exact one (this stream) sample by sample.
+    /// UDP port the simulator broadcasts its raw state to, so consumers can
+    /// compare the estimated state (telemetry) with the exact one (this
+    /// stream) sample by sample. The plant is not a transport node.
     inline constexpr std::uint16_t SIM_RAW_PORT = 47802U;
 
-    // 47803 is unassigned: it used to mirror the telemetry broadcast for the
-    // one consumer whose socket stack could not share a bound port. Every
-    // consumer left sets SO_REUSEADDR and reads udp/47801 directly.
-
-    // 47804 is unassigned: the simulator used to bind it for scenario
-    // commands, and binds no listening port at all any more. Scenarios reach
-    // it inside the lockstep reply.
-
-    /// UDP port a flight process binds its command receiver to. It carries
-    /// the pilot RC stream (RcCommandPacket) and the scenario commands
-    /// (SimScenarioPacket) the flight process forwards to its plant, plus
-    /// the commands that follow them. Ownership rule: the receiving flight
-    /// process binds, senders just send. drone_sim binds it by default; the
-    /// hub binds it when it is the one fronting the real board.
-    inline constexpr std::uint16_t RC_COMMAND_PORT = 47805U;
-
-    /// UDP port every flight process broadcasts its AnnouncePacket to. One
-    /// shared port for every instance and every kind: the packet itself
-    /// carries the ports that matter, so batch campaigns never stride this
-    /// one. Consumers bind with SO_REUSEADDR so several watchers coexist.
-    inline constexpr std::uint16_t ANNOUNCE_PORT = 47806U;
+    // 47803 to 47806 are unassigned: the telemetry mirror, the simulator's
+    // scenario port, the command receiver port and the announce port all
+    // died with the ports they described. Commands are transport unicasts
+    // to the node that beaconed, the announce is that beacon.
 } // namespace mark4

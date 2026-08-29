@@ -625,9 +625,9 @@ namespace mark4
             Json entry;
             entry["kind"] = static_cast<std::uint8_t>(process.kind);
             entry["kindName"] = streamSourceName(process.kind);
-            entry["sessionId"] = process.sessionId;
-            entry["telemetryPort"] = process.telemetryPort;
-            entry["commandPort"] = process.commandPort;
+            // The transport node id is what identifies one start of the
+            // process, which is what this key has meant to the pages all along.
+            entry["sessionId"] = process.nodeId;
             entry["viaSerial"] = process.viaSerial;
             entry["ageMs"] =
                 (nowUs > process.lastSeenUs ? nowUs - process.lastSeenUs : 0U) / US_PER_MS;

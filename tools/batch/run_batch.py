@@ -16,15 +16,22 @@ the lockstep reply; resending it is free, since the plant plays a block once
 per change of its sequence byte.
 
 The flight process hashes the trajectory of every run and broadcasts the hash
-on the telemetry port. Two runs given the same scenario must produce the same
+with its telemetry. Two runs given the same scenario must produce the same
 hash, which is what --verify-repro checks.
 
+Every packet between this campaign and a drone_sim travels through the
+transport (software/components/transport/): each pair gets its own discovery
+port, the drone_sim is started with a known node id, and the campaign is one
+more transport node on that port - it reads the broadcast frames off the
+discovery socket and unicasts commands to the address the drone's frames
+come from. No beacon: the drone learns the campaign from the first command.
+
 Arming and the kill switch travel as an RcCommandPacket stream straight to
-each drone_sim command receiver, the same path a real flight uses: a
-background thread per instance repeats the held state fast enough that the
-flight process fail-safe never trips, whatever the time scale. The state is
-held constant for the whole campaign - armed, altitude-auto, stick centered -
-which is what the altitude-auto interlock wants and what makes the throw path
+each drone_sim, the same path a real flight uses: a background thread per
+instance repeats the held state fast enough that the flight process
+fail-safe never trips, whatever the time scale. The state is held constant
+for the whole campaign - armed, altitude-auto, stick centered - which is
+what the altitude-auto interlock wants and what makes the throw path
 reachable.
 
 --set writes tuning parameters once per run, after the reset that rebuilt the
@@ -53,12 +60,16 @@ from telemetry_wire import (
     RC_MODE_ALTITUDE_AUTO,
     SIM_SCENARIO_HAND_THROW,
     SIM_SCENARIO_THROW,
+    TRANSPORT_HEADER_SIZE,
+    TRANSPORT_MAX_PAYLOAD,
     TUNING_ACK_OK,
     decode_sim_run_stats,
     decode_telemetry,
+    decode_transport_frame,
     decode_tuning_ack,
     encode_rc_command,
     encode_sim_scenario,
+    encode_transport_frame,
     encode_tuning_set,
 )
 
@@ -74,12 +85,18 @@ PHASE_NAMES = [
     "idle", "altitude", "armed", "ballistic", "recovery", "hover", "cutoff", "manual",
 ]
 
-# One UDP port range per instance: sim link, telemetry, raw state and the
-# drone_sim command receiver never overlap between instances.
-# Striding the rc port also keeps a campaign away from the default port a
-# bench session may be using for the real board.
+# One UDP port range per instance: sim link, transport discovery port and
+# raw state never overlap between instances, and the discovery port keeps a
+# campaign away from the bench (DISCOVERY_PORT) a live hub may be running.
 BASE_PORT = 48000
 PORT_STRIDE = 10
+
+# Transport node ids: a drone_sim is 1 + its instance index (--node-id), the
+# campaign's own node on that pair's port is one this base apart.
+CAMPAIGN_NODE_BASE = 0xBA7C0000
+
+#: Largest frame read off a transport socket.
+FRAME_BUFFER = TRANSPORT_HEADER_SIZE + TRANSPORT_MAX_PAYLOAD
 
 THROW_DELAY_SIM_S = 2.0   # reset to throw: baro reference + attitude convergence
 HELD_WATCH_SIM_S = 8.0    # held-only runs watch the shaken hand this long
@@ -130,9 +147,10 @@ class Instance:
         self.index = index
         base = BASE_PORT + index * PORT_STRIDE
         self.sim_port = base
-        self.telemetry_port = base + 1
+        self.discovery_port = base + 1
         self.raw_port = base + 5
-        self.rc_port = base + 9
+        self.node_id = index + 1
+        self.own_node = CAMPAIGN_NODE_BASE + index + 1
 
         log_dir = os.path.join(REPO_ROOT, "logs", "batch")
         os.makedirs(log_dir, exist_ok=True)
@@ -171,22 +189,32 @@ class Instance:
                 args.drone_sim,
                 "--sim-port",
                 str(self.sim_port),
-                "--telemetry-port",
-                str(self.telemetry_port),
-                "--rc-port",
-                str(self.rc_port),
+                "--discovery-port",
+                str(self.discovery_port),
+                "--node-id",
+                str(self.node_id),
             ],
             stdout=self._log,
             stderr=subprocess.STDOUT,
             cwd=REPO_ROOT,
         )
 
-        self.telemetry = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.telemetry.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.telemetry.bind(("0.0.0.0", self.telemetry_port))
-        self.telemetry.settimeout(1.0)
-
-        self.command = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # The campaign's transport node: the shared discovery socket every
+        # broadcast frame lands on, and the data socket every unicast leaves
+        # from (and the drone's unicasts come back to).
+        self.discovery = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.discovery.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.discovery.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        self.discovery.bind(("0.0.0.0", self.discovery_port))
+        self.discovery.settimeout(1.0)
+        self.data = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.data.bind(("0.0.0.0", 0))
+        self.data.setblocking(False)
+        #: Where the drone's frames come from: its unicast address, learnt
+        #: from the first frame heard, None until then.
+        self.drone_addr = None
+        self._seq = 0
+        self._send_lock = threading.Lock()
         #: Last run stats packet decoded, the verdict of the current run.
         self.last_stats = None
         self._scenario_sequence = 0
@@ -219,11 +247,21 @@ class Instance:
         """Repeat the held RC state until close() stops the thread."""
         while not self._rc_stop.wait(self._rc_period_s):
             kill, arm, mode, throttle = self._rc_state
-            # sendto is thread safe for datagrams: no lock needed around it.
-            self.command.sendto(
-                encode_rc_command(kill=kill, arm=arm, mode=mode, throttle=throttle),
-                ("127.0.0.1", self.rc_port),
-            )
+            self._send(encode_rc_command(kill=kill, arm=arm, mode=mode, throttle=throttle))
+
+    def _send(self, payload: bytes) -> None:
+        """Unicast one packet to the drone, once its address is known.
+
+        The sequence counter is shared by the RC thread and the campaign
+        thread, so the whole frame build and send is one locked step.
+        """
+        addr = self.drone_addr
+        if addr is None:
+            return
+        with self._send_lock:
+            frame = encode_transport_frame(self.own_node, self.node_id, self._seq, payload)
+            self._seq = (self._seq + 1) & 0xFFFF
+            self.data.sendto(frame, addr)
 
     def set_rc(
         self,
@@ -246,8 +284,8 @@ class Instance:
             except subprocess.TimeoutExpired:
                 child.kill()
                 child.wait()
-        self.telemetry.close()
-        self.command.close()
+        self.discovery.close()
+        self.data.close()
         self._log.close()
 
     def send_scenario(
@@ -277,37 +315,49 @@ class Instance:
             held_s=held_s, held_tilt=held_tilt,
             held_azimuth=held_azimuth, swing_s=swing_s,
         )
-        self.command.sendto(packet, ("127.0.0.1", self.rc_port))
+        self._send(packet)
         return packet
 
     def resend(self, packet: bytes) -> None:
         """Resend a scenario packet unchanged; the plant dedups on sequence."""
-        self.command.sendto(packet, ("127.0.0.1", self.rc_port))
+        self._send(packet)
 
     def drain_telemetry(self) -> None:
         """Discard buffered samples so judgments only see fresh ones."""
-        self.telemetry.setblocking(False)
+        self.discovery.setblocking(False)
         try:
             while True:
-                self.telemetry.recv(256)
+                self.discovery.recv(FRAME_BUFFER)
         except BlockingIOError:
             pass
         finally:
-            self.telemetry.settimeout(1.0)
+            self.discovery.settimeout(1.0)
 
     def next_sample(self):
         """Block for the next telemetry sample, None on anything else.
 
-        Three streams share the telemetry port, because the flight process
-        answers on the link it already broadcasts on. Run stats are absorbed
-        into last_stats and tuning acks are queued for whoever is waiting on
-        one; neither is ever returned, so a caller judging a flight only ever
-        sees telemetry.
+        Every stream of the flight process arrives as a broadcast frame on
+        the discovery socket. Run stats are absorbed into last_stats and
+        tuning acks are queued for whoever is waiting on one; neither is
+        ever returned, so a caller judging a flight only ever sees
+        telemetry. Whatever the drone unicasts to this node (its beacon on
+        first contact) lands on the data socket and is discarded.
         """
         try:
-            datagram = self.telemetry.recv(256)
+            while True:
+                self.data.recv(FRAME_BUFFER)
+        except (BlockingIOError, OSError):
+            pass
+        try:
+            datagram, addr = self.discovery.recvfrom(FRAME_BUFFER)
         except socket.timeout:
             return None
+        frame = decode_transport_frame(datagram)
+        if frame is None or frame.src != self.node_id:
+            return None
+        # The source port of any frame the drone sends is its unicast address.
+        self.drone_addr = addr
+        datagram = frame.payload
         stats = decode_sim_run_stats(datagram)
         if stats is not None:
             self.last_stats = stats
@@ -332,9 +382,7 @@ class Instance:
             return None
         self._acks.clear()
         for param_id, value in settings:
-            self.command.sendto(
-                encode_tuning_set(param_id, value), ("127.0.0.1", self.rc_port)
-            )
+            self._send(encode_tuning_set(param_id, value))
         pending = {param_id for param_id, _ in settings}
         deadline = time.monotonic() + WALL_BUDGET_S
         while time.monotonic() < deadline:

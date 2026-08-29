@@ -76,16 +76,12 @@ const SCENARIO_VELOCITY_OFFSET := 18
 const SCENARIO_ANGULAR_OFFSET := 30
 const SCENARIO_HELD_OFFSET := 42
 
-## Default UDP ports (ports.hpp).
+## Default UDP ports (ports.hpp): the two boundaries the plant speaks on.
+## Everything between the flight processes and the hub travels through the
+## transport (software/components/transport/), which the plant is not part
+## of; 47801 and 47803-47806 are unassigned.
 const SIM_LINK_PORT := 47800
-const TELEMETRY_PORT := 47801
 const SIM_RAW_PORT := 47802
-## 47803 is unassigned: it used to mirror the telemetry broadcast for the
-## one consumer whose socket stack could not share a bound port.
-## 47804 is unassigned: this project binds no command port any more, and
-## scenarios reach it inside the lockstep reply.
-const RC_COMMAND_PORT := 47805
-const ANNOUNCE_PORT := 47806
 
 
 ## True when the payload opens with the protocol version and the given
