@@ -11,7 +11,6 @@ FetchContent_MakeAvailable(Catch2)
 add_executable(unit_tests
     test_announce.cpp
     test_attitude_estimator.cpp
-    test_blackbox.cpp
     test_control.cpp
     test_flight_core.cpp
     test_hub_discovery.cpp

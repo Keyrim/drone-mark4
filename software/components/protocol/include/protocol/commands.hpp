@@ -156,8 +156,8 @@ namespace mark4
 #pragma pack(push, 1)
     /// Reboots the flight controller (NVIC system reset), the serial
     /// counterpart of the simulator reset: one bench gesture restarts
-    /// whichever world is listening. Telemetry, blackbox bytes in flight
-    /// and the RC state are all lost, which is the point.
+    /// whichever world is listening. Telemetry in flight and the RC state
+    /// are both lost, which is the point.
     struct RebootCommandPacket
     {
         std::uint8_t version; ///< = PROTOCOL_VERSION

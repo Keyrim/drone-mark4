@@ -356,8 +356,8 @@ namespace
         }
 
         /// @brief Spawns drone_sim on the given ports and flash directory.
-        /// @param runDirectory directory the process runs in, so its blackbox
-        ///        file lands in the test's own scratch space instead of
+        /// @param runDirectory directory the process runs in, so what it
+        ///        writes lands in the test's own scratch space instead of
         ///        wherever ctest was started from
         /// @param otaDirectory emulated flash directory
         /// @param simPort lockstep port (nothing drives it in this test)
@@ -388,9 +388,8 @@ namespace
 
             posix_spawn_file_actions_t actions;
             static_cast<void>(::posix_spawn_file_actions_init(&actions));
-            // The sim writes its blackbox under the working directory, so the
-            // working directory is the test's, not the one ctest happens to
-            // run in.
+            // The sim writes under its working directory, so the working
+            // directory is the test's, not the one ctest happens to run in.
             static_cast<void>(::posix_spawn_file_actions_addchdir_np(&actions, runPath.c_str()));
             static_cast<void>(::posix_spawn_file_actions_addopen(
                 &actions, STDOUT_FILENO, consolePath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644));

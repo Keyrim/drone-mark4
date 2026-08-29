@@ -35,7 +35,6 @@ namespace mark4
         SIM_SCENARIO = 5U,        ///< SimScenarioPacket
         RC_COMMAND = 6U,          ///< RcCommandPacket
         REBOOT_COMMAND = 7U,      ///< RebootCommandPacket
-        BLACKBOX_RECORD = 8U,     ///< BlackboxRecord
         ANNOUNCE = 9U,            ///< AnnouncePacket
         TUNING_SET = 10U,         ///< TuningSetPacket
         TUNING_GET = 11U,         ///< TuningGetPacket
@@ -57,13 +56,12 @@ namespace mark4
 
     /// Identity of a stream sender, carried by every stream packet
     /// (telemetry, sim raw) so several senders coexist on one port and a
-    /// consumer can tell a live sim from a replay or a real board.
+    /// consumer can tell a live sim from a real board.
     enum class StreamSource : std::uint8_t
     {
-        FIRMWARE = 1U,     ///< the real board
-        DRONE_SIM = 2U,    ///< desktop flight process against the plant
-        DRONE_REPLAY = 3U, ///< re-execution of a recorded flight
-        SIM_PLANT = 4U,    ///< the physics simulator itself (sim raw)
+        FIRMWARE = 1U,  ///< the real board
+        DRONE_SIM = 2U, ///< desktop flight process against the plant
+        SIM_PLANT = 4U, ///< the physics simulator itself (sim raw)
     };
 
     /// @brief Checks the two header bytes of a received packet.

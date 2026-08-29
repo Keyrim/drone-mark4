@@ -1,8 +1,8 @@
 /// @file
 /// @brief Golden packet generator and checker. Emits reference bytes with
 ///        asymmetric field values for every packet type of the protocol
-///        (plus the stored formats that cross a process boundary: the
-///        blackbox record and the OTA image header);
+///        (plus the OTA image header, a stored format that crosses a
+///        process boundary);
 ///        the fixtures are committed, a ctest re-generates and compares
 ///        them (C++ drift guard), and the python and GDScript decode
 ///        tests read the same files, so every hand-written parser is
@@ -21,7 +21,6 @@
 
 #include "platform_common/crc32_mpeg2.hpp"
 #include "protocol/announce.hpp"
-#include "protocol/blackbox.hpp"
 #include "protocol/commands.hpp"
 #include "protocol/header.hpp"
 #include "protocol/ota.hpp"
@@ -447,36 +446,6 @@ namespace
         return bytes;
     }
 
-    std::vector<std::uint8_t> makeBlackboxRecord()
-    {
-        mark4::BlackboxRecord record{};
-        record.sync0 = mark4::BLACKBOX_SYNC0;
-        record.sync1 = mark4::BLACKBOX_SYNC1;
-        record.version = mark4::BLACKBOX_VERSION;
-        record.type = static_cast<std::uint8_t>(mark4::PacketType::BLACKBOX_RECORD);
-        record.length = mark4::BLACKBOX_RECORD_PAYLOAD_SIZE;
-        record.timestampUs = 987654321ULL;
-        record.baroPa = 101325.0f;
-        record.killSwitch = 0U;
-        record.throttle = 0.75f;
-        record.armSwitch = 1U;
-        auto bytes = toBytes(record);
-        patch(bytes,
-              offsetof(mark4::BlackboxRecord, gyroRadS),
-              std::array<float, 3>{0.25f, -0.5f, 1.5f});
-        patch(bytes,
-              offsetof(mark4::BlackboxRecord, accelMps2),
-              std::array<float, 3>{0.0f, 0.0f, 9.80665f});
-        patch(bytes,
-              offsetof(mark4::BlackboxRecord, motor),
-              std::array<float, 4>{0.125f, 0.25f, 0.5f, 0.75f});
-        const std::uint16_t crc = mark4::blackboxRecordCrc(bytes.data());
-        bytes[mark4::BLACKBOX_CRC_OFFSET] = static_cast<std::uint8_t>(crc & mark4::CRC16_LOW_MASK);
-        bytes[mark4::BLACKBOX_CRC_OFFSET + 1U] =
-            static_cast<std::uint8_t>(crc >> mark4::CRC16_BYTE_SHIFT);
-        return bytes;
-    }
-
     std::vector<std::uint8_t> makeSerialFrame()
     {
         const std::array<std::uint8_t, 5> payload = {0x01U, 0x02U, 0x03U, 0x04U, 0xFAU};
@@ -515,7 +484,6 @@ namespace
             {"ota_abort.bin", makeOtaAbort()},
             {"ota_ack.bin", makeOtaAck()},
             {"ota_image_header.bin", makeOtaImageHeader()},
-            {"blackbox_record.bin", makeBlackboxRecord()},
             {"serial_frame.bin", makeSerialFrame()},
         };
     }

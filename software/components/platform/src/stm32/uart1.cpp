@@ -37,8 +37,8 @@ namespace mark4
         constexpr std::uint32_t USART1_IRQ_NUMBER = 37U;
 
         /// Transmit ring capacity; must be a power of two. Holds about
-        /// 45 ms of a saturated line (blackbox records plus telemetry),
-        /// the drop policy of the senders covers the rest.
+        /// 45 ms of a saturated line, the drop policy of the senders covers
+        /// the rest.
         constexpr std::uint32_t TX_RING_SIZE = 4096U;
         constexpr std::uint32_t TX_RING_MASK = TX_RING_SIZE - 1U;
         static_assert((TX_RING_SIZE & TX_RING_MASK) == 0U);

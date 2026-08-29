@@ -1,6 +1,6 @@
 # Desktop variant: sensor frames come in over UDP from the simulator, actuator
-# frames go back to it, telemetry is broadcast, blackbox records go to a file.
-# POSIX sockets and stdio, desktop only.
+# frames go back to it, telemetry is broadcast. POSIX sockets and stdio,
+# desktop only.
 add_library(platform_sim STATIC
     clock_sim.cpp
     udp_link.cpp
@@ -8,7 +8,6 @@ add_library(platform_sim STATIC
     command_receiver_sim.cpp
     motor_sink_sim.cpp
     telemetry_sender_sim.cpp
-    log_sink_file.cpp
     firmware_store_sim.cpp)
 target_include_directories(platform_sim PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # protocol is PUBLIC: the run tracker is a header of this library and carries

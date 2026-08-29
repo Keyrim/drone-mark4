@@ -10,7 +10,6 @@
 
 #include "flight_core/flight_core.hpp"
 #include "platform_common/announce_publisher.hpp"
-#include "platform_common/blackbox.hpp"
 #include "platform_common/ota_updater.hpp"
 #include "platform_common/rc_tracker.hpp"
 #include "platform_common/telemetry_publisher.hpp"
@@ -18,7 +17,6 @@
 #include "platform_sim/clock_sim.hpp"
 #include "platform_sim/command_receiver_sim.hpp"
 #include "platform_sim/firmware_store_sim.hpp"
-#include "platform_sim/log_sink_file.hpp"
 #include "platform_sim/motor_sink_sim.hpp"
 #include "platform_sim/sensor_source_sim.hpp"
 #include "platform_sim/sim_run_tracker.hpp"
@@ -40,12 +38,6 @@ namespace mark4
         /// real board - but the loop must keep waking up to announce itself,
         /// and the announce contract is one per second.
         static constexpr std::uint32_t IDLE_TIMEOUT_MS = 500U;
-
-        /// Directory the blackbox file is created in, relative to the cwd.
-        static constexpr const char *LOG_DIRECTORY = "logs/blackbox";
-
-        /// Size of the buffer holding the timestamped blackbox file path.
-        static constexpr std::size_t LOG_PATH_SIZE = 64U;
 
         /// Size of the buffer holding the emulated-flash directory. The
         /// store builds its own file paths inside it, so this only has to
@@ -75,7 +67,7 @@ namespace mark4
                              const char *otaDirectory);
 
         /// @brief Initializes services in declaration order: binds the sim link,
-        ///        opens the telemetry socket and the blackbox file, then runs
+        ///        opens the telemetry socket, then runs
         ///        the fake bootloader that picks the firmware slot. The first
         ///        failure is logged by the service and returns false immediately.
         /// @return true when every service is ready
@@ -102,18 +94,6 @@ namespace mark4
         [[nodiscard]] mark4::AbsClock &accessClock()
         {
             return m_clock;
-        }
-
-        /// @return blackbox log sink, for post-run reporting
-        [[nodiscard]] const mark4::LogSinkFile &accessLogSink() const
-        {
-            return m_logSink;
-        }
-
-        /// @return blackbox recorder, for post-run reporting
-        [[nodiscard]] const mark4::Blackbox &accessBlackbox() const
-        {
-            return m_blackbox;
         }
 
         /// @return sensor source, for post-run reporting
@@ -219,11 +199,8 @@ namespace mark4
         mark4::TelemetrySenderSim m_announceSender;
         mark4::AnnouncePublisher m_announcePublisher{
             m_announceSender, StreamSource::DRONE_SIM, m_sessionId, m_telemetryPort, m_rcPort};
-        std::array<char, LOG_PATH_SIZE> m_logFilePath; ///< one file per run, outlives m_logSink
-        mark4::LogSinkFile m_logSink;
         mark4::FlightCore m_core;
         mark4::TuningService m_tuningService{m_core, m_telemetrySender};
-        mark4::Blackbox m_blackbox;
         mark4::SimRunTracker m_runTracker{m_telemetrySender, StreamSource::DRONE_SIM};
 
         /// Emulated flash directory, declared before the store because the

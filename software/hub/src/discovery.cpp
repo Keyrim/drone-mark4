@@ -17,8 +17,6 @@ namespace mark4
                 return "firmware";
             case StreamSource::DRONE_SIM:
                 return "drone_sim";
-            case StreamSource::DRONE_REPLAY:
-                return "drone_replay";
             case StreamSource::SIM_PLANT:
                 return "sim_plant";
         }

@@ -1,15 +1,10 @@
 #include "drone_sim_app.hpp"
 
 #include <array>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <ctime>
-
-#include <sys/stat.h>
-#include <sys/types.h>
 
 #include "flight_core/throw_detector.hpp"
 #include "platform_common/ota_boot_policy.hpp"
@@ -45,9 +40,6 @@ namespace
     constexpr char OTA_BROKEN_MARKER[] = "notalive";
     constexpr std::size_t OTA_BROKEN_MARKER_SIZE = sizeof(OTA_BROKEN_MARKER) - 1U;
 
-    /// Permissions of the log directory when it has to be created: rwxr-xr-x.
-    constexpr mode_t LOG_DIRECTORY_MODE = 0755;
-
     /// @return human readable name of a flight phase, for the console
     const char *phaseName(mark4::FlightPhase phase)
     {
@@ -71,40 +63,6 @@ namespace
                 return "manual";
         }
         return "?";
-    }
-
-    /// @brief Creates a directory, treating an existing one as a success.
-    /// @param path directory to create
-    /// @return true when the directory exists afterwards
-    bool ensureDirectory(const char *path)
-    {
-        if (::mkdir(path, LOG_DIRECTORY_MODE) == 0 || errno == EEXIST)
-        {
-            return true;
-        }
-        static_cast<void>(std::fprintf(
-            stderr, "drone_sim: mkdir failed on '%s': %s\n", path, std::strerror(errno)));
-        return false;
-    }
-
-    /// @brief Builds a per-run blackbox path from the wall clock, so a run
-    ///        never overwrites the previous one. The format string embeds
-    ///        DroneSimApp::LOG_DIRECTORY (strftime cannot interpolate it).
-    /// @return "logs/blackbox/drone_sim_YYYYMMDD_HHMMSS.m4bb"
-    std::array<char, mark4::DroneSimApp::LOG_PATH_SIZE> makeLogFilePath()
-    {
-        std::array<char, mark4::DroneSimApp::LOG_PATH_SIZE> path{};
-        const std::time_t now = std::time(nullptr);
-        std::tm local{};
-        static_cast<void>(::localtime_r(&now, &local));
-        if (std::strftime(
-                path.data(), path.size(), "logs/blackbox/drone_sim_%Y%m%d_%H%M%S.m4bb", &local) ==
-            0U)
-        {
-            static_cast<void>(
-                std::snprintf(path.data(), path.size(), "logs/blackbox/drone_sim.m4bb"));
-        }
-        return path;
     }
 
     /// @brief Copies a directory path into an owned buffer.
@@ -143,9 +101,6 @@ namespace mark4
           m_sessionId(sessionId),
           m_sensorSource(m_simLink),
           m_motorSink(m_simLink),
-          m_logFilePath(makeLogFilePath()),
-          m_logSink(m_logFilePath.data()),
-          m_blackbox(m_logSink),
           m_otaDirectory(makeOtaDirectory(otaDirectory))
     {
     }
@@ -167,15 +122,6 @@ namespace mark4
             return false;
         }
         if (!m_announceSender.open(ANNOUNCE_PORT))
-        {
-            return false;
-        }
-        // mkdir(2) creates one level at a time: the parent goes first.
-        if (!ensureDirectory("logs") || !ensureDirectory(LOG_DIRECTORY))
-        {
-            return false;
-        }
-        if (!m_logSink.init())
         {
             return false;
         }
@@ -596,7 +542,6 @@ namespace mark4
             ++steps;
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);
-            m_blackbox.record(frame, actuators);
             m_telemetryPublisher.publish(frame, actuators, m_core);
             // Paced answers to a list request: one description per frame, so
             // a table dump never bursts ahead of the telemetry it shares the

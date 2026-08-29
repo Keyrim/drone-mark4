@@ -10,8 +10,8 @@
 
 namespace mark4
 {
-    /// Fast enough for the full-rate blackbox stream plus telemetry
-    /// (about 40 % of the line), and a standard FTDI rate.
+    /// Fast enough for the full-rate telemetry stream with room to
+    /// spare, and a standard FTDI rate.
     inline constexpr std::uint32_t UART1_BAUD_RATE = 921600U;
 
     /// @brief Configures PB6/PB7, the USART and its interrupt. Idempotent:

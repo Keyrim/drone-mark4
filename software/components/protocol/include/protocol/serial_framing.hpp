@@ -7,7 +7,7 @@
 ///        can resynchronize on the sync pair after any byte loss. The
 ///        CRC covers the length byte and the payload, so a corrupted
 ///        length cannot swallow the stream or synthesize a plausible
-///        frame; XOR-class checksums are not enough for the blackbox
+///        frame; XOR-class checksums are not enough for the
 ///        stream, which is the forensic record.
 
 #include <cstddef>
@@ -41,8 +41,7 @@ namespace mark4
 
     /// @brief Feeds bytes into a running CRC-16/CCITT-FALSE computation
     ///        (polynomial 0x1021, no reflection, no final xor) - the one
-    ///        CRC of the project, shared by the serial framing and the
-    ///        blackbox records.
+    ///        CRC of the project.
     /// @param crc running value, CRC16_INIT to start a computation
     /// @param data bytes to feed
     /// @param size number of bytes to feed

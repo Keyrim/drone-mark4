@@ -2,12 +2,9 @@
 
 /// @file
 /// @brief Dynamic tuning packets: set / get / list parameters with
-///        acknowledgement. Defined ahead of their consumer: the flight
-///        core will own a static parameter table (id, value, bounds,
-///        armed-change policy) and the ground side will read and write it
-///        through these packets without reflashing. Nothing emits them
-///        yet; the layouts ship with the rest of the wire version so
-///        wiring them up later breaks nothing.
+///        acknowledgement. The flight core owns a static parameter table
+///        (id, value, bounds, armed-change policy) and the ground side
+///        reads and writes it through these packets without reflashing.
 
 #include <array>
 #include <cstddef>

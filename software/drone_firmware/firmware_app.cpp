@@ -102,7 +102,7 @@ namespace mark4
             return false;
         }
         rttPrintf("loop: %lu Hz, timer paced; telemetry: %lu baud, 1 packet / %lu frames; "
-                  "blackbox: every frame, same link; rc uplink armed with %lu ms fail-safe\n",
+                  "rc uplink armed with %lu ms fail-safe\n",
                   static_cast<unsigned long>(SensorSourceStm32::FRAME_RATE_HZ),
                   static_cast<unsigned long>(UART1_BAUD_RATE),
                   static_cast<unsigned long>(TelemetryPublisher::DECIMATION),
@@ -267,7 +267,6 @@ namespace mark4
 
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);
-            m_blackbox.record(frame, actuators);
             updateStatusLeds(m_core.flightPhase(), frame.rc.killSwitch, degraded, frames);
 
             ++frames;

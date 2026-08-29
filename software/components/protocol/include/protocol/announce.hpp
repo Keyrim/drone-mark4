@@ -2,11 +2,9 @@
 
 /// @file
 /// @brief Process announce packet, the basis of ground-side discovery.
-///        Defined ahead of its consumer: a flight process will broadcast
-///        it periodically and the ground side will discover whoever is
-///        alive instead of relying on hand-wired ports. Nothing emits it
-///        yet; the layout ships with the rest of the wire version so
-///        wiring it up later breaks nothing.
+///        Every flight process broadcasts it periodically and the hub
+///        discovers whoever is alive instead of relying on hand-wired
+///        ports.
 
 #include <cstddef>
 #include <cstdint>

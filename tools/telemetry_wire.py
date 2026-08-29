@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 #: First byte of every packet, must match mark4::PROTOCOL_VERSION.
-PROTOCOL_VERSION = 15
+PROTOCOL_VERSION = 16
 
 # Packet types, the second byte of every packet (mark4::PacketType).
 TYPE_SIM_SENSOR = 1
@@ -27,7 +27,6 @@ TYPE_SIM_RAW = 4
 TYPE_SIM_SCENARIO = 5
 TYPE_RC_COMMAND = 6
 TYPE_REBOOT_COMMAND = 7
-TYPE_BLACKBOX_RECORD = 8
 TYPE_ANNOUNCE = 9
 TYPE_TUNING_SET = 10
 TYPE_TUNING_GET = 11
@@ -49,7 +48,6 @@ TYPE_OTA_ACK = 25
 # Stream source identities (mark4::StreamSource).
 SOURCE_FIRMWARE = 1
 SOURCE_DRONE_SIM = 2
-SOURCE_DRONE_REPLAY = 3
 SOURCE_SIM_PLANT = 4
 
 # Scenarios carried by SimScenario (commands.hpp). Each one opens with a
@@ -301,20 +299,6 @@ for _wire_struct, _wire_size, _name in (
     )
 
 
-# Blackbox record (blackbox.hpp): self-framing, sync marker "M4" then
-# version, type, length, the sensor-step payload and a crc16 over
-# version..payload (little-endian). A .m4bb file is a plain sequence of
-# records; a damaged record costs only itself.
-BLACKBOX_SYNC0 = 0x4D
-BLACKBOX_SYNC1 = 0x34
-BLACKBOX_RECORD_STRUCT = struct.Struct("<BBBBBQ3f3ffBfB4fH")
-BLACKBOX_RECORD_SIZE = 65
-#: Version byte of a blackbox record, mirroring mark4::BLACKBOX_VERSION.
-#: Deliberately NOT PROTOCOL_VERSION: a stored format outlives the session
-#: that wrote it, so it moves only when the record layout moves.
-BLACKBOX_VERSION = 14
-BLACKBOX_RECORD_PAYLOAD_SIZE = 58
-
 # Serial framing (serial_framing.hpp): SYNC0 SYNC1 length payload crc16,
 # the CRC covering the length byte and the payload, little-endian on the
 # wire.
@@ -358,35 +342,6 @@ def encode_serial_frame(payload: bytes) -> bytes:
     crc = crc16(CRC16_INIT, body)
     return bytes([SERIAL_SYNC0, SERIAL_SYNC1]) + body + bytes(
         [crc & 0xFF, crc >> 8])
-
-
-def valid_blackbox_record(record: bytes) -> bool:
-    """Framing check of one candidate record, mark4::validBlackboxRecord."""
-    if len(record) != BLACKBOX_RECORD_SIZE:
-        return False
-    if record[0] != BLACKBOX_SYNC0 or record[1] != BLACKBOX_SYNC1:
-        return False
-    if (record[2] != BLACKBOX_VERSION or record[3] != TYPE_BLACKBOX_RECORD
-            or record[4] != BLACKBOX_RECORD_PAYLOAD_SIZE):
-        return False
-    carried = record[-2] | record[-1] << 8
-    return carried == crc16(CRC16_INIT, record[2:-2])
-
-
-def iter_blackbox_records(data: bytes):
-    """Yield the field tuple of every valid record in a .m4bb byte string.
-
-    Resynchronizes on the record sync marker after damaged bytes, so a
-    torn write costs only the record it tore.
-    """
-    offset = 0
-    while offset + BLACKBOX_RECORD_SIZE <= len(data):
-        chunk = data[offset:offset + BLACKBOX_RECORD_SIZE]
-        if valid_blackbox_record(chunk):
-            yield BLACKBOX_RECORD_STRUCT.unpack(chunk)
-            offset += BLACKBOX_RECORD_SIZE
-        else:
-            offset += 1
 
 
 @dataclass(frozen=True)

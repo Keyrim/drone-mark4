@@ -185,10 +185,8 @@ namespace mark4
                 return false;
             }
             const auto name = found->get<std::string>();
-            for (const StreamSource kind : {StreamSource::FIRMWARE,
-                                            StreamSource::DRONE_SIM,
-                                            StreamSource::DRONE_REPLAY,
-                                            StreamSource::SIM_PLANT})
+            for (const StreamSource kind :
+                 {StreamSource::FIRMWARE, StreamSource::DRONE_SIM, StreamSource::SIM_PLANT})
             {
                 if (name == streamSourceName(kind))
                 {

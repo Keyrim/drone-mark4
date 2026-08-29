@@ -206,24 +206,6 @@ class GoldenTuning(unittest.TestCase):
         self.assertEqual(fields[6:], (0.09375, 0.0, 1.5, 1))
 
 
-class GoldenBlackbox(unittest.TestCase):
-    def test_decode(self):
-        data = read("blackbox_record.bin")
-        self.assertEqual(len(data), tw.BLACKBOX_RECORD_SIZE)
-        self.assertTrue(tw.valid_blackbox_record(data))
-        records = list(tw.iter_blackbox_records(data))
-        self.assertEqual(len(records), 1)
-        r = records[0]
-        self.assertEqual(r[5], 987654321)  # timestamp
-        self.assertEqual(r[6:9], (0.25, -0.5, 1.5))  # gyro
-        self.assertEqual(r[9:12], (0.0, 0.0, f32(9.80665)))  # accel
-        self.assertEqual(r[12], 101325.0)  # baro
-        self.assertEqual(r[13], 0)  # kill
-        self.assertEqual(r[14], 0.75)  # throttle
-        self.assertEqual(r[15], 1)  # arm
-        self.assertEqual(r[16:20], (0.125, 0.25, 0.5, 0.75))  # motors
-
-
 #: The session nonce every OTA fixture of the one session echoes.
 OTA_SESSION = 0x1A2B3C4D
 #: Offset and payload of the fixture chunk (fewer bytes than the maximum).

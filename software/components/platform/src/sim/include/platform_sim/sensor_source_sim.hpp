@@ -31,9 +31,9 @@ namespace mark4
         ///        the same simulator session, is a resend rather than a new
         ///        sample: the simulator asks again because the reply to that
         ///        exact tick never reached it. The cached reply goes out
-        ///        again and the wait resumes, so the flight core, the
-        ///        blackbox and the telemetry never see the same instant
-        ///        twice. A new session restarts the simulated clock, so what
+        ///        again and the wait resumes, so the flight core and the
+        ///        telemetry never see the same instant twice. A new session
+        ///        restarts the simulated clock, so what
         ///        this source remembers about timestamps is forgotten with
         ///        the session that produced them.
         /// @param[out] frameOut frame decoded from the packet

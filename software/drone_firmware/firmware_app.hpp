@@ -8,7 +8,6 @@
 
 #include "flight_core/flight_core.hpp"
 #include "flight_core/types.hpp"
-#include "platform_common/blackbox.hpp"
 #include "platform_common/ota_updater.hpp"
 #include "platform_common/rc_tracker.hpp"
 #include "platform_common/telemetry_publisher.hpp"
@@ -18,7 +17,6 @@
 #include "platform_stm32/command_receiver_stm32.hpp"
 #include "platform_stm32/firmware_store_stm32.hpp"
 #include "platform_stm32/i2c_bus.hpp"
-#include "platform_stm32/log_sink_uart.hpp"
 #include "platform_stm32/motor_sink_null.hpp"
 #include "platform_stm32/mpu6050.hpp"
 #include "platform_stm32/ota_slots.hpp"
@@ -93,8 +91,6 @@ namespace mark4
         mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender, StreamSource::FIRMWARE};
         mark4::CommandReceiverStm32 m_commandReceiver;
         mark4::RcTracker m_rcTracker{m_commandReceiver};
-        mark4::LogSinkUart m_logSink{m_telemetrySender};
-        mark4::Blackbox m_blackbox{m_logSink};
         mark4::FlightCore m_core;
         mark4::TuningService m_tuningService{m_core, m_telemetrySender};
         /// The slot this image was linked for is a compile-time fact

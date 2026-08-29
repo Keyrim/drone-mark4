@@ -12,7 +12,7 @@ class_name Protocol
 ## packets (telemetry, sim raw) follow with a source id byte and a u16
 ## sequence number.
 
-const VERSION := 15
+const VERSION := 16
 
 ## Packet types, the second byte of every packet (header.hpp).
 const TYPE_SIM_SENSOR := 1
@@ -22,7 +22,6 @@ const TYPE_SIM_RAW := 4
 const TYPE_SIM_SCENARIO := 5
 const TYPE_RC_COMMAND := 6
 const TYPE_REBOOT_COMMAND := 7
-const TYPE_BLACKBOX_RECORD := 8
 const TYPE_ANNOUNCE := 9
 const TYPE_TUNING_SET := 10
 const TYPE_TUNING_GET := 11
@@ -34,7 +33,6 @@ const TYPE_SIM_RUN_STATS := 15
 ## Stream source identities (header.hpp).
 const SOURCE_FIRMWARE := 1
 const SOURCE_DRONE_SIM := 2
-const SOURCE_DRONE_REPLAY := 3
 const SOURCE_SIM_PLANT := 4
 
 ## Packed packet sizes (sim_link.hpp, sim_raw.hpp, commands.hpp,
