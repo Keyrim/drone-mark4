@@ -1,0 +1,39 @@
+# nanopb bounds for mark4.proto: every string and repeated field gets a
+# fixed capacity so the generated structs hold their storage inline and
+# nothing ever allocates (PB_NO_MALLOC). Strings count one byte for the
+# terminator; the repeated floats are fixed-count vectors of the project
+# convention (3 for a vector, 4 for a quaternion or the four motors).
+#
+# Every enum gets a fixed 32-bit underlying type (C++11, C23): a value a
+# newer peer sends that this build does not know is then a plain integer
+# the code compares and rejects, not an out-of-range load of a C enum.
+
+*                                   enum_intsize:IS_32
+
+mark4.Announce.name                 max_size:17
+mark4.Announce.git_hash             max_size:9
+
+mark4.PlantTruth.attitude_quat      max_count:4 fixed_count:true
+mark4.PlantTruth.position_m         max_count:3 fixed_count:true
+mark4.PlantTruth.velocity_mps       max_count:3 fixed_count:true
+
+mark4.Telemetry.gyro_rad_s          max_count:3 fixed_count:true
+mark4.Telemetry.attitude_quat       max_count:4 fixed_count:true
+mark4.Telemetry.gyro_bias_rad_s     max_count:3 fixed_count:true
+mark4.Telemetry.motor               max_count:4 fixed_count:true
+
+mark4.Log.text                      max_size:97
+
+mark4.SimSensor.gyro_rad_s          max_count:3 fixed_count:true
+mark4.SimSensor.accel_mps2          max_count:3 fixed_count:true
+
+mark4.SimActuator.motor             max_count:4 fixed_count:true
+
+mark4.SimScenario.velocity_mps            max_count:3 fixed_count:true
+mark4.SimScenario.angular_velocity_rad_s  max_count:3 fixed_count:true
+
+mark4.TuningInfo.name               max_size:17
+
+mark4.OtaSlotStatus.git_hash        max_size:9
+mark4.OtaStatus.slots               max_count:2 fixed_count:true
+mark4.OtaChunk.data                 max_size:240

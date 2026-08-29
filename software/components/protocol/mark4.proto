@@ -1,0 +1,325 @@
+// The one wire of the project. Every datagram and every serial frame
+// between the flight processes, the board, the plant and the ground tools
+// carries exactly one Envelope. The codecs are generated at build time:
+// nanopb for C/C++ (mark4.options bounds every field so nothing allocates),
+// godobuf for the Godot plant, protoc --python_out for the batch tool.
+//
+// Frames follow the project convention: body x forward, y left, z up,
+// right-handed; world z up; quaternions rotate body into world, w first.
+//
+// Enum values are C-scoped inside the package, so two enums may not share
+// a value name: the prefixes below exist for that reason only.
+
+syntax = "proto3";
+
+package mark4;
+
+message Envelope {
+  oneof body {
+    Telemetry telemetry = 1;
+    SimSensor sim_sensor = 2;
+    SimActuator sim_actuator = 3;
+    Rc rc = 4;
+    Announce announce = 5;
+    Log log = 6;
+    SimScenario sim_scenario = 16;
+    SimRunStats sim_run_stats = 17;
+    Reboot reboot = 18;
+    TuningSet tuning_set = 20;
+    TuningGet tuning_get = 21;
+    TuningList tuning_list = 22;
+    TuningAck tuning_ack = 23;
+    TuningInfo tuning_info = 24;
+    OtaStatusRequest ota_status_request = 30;
+    OtaStatus ota_status = 31;
+    OtaBegin ota_begin = 32;
+    OtaChunk ota_chunk = 33;
+    OtaChunkAck ota_chunk_ack = 34;
+    OtaFinish ota_finish = 35;
+    OtaRevert ota_revert = 36;
+    OtaAbort ota_abort = 37;
+    OtaAck ota_ack = 38;
+  }
+}
+
+// What kind of node is speaking.
+enum NodeKind {
+  NODE_KIND_UNSPECIFIED = 0;
+  FIRMWARE = 1;   // the real board
+  DRONE_SIM = 2;  // desktop flight process against the plant
+  PLANT = 3;      // the physics simulator
+  GATEWAY = 4;    // the hub
+  BATCH = 5;      // a Monte Carlo campaign
+}
+
+// Target chip of a firmware image; a board refuses an image built for
+// another one. The values are also what the on-flash image header stores.
+enum Mcu {
+  MCU_UNSPECIFIED = 0;
+  STM32F405 = 1;
+  STM32F722 = 2;
+  SIM = 200;  // desktop flight processes
+}
+
+// One node saying "here I am", beaconed every second.
+message Announce {
+  NodeKind kind = 1;
+  string name = 2;           // free label, at most 16 characters
+  Mcu mcu = 3;
+  uint32 build_epoch = 4;    // packaging time [unix s], the build's identity
+  string git_hash = 5;       // short commit hash, 8 hex characters
+  uint32 wire_hash = 6;      // hash of this file, as built into the sender
+}
+
+// Same names and values as the flight core's FlightPhase.
+enum FlightPhase {
+  PHASE_IDLE = 0;
+  PHASE_ALTITUDE_AUTO = 1;
+  PHASE_ARMED = 2;
+  PHASE_BALLISTIC = 3;
+  PHASE_RECOVERY = 4;
+  PHASE_HOVER = 5;
+  PHASE_CUTOFF = 6;
+  PHASE_MANUAL = 7;
+}
+
+// Same names and values as the flight core's ThrowState.
+enum ThrowState {
+  THROW_IDLE = 0;
+  THROW_THRUST = 1;
+  THROW_BALLISTIC = 2;
+}
+
+// Exact plant state, straight from the physics engine: no sensor model,
+// no noise, no estimation. Only a simulator can produce it.
+message PlantTruth {
+  repeated float attitude_quat = 1;  // 4, w x y z
+  repeated float position_m = 2;     // 3, world [m]
+  repeated float velocity_mps = 3;   // 3, world [m/s]
+}
+
+// Estimated state snapshot of a flight process, decimated from the loop.
+message Telemetry {
+  uint64 timestamp_us = 1;            // acquisition time [us]
+  repeated float gyro_rad_s = 2;      // 3, body angular rates [rad/s]
+  repeated float attitude_quat = 3;   // 4, estimated attitude, w x y z
+  repeated float gyro_bias_rad_s = 4; // 3, estimated gyro bias [rad/s]
+  repeated float motor = 5;           // 4, normalized motor commands [0, 1]
+  float altitude_m = 6;               // estimated altitude above startup [m]
+  float baro_altitude_m = 7;          // last plausible pressure altitude [m]
+  float vertical_velocity_mps = 8;    // estimated vertical velocity, up [m/s]
+  FlightPhase flight_phase = 9;
+  ThrowState throw_state = 10;
+  uint32 throw_count = 11;            // throws detected since startup
+  float release_velocity_mps = 12;    // last release velocity [m/s]
+  uint64 apex_timestamp_us = 13;      // last predicted apex instant [us]
+  float apex_altitude_m = 14;         // last predicted apex altitude [m]
+  optional PlantTruth truth = 15;     // the plant's exact state, sim only
+}
+
+// Same values as the flight core's PilotMode.
+enum RcMode {
+  RC_MANUAL = 0;         // the stick commands the collective directly
+  RC_ALTITUDE_AUTO = 1;  // the stick commands a vertical velocity
+}
+
+// Pilot state, streamed at 10 Hz: the flight process treats a silent
+// uplink as a kill, so holding a state means repeating it.
+message Rc {
+  bool kill = 1;
+  bool arm = 2;
+  RcMode mode = 3;
+  float throttle = 4;  // normalized [0, 1]
+}
+
+// Resets the flight controller (or re-runs the boot decision of a desktop
+// flight process).
+message Reboot {}
+
+enum LogLevel {
+  INFO = 0;
+  WARN = 1;
+  ERROR = 2;
+}
+
+// One line of a flight process's console, at most 96 characters.
+message Log {
+  uint64 timestamp_us = 1;
+  LogLevel level = 2;
+  string text = 3;
+}
+
+// Sensor frame of the plant, one per physics tick, lockstep link.
+message SimSensor {
+  uint64 timestamp_us = 1;           // simulation time at acquisition [us]
+  repeated float gyro_rad_s = 2;     // 3, body angular rates [rad/s]
+  repeated float accel_mps2 = 3;     // 3, specific force [m/s^2]
+  float baro_pa = 4;                 // static pressure [Pa]
+  uint32 reset_count = 5;            // world resets (teleports), wraps
+  uint32 lockstep_timeouts = 6;      // ticks the plant gave up waiting on
+  PlantTruth truth = 7;              // exact state at the same instant
+}
+
+// Actuator frame back to the plant; the echoed timestamp is the lockstep
+// handshake.
+message SimActuator {
+  uint64 echo_timestamp_us = 1;  // timestamp of the sensor frame answered
+  repeated float motor = 2;      // 4, normalized motor commands [0, 1]
+}
+
+enum SimScenarioKind {
+  SIM_SCENARIO_UNSPECIFIED = 0;
+  RESET = 1;       // teleport back to the start pose, reseed
+  THROW = 3;       // reset, then an instant throw
+  HAND_THROW = 4;  // reset, then a full hand sequence
+}
+
+// One whole run, scripted. A receiver plays a scenario once per change of
+// sequence; every scenario opens with a reset and everything after it is
+// scheduled by the plant on its own tick grid.
+message SimScenario {
+  uint32 sequence = 1;                       // 1..255, 0 = no scenario
+  SimScenarioKind kind = 2;
+  uint64 seed = 3;                           // seeds every generator of the run
+  uint32 throw_delay_us = 4;                 // reset tick to throw or grab [us]
+  uint32 hash_window_us = 5;                 // simulated time the flight process hashes
+  repeated float velocity_mps = 6;           // 3, release velocity, world [m/s]
+  repeated float angular_velocity_rad_s = 7; // 3, release spin, body [rad/s]
+  float held_seconds = 8;                    // HAND_THROW: hold before the swing [s]
+  float held_tilt_rad = 9;                   // HAND_THROW: held tilt from level [rad]
+  float held_azimuth_rad = 10;               // HAND_THROW: world azimuth of the tilt [rad]
+  float swing_seconds = 11;                  // HAND_THROW: swing duration, 0 = hold only [s]
+}
+
+// What one simulated run amounted to, republished on every change.
+message SimRunStats {
+  uint32 run_id = 1;             // reset counter of the measured run
+  bool final = 2;                // the hash window elapsed, run_hash is final
+  bool degraded = 3;             // the link lost a tick during the run
+  uint64 run_start_us = 4;       // simulated time the run started at [us]
+  uint64 run_hash = 5;           // hash of the trajectory so far
+  uint32 duplicate_frames = 6;   // sensor resends answered again, cumulative
+  uint32 lockstep_timeouts = 7;  // lockstep timeouts reported by the plant
+}
+
+// Same values as the flight core's TuningStatus.
+enum TuningStatus {
+  OK = 0;
+  UNKNOWN_ID = 1;
+  OUT_OF_BOUNDS = 2;
+  LOCKED_WHILE_ARMED = 3;
+}
+
+message TuningSet {
+  uint32 id = 1;
+  float value = 2;
+}
+
+message TuningGet {
+  uint32 id = 1;
+}
+
+message TuningList {
+  uint32 start_index = 1;
+}
+
+// Answer to a set or get: the status and the value in effect afterwards.
+message TuningAck {
+  uint32 id = 1;
+  float value = 2;
+  TuningStatus status = 3;
+}
+
+// One parameter description, answering a list request.
+message TuningInfo {
+  uint32 index = 1;
+  uint32 count = 2;
+  uint32 id = 3;
+  string name = 4;  // at most 16 characters
+  float value = 5;
+  float min_value = 6;
+  float max_value = 7;
+  bool armed_change = 8;
+}
+
+// Slot lifecycle states. The flash keeps its own encoding (0xFF = empty);
+// the firmware codec maps between the two.
+enum OtaSlotState {
+  EMPTY = 0;
+  STAGED = 1;
+  TESTING = 2;
+  VALID = 3;
+  BAD = 4;
+}
+
+enum OtaResult {
+  OTA_OK = 0;
+  DENIED_ARMED = 1;
+  DENIED_VOLTAGE = 2;
+  DENIED_BUSY = 3;
+  BAD_SESSION = 4;
+  BAD_STATE = 5;
+  BAD_IMAGE = 6;
+  CRC_MISMATCH = 7;
+  STORE_FAILURE = 8;
+}
+
+enum OtaOp {
+  OTA_OP_UNSPECIFIED = 0;
+  BEGIN = 1;
+  CHUNK = 2;
+  FINISH = 3;
+  REVERT = 4;
+  ABORT = 5;
+}
+
+message OtaSlotStatus {
+  OtaSlotState state = 1;
+  uint32 build_epoch = 2;  // 0 with no image header, 0xFFFFFFFF unpackaged
+  string git_hash = 3;     // 8 hex characters, empty when unstamped
+}
+
+message OtaStatusRequest {}
+
+message OtaStatus {
+  Mcu mcu = 1;
+  uint32 running_slot = 2;
+  uint32 active_slot = 3;
+  bool updater_busy = 4;
+  repeated OtaSlotStatus slots = 5;  // 2
+  uint32 slot_size = 6;
+  uint32 max_chunk_data = 7;
+}
+
+message OtaBegin {
+  uint32 session = 1;
+  uint32 image_size = 2;
+  uint32 image_crc = 3;
+}
+
+message OtaChunk {
+  uint32 session = 1;
+  uint32 offset = 2;
+  bytes data = 3;  // at most 240 bytes
+}
+
+message OtaChunkAck {
+  uint32 session = 1;
+  uint32 next_offset = 2;
+}
+
+message OtaFinish {
+  uint32 session = 1;
+}
+
+message OtaRevert {}
+
+message OtaAbort {
+  uint32 session = 1;
+}
+
+message OtaAck {
+  uint32 session = 1;
+  OtaOp op = 2;
+  OtaResult result = 3;
+}

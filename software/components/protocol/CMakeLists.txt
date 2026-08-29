@@ -1,4 +1,123 @@
-# Header-only INTERFACE lib, zero dependency: included by flight-core, the
-# apps, the ESP32, and parsed by Godot and the ground station.
-add_library(protocol INTERFACE)
-target_include_directories(protocol INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# The wire: one schema (mark4.proto + the nanopb bounds of mark4.options),
+# three codecs generated into the build tree and never committed:
+#   - nanopb C for every C/C++ target, desktop and STM32 alike (the `nanopb`
+#     static lib below, wrapped by `protocol` with the few helpers the apps
+#     use);
+#   - godobuf GDScript for the Godot plant (target proto_gd, desktop only,
+#     skipped with a warning when no godot binary is on the PATH);
+#   - protoc --python_out for the batch tool (target proto_py, desktop only).
+# A 32-bit hash of mark4.proto travels in every Announce so a node built on
+# another schema is visible instead of silent.
+include(FetchContent)
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+# nanopb_generator.py drives the protoc bundled in grpcio-tools and needs
+# the protobuf runtime; neither is a system package here.
+execute_process(
+    COMMAND ${Python3_EXECUTABLE} -c "import grpc_tools.protoc, google.protobuf"
+    RESULT_VARIABLE DRONE_PROTO_PYTHON_OK
+    OUTPUT_QUIET ERROR_QUIET)
+if(NOT DRONE_PROTO_PYTHON_OK EQUAL 0)
+    message(FATAL_ERROR
+        "the wire codecs need the python packages protobuf and grpcio-tools: "
+        "pip install --user protobuf grpcio-tools (the devcontainer image ships them)")
+endif()
+
+# SOURCE_SUBDIR names a directory nanopb does not have, so its own
+# CMakeLists.txt is never processed: only the sources are wanted.
+FetchContent_Declare(
+    nanopb
+    GIT_REPOSITORY https://github.com/nanopb/nanopb.git
+    # nanopb-0.4.9.2, pinned by commit: a tag can be force-pushed and would
+    # change what CI builds with no diff in this repo.
+    GIT_TAG 4133c1d3631654e80ed9bd27139318fd79fc2528
+    SOURCE_SUBDIR sources-only-no-cmake)
+FetchContent_MakeAvailable(nanopb)
+
+set(DRONE_PROTO_FILE ${CMAKE_CURRENT_SOURCE_DIR}/mark4.proto)
+set(DRONE_PROTO_GEN_DIR ${CMAKE_BINARY_DIR}/gen)
+
+# The wire hash: the first 8 hex characters of the SHA-256 of the schema.
+# Reconfigure follows every edit of the schema, so the value is never stale.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${DRONE_PROTO_FILE})
+file(SHA256 ${DRONE_PROTO_FILE} DRONE_PROTO_SHA256)
+string(SUBSTRING "${DRONE_PROTO_SHA256}" 0 8 DRONE_WIRE_HASH_HEX)
+set(DRONE_WIRE_HASH_HEX "${DRONE_WIRE_HASH_HEX}" CACHE INTERNAL "8 hex characters of the mark4.proto hash")
+configure_file(wire_hash.hpp.in ${DRONE_PROTO_GEN_DIR}/include/protocol/wire_hash.hpp @ONLY)
+
+# nanopb: runtime + generated codec, compiled as C. Not project code, so it
+# does not take drone_warnings; PB_NO_MALLOC / PB_BUFFER_ONLY because every
+# field is bounded by mark4.options and nothing here streams.
+add_custom_command(
+    OUTPUT ${DRONE_PROTO_GEN_DIR}/nanopb/mark4.pb.c ${DRONE_PROTO_GEN_DIR}/nanopb/mark4.pb.h
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${DRONE_PROTO_GEN_DIR}/nanopb
+    COMMAND ${Python3_EXECUTABLE} ${nanopb_SOURCE_DIR}/generator/nanopb_generator.py -q
+            -I ${CMAKE_CURRENT_SOURCE_DIR} -D ${DRONE_PROTO_GEN_DIR}/nanopb mark4.proto
+    DEPENDS ${DRONE_PROTO_FILE} ${CMAKE_CURRENT_SOURCE_DIR}/mark4.options
+    COMMENT "generating the nanopb codec of mark4.proto"
+    VERBATIM)
+add_library(nanopb STATIC
+    ${nanopb_SOURCE_DIR}/pb_common.c
+    ${nanopb_SOURCE_DIR}/pb_encode.c
+    ${nanopb_SOURCE_DIR}/pb_decode.c
+    ${DRONE_PROTO_GEN_DIR}/nanopb/mark4.pb.c)
+target_include_directories(nanopb SYSTEM PUBLIC ${nanopb_SOURCE_DIR} ${DRONE_PROTO_GEN_DIR}/nanopb)
+target_compile_definitions(nanopb PUBLIC PB_NO_MALLOC PB_BUFFER_ONLY)
+# The enums carry a fixed underlying type (enum_intsize in mark4.options),
+# C23 syntax that gcc 13 and arm-none-eabi-gcc 14 both accept.
+set_target_properties(nanopb PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS ON)
+if(DRONE_PLATFORM STREQUAL "stm32")
+    target_compile_definitions(nanopb PUBLIC PB_NO_ERRMSG)
+endif()
+
+# protocol: the codec plus the helpers every app uses, and the headers that
+# are not wire (the on-flash image layout, the sim link port).
+add_library(protocol STATIC src/envelope.cpp)
+target_include_directories(protocol PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${DRONE_PROTO_GEN_DIR}/include)
+target_link_libraries(protocol PUBLIC nanopb PRIVATE drone_warnings drone_strict)
+
+if(DRONE_PLATFORM STREQUAL "desktop")
+    # Python codec for the batch tool (tools/batch/run_batch.py).
+    add_custom_command(
+        OUTPUT ${DRONE_PROTO_GEN_DIR}/python/mark4_pb2.py
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${DRONE_PROTO_GEN_DIR}/python
+        COMMAND ${Python3_EXECUTABLE} -m grpc_tools.protoc -I ${CMAKE_CURRENT_SOURCE_DIR}
+                --python_out=${DRONE_PROTO_GEN_DIR}/python mark4.proto
+        DEPENDS ${DRONE_PROTO_FILE}
+        COMMENT "generating the python codec of mark4.proto"
+        VERBATIM)
+    file(WRITE ${DRONE_PROTO_GEN_DIR}/python/mark4_wire_hash.py
+        "# Generated by software/components/protocol/CMakeLists.txt, do not edit.\n"
+        "WIRE_HASH = 0x${DRONE_WIRE_HASH_HEX}\n")
+    add_custom_target(proto_py ALL DEPENDS ${DRONE_PROTO_GEN_DIR}/python/mark4_pb2.py)
+
+    # GDScript codec for the plant: godobuf runs inside a headless Godot
+    # and writes into the project (sim-godot/scripts/gen/, gitignored). Its
+    # CLI exits 0 whatever happens, so scripts/gen_godobuf.py checks the
+    # output.
+    set(DRONE_GODOT_PROJECT ${DRONE_REPO_ROOT}/sim-godot)
+    set(DRONE_GODOT_GEN_DIR ${DRONE_GODOT_PROJECT}/scripts/gen)
+    find_program(DRONE_GODOT godot)
+    if(DRONE_GODOT)
+        add_custom_command(
+            OUTPUT ${DRONE_GODOT_GEN_DIR}/mark4.gd
+            COMMAND ${Python3_EXECUTABLE} ${DRONE_REPO_ROOT}/scripts/gen_godobuf.py
+                    --godot ${DRONE_GODOT} --project ${DRONE_GODOT_PROJECT}
+                    --input ${DRONE_PROTO_FILE} --output ${DRONE_GODOT_GEN_DIR}/mark4.gd
+            DEPENDS ${DRONE_PROTO_FILE} ${DRONE_REPO_ROOT}/scripts/gen_godobuf.py
+                    ${DRONE_GODOT_PROJECT}/addons/godobuf/parser.gd
+            COMMENT "generating the GDScript codec of mark4.proto"
+            VERBATIM)
+        file(WRITE ${DRONE_GODOT_GEN_DIR}/wire_hash.gd
+            "# Generated by software/components/protocol/CMakeLists.txt, do not edit.\n"
+            "class_name WireHash\n\n"
+            "const VALUE := 0x${DRONE_WIRE_HASH_HEX}\n")
+        add_custom_target(proto_gd ALL DEPENDS ${DRONE_GODOT_GEN_DIR}/mark4.gd)
+    else()
+        message(WARNING "godot not found: the GDScript codec (sim-godot/scripts/gen/mark4.gd) "
+                        "is not generated, the plant cannot run against this build")
+    endif()
+endif()

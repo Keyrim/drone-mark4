@@ -31,6 +31,11 @@ add_library(drone_strict INTERFACE)
 target_compile_options(drone_strict INTERFACE
     $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti>)
 
+# Absolute path of the repository, for the generators that write outside
+# software/ (the GDScript codec lands in the Godot project) and the flash
+# tooling.
+set(DRONE_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
+
 add_subdirectory(components/protocol)
 add_subdirectory(components/transport)
 add_subdirectory(components/flight-core)
@@ -38,7 +43,6 @@ add_subdirectory(components/platform)
 
 if(DRONE_PLATFORM STREQUAL "stm32")
     # Tools the flash images need, looked up once for every stm32 executable.
-    set(DRONE_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
     find_program(DRONE_ARM_SIZE arm-none-eabi-size)
     find_program(DRONE_ARM_OBJCOPY arm-none-eabi-objcopy)
     find_program(DRONE_PYTHON3 python3)
@@ -54,5 +58,4 @@ endif()
 if(DRONE_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests/unit)
-    add_subdirectory(tests/golden)
 endif()

@@ -30,3 +30,8 @@ esp32-bridge/sdkconfig.old
 
 # Scratch (handoffs, reference clones)
 tmp/
+
+# Codecs generated from software/components/protocol/mark4.proto by the desktop build
+sim-godot/scripts/gen/
+# Godot user data written next to the project by a headless run
+sim-godot/godot/

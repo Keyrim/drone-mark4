@@ -49,6 +49,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
+# The wire codecs are generated at build time from mark4.proto: nanopb's
+# generator needs the protobuf runtime and drives the protoc bundled in
+# grpcio-tools (no system protoc). System-wide so the dev user and the root
+# user CI jobs run as share one install.
+RUN pip install --no-cache-dir --break-system-packages protobuf grpcio-tools
+
 # -----------------------------------------------------------------------------
 # Layer 2 - clang-format / clang-tidy / clangd from apt.llvm.org (pinned)
 #   Exposed without a version suffix via update-alternatives.

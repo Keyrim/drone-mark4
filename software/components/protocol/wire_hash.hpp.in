@@ -1,0 +1,16 @@
+#pragma once
+
+/// @file
+/// @brief Hash of the wire schema this build was generated from. Written
+///        by software/components/protocol/CMakeLists.txt from the SHA-256 of
+///        mark4.proto; every Announce carries it, and the hub compares it
+///        with its own so a node built on another schema shows up as a
+///        mismatch instead of a silent bench.
+
+#include <cstdint>
+
+namespace mark4
+{
+    /// First 8 hex characters of the SHA-256 of mark4.proto.
+    inline constexpr std::uint32_t WIRE_HASH = 0x@DRONE_WIRE_HASH_HEX@U;
+} // namespace mark4
