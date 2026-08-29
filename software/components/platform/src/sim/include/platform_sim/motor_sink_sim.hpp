@@ -6,7 +6,7 @@
 #include <cstdint>
 
 #include "platform/motor_sink.hpp"
-#include "platform_sim/udp_link.hpp"
+#include "platform_sim/udp_socket.hpp"
 #include "protocol/commands.hpp"
 
 namespace mark4
@@ -24,7 +24,7 @@ namespace mark4
     {
       public:
         /// @param link bound sim link the actuator packets are sent on
-        explicit MotorSinkSim(UdpLink &link)
+        explicit MotorSinkSim(UdpSocket &link)
             : m_link(link)
         {
         }
@@ -57,7 +57,7 @@ namespace mark4
         }
 
       private:
-        UdpLink &m_link;                 ///< sim link, owned by the composition root
+        UdpSocket &m_link;               ///< sim link, owned by the composition root
         mark4::ActuatorFrame m_last;     ///< last frame pushed
         mark4::SimScenario m_scenario{}; ///< block repeated by every reply
         std::uint32_t m_pushCount = 0U;  ///< frames pushed since construction

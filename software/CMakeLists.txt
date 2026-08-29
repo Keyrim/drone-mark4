@@ -32,6 +32,7 @@ target_compile_options(drone_strict INTERFACE
     $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti>)
 
 add_subdirectory(components/protocol)
+add_subdirectory(components/transport)
 add_subdirectory(components/flight-core)
 add_subdirectory(components/platform)
 

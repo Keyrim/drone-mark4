@@ -20,20 +20,20 @@ namespace mark4
     /// the replies. The socket is closed by the destructor; the object is
     /// neither copyable nor movable so that the file descriptor has a single
     /// owner.
-    class UdpLink
+    class UdpSocket
     {
       public:
         /// Largest reply the repeat cache can hold [bytes]. Every reply of
         /// the protocol fits inside it with room to spare.
         static constexpr std::size_t MAX_REPLY_SIZE = 128U;
 
-        UdpLink() = default;
-        ~UdpLink();
+        UdpSocket() = default;
+        ~UdpSocket();
 
-        UdpLink(const UdpLink &) = delete;
-        UdpLink &operator=(const UdpLink &) = delete;
-        UdpLink(UdpLink &&) = delete;
-        UdpLink &operator=(UdpLink &&) = delete;
+        UdpSocket(const UdpSocket &) = delete;
+        UdpSocket &operator=(const UdpSocket &) = delete;
+        UdpSocket(UdpSocket &&) = delete;
+        UdpSocket &operator=(UdpSocket &&) = delete;
 
         /// @brief Creates the socket and binds it to every local interface.
         /// @param port local UDP port, 0 to let the system pick a free one

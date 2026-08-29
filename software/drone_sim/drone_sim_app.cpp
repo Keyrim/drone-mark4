@@ -8,10 +8,10 @@
 
 #include "flight_core/throw_detector.hpp"
 #include "platform_common/ota_boot_policy.hpp"
+#include "protocol/announce.hpp"
 #include "protocol/commands.hpp"
 #include "protocol/header.hpp"
 #include "protocol/ota.hpp"
-#include "protocol/ports.hpp"
 
 namespace
 {
@@ -90,17 +90,15 @@ namespace mark4
 {
     DroneSimApp::DroneSimApp(std::uint32_t maxFrames,
                              std::uint16_t simPort,
-                             std::uint16_t telemetryPort,
-                             std::uint16_t rcPort,
-                             std::uint32_t sessionId,
+                             std::uint16_t discoveryPort,
+                             std::uint32_t nodeId,
                              const char *otaDirectory)
         : m_maxFrames(maxFrames),
           m_simPort(simPort),
-          m_telemetryPort(telemetryPort),
-          m_rcPort(rcPort),
-          m_sessionId(sessionId),
           m_sensorSource(m_simLink),
           m_motorSink(m_simLink),
+          m_udpLink(discoveryPort),
+          m_transport(nodeId),
           m_otaDirectory(makeOtaDirectory(otaDirectory))
     {
     }
@@ -111,21 +109,40 @@ namespace mark4
         {
             return false;
         }
-        if (!m_telemetrySender.open(m_telemetryPort))
+        if (!m_udpLink.init() || !m_transport.addLink(m_udpLink) || !m_transport.init())
         {
+            static_cast<void>(std::fprintf(stderr, "drone_sim: transport initialization failed\n"));
             return false;
         }
-        // The receive timeout is irrelevant here: only receiveNonBlocking()
-        // is ever called on this link, so it never waits.
-        if (!m_rcLink.open(m_rcPort, 0U))
-        {
-            return false;
-        }
-        if (!m_announceSender.open(ANNOUNCE_PORT))
-        {
-            return false;
-        }
+        // The announce is the beacon: the transport broadcasts it once per
+        // second and hands it to every node the moment it appears. The two
+        // port fields are meaningless now that everything travels through
+        // the transport: they stay at 0 until the packet is retired.
+        AnnouncePacket announce{};
+        announce.version = PROTOCOL_VERSION;
+        announce.type = static_cast<std::uint8_t>(PacketType::ANNOUNCE);
+        announce.kind = static_cast<std::uint8_t>(StreamSource::DRONE_SIM);
+        announce.sessionId = m_transport.nodeId();
+        announce.telemetryPort = 0U;
+        announce.commandPort = 0U;
+        std::array<std::uint8_t, ANNOUNCE_PACKET_SIZE> beacon{};
+        std::memcpy(beacon.data(), &announce, beacon.size());
+        m_transport.setBeacon(beacon.data(), beacon.size());
         return bootFirmware();
+    }
+
+    void DroneSimApp::OnPayload(void *context,
+                                std::uint32_t src,
+                                const std::uint8_t *payload,
+                                std::size_t size)
+    {
+        static_cast<void>(src);
+        static_cast<DroneSimApp *>(context)->m_commandReceiver.push(payload, size);
+    }
+
+    void DroneSimApp::pollTransport()
+    {
+        m_transport.poll(m_clock.nowUs(), &DroneSimApp::OnPayload, this);
     }
 
     bool DroneSimApp::bootFirmware()
@@ -338,6 +355,9 @@ namespace mark4
         while (m_otaUpdater.has_value() && m_otaUpdater->sessionActive())
         {
             const std::uint64_t nowUs = m_clock.nowUs();
+            // Kept up while parked: the ground side must keep finding this
+            // process, and an update takes longer than the beacon period.
+            pollTransport();
             for (;;)
             {
                 const std::size_t size = m_commandReceiver.poll(command.data(), command.size());
@@ -348,12 +368,10 @@ namespace mark4
                 if (!serveOta(command.data(), size, nowUs) && IsRebootCommand(command.data(), size))
                 {
                     reboot = true;
+                    break;
                 }
             }
             m_otaUpdater->tick(m_clock.nowUs());
-            // Kept up while parked: the ground side must keep finding this
-            // process, and an update takes longer than the announce period.
-            m_announcePublisher.publish(m_clock.nowUs());
             if (reboot)
             {
                 break;
@@ -374,6 +392,7 @@ namespace mark4
         // The tracker consumes the RC packets and hands back everything
         // else; the updater gets first look at the rest, then a scenario goes
         // on to the plant and the tuning service claims what it recognizes.
+        pollTransport();
         std::array<std::uint8_t, RC_BUFFER_SIZE> command{};
         bool reboot = false;
         for (;;)
@@ -389,11 +408,12 @@ namespace mark4
             }
             if (IsRebootCommand(command.data(), size))
             {
-                // Handled after the drain: rebuilding the store underneath
-                // the loop that is still reading from the uplink would pull
-                // the ground out from under it.
+                // Handled after the drain, and the drain stops here: what
+                // arrived behind the reset is for the image that comes back,
+                // exactly as on a board, and answering it first would show
+                // the ground side a status the reset is about to erase.
                 reboot = true;
-                continue;
+                break;
             }
             forwardScenario(command.data(), size);
             static_cast<void>(m_tuningService.handle(command.data(), size));
@@ -462,7 +482,6 @@ namespace mark4
                     static_cast<void>(std::fflush(stdout));
                     platformReady = false;
                 }
-                m_announcePublisher.publish(m_clock.nowUs());
                 // The command path needs no world: tuning reads and writes
                 // keep answering and the RC stream keeps being tracked, so
                 // the bench can push coefficients to a grounded drone. Only
@@ -561,11 +580,6 @@ namespace mark4
                             m_runTracker.degraded() ? ", LINK DEGRADED" : "");
                 static_cast<void>(std::fflush(stdout));
             }
-            // Wall clock, not simulated time: one announce per second of real
-            // time whatever the sim time scale, which is the cadence the
-            // ground side counts on.
-            m_announcePublisher.publish(m_clock.nowUs());
-
             const mark4::ThrowDetector &detector = m_core.throwDetector();
             if (detector.throwCount() > announcedThrows)
             {

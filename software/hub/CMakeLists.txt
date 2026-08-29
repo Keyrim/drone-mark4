@@ -35,7 +35,7 @@ add_library(hub_core STATIC
     src/stream_health.cpp
     src/tuning_profiles.cpp)
 target_include_directories(hub_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(hub_core PUBLIC protocol nlohmann_json::nlohmann_json)
+target_link_libraries(hub_core PUBLIC protocol transport nlohmann_json::nlohmann_json)
 target_link_libraries(hub_core PRIVATE drone_warnings)
 
 # The hub itself: hub_core plus everything that owns a resource. Desktop only,
@@ -47,4 +47,4 @@ add_executable(hub
     src/serial_transport.cpp
     src/udp_transport.cpp
     src/ws_bridge.cpp)
-target_link_libraries(hub PRIVATE hub_core protocol ixwebsocket drone_warnings)
+target_link_libraries(hub PRIVATE hub_core protocol transport ixwebsocket drone_warnings)

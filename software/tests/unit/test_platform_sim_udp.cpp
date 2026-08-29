@@ -11,10 +11,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "flight_core/types.hpp"
-#include "platform_sim/command_receiver_sim.hpp"
 #include "platform_sim/motor_sink_sim.hpp"
 #include "platform_sim/sensor_source_sim.hpp"
-#include "platform_sim/udp_link.hpp"
+#include "platform_sim/udp_socket.hpp"
 #include "protocol/commands.hpp"
 #include "protocol/header.hpp"
 #include "protocol/sim_link.hpp"
@@ -28,7 +27,6 @@ namespace
     constexpr std::array<float, 3> TEST_GYRO_RAD_S = {0.25f, -0.5f, 1.5f};
     constexpr std::array<float, 3> TEST_ACCEL_MPS2 = {0.0f, 0.0f, 9.80665f};
     constexpr float TEST_BARO_PA = 101325.0f;
-    constexpr float TEST_THROTTLE = 0.75f;
     constexpr std::uint8_t TEST_RESET_COUNT = 3U;
     constexpr std::uint32_t TEST_SESSION_ID = 0xC0FFEE01U;
     constexpr std::uint16_t TEST_LOCKSTEP_TIMEOUTS = 517U;
@@ -133,37 +131,11 @@ namespace
         int m_fd; ///< sender socket, bound implicitly by the first send
     };
 
-    /// @brief Polls a non-blocking receiver until a datagram shows up or the
-    ///        test timeout expires. The kernel does not necessarily hand a
-    ///        loopback datagram over before the sender's sendto() returns,
-    ///        so a single poll may legitimately come back empty - the flight
-    ///        loop polls once per frame for the same reason.
-    /// @param receiver receiver under test
-    /// @param[out] bufferOut receives the datagram bytes
-    /// @param capacity size of bufferOut
-    /// @return datagram size, 0 when none arrived before the timeout
-    std::size_t pollUntilPacket(mark4::CommandReceiverSim &receiver,
-                                std::uint8_t *bufferOut,
-                                std::size_t capacity)
-    {
-        constexpr std::uint32_t POLL_INTERVAL_US = 1000U;
-        constexpr std::uint32_t POLL_ATTEMPTS = TEST_TIMEOUT_MS;
-        for (std::uint32_t attempt = 0U; attempt < POLL_ATTEMPTS; ++attempt)
-        {
-            const std::size_t received = receiver.poll(bufferOut, capacity);
-            if (received > 0U)
-            {
-                return received;
-            }
-            ::usleep(POLL_INTERVAL_US);
-        }
-        return 0U;
-    }
 } // namespace
 
 TEST_CASE("a sensor packet is decoded into a sensor frame")
 {
-    mark4::UdpLink link;
+    mark4::UdpSocket link;
     REQUIRE(link.open(0U, TEST_TIMEOUT_MS));
     REQUIRE(link.boundPort() != 0U);
 
@@ -189,7 +161,7 @@ TEST_CASE("a sensor packet is decoded into a sensor frame")
 
 TEST_CASE("malformed datagrams are skipped and the next valid one is delivered")
 {
-    mark4::UdpLink link;
+    mark4::UdpSocket link;
     REQUIRE(link.open(0U, TEST_TIMEOUT_MS));
 
     mark4::SensorSourceSim source(link);
@@ -216,7 +188,7 @@ TEST_CASE("malformed datagrams are skipped and the next valid one is delivered")
 
 TEST_CASE("a stray datagram cannot redirect the motor replies")
 {
-    mark4::UdpLink link;
+    mark4::UdpSocket link;
     REQUIRE(link.open(0U, TEST_TIMEOUT_MS));
 
     mark4::SensorSourceSim source(link);
@@ -249,7 +221,7 @@ TEST_CASE("a stray datagram cannot redirect the motor replies")
 
 TEST_CASE("a resent sensor packet is answered again instead of stepped twice")
 {
-    mark4::UdpLink link;
+    mark4::UdpSocket link;
     REQUIRE(link.open(0U, TEST_TIMEOUT_MS));
 
     mark4::SensorSourceSim source(link);
@@ -285,7 +257,7 @@ TEST_CASE("a resent sensor packet is answered again instead of stepped twice")
 
 TEST_CASE("a restarted simulator may replay a timestamp already seen")
 {
-    mark4::UdpLink link;
+    mark4::UdpSocket link;
     REQUIRE(link.open(0U, TEST_TIMEOUT_MS));
 
     mark4::SensorSourceSim source(link);
@@ -308,7 +280,7 @@ TEST_CASE("a restarted simulator may replay a timestamp already seen")
 
 TEST_CASE("the attached scenario rides in every reply, byte for byte")
 {
-    mark4::UdpLink link;
+    mark4::UdpSocket link;
     REQUIRE(link.open(0U, TEST_TIMEOUT_MS));
 
     mark4::SensorSourceSim source(link);
@@ -350,7 +322,7 @@ TEST_CASE("the attached scenario rides in every reply, byte for byte")
 
 TEST_CASE("an idle link ends the run")
 {
-    mark4::UdpLink link;
+    mark4::UdpSocket link;
     REQUIRE(link.open(0U, TEST_TIMEOUT_MS));
 
     mark4::SensorSourceSim source(link);
@@ -361,7 +333,7 @@ TEST_CASE("an idle link ends the run")
 
 TEST_CASE("pushed motors are sent back to the sensor sender")
 {
-    mark4::UdpLink link;
+    mark4::UdpSocket link;
     REQUIRE(link.open(0U, TEST_TIMEOUT_MS));
 
     mark4::SensorSourceSim source(link);
@@ -398,45 +370,4 @@ TEST_CASE("pushed motors are sent back to the sensor sender")
     std::memcpy(
         motor.data(), wire.data() + offsetof(mark4::SimActuatorPacket, motor), sizeof(motor));
     REQUIRE(motor == actuators.motor);
-}
-
-TEST_CASE("an rc command datagram comes out of poll")
-{
-    mark4::UdpLink link;
-    REQUIRE(link.open(0U, TEST_TIMEOUT_MS));
-    REQUIRE(link.boundPort() != 0U);
-
-    mark4::CommandReceiverSim receiver(link);
-    SimulatorStub pilot;
-
-    mark4::RcCommandPacket packet{};
-    packet.version = mark4::PROTOCOL_VERSION;
-    packet.type = static_cast<std::uint8_t>(mark4::PacketType::RC_COMMAND);
-    packet.killSwitch = 0U;
-    packet.armSwitch = 1U;
-    packet.mode = mark4::RC_MODE_MANUAL;
-    packet.throttle = TEST_THROTTLE;
-
-    std::array<std::uint8_t, mark4::RC_COMMAND_PACKET_SIZE> sent{};
-    std::memcpy(sent.data(), &packet, sizeof(packet));
-    REQUIRE(pilot.sendTo(link.boundPort(), sent.data(), sent.size()));
-
-    std::array<std::uint8_t, WIRE_BUFFER_SIZE> wire{};
-    REQUIRE(pollUntilPacket(receiver, wire.data(), wire.size()) == mark4::RC_COMMAND_PACKET_SIZE);
-    REQUIRE(std::memcmp(wire.data(), sent.data(), sent.size()) == 0);
-    REQUIRE(receiver.packetsReceived() == 1U);
-}
-
-TEST_CASE("poll returns 0 immediately when nothing is pending")
-{
-    mark4::UdpLink link;
-    REQUIRE(link.open(0U, TEST_TIMEOUT_MS));
-
-    mark4::CommandReceiverSim receiver(link);
-
-    // The link opens with a receive timeout: only a non-blocking read comes
-    // back at once, which is what the flight loop needs.
-    std::array<std::uint8_t, WIRE_BUFFER_SIZE> wire{};
-    REQUIRE(receiver.poll(wire.data(), wire.size()) == 0U);
-    REQUIRE(receiver.packetsReceived() == 0U);
 }

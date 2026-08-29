@@ -7,7 +7,7 @@
 #include <cstdint>
 
 #include "platform/command_receiver.hpp"
-#include "protocol/serial_framing.hpp"
+#include "transport/serial_framing.hpp"
 
 namespace mark4
 {

@@ -1,4 +1,4 @@
-#include "platform_sim/udp_link.hpp"
+#include "platform_sim/udp_socket.hpp"
 
 #include <cerrno>
 #include <cstdio>
@@ -21,21 +21,22 @@ namespace mark4
         void logErrno(const char *what)
         {
             static_cast<void>(
-                std::fprintf(stderr, "UdpLink: %s failed: %s\n", what, std::strerror(errno)));
+                std::fprintf(stderr, "UdpSocket: %s failed: %s\n", what, std::strerror(errno)));
         }
     } // namespace
 
-    UdpLink::~UdpLink()
+    UdpSocket::~UdpSocket()
     {
         closeSocket();
     }
 
-    bool UdpLink::open(std::uint16_t port, std::uint32_t receiveTimeoutMs)
+    bool UdpSocket::open(std::uint16_t port, std::uint32_t receiveTimeoutMs)
     {
         if (m_socketFd >= 0)
         {
-            static_cast<void>(std::fprintf(
-                stderr, "UdpLink: already open on port %u\n", static_cast<unsigned>(m_boundPort)));
+            static_cast<void>(std::fprintf(stderr,
+                                           "UdpSocket: already open on port %u\n",
+                                           static_cast<unsigned>(m_boundPort)));
             return false;
         }
 
@@ -80,17 +81,17 @@ namespace mark4
         return true;
     }
 
-    std::size_t UdpLink::receive(std::uint8_t *bufferOut, std::size_t capacity)
+    std::size_t UdpSocket::receive(std::uint8_t *bufferOut, std::size_t capacity)
     {
         return receiveWith(0, bufferOut, capacity);
     }
 
-    std::size_t UdpLink::receiveNonBlocking(std::uint8_t *bufferOut, std::size_t capacity)
+    std::size_t UdpSocket::receiveNonBlocking(std::uint8_t *bufferOut, std::size_t capacity)
     {
         return receiveWith(MSG_DONTWAIT, bufferOut, capacity);
     }
 
-    std::size_t UdpLink::receiveWith(int flags, std::uint8_t *bufferOut, std::size_t capacity)
+    std::size_t UdpSocket::receiveWith(int flags, std::uint8_t *bufferOut, std::size_t capacity)
     {
         if (m_socketFd < 0 || bufferOut == nullptr || capacity == 0U)
         {
@@ -122,7 +123,7 @@ namespace mark4
         return static_cast<std::size_t>(received);
     }
 
-    void UdpLink::acceptLastSender()
+    void UdpSocket::acceptLastSender()
     {
         if (m_hasPendingSender)
         {
@@ -131,7 +132,7 @@ namespace mark4
         }
     }
 
-    bool UdpLink::replyToLastSender(const std::uint8_t *data, std::size_t size)
+    bool UdpSocket::replyToLastSender(const std::uint8_t *data, std::size_t size)
     {
         if (m_socketFd < 0 || !m_hasReplyTarget || data == nullptr)
         {
@@ -164,7 +165,7 @@ namespace mark4
         return static_cast<std::size_t>(sent) == size;
     }
 
-    bool UdpLink::repeatLastReply()
+    bool UdpSocket::repeatLastReply()
     {
         if (m_socketFd < 0 || !m_hasReplyTarget || m_lastReplySize == 0U)
         {
@@ -186,7 +187,7 @@ namespace mark4
         return static_cast<std::size_t>(sent) == m_lastReplySize;
     }
 
-    void UdpLink::closeSocket()
+    void UdpSocket::closeSocket()
     {
         if (m_socketFd >= 0)
         {

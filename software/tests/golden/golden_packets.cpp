@@ -24,13 +24,12 @@
 #include "protocol/commands.hpp"
 #include "protocol/header.hpp"
 #include "protocol/ota.hpp"
-#include "protocol/ports.hpp"
-#include "protocol/serial_framing.hpp"
 #include "protocol/sim_link.hpp"
 #include "protocol/sim_raw.hpp"
 #include "protocol/sim_stats.hpp"
 #include "protocol/telemetry.hpp"
 #include "protocol/tuning.hpp"
+#include "transport/serial_framing.hpp"
 
 namespace
 {
@@ -234,8 +233,8 @@ namespace
         packet.type = static_cast<std::uint8_t>(mark4::PacketType::ANNOUNCE);
         packet.kind = static_cast<std::uint8_t>(mark4::StreamSource::DRONE_SIM);
         packet.sessionId = 3405691582U; // 0xCAFEBABE
-        packet.telemetryPort = mark4::TELEMETRY_PORT;
-        packet.commandPort = mark4::RC_COMMAND_PORT;
+        packet.telemetryPort = 0U;      // meaningless since the transport: always 0
+        packet.commandPort = 0U;
         return toBytes(packet);
     }
 

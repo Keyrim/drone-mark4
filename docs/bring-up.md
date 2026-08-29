@@ -128,7 +128,7 @@ Incremental, one observable win per step:
    SensorFrames; barometer driver for whatever the scan identified.
 3. **Telemetry**: SensorFrames streamed over UART1 to the PC. Done: a
    50 Hz TelemetryPacket stream at 921600 baud, each packet wrapped in
-   the serial framing of `protocol/serial_framing.hpp` (a UART has no
+   the serial framing of `transport/serial_framing.hpp` (a UART has no
    datagram boundaries), interrupt-driven behind a ring buffer, demuxed
    by payload size on the PC. The `hub` (the board reached through the
    ESP32 WiFi bridge, connected from the Connections panel of the

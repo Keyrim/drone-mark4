@@ -9,8 +9,9 @@
 #include <cstring>
 
 #include "drone_sim_app.hpp"
-#include "platform_common/session_id.hpp"
 #include "protocol/ports.hpp"
+#include "transport/node_id.hpp"
+#include "transport/udp_link.hpp"
 
 // Frame budget baked in at build time (see the cache variable in
 // CMakeLists.txt); 0 = no limit, the run ends with the operator or the link.
@@ -26,6 +27,7 @@ namespace
     constexpr int STRTOL_BASE = 10;
     constexpr std::uint64_t US_PER_MS = 1000U;
     constexpr long MAX_PORT = 65535L;
+    constexpr long long MAX_NODE_ID = 0xFFFFFFFFLL;
 
     /// Name of the emulated-flash directory when the caller does not pick
     /// one. It sits next to the binary rather than under the working
@@ -37,16 +39,15 @@ namespace
     {
         static_cast<void>(std::fprintf(
             stderr,
-            "usage: %s [--sim-port N] [--telemetry-port N] [--rc-port N] [--ota-dir DIR]\n"
+            "usage: %s [--sim-port N] [--discovery-port N] [--node-id N] [--ota-dir DIR]\n"
             "  --sim-port        UDP port the sim link listens on (default %u)\n"
-            "  --telemetry-port  UDP telemetry broadcast port (default %u)\n"
-            "  --rc-port         UDP port the RC command receiver binds (default %u)\n"
+            "  --discovery-port  shared UDP port of the transport (default %u)\n"
+            "  --node-id         transport identity, 1..4294967295 (default: random)\n"
             "  --ota-dir         directory holding the emulated firmware slots and boot\n"
             "                    metadata (default '%s' next to this binary)\n",
             program,
             static_cast<unsigned>(mark4::SIM_LINK_PORT),
-            static_cast<unsigned>(mark4::TELEMETRY_PORT),
-            static_cast<unsigned>(mark4::RC_COMMAND_PORT),
+            static_cast<unsigned>(mark4::DISCOVERY_PORT),
             OTA_DIRECTORY_NAME));
     }
 
@@ -70,11 +71,11 @@ namespace
 
     /// @brief Parses a strictly positive integer bounded by maxValue.
     /// @return true on success, with the value stored in valueOut
-    bool parsePositive(const char *text, long maxValue, long &valueOut)
+    bool parsePositive(const char *text, long long maxValue, long long &valueOut)
     {
         char *end = nullptr;
-        const long parsed = std::strtol(text, &end, STRTOL_BASE);
-        if (end == text || *end != '\0' || parsed <= 0L || parsed > maxValue)
+        const long long parsed = std::strtoll(text, &end, STRTOL_BASE);
+        if (end == text || *end != '\0' || parsed <= 0LL || parsed > maxValue)
         {
             return false;
         }
@@ -86,14 +87,14 @@ namespace
 int main(int argc, char **argv)
 {
     std::uint16_t simPort = mark4::SIM_LINK_PORT;
-    std::uint16_t telemetryPort = mark4::TELEMETRY_PORT;
-    std::uint16_t rcPort = mark4::RC_COMMAND_PORT;
+    std::uint16_t discoveryPort = mark4::DISCOVERY_PORT;
+    std::uint32_t nodeId = 0U;
     std::array<char, mark4::DroneSimApp::OTA_DIRECTORY_SIZE> otaDirectory{};
     makeDefaultOtaDirectory(argv[0], otaDirectory.data(), otaDirectory.size());
 
     for (int i = 1; i < argc; ++i)
     {
-        long value = 0L;
+        long long value = 0LL;
         if (std::strcmp(argv[i], "--sim-port") == 0 && i + 1 < argc)
         {
             if (!parsePositive(argv[++i], MAX_PORT, value))
@@ -103,23 +104,23 @@ int main(int argc, char **argv)
             }
             simPort = static_cast<std::uint16_t>(value);
         }
-        else if (std::strcmp(argv[i], "--telemetry-port") == 0 && i + 1 < argc)
+        else if (std::strcmp(argv[i], "--discovery-port") == 0 && i + 1 < argc)
         {
             if (!parsePositive(argv[++i], MAX_PORT, value))
             {
                 printUsage(argv[0]);
                 return 1;
             }
-            telemetryPort = static_cast<std::uint16_t>(value);
+            discoveryPort = static_cast<std::uint16_t>(value);
         }
-        else if (std::strcmp(argv[i], "--rc-port") == 0 && i + 1 < argc)
+        else if (std::strcmp(argv[i], "--node-id") == 0 && i + 1 < argc)
         {
-            if (!parsePositive(argv[++i], MAX_PORT, value))
+            if (!parsePositive(argv[++i], MAX_NODE_ID, value))
             {
                 printUsage(argv[0]);
                 return 1;
             }
-            rcPort = static_cast<std::uint16_t>(value);
+            nodeId = static_cast<std::uint32_t>(value);
         }
         else if (std::strcmp(argv[i], "--ota-dir") == 0 && i + 1 < argc)
         {
@@ -139,22 +140,27 @@ int main(int argc, char **argv)
         }
     }
 
-    const std::uint32_t sessionId = mark4::makeSessionId();
-    mark4::DroneSimApp app(
-        MAX_FRAMES, simPort, telemetryPort, rcPort, sessionId, otaDirectory.data());
+    if (nodeId == 0U)
+    {
+        nodeId = mark4::randomNodeId();
+        if (nodeId == 0U)
+        {
+            static_cast<void>(std::fprintf(stderr, "drone_sim: cannot draw a node id\n"));
+            return 1;
+        }
+    }
+    mark4::DroneSimApp app(MAX_FRAMES, simPort, discoveryPort, nodeId, otaDirectory.data());
     if (!app.init())
     {
         static_cast<void>(std::fprintf(stderr, "drone_sim: initialization failed\n"));
         return 1;
     }
 
-    std::printf("drone_sim: waiting for sensor packets on udp/%u, telemetry broadcast on udp/%u, "
-                "rc uplink on udp/%u, announcing on udp/%u as session %u\n",
+    std::printf("drone_sim: waiting for sensor packets on udp/%u, transport node %u on "
+                "discovery udp/%u\n",
                 static_cast<unsigned>(simPort),
-                static_cast<unsigned>(telemetryPort),
-                static_cast<unsigned>(rcPort),
-                static_cast<unsigned>(mark4::ANNOUNCE_PORT),
-                static_cast<unsigned>(sessionId));
+                static_cast<unsigned>(nodeId),
+                static_cast<unsigned>(discoveryPort));
 
     const std::uint32_t steps = app.run();
     if (steps == 0U)
@@ -169,11 +175,13 @@ int main(int argc, char **argv)
 
     const auto &telemetry = app.accessTelemetrySender();
     const auto &motor = app.accessMotorSink().last().motor;
-    std::printf("drone_sim: %u steps in %llu ms, %u telemetry packets (%zu bytes)\n",
-                steps,
-                static_cast<unsigned long long>(elapsedMs),
-                telemetry.packetCount(),
-                telemetry.byteCount());
+    std::printf(
+        "drone_sim: %u steps in %llu ms, %u telemetry packets (%zu bytes), %zu nodes seen\n",
+        steps,
+        static_cast<unsigned long long>(elapsedMs),
+        telemetry.packetCount(),
+        telemetry.byteCount(),
+        app.accessTransport().nodeCount());
     std::printf("drone_sim: last motors [%.2f %.2f %.2f %.2f]\n",
                 static_cast<double>(motor[0]),
                 static_cast<double>(motor[1]),

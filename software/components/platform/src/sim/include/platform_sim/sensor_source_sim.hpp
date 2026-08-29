@@ -6,7 +6,7 @@
 #include <cstdint>
 
 #include "platform/sensor_source.hpp"
-#include "platform_sim/udp_link.hpp"
+#include "platform_sim/udp_socket.hpp"
 
 namespace mark4
 {
@@ -17,7 +17,7 @@ namespace mark4
     {
       public:
         /// @param link bound sim link the sensor packets arrive on
-        explicit SensorSourceSim(UdpLink &link)
+        explicit SensorSourceSim(UdpSocket &link)
             : m_link(link)
         {
         }
@@ -76,7 +76,7 @@ namespace mark4
         }
 
       private:
-        UdpLink &m_link;                       ///< sim link, owned by the composition root
+        UdpSocket &m_link;                     ///< sim link, owned by the composition root
         std::uint8_t m_resetCount = 0U;        ///< reset counter of the last packet
         std::uint32_t m_sessionId = 0U;        ///< simulator session of the last packet
         std::uint16_t m_lockstepTimeouts = 0U; ///< plant timeout count of the last packet

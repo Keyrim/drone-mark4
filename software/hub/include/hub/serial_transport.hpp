@@ -11,7 +11,7 @@
 #include <functional>
 #include <string>
 
-#include "protocol/serial_framing.hpp"
+#include "transport/serial_framing.hpp"
 
 namespace mark4
 {

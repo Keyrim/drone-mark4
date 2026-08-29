@@ -4,7 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "protocol/serial_framing.hpp"
+#include "transport/serial_framing.hpp"
 
 namespace
 {

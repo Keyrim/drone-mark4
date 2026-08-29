@@ -11,7 +11,7 @@
 namespace mark4
 {
     /// Sends protocol/ packets on the shared USART1 transport (uart1.hpp),
-    /// each wrapped in a serial frame (protocol/serial_framing.hpp) so the
+    /// each wrapped in a serial frame (transport/serial_framing.hpp) so the
     /// receiver can find packet boundaries in the byte stream. send() only
     /// copies bytes and never waits on the wire. A packet that does not
     /// fit is dropped whole and counted, keeping frames self-consistent.

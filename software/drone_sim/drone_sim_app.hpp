@@ -9,20 +9,21 @@
 #include <optional>
 
 #include "flight_core/flight_core.hpp"
-#include "platform_common/announce_publisher.hpp"
+#include "platform_common/command_receiver_transport.hpp"
 #include "platform_common/ota_updater.hpp"
 #include "platform_common/rc_tracker.hpp"
 #include "platform_common/telemetry_publisher.hpp"
+#include "platform_common/telemetry_sender_transport.hpp"
 #include "platform_common/tuning_service.hpp"
 #include "platform_sim/clock_sim.hpp"
-#include "platform_sim/command_receiver_sim.hpp"
 #include "platform_sim/firmware_store_sim.hpp"
 #include "platform_sim/motor_sink_sim.hpp"
 #include "platform_sim/sensor_source_sim.hpp"
 #include "platform_sim/sim_run_tracker.hpp"
-#include "platform_sim/telemetry_sender_sim.hpp"
-#include "platform_sim/udp_link.hpp"
+#include "platform_sim/udp_socket.hpp"
 #include "protocol/header.hpp"
+#include "transport/transport.hpp"
+#include "transport/udp_link.hpp"
 
 namespace mark4
 {
@@ -52,24 +53,21 @@ namespace mark4
         /// @param maxFrames number of frames to process before stopping,
         ///        0 = no limit (the run ends with the operator or the link)
         /// @param simPort UDP port the sim link listens on
-        /// @param telemetryPort UDP port telemetry is broadcast to
-        /// @param rcPort UDP port the command receiver binds, for the RC
-        ///        stream the pilot keeps up
-        /// @param sessionId identity of this process start, announced so the
-        ///        ground side tells a restart from a refresh
+        /// @param discoveryPort shared transport port of this deployment
+        /// @param nodeId transport identity of this process, never 0; drawn
+        ///        at random by main() unless a campaign pins it
         /// @param otaDirectory directory holding the emulated flash slots and
         ///        boot metadata; copied, so the caller keeps its buffer
         explicit DroneSimApp(std::uint32_t maxFrames,
                              std::uint16_t simPort,
-                             std::uint16_t telemetryPort,
-                             std::uint16_t rcPort,
-                             std::uint32_t sessionId,
+                             std::uint16_t discoveryPort,
+                             std::uint32_t nodeId,
                              const char *otaDirectory);
 
         /// @brief Initializes services in declaration order: binds the sim link,
-        ///        opens the telemetry socket, then runs
-        ///        the fake bootloader that picks the firmware slot. The first
-        ///        failure is logged by the service and returns false immediately.
+        ///        opens the transport, then runs the fake bootloader that
+        ///        picks the firmware slot. The first failure is logged by the
+        ///        service and returns false immediately.
         /// @return true when every service is ready
         bool init();
 
@@ -79,9 +77,15 @@ namespace mark4
         std::uint32_t run();
 
         /// @return telemetry service, for post-run reporting
-        [[nodiscard]] const mark4::TelemetrySenderSim &accessTelemetrySender() const
+        [[nodiscard]] const mark4::TelemetrySenderTransport &accessTelemetrySender() const
         {
             return m_telemetrySender;
+        }
+
+        /// @return transport, for post-run reporting
+        [[nodiscard]] const mark4::Transport &accessTransport() const
+        {
+            return m_transport;
         }
 
         /// @return motor sink, for post-run reporting
@@ -179,26 +183,39 @@ namespace mark4
         /// @param nowUs instant handed to the RC fail-safe [us]
         void drainCommands(std::uint64_t nowUs);
 
-        std::uint32_t m_maxFrames;     ///< frame budget for run()
-        std::uint16_t m_simPort;       ///< sim link listen port
-        std::uint16_t m_telemetryPort; ///< telemetry broadcast port
-        std::uint16_t m_rcPort;        ///< command receiver listen port
-        std::uint32_t m_sessionId;     ///< identity of this process start
+        /// @brief Pumps the transport on the wall clock: frames in, beacon
+        ///        and node expiry out. Every payload delivered lands in the
+        ///        command receiver; the wall clock, not the simulated one,
+        ///        because the beacon cadence is a real-time contract with the
+        ///        ground side whatever the sim time scale.
+        void pollTransport();
+
+        /// @brief Transport delivery callback: queues one payload.
+        /// @param context the DroneSimApp
+        /// @param src node the payload came from, unused: every command is
+        ///        acted on whoever sent it, as on the board
+        /// @param payload payload bytes
+        /// @param size payload size
+        static void OnPayload(void *context,
+                              std::uint32_t src,
+                              const std::uint8_t *payload,
+                              std::size_t size);
+
+        std::uint32_t m_maxFrames; ///< frame budget for run()
+        std::uint16_t m_simPort;   ///< sim link listen port
 
         // Declaration order = construction order; dependencies are injected by
         // reference, so a service may only depend on those declared above it.
         mark4::ClockSim m_clock;
-        mark4::UdpLink m_simLink;
+        mark4::UdpSocket m_simLink;
         mark4::SensorSourceSim m_sensorSource;
         mark4::MotorSinkSim m_motorSink;
-        mark4::TelemetrySenderSim m_telemetrySender;
+        mark4::UdpLink m_udpLink;
+        mark4::Transport m_transport;
+        mark4::TelemetrySenderTransport m_telemetrySender{m_transport};
         mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender, StreamSource::DRONE_SIM};
-        mark4::UdpLink m_rcLink;
-        mark4::CommandReceiverSim m_commandReceiver{m_rcLink};
+        mark4::CommandReceiverTransport m_commandReceiver;
         mark4::RcTracker m_rcTracker{m_commandReceiver};
-        mark4::TelemetrySenderSim m_announceSender;
-        mark4::AnnouncePublisher m_announcePublisher{
-            m_announceSender, StreamSource::DRONE_SIM, m_sessionId, m_telemetryPort, m_rcPort};
         mark4::FlightCore m_core;
         mark4::TuningService m_tuningService{m_core, m_telemetrySender};
         mark4::SimRunTracker m_runTracker{m_telemetrySender, StreamSource::DRONE_SIM};

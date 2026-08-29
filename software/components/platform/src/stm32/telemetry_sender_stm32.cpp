@@ -3,7 +3,7 @@
 #include <cstdint>
 
 #include "platform_stm32/uart1.hpp"
-#include "protocol/serial_framing.hpp"
+#include "transport/serial_framing.hpp"
 
 namespace mark4
 {

@@ -44,6 +44,8 @@
 #include "protocol/commands.hpp"
 #include "protocol/header.hpp"
 #include "protocol/ota.hpp"
+#include "transport/transport.hpp"
+#include "transport/udp_link.hpp"
 
 namespace
 {
@@ -205,116 +207,68 @@ namespace
         return path.string();
     }
 
-    /// The ground side's UDP end of the link: one socket, bound to an
-    /// ephemeral port the sim is told to broadcast its telemetry to, and used
-    /// to send commands to the sim's uplink port. Exactly the two directions
-    /// the hub uses, on exactly the two ports it uses them on.
+    /// Transport identity of the ground side in this test.
+    constexpr std::uint32_t GROUND_NODE = 0x6E0D0001U;
+
+    /// Transport identity the sim is started with, so the ground side can
+    /// address it before it ever announced anything but its beacon.
+    constexpr std::uint32_t SIM_NODE = 0x51300001U;
+
+    /// The ground side of the link: one transport node over one UDP link on
+    /// a private discovery port, exactly what the hub is, addressing the sim
+    /// by the node id it was started with.
     class GroundLink
     {
       public:
-        GroundLink() = default;
-
-        GroundLink(const GroundLink &) = delete;
-        GroundLink &operator=(const GroundLink &) = delete;
-        GroundLink(GroundLink &&) = delete;
-        GroundLink &operator=(GroundLink &&) = delete;
-
-        ~GroundLink()
+        /// @param discoveryPort shared port of this test's private deployment
+        explicit GroundLink(std::uint16_t discoveryPort)
+            : m_udp(discoveryPort)
         {
-            if (m_socketFd >= 0)
-            {
-                static_cast<void>(::close(m_socketFd));
-            }
         }
 
-        /// @brief Binds the receive port and readies the send side.
-        /// @return true when the socket is usable
+        /// @brief Opens the sockets and composes the transport.
+        /// @return true when frames can flow
         bool open()
         {
-            m_socketFd = ::socket(AF_INET, SOCK_DGRAM, 0);
-            if (m_socketFd < 0)
-            {
-                return false;
-            }
-            const int enable = 1;
-            static_cast<void>(
-                ::setsockopt(m_socketFd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable)));
-            // The sim broadcasts its answers, like every other packet it
-            // sends: the receive side must accept a datagram addressed to the
-            // broadcast address, which binding INADDR_ANY does.
-            sockaddr_in address{};
-            address.sin_family = AF_INET;
-            address.sin_addr.s_addr = htonl(INADDR_ANY);
-            address.sin_port = 0U;
-            if (::bind(m_socketFd, reinterpret_cast<const sockaddr *>(&address), sizeof(address)) !=
-                0)
-            {
-                return false;
-            }
-            sockaddr_in bound{};
-            socklen_t length = sizeof(bound);
-            if (::getsockname(m_socketFd, reinterpret_cast<sockaddr *>(&bound), &length) != 0)
-            {
-                return false;
-            }
-            m_port = ntohs(bound.sin_port);
-            return ::fcntl(m_socketFd, F_SETFL, O_NONBLOCK) == 0;
+            return m_udp.init() && m_transport.addLink(m_udp) && m_transport.init();
         }
 
-        /// @return the port the sim must broadcast to
-        [[nodiscard]] std::uint16_t port() const
-        {
-            return m_port;
-        }
-
-        /// @brief Points the send side at the sim's command uplink.
-        /// @param commandPort port the sim binds its command receiver to
-        void setCommandPort(std::uint16_t commandPort)
-        {
-            m_commandPort = commandPort;
-        }
-
-        /// @brief Sends one packet to the sim's command uplink.
+        /// @brief Sends one packet to the sim, by node id.
         /// @param data packet bytes
         /// @param size packet size
-        /// @return true when the datagram went out
-        bool send(const std::uint8_t *data, std::size_t size) const
+        /// @return true when the frame went out, false while the sim has
+        ///         not been heard yet
+        bool send(const std::uint8_t *data, std::size_t size)
         {
-            sockaddr_in target{};
-            target.sin_family = AF_INET;
-            target.sin_port = htons(m_commandPort);
-            target.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-            return ::sendto(m_socketFd,
-                            data,
-                            size,
-                            0,
-                            reinterpret_cast<const sockaddr *>(&target),
-                            sizeof(target)) == static_cast<ssize_t>(size);
+            return m_transport.send(SIM_NODE, data, size);
         }
 
-        /// @brief Hands every pending datagram to the client, the way the
+        /// @brief Hands every pending payload to the client, the way the
         ///        hub's poll loop does.
         /// @param client client to feed
         /// @param instantUs current time [us]
-        void drain(mark4::OtaClient &client, std::uint64_t instantUs) const
+        void drain(mark4::OtaClient &client, std::uint64_t instantUs)
         {
-            std::array<std::uint8_t, RECEIVE_BUFFER_SIZE> buffer{};
-            for (;;)
-            {
-                const ssize_t got = ::recv(m_socketFd, buffer.data(), buffer.size(), 0);
-                if (got <= 0)
-                {
-                    return;
-                }
-                static_cast<void>(
-                    client.onPacket(buffer.data(), static_cast<std::size_t>(got), instantUs));
-            }
+            m_pending = &client;
+            m_pendingUs = instantUs;
+            m_transport.poll(instantUs, &GroundLink::Deliver, this);
         }
 
       private:
-        int m_socketFd = -1;              ///< bound receive and send socket
-        std::uint16_t m_port = 0U;        ///< port the sim broadcasts to
-        std::uint16_t m_commandPort = 0U; ///< port the sim listens on
+        static void Deliver(void *context,
+                            std::uint32_t src,
+                            const std::uint8_t *payload,
+                            std::size_t size)
+        {
+            static_cast<void>(src);
+            auto *self = static_cast<GroundLink *>(context);
+            static_cast<void>(self->m_pending->onPacket(payload, size, self->m_pendingUs));
+        }
+
+        mark4::UdpLink m_udp;                      ///< the one link
+        mark4::Transport m_transport{GROUND_NODE}; ///< this node
+        mark4::OtaClient *m_pending = nullptr;     ///< client being fed by drain()
+        std::uint64_t m_pendingUs = 0U;            ///< instant handed to it
     };
 
     /// @return a UDP port nothing holds right now
@@ -361,27 +315,27 @@ namespace
         ///        wherever ctest was started from
         /// @param otaDirectory emulated flash directory
         /// @param simPort lockstep port (nothing drives it in this test)
-        /// @param telemetryPort port the sim broadcasts its answers to
-        /// @param commandPort port the sim binds its command uplink to
+        /// @param discoveryPort shared transport port of the test
+        /// @param nodeId transport identity the sim takes
         /// @return true when the process started
         bool start(const std::filesystem::path &runDirectory,
                    const std::string &otaDirectory,
                    std::uint16_t simPort,
-                   std::uint16_t telemetryPort,
-                   std::uint16_t commandPort)
+                   std::uint16_t discoveryPort,
+                   std::uint32_t nodeId)
         {
             const std::string simPortText = std::to_string(simPort);
-            const std::string telemetryPortText = std::to_string(telemetryPort);
-            const std::string commandPortText = std::to_string(commandPort);
+            const std::string discoveryPortText = std::to_string(discoveryPort);
+            const std::string nodeIdText = std::to_string(nodeId);
             const std::string consolePath = (runDirectory / "drone_sim.log").string();
             const std::string runPath = runDirectory.string();
             std::array<const char *, 10> argv = {DRONE_SIM_BINARY,
                                                  "--sim-port",
                                                  simPortText.c_str(),
-                                                 "--telemetry-port",
-                                                 telemetryPortText.c_str(),
-                                                 "--rc-port",
-                                                 commandPortText.c_str(),
+                                                 "--discovery-port",
+                                                 discoveryPortText.c_str(),
+                                                 "--node-id",
+                                                 nodeIdText.c_str(),
                                                  "--ota-dir",
                                                  otaDirectory.c_str(),
                                                  nullptr};
@@ -553,14 +507,13 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     const std::string secondBundle =
         writeBundle(runDirectory / "second.ota", secondBuild, "bbbbbbbb", true);
 
-    GroundLink link;
-    REQUIRE(link.open());
-    const std::uint16_t commandPort = pickFreePort();
+    const std::uint16_t discoveryPort = pickFreePort();
     const std::uint16_t simPort = pickFreePort();
-    link.setCommandPort(commandPort);
+    GroundLink link(discoveryPort);
+    REQUIRE(link.open());
 
     SimProcess sim;
-    REQUIRE(sim.start(runDirectory, otaDirectory, simPort, link.port(), commandPort));
+    REQUIRE(sim.start(runDirectory, otaDirectory, simPort, discoveryPort, SIM_NODE));
 
     mark4::OtaClient client(testConfig());
     client.setSink([&link](const std::uint8_t *data, std::size_t size, std::string &errorOut) {

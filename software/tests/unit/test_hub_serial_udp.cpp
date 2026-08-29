@@ -14,7 +14,7 @@
 #include <vector>
 
 #include "hub/serial_transport.hpp"
-#include "protocol/serial_framing.hpp"
+#include "transport/serial_framing.hpp"
 
 namespace
 {

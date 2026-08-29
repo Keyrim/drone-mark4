@@ -3,11 +3,9 @@
 # desktop only.
 add_library(platform_sim STATIC
     clock_sim.cpp
-    udp_link.cpp
+    udp_socket.cpp
     sensor_source_sim.cpp
-    command_receiver_sim.cpp
     motor_sink_sim.cpp
-    telemetry_sender_sim.cpp
     firmware_store_sim.cpp)
 target_include_directories(platform_sim PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # protocol is PUBLIC: the run tracker is a header of this library and carries

@@ -10,8 +10,8 @@
 #include "protocol/commands.hpp"
 #include "protocol/header.hpp"
 #include "protocol/ota.hpp"
-#include "protocol/serial_framing.hpp"
 #include "status_leds.hpp"
+#include "transport/serial_framing.hpp"
 
 namespace
 {
