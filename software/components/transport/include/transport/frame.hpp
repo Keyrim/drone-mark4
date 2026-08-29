@@ -15,6 +15,12 @@ namespace mark4
     /// Destination meaning "every node", on every link.
     inline constexpr std::uint32_t BROADCAST_NODE = 0U;
 
+    /// Bits of one wire byte, the shift step of the little-endian codec.
+    inline constexpr unsigned FRAME_BYTE_BITS = 8U;
+
+    /// Bits of the two node id fields.
+    inline constexpr unsigned FRAME_WORD_BITS = 32U;
+
     /// Bytes of the header in front of every payload.
     inline constexpr std::size_t FRAME_HEADER_SIZE = 11U;
 
@@ -42,14 +48,14 @@ namespace mark4
         std::size_t index = 0U;
         for (const std::uint32_t word : {header.src, header.dst})
         {
-            for (unsigned shift = 0U; shift < 32U; shift += 8U)
+            for (unsigned shift = 0U; shift < FRAME_WORD_BITS; shift += FRAME_BYTE_BITS)
             {
                 out[index] = static_cast<std::uint8_t>(word >> shift);
                 ++index;
             }
         }
         out[index] = static_cast<std::uint8_t>(header.seq);
-        out[index + 1U] = static_cast<std::uint8_t>(header.seq >> 8U);
+        out[index + 1U] = static_cast<std::uint8_t>(header.seq >> FRAME_BYTE_BITS);
         out[index + 2U] = header.hops;
     }
 
@@ -70,7 +76,7 @@ namespace mark4
         std::size_t index = 0U;
         for (std::uint32_t &word : words)
         {
-            for (unsigned shift = 0U; shift < 32U; shift += 8U)
+            for (unsigned shift = 0U; shift < FRAME_WORD_BITS; shift += FRAME_BYTE_BITS)
             {
                 word |= static_cast<std::uint32_t>(data[index]) << shift;
                 ++index;
@@ -80,7 +86,8 @@ namespace mark4
         headerOut.dst = words[1];
         headerOut.seq = static_cast<std::uint16_t>(
             static_cast<std::uint16_t>(data[index]) |
-            static_cast<std::uint16_t>(static_cast<std::uint16_t>(data[index + 1U]) << 8U));
+            static_cast<std::uint16_t>(static_cast<std::uint16_t>(data[index + 1U])
+                                       << FRAME_BYTE_BITS));
         headerOut.hops = data[index + 2U];
         return true;
     }

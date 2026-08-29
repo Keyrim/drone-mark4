@@ -140,9 +140,9 @@ Incremental, one observable win per step:
    verbatim, and 500 ms of silence trips the fail-safe (kill engaged,
    disarmed), so closing the sender is itself a safe action. A simulated
    flight is flown the same way: an `rc` message aimed at `drone_sim`
-   goes to udp/47805, where `drone_sim` binds its own command receiver,
-   so the RC path and its fail-safe are exercised in every simulated
-   flight, not only on the bench. The simulator holds no pilot state of
+   is a transport unicast to that process's node, so the RC path and its
+   fail-safe are exercised in every simulated flight, not only on the
+   bench. The simulator holds no pilot state of
    its own - it is the plant, not the cockpit - and its keyboard only
    drives the world (H hold, SPACE throw, R reset). A `reboot` message
    reboots the board (NVIC

@@ -68,7 +68,6 @@ namespace
 
     constexpr std::uint64_t US_PER_MS = 1000U;
     constexpr std::uint64_t NS_PER_US = 1000U;
-    constexpr std::size_t RECEIVE_BUFFER_SIZE = 512U;
 
     /// @return a monotonic microsecond clock, the one the client is fed
     std::uint64_t nowUs()

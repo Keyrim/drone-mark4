@@ -2,20 +2,21 @@
 
 The single process that decodes the binary protocol on behalf of humans.
 
-Everything else in the system speaks `protocol/` over UDP, the board through
-the WiFi bridge that frames its UART onto it. The hub is the one place those
-bytes become JSON: it watches the announce broadcast to find out who is
-alive, follows the telemetry ports those processes serve, and publishes
-everything on one websocket endpoint that a browser or a script can read
-without ever touching a socket or a packed struct. Commands travel the other
-way through the same endpoint.
+Everything else in the system speaks `protocol/` packets: the desktop flight
+process inside transport frames (`software/components/transport/`), the
+board through the WiFi bridge that frames its UART onto UDP. The hub is the
+one place those bytes become JSON: it is one transport node, learns who is
+alive from the beacons the other nodes send, and publishes everything on one
+websocket endpoint that a browser or a script can read without ever touching
+a socket or a packed struct. Commands travel the other way through the same
+endpoint.
 
 That same TCP port also serves the static pages: the library dispatches on
 the `Upgrade` header, so a page loaded from the hub reaches it back with
 `new WebSocket("ws://" + location.host)` and never learns a port of its own.
 
-It links `protocol/` headers and nothing else: never `flight-core`, never
-`platform`. Desktop only.
+It links `protocol/` headers and the `transport` library and nothing else:
+never `flight-core`, never `platform`. Desktop only.
 
 ## Building and running
 
@@ -25,15 +26,15 @@ cmake --preset desktop && cmake --build --preset desktop
 ```
 
 The hub takes **no arguments**. It decodes and serves with its built-in
-defaults (endpoint on 127.0.0.1:47810, announce 47806, telemetry 47801, sim
-raw 47802, profiles in `profiles/`, pages in `software/hub/pages/dist`
-resolved from the binary location); it watches the default ports from the
-start and follows any extra telemetry port a process announces for as long as
-that process lives. Everything operational is driven at runtime through the
-websocket by the pages: connecting to a drone (`connect` message, Connections
-panel of the control page) and the tuning profiles. A default worth changing
-is a compile-time change in `protocol/ports.hpp` or `HubApp::Config`, not a
-flag.
+defaults (endpoint on 127.0.0.1:47810, transport discovery port 47820, sim
+raw 47802, bridge announces 47831, profiles in `profiles/`, pages in
+`software/hub/pages/dist` resolved from the binary location). A flight
+process reaches it by beaconing on the discovery port; nothing is wired by
+hand. Everything operational is driven at runtime through the websocket by
+the pages: connecting to a drone (`connect` message, Connections panel of
+the control page) and the tuning profiles. A default worth changing is a
+compile-time change in `protocol/ports.hpp`, `transport/udp_link.hpp` or
+`HubApp::Config`, not a flag.
 
 One drone at a time is THE connected drone. Everything the hub hears is
 still decoded and published to the clients - being connected
@@ -85,8 +86,8 @@ structs in `protocol/`.
  "attitudeQuat":[1,0,0,0],"positionM":[0,0,0],"velocityMps":[0,0,0]}
 
 {"type":"discovery","processes":[
-  {"kind":2,"kindName":"drone_sim","sessionId":12345,"telemetryPort":47801,
-   "commandPort":47805,"viaSerial":false,"ageMs":120}],
+  {"kind":2,"kindName":"drone_sim","sessionId":12345,
+   "viaSerial":false,"ageMs":120}],
  "bridges":[
   {"address":"192.168.1.31","port":47830,"name":"c19f6c",
    "device":"udp:192.168.1.31:47830","ageMs":220}]}
@@ -135,11 +136,17 @@ forward jump of more than 1024 is counted as one `resyncs` rather than as a
 thousand losses, because that is a sender restarting or the hub joining a
 stream already in flight. `sourceName` is what discovery calls that source,
 empty while nobody has announced it. `lossRate` is `lost / (received +
-lost)`.
+lost)`. A `transport` entry per process reached over the transport carries
+the frame counters of its node (every payload type included), as the
+transport keeps them.
+
+`sessionId` in `discovery` is the transport node id of the process: a
+process draws a new one every start, so a change behind the same kind is a
+restart. A process heard over the serial link has none (0).
 
 `statusName` is one of `ok`, `unknownId`, `outOfBounds`, `lockedWhileArmed`.
 `source` is inferred from the path the answer arrived by: the serial link
-means the board, a telemetry port means the simulator side. Tuning answers
+means the board, the transport means the simulator side. Tuning answers
 share the telemetry stream and carry no source byte of their own.
 
 A client that connects gets a `discovery` and a `status` message
@@ -211,10 +218,9 @@ hub stamps a rolling one, so two scenarios in a row are two runs.
 Routing: a command only goes out when its `target` is the connected drone
 (the `ack` says `no drone connected` or `connected to X, not to Y`
 otherwise). An RC message for `firmware` then goes out serial-framed on the
-board link; an RC message for any other kind goes to the command port that
-process
-announced. A scenario is routed the same way, to the flight process driving
-the plant - no port is hardwired. A reboot needs the board. `otaAbort` is
+board link; an RC message for any other kind is a transport unicast to the
+node whose beacon announced that kind. A scenario is routed the same way,
+to the flight process driving the plant - no port is hardwired. A reboot needs the board. `otaAbort` is
 the one exception to the gate: dropping a stuck transfer must work even
 after the drone is gone.
 
@@ -282,18 +288,14 @@ code, never as the code.
 
 - An RC message aimed at a kind no process has announced is refused with
   `no process of kind <kind>`; a scenario has to be up first.
-- Every announce carries `sessionId` 0 for now, so a process that restarts
-  on the same ports is not seen as a new session.
 - Acks are broadcast to every connected client rather than sent back to the
   one that asked: a client correlates the answer with the `id` it sent and
   ignores the rest. This keeps the endpoint free of any per-client state
   shared between the library threads and the poll loop.
 - The endpoint has no authentication. It binds the loopback interface, and
   it is a bench tool on a trusted network.
-- With the serial rebroadcast on, the hub ignores firmware telemetry
-  arriving over UDP: that copy is its own echo of what it just re-emitted.
-  A second, genuinely different board reaching the hub over UDP while a
-  first one is wired to it would therefore be invisible.
+- With the serial rebroadcast on, firmware telemetry is re-emitted as a
+  transport broadcast; the transport drops the hub's own echo of it.
 - Tuned values do not survive a simulator reset: `drone_sim` rebuilds its
   flight core on the reset (there is no state a teleport could keep) and
   does not re-announce, so the hub has no event to push a profile on. Push

@@ -17,19 +17,22 @@ flowchart LR
     GODOT["Godot simulator<br/>(plant only)"]
     HUB["hub<br/>discovery, decoding, web pages"]
     PAGES["web pages<br/>control, plots"]
-    BUS(("Telemetry<br/>UDP broadcast"))
+    BUS(("transport<br/>frames over UDP"))
 
     FW <--> ESP
     DS <-->|"sim link: SensorFrame / ActuatorFrame<br/>real-time or lockstep"| GODOT
-    ESP --> BUS
-    DS --> BUS
-    BUS --> HUB
+    ESP <-->|"framed UART stream<br/>(bare packets, for now)"| HUB
+    DS <--> BUS
+    BUS <--> HUB
     HUB <-->|"HTTP + WebSocket<br/>one port"| PAGES
 ```
 
-- **A single output bus**: telemetry goes out as UDP broadcast; any
-  combination of tools listens simultaneously, whatever the source (firmware
-  through the ESP32, simulation).
+- **A single output bus**: the transport (`software/components/transport/`)
+  carries every packet between the flight processes and the ground tools as
+  a frame with a source and destination node; telemetry is a broadcast
+  frame any number of nodes read simultaneously, commands are unicasts to
+  the node that beaconed. The board still reaches the hub as bare packets
+  through the ESP32 bridge until it migrates.
 - **Godot and the hub never link flight-core**: they only know `protocol/`
   (packed structs, versioned from the first byte). The web pages only know
   the hub's JSON over WebSocket/HTTP, never the wire.

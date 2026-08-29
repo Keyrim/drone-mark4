@@ -59,7 +59,7 @@ python3 scripts/build_app.py drone_sim
 
 # Run the flight process (no frame limit by default; a finite budget is the
 # DRONE_SIM_FRAME_LIMIT cmake cache variable, never a runtime argument)
-./software/build/desktop/drone_sim/drone_sim [--sim-port N] [--telemetry-port N]
+./software/build/desktop/drone_sim/drone_sim [--sim-port N] [--discovery-port N] [--node-id N]
 
 # Start a bench session: the hub takes no arguments, serves the pages and
 # websocket on http://127.0.0.1:47810 and stays up; everything operational
@@ -101,7 +101,7 @@ config and only relaxes magic numbers.
 
 Everything C++ lives under `software/`: the executables at its top level
 (`drone_sim`, `drone_firmware`, `hub`), the libraries in
-`software/components/`. Three libraries, one rule of dependency flow:
+`software/components/`. Four libraries, one rule of dependency flow:
 
 - `flight-core/` - pure static lib. Single entry point
   `FlightCore::step(const SensorFrame&, ActuatorFrame&)`: synchronous,
@@ -134,9 +134,24 @@ Everything C++ lives under `software/`: the executables at its top level
   and `sim-godot/scripts/protocol.gd` (all Godot scripts read it), both
   guarded by the golden fixtures in `software/tests/golden/fixtures/` that CI
   decodes in all three languages. External processes (Godot sim, hub,
-  ESP32 bridge) speak ONLY protocol/ over UDP and never link
-  flight-core; the web pages (`software/hub/pages/`) speak only the hub's
-  JSON over WebSocket/HTTP and never the wire.
+  ESP32 bridge) speak ONLY protocol/ and never link flight-core; the web
+  pages (`software/hub/pages/`) speak only the hub's JSON over
+  WebSocket/HTTP and never the wire. protocol/ is payload only: it names
+  no address and no route.
+- `transport/` - static lib, the interface manager between processes and
+  boards (`software/components/transport/README.md`). Frames an opaque
+  payload with `src u32, dst u32, seq u16, hops u8`, learns every node from
+  any frame heard, beacons once per second, expires silent nodes, relays
+  between links when asked. Depends on nothing but `drone_warnings`
+  (`transport/serial_framing.hpp` lives here, the one CRC-16 of the
+  project). The core and `UartLink` build for stm32 (no heap, fixed
+  tables, function pointer callbacks); `UdpLink` is POSIX only: one shared
+  discovery port (47820) for broadcasts, one ephemeral data socket per
+  node for unicasts. Node ids are self-assigned `uint32_t` (random on
+  desktop, `hashNodeId()` of the MCU UID on a board), never configured.
+  Adopted between drone_sim and the hub, and by the batch campaign; the
+  firmware, the bootloader and the ESP32 bridge still speak bare
+  protocol/ packets over the serial framing.
 
 Each executable is flight-core plus one composition of platform services,
 assembled in an App class (see `software/drone_sim/drone_sim_app.hpp`): services

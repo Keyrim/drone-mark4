@@ -31,8 +31,8 @@ flowchart LR
     GODOT["Godot<br/>physics only<br/>(viz/input scripts deleted)"]
 
     subgraph hub["hub daemon - links protocol/ directly, zero duplication"]
-        TR["transports<br/>UDP, board through<br/>the WiFi bridge"]
-        DISC["discovery<br/>listens to announce<br/>broadcasts, no port wiring"]
+        TR["transport node (UDP),<br/>board through<br/>the WiFi bridge"]
+        DISC["discovery<br/>from the beacons the<br/>transport hears, no port wiring"]
         SVC["commands / rc<br/>tuning profiles"]
         WS["single WebSocket + JSON<br/>endpoint"]
         TR --- DISC --- SVC --- WS
@@ -46,7 +46,7 @@ flowchart LR
     BROWSER["opened in a browser,<br/>VSCode Simple Browser,<br/>or a thin extension later"]
 
     GODOT <-->|"binary sim link kept direct<br/>(lockstep, latency-critical)"| DS
-    DS <-->|"binary UDP + announce"| TR
+    DS <-->|"transport frames over UDP<br/>(beacon, telemetry, commands)"| TR
     FW <-->|"framed binary over the WiFi bridge"| TR
     WS <--> P1
     WS <--> P2
@@ -66,9 +66,11 @@ Structural improvements, one by one:
   `protocol/` and breaks at compile time on any packet change.
 - Human-facing surface: 6 UDP ports -> 1 WebSocket endpoint; UI pages are
   protocol-agnostic and replaceable one by one.
-- Port wiring replaced by discovery: flight processes periodically
-  broadcast a small announce packet (process kind, ports, protocol
-  version); the hub finds whoever is alive and reconnects on its own.
+- Port wiring replaced by discovery: every process is a node of the
+  shared transport (`software/components/transport/`), beacons its
+  announce packet (process kind, protocol version) once per second on the
+  one discovery port, and the hub commands it by node id; nobody
+  configures an address.
 - Roles untangled: Godot is a plant model again; decoding and routing are
   hub features instead of separate processes.
 - VSCode becomes packaging, not architecture: the same pages render in a

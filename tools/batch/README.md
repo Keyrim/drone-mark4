@@ -15,10 +15,13 @@ reply; resending it is free, since the plant plays a block once per change of
 its sequence byte, and the campaign resends every 200 ms until the plant
 reports the new run.
 
-One pair per instance, one port range per instance. The campaign owns the
-pair: Godot boots first (it resends until the flight process answers), the
-teardown terminates both, and the campaign is the only reader of its
-telemetry port. The hub plays no part in a campaign.
+One pair per instance, one port range per instance: a sim link port, a
+raw state port and a transport discovery port of its own, on which the
+campaign is one more transport node (`tools/telemetry_wire.py` carries the
+frame codec) and the `drone_sim` is started with `--node-id 1 + index`.
+The campaign owns the pair: Godot boots first (it resends until the flight
+process answers), the teardown terminates both, and the campaign is the
+only reader of its discovery port. The hub plays no part in a campaign.
 
 Arming and the kill switch do not go through the simulator: they are streamed
 as `RcCommandPacket` straight at each `drone_sim` command receiver, the same
@@ -129,7 +132,7 @@ campaign that produced those measured nothing.
 
 The flight process hashes the trajectory of every run - relative timestamp,
 gyro, accelerometer, barometer and motors of every stepped frame - and
-broadcasts the sealed hash on the telemetry port. It lands in the `traj_hash`
+broadcasts the sealed hash with its telemetry. It lands in the `traj_hash`
 CSV column and on every result line.
 
 The promise: **the same scenario played twice in the same plant produces the

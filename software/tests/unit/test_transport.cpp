@@ -69,11 +69,11 @@ namespace
         bool broadcast(const std::uint8_t *data, std::size_t size) override
         {
             ++m_broadcasts;
-            for (std::size_t peer = 0U; peer < m_bus.inbox.size(); ++peer)
+            for (std::deque<Datagram> &queue : m_bus.inbox)
             {
                 // A real broadcast medium hands the frame back to its sender
                 // too; the transport must cope with its own echo.
-                m_bus.inbox[peer].push_back(
+                queue.push_back(
                     Datagram{std::vector<std::uint8_t>(data, data + size), self(), true});
             }
             return true;
