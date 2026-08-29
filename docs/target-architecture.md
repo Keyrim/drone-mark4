@@ -192,28 +192,29 @@ Validity is layered where the knowledge is:
 
 ### 3.3 Protocol
 
-Fixed-size packed structs, kept deliberately: fixed frames give zero-copy
-decode, compile-time layout checks, deterministic UART/DMA framing and a
-bandwidth budget that never depends on the values transported. On a local
-link owned end to end, bytes are cheap and determinism is not.
+One protobuf schema (`software/components/protocol/mark4.proto`) and
+generated codecs: nanopb for C/C++ (desktop and STM32, no allocation,
+every field bounded by `mark4.options`), godobuf for GDScript, protoc for
+python. The hand-packed structs and their per-language copies are gone;
+the build regenerates every codec, and the plant's is checked against the
+C++ one by a headless Godot in the unit tests.
 
-Target wire format properties:
+Wire format properties:
 
-- **Version byte then type byte** on every packet; nothing is ever
-  demultiplexed by size.
-- **Source identity and sequence number** on every stream, so multiple
-  senders coexist and loss is measurable.
+- **One `Envelope`** (a oneof over every message) per datagram or serial
+  frame; nothing is ever demultiplexed by size, and there is no version
+  byte.
+- **Wire hash**: a 32-bit hash of the schema computed at build time
+  travels in every `Announce`; the hub flags a node built on another
+  schema instead of dropping it silently.
+- **Source identity and sequence number** on every transport frame (the
+  transport header), so multiple senders coexist and loss is measurable.
 - **CRC** on serial framing; XOR-class checksums are not enough for a
   link that carries flight data.
-- **Announce packet**: process kind, ports, protocol version, broadcast
-  periodically; the basis of discovery.
-- **Command set**: arm/reset/reboot, RC with the mode field (2.1), tuning
-  set/get/list with ack (2.3).
-- Layout is asserted at compile time (sizes, offsets where they matter,
-  little-endianness), and **golden-packet fixtures** guarantee the
-  non-C++ consumers: reference bytes with asymmetric field values are
-  generated from the C++ structs and checked into the repo; every
-  hand-written parser must decode them exactly in CI.
+- **Announce message**: node kind, name, chip, build identity, wire hash,
+  broadcast periodically; the basis of discovery.
+- **Command set**: reboot, RC with the mode field (2.1), tuning
+  set/get/list with ack (2.3), the updater messages.
 
 ### 3.4 Command paths: two kinds, never mixed
 
@@ -229,9 +230,9 @@ Target wire format properties:
 
 ### 3.5 The hub
 
-One desktop C++ process, in this repo, linking protocol/ headers directly
-(zero schema duplication, packet changes break it at compile time) and
-never linking flight-core. Roles: transports (UDP, serial), discovery,
+One desktop C++ process, in this repo, linking the generated protocol/
+codec directly (zero schema duplication, a message change breaks it at
+compile time) and never linking flight-core. Roles: transports (UDP, serial), discovery,
 command/RC/tuning forwarding, profile storage, and the scenario launcher
 CLI. Human-facing surface: a single WebSocket + JSON
 endpoint serving any number of simultaneous clients.
@@ -241,8 +242,8 @@ endpoint serving any number of simultaneous clients.
 Thin web pages over the hub endpoint: plots (live, real vs sim),
 command console with tuning profiles, 3D attitude
 (rendered from the telemetry quaternion; the physics engine is not a
-renderer for the ground station). Pages know no ports and no packed
-structs, and are individually replaceable. The editor is packaging, not
+renderer for the ground station). Pages know no ports and no wire
+messages, and are individually replaceable. The editor is packaging, not
 architecture: the same pages render in a browser tab, an editor webview,
 or a field laptop.
 
@@ -273,8 +274,9 @@ source selected" failure mode.
 
 The guarantees above are only real if something checks them continuously:
 
-- protocol layout: static asserts in C++, golden-packet decode tests for
-  every non-C++ parser.
+- protocol: one schema, generated codecs, a round-trip test of every
+  message in C++ and a headless-Godot exchange against the generated
+  GDScript codec.
 - cross-language integration: one headless single-run batch in CI proves
   the C++/GDScript wire compatibility end to end.
 - reproducibility: the trajectory hash in batch results.

@@ -40,17 +40,15 @@ jobs:
         working-directory: software
       - run: cmake --build --preset desktop
         working-directory: software
+      # The Godot project is imported once here: the build generated the
+      # plant's codec into sim-godot/scripts/gen/, and the unit tests spawn
+      # a headless Godot against it (a fresh checkout has no .godot cache).
+      - run: godot --path sim-godot --headless --import
       - run: ctest --preset desktop
         working-directory: software
-      # Golden packets: every hand-written parser must decode the exact
-      # bytes the C++ structs produce (the ctest above already regenerates
-      # and compares the fixtures on the C++ side).
-      - run: python3 software/tests/golden/test_golden.py
-      - run: godot --path sim-godot --headless --import
-      - run: godot --path sim-godot --headless --script res://tests/golden_check.gd -- "$GITHUB_WORKSPACE/software/tests/golden/fixtures"
       # Cross-language end-to-end: the only check that runs the real physics,
-      # the real flight core and the real wire against each other. A golden
-      # fixture proves three parsers agree on bytes; this proves a throw
+      # the real flight core and the real wire against each other. The unit
+      # tests prove the generated codecs agree on bytes; this proves a throw
       # still flies.
       - run: python3 tools/batch/run_batch.py --runs 1 --parallel 1 --time-scale 20
       # And the promise the campaign rests on: one seed, twice, one plant,

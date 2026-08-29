@@ -78,13 +78,15 @@ cd software/hub/pages && pnpm install --frozen-lockfile && pnpm build
 # marketplace, no CI job). Install: "Extensions: Install from VSIX".
 cd tools/vscode-mark4 && pnpm install --frozen-lockfile && pnpm build && pnpm package
 
-# Monte Carlo throw campaign through headless Godot (see tools/batch/README.md)
+# Monte Carlo throw campaign through headless Godot (see tools/batch/README.md;
+# needs the desktop build for drone_sim and the generated python codec)
 python3 tools/batch/run_batch.py --runs 100 --parallel 4 [--godot /path/to/godot4]
 
-# Golden packet decode tests (the ctest suite already checks the C++ side;
-# CI runs all three in the desktop job)
-python3 software/tests/golden/test_golden.py
-godot --path sim-godot --headless --script res://tests/golden_check.gd -- "$(pwd)/software/tests/golden/fixtures"
+# Wire codecs: generated from software/components/protocol/mark4.proto by the
+# desktop build (nanopb C into the build tree, godobuf GDScript into
+# sim-godot/scripts/gen/, python into software/build/desktop/gen/python).
+# Regenerate = rebuild; the two targets alone:
+(cd software && cmake --build --preset desktop --target proto_gd proto_py)
 
 # Lint (all must be clean before committing; CI runs exactly these)
 git ls-files '*.cpp' '*.hpp' '*.c' '*.h' | xargs clang-format --dry-run --Werror
@@ -125,19 +127,22 @@ Everything C++ lives under `software/`: the executables at its top level
   are declared only in the presets where they make sense (the
   DRONE_PLATFORM switch in `software/components/platform/CMakeLists.txt` and
   `software/CMakeLists.txt`) and are linked by the apps.
-- `protocol/` - header-only packed wire structs. Every packet opens with
-  a version byte then a type byte (nothing is demuxed by size); streams
-  (telemetry, sim raw) add sourceId + u16 sequence; sizes, field offsets
-  and little-endianness are static_asserted. The wire has exactly one
-  copy per language: the C++ headers (source of truth),
-  `tools/telemetry_wire.py` (all python tools import it)
-  and `sim-godot/scripts/protocol.gd` (all Godot scripts read it), both
-  guarded by the golden fixtures in `software/tests/golden/fixtures/` that CI
-  decodes in all three languages. External processes (Godot sim, hub,
-  ESP32 bridge) speak ONLY protocol/ and never link flight-core; the web
-  pages (`software/hub/pages/`) speak only the hub's JSON over
-  WebSocket/HTTP and never the wire. protocol/ is payload only: it names
-  no address and no route.
+- `protocol/` - one protobuf schema, `mark4.proto` (+ `mark4.options`
+  nanopb bounds), codecs generated at build time and never committed:
+  nanopb C for every C/C++ target (the `nanopb` lib, `PB_NO_MALLOC`,
+  `PB_BUFFER_ONLY`; the `protocol` lib adds `encodeEnvelope()` /
+  `decodeEnvelope()` in `protocol/envelope.hpp`), godobuf GDScript for
+  Godot (`sim-godot/scripts/gen/`, target `proto_gd`), `protoc
+  --python_out` for the batch tool (target `proto_py`). Every message on
+  every link is one `Envelope` (a oneof over all messages); there is no
+  version byte, a 32-bit hash of the schema (`WIRE_HASH`, computed by
+  CMake) travels in every `Announce` and the hub flags `wireMismatch`.
+  `protocol/ota_image.hpp` keeps what is not wire (the on-flash image
+  header). External processes (Godot sim, hub, ESP32 bridge) speak ONLY
+  the wire and never link flight-core; the web pages
+  (`software/hub/pages/`) speak only the hub's JSON over WebSocket/HTTP
+  and never the wire. protocol/ is payload only: it names no address and
+  no route. See `software/components/protocol/README.md`.
 - `transport/` - static lib, the interface manager between processes and
   boards (`software/components/transport/README.md`). Frames an opaque
   payload with `src u32, dst u32, seq u16, hops u8`, learns every node from
@@ -150,8 +155,9 @@ Everything C++ lives under `software/`: the executables at its top level
   node for unicasts. Node ids are self-assigned `uint32_t` (random on
   desktop, `hashNodeId()` of the MCU UID on a board), never configured.
   Adopted between drone_sim and the hub, and by the batch campaign; the
-  firmware, the bootloader and the ESP32 bridge still speak bare
-  protocol/ packets over the serial framing.
+  firmware still sends bare envelopes over the serial framing
+  (`A5 5A len_lo len_hi payload crc16`, 512 bytes at most) through the
+  ESP32 bridge, which the hub reads on its serial path.
 
 Each executable is flight-core plus one composition of platform services,
 assembled in an App class (see `software/drone_sim/drone_sim_app.hpp`): services
@@ -181,9 +187,9 @@ every project target, not by FetchContent deps such as Catch2).
 
 `.github/workflows/devcontainer-image.yml` rebuilds the dev image and pushes
 it to GHCR (`ghcr.io/keyrim/drone-mark4-devcontainer`) when `.devcontainer/`
-changes; `ci.yml` runs 6 jobs (desktop+tests+golden decode in python and
-GDScript, stm32, desktop-san, pages pnpm typecheck+build+test,
-format+ascii, tidy desktop+stm32) inside that image, pinned by digest.
+changes; `ci.yml` runs 7 jobs (desktop+tests+batch through headless Godot, stm32,
+esp32, desktop-san, pages pnpm typecheck+build+test, format+ascii, tidy
+desktop+stm32) inside that image, pinned by digest.
 After a `.devcontainer/` change, bump the digest in `ci.yml` to the one the
 image workflow pushed (`docker manifest inspect ...:latest`). Container jobs need `options: --user root` (the
 image defaults to user `dev`, the runner mounts workdirs for another UID).

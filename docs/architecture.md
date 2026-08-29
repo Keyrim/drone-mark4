@@ -33,9 +33,10 @@ flowchart LR
   frame any number of nodes read simultaneously, commands are unicasts to
   the node that beaconed. The board still reaches the hub as bare packets
   through the ESP32 bridge until it migrates.
-- **Godot and the hub never link flight-core**: they only know `protocol/`
-  (packed structs, versioned from the first byte). The web pages only know
-  the hub's JSON over WebSocket/HTTP, never the wire.
+- **Godot and the hub never link flight-core**: they only know the wire of
+  `protocol/mark4.proto`, through codecs generated at build time (nanopb,
+  godobuf). The web pages only know the hub's JSON over WebSocket/HTTP,
+  never the wire.
 - The sim link's **lockstep** mode (the simulator waits for the motor
   response before advancing its physics) buys determinism, faster-than-real-
   time runs and debugger single-stepping.

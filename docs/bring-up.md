@@ -127,15 +127,16 @@ Incremental, one observable win per step:
 2. **IMU driver**: MPU6050 over I2C, timer-paced sampling into
    SensorFrames; barometer driver for whatever the scan identified.
 3. **Telemetry**: SensorFrames streamed over UART1 to the PC. Done: a
-   50 Hz TelemetryPacket stream at 921600 baud, each packet wrapped in
-   the serial framing of `transport/serial_framing.hpp` (a UART has no
-   datagram boundaries), interrupt-driven behind a ring buffer, demuxed
-   by payload size on the PC. The `hub` (the board reached through the
+   50 Hz `Telemetry` envelope stream at 921600 baud (plus one `Announce`
+   per second naming the board, its chip, its build and its wire hash),
+   each envelope wrapped in the serial framing of
+   `transport/serial_framing.hpp` (a UART has no datagram boundaries),
+   interrupt-driven behind a ring buffer. The `hub` (the board reached through the
    ESP32 WiFi bridge, connected from the Connections panel of the
    control page) is the single consumer of that link in a session: it
    re-broadcasts telemetry over UDP and serves the web pages that plot
    it. The uplink carries the pilot state
-   (RcCommandPacket: kill, arm, throttle): an `rc` message aimed at
+   (`Rc`: kill, arm, mode, throttle): an `rc` message aimed at
    `firmware` on the hub websocket endpoint is framed onto the UART
    verbatim, and 500 ms of silence trips the fail-safe (kill engaged,
    disarmed), so closing the sender is itself a safe action. A simulated

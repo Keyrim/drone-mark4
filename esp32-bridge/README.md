@@ -3,7 +3,7 @@
 Firmware for the ESP32-C3 SuperMini (IPEX variant) sitting between the FC and
 the ground tools, in place of the USB serial dongle. It is a cable, not a peer:
 it carries bytes and never looks at them, so nothing here has to follow the
-wire format of `protocol/`.
+wire of `protocol/mark4.proto` or its serial framing.
 
 The board joins the network its build named, and raises its own access point,
 `mark4-bridge` (WPA2, see `bridge_main.c`), when there is no such network or it

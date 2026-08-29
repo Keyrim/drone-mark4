@@ -16,10 +16,10 @@ meant launching three or more processes with consistent arguments.
 
 ## Proposal - one hub, one binary boundary, thin UI clients
 
-Green = compile-checked against `protocol/` headers. The hub is the single
-process that speaks the binary protocol on behalf of humans; everything
-above it is JSON over one WebSocket endpoint and knows nothing about ports
-or packed structs.
+Green = compile-checked against the generated `protocol/` codec. The hub is
+the single process that speaks the binary protocol on behalf of humans;
+everything above it is JSON over one WebSocket endpoint and knows nothing
+about ports or wire messages.
 
 ```mermaid
 flowchart LR
@@ -62,8 +62,8 @@ flowchart LR
 
 Structural improvements, one by one:
 
-- Binary parser count: 9 hand-written files -> 1 process that includes
-  `protocol/` and breaks at compile time on any packet change.
+- Binary parser count: 9 hand-written files -> codecs generated from one
+  schema, and 1 process that decodes them on behalf of humans.
 - Human-facing surface: 6 UDP ports -> 1 WebSocket endpoint; UI pages are
   protocol-agnostic and replaceable one by one.
 - Port wiring replaced by discovery: every process is a node of the
@@ -92,16 +92,14 @@ per variant, one target per composition.
 ## Alternatives considered and rejected
 
 - **Protobuf / nanopb for the wire protocol.** Solves multi-language
-  duplication, and nanopb is proven on STM32-class targets. Rejected here
-  because it trades away the current protocol's best properties: fixed
-  frame sizes (varint encoding makes size depend on values, so the link
-  can saturate exactly during dynamic phases), zero-copy decode into
-  packed structs, `static_assert` layout checks at compile time, and
-  deterministic UART/DMA framing. Worth it for 100+ message types in 3+
-  consumer languages; not for this protocol's handful of packet types.
-  The hub-links-protocol/ approach removes the duplication without the
-  trade. If a schema language ever becomes necessary, fixed-size formats
-  or a small in-repo generator fit better.
+  duplication, and nanopb is proven on STM32-class targets. Rejected at
+  first for the properties it trades away (fixed frame sizes, zero-copy
+  decode, compile-time layout checks), then adopted once the third
+  consumer language and the third hand copy of every struct made the
+  duplication the larger cost: one `mark4.proto`, nanopb on every C/C++
+  target, godobuf for the plant, protoc for python, and a hash of the
+  schema in every announce so a stale build is visible instead of silent
+  (`software/components/protocol/README.md`).
 - **Shared library + FFI instead of a hub daemon** (protocol stack built
   as a `.so` loaded by the UI host process). Removes duplication just as
   well, but couples the tooling to one host runtime (Node/VSCode), and

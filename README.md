@@ -26,7 +26,8 @@ Documentation:
   AbsCommandReceiver, AbsTelemetrySender, AbsLogSink, AbsClock) plus one
   implementation set per variant. No singletons: each executable has an
   explicit composition root in its main.
-- `protocol/` - header-only library, versioned packed structs, spoken by
+- `protocol/` - one protobuf schema (`mark4.proto`), codecs generated at
+  build time for C/C++ (nanopb), GDScript (godobuf) and python; spoken by
   everyone (firmware, sim, Godot, hub).
 
 ## Build
@@ -66,16 +67,17 @@ run-clang-tidy -p software/build/desktop "$(pwd)/(apps|flight-core|platform|prot
 
 ## Simulation chain
 
-Three processes speak `protocol/` over UDP on localhost: the sensor stub
-feeds `drone_sim`, which answers with actuator frames and broadcasts
-telemetry to any listener.
+Three processes speak the wire over UDP on localhost: the Godot plant
+feeds `drone_sim` sensor frames in lockstep, `drone_sim` answers with
+actuator frames and broadcasts telemetry to any transport node, the hub
+decodes it for the pages.
 
 ```sh
 # Terminal 1 - flight process (listens on udp/47800)
-./software/build/desktop/drone_sim/drone_sim 100000
+./software/build/desktop/drone_sim/drone_sim
 
-# Terminal 2 - sinusoidal sensor stream (standard library only)
-python3 tools/sim-stub/sim_stub.py --duration 0
+# Terminal 2 - the plant (the desktop build generated its codec)
+godot --path sim-godot
 
 # Terminal 3 - decoding endpoint and web pages on http://127.0.0.1:47810
 ./software/build/desktop/hub/hub

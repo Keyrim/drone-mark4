@@ -4,15 +4,17 @@ The interface manager between the processes and boards of the project. An
 application declares its physical links (one per medium: a UDP socket pair,
 a UART), then calls `send(node, payload)`; the transport remembers on which
 link and at which address every node was last heard and emits there. The
-payload is opaque: today it is a `protocol/` packet, and the transport does
-not link `protocol/` (it depends on `drone_warnings` alone). The core and
+payload is opaque: today it is one `Envelope` of `protocol/mark4.proto`,
+and the transport does not link `protocol/` (it depends on `drone_warnings`
+alone). The core and
 the UART link build for every preset, the F405 included, with no heap and
 fixed-size tables; the UDP link is POSIX and desktop only.
 
 Adopted today between `drone_sim` and the `hub`, and by the batch campaign
 (`tools/batch/run_batch.py`, through the frame codec of
-`tools/telemetry_wire.py`). The firmware, the bootloader, the ESP32 bridge
-and the hub's bridge/serial path still speak bare `protocol/` packets.
+`tools/telemetry_wire.py`). The firmware, the ESP32 bridge and the hub's
+bridge/serial path still carry bare envelopes in the serial framing, with
+no transport header.
 
 ## Frame
 
@@ -27,9 +29,10 @@ Every frame opens with an 11-byte little-endian header (`transport/frame.hpp`):
 
 The payload follows, at most `MAX_PAYLOAD` = 512 bytes. A medium that keeps
 datagram boundaries (UDP) adds nothing; the UART link wraps the frame in
-the serial framing (`transport/serial_framing.hpp`: `A5 5A len payload
-crc16`, CRC-16/CCITT-FALSE over length and payload), whose one length byte
-caps a UART frame at 255 bytes, header included.
+the serial framing (`transport/serial_framing.hpp`: `A5 5A len_lo len_hi
+payload crc16`, CRC-16/CCITT-FALSE over the two length bytes and the
+payload), whose payload is capped at `SERIAL_MAX_PAYLOAD` = 512 bytes like
+`MAX_PAYLOAD`, so a whole envelope fits behind the header.
 
 ## Node ids
 
@@ -69,13 +72,13 @@ entries.
 
 ## Presence
 
-`setBeacon()` registers an application payload (the `AnnouncePacket` for a
-flight process) that the transport broadcasts every `BEACON_PERIOD_US`
+`setBeacon()` registers an application payload (the `Announce` envelope of
+a node) that the transport broadcasts every `BEACON_PERIOD_US`
 (1 s, the first one on the first `poll()`), and additionally unicasts once
 to a node the moment it first appears, so a newcomer learns everyone at
 once. A node silent for `NODE_EXPIRY_US` (3 s) is forgotten and `onDown`
-fires; `onUp` fires when a node is heard for the first time. The hub sets
-no beacon: a flight process learns it from the first command it sends.
+fires; `onUp` fires when a node is heard for the first time. The hub
+beacons too, as kind `gateway`.
 
 ## Relay
 
@@ -116,22 +119,17 @@ ESP32 bridge (UART on one side, WiFi on the other); nothing relays yet.
 |------|-----|------|
 | udp/47820 | every transport node | discovery: broadcast frames (beacons, telemetry, answers) |
 | ephemeral | every transport node | data socket: unicast frames (commands, beacon on first sight) |
-| udp/47800 | drone_sim <-> Godot | lockstep sim link, bare packets (`protocol/ports.hpp`) |
-| udp/47802 | Godot -> hub | sim raw broadcast, bare packets |
+| udp/47800 | drone_sim <-> Godot | lockstep sim link, bare envelopes (`protocol/ports.hpp`) |
 | udp/47810 | hub | HTTP + WebSocket for the pages |
 | udp/47830, 47831 | ESP32 bridge | pseudo-serial stream and bridge announce |
 
 `drone_sim` sends telemetry and every answer (tuning, OTA, run stats) as
 broadcast frames, so the hub, a batch campaign and any other node read the
 same stream; commands reach it as unicasts to its node. Its beacon is the
-`AnnouncePacket` with `sessionId` = node id and both port fields at 0
-(meaningless since the transport; the packet dies with the protobuf layer).
+`Announce` envelope (kind, name, mcu, build identity, wire hash).
 
 ## Open points
 
-- UART frames are capped at 255 bytes by the one-byte serial length, so an
-  `OtaChunkPacket` (251 bytes) does not fit behind the 11-byte header. The
-  board migrates later; the chunk size or the length field will move then.
 - No retransmission, no acknowledgement, no fragmentation: what the
   application needs it does itself (the OTA client already does).
 - Unicast replies are not used by `drone_sim`: every answer is a broadcast,

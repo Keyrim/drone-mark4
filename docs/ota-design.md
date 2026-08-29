@@ -1,6 +1,6 @@
 # OTA firmware update - design proposal
 
-Status: implemented (protocol/ota.hpp, platform firmware stores, OtaUpdater,
+Status: implemented (the Ota* messages of mark4.proto, protocol/ota_image.hpp, platform firmware stores, OtaUpdater,
 drone_boot, scripts/make_ota.py, hub OtaClient and the update panel; the
 desktop end-to-end test drives a full update and a rollback against
 drone_sim). This document remains the reference for the design decisions.
@@ -29,7 +29,7 @@ hub (desktop) --UDP/WiFi--> ESP32 bridge --UART 921600--> flight controller
 ```
 
 - **The bridge stays a cable.** It carries bytes and never looks at them,
-  so OTA needs zero bridge changes: the hub sends `protocol/` packets in
+  so OTA needs zero bridge changes: the hub sends wire envelopes in
   the existing serial framing, the bridge forwards them, the frame parser
   on the board picks them up. This is the payoff of the "it is a cable"
   decision and the proposal keeps it intact.
@@ -225,23 +225,26 @@ confirmation that needs no session state anywhere.
 
 ## 5. Wire protocol
 
-New packets in `protocol/`, version byte then type byte like everything
-else. All updater packets carry a 32-bit session nonce chosen by the hub
-at OTA_BEGIN, so duplicates from an abandoned session cannot corrupt a
-new one.
+The updater messages are bodies of the one `Envelope` of `mark4.proto`
+(`software/components/protocol/`), like everything else on the wire. All
+session messages carry a 32-bit session nonce chosen by the hub at
+`OtaBegin`, so duplicates from an abandoned session cannot corrupt a new
+one.
 
-| Packet | Direction | Content and role |
+| Message | Direction | Content and role |
 | --- | --- | --- |
-| OTA_STATUS_REQUEST | hub to board | ask for the update status |
-| OTA_STATUS | board to hub | running and active slot, then per slot the state and the image identity (build epoch, git hash), slot size, max chunk size; the hub uses it to pick the image variant, to read the trial verdict and to paint the slot table |
-| OTA_BEGIN | hub to board | session nonce, image size, image CRC-32; refused while armed or under the voltage floor. The board erases the inactive slot, then acks; the hub allows that ack a generous timeout, erase is seconds long |
-| OTA_CHUNK | hub to board | session, byte offset, up to 240 data bytes (fits the 255-byte framing) |
-| OTA_CHUNK_ACK | board to hub | session, next expected offset; sent every 16 chunks and on any out-of-order chunk |
-| OTA_FINISH | hub to board | session; the board CRC-checks the whole slot and writes the STAGED record |
-| OTA_CONFIRM | hub to board | mark the running trial image VALID by hand; kept as an escape hatch, nothing sends it in normal operation (the firmware confirms itself) |
-| OTA_REVERT | hub to board | activate the other slot if VALID; followed by the existing reboot command |
-| OTA_ABORT | hub to board | drop the session, return to normal mode |
-| OTA_ACK | board to hub | one answer packet for begin, finish, confirm, revert and abort: the acknowledged type, the session, and ok or a refusal reason |
+| OtaStatusRequest | hub to board | ask for the update status |
+| OtaStatus | board to hub | mcu, running and active slot, then per slot the state and the image identity (build epoch, git hash), slot size, max chunk size; the hub uses it to pick the image variant, to read the trial verdict and to paint the slot table |
+| OtaBegin | hub to board | session nonce, image size, image CRC-32; refused while armed or under the voltage floor. The board erases the inactive slot, then acks; the hub allows that ack a generous timeout, erase is seconds long |
+| OtaChunk | hub to board | session, byte offset, up to 240 data bytes (the largest envelope of the wire, 259 bytes encoded, inside the 512-byte framing) |
+| OtaChunkAck | board to hub | session, next expected offset; sent every 16 chunks and on any out-of-order chunk |
+| OtaFinish | hub to board | session; the board CRC-checks the whole slot and writes the STAGED record |
+| OtaRevert | hub to board | activate the other slot if VALID; followed by the existing reboot command |
+| OtaAbort | hub to board | drop the session, return to normal mode |
+| OtaAck | board to hub | one answer for begin, finish, revert and abort: the acknowledged operation (`OtaOp`), the session, and `OTA_OK` or a refusal reason (`OtaResult`) |
+
+The trial image confirms itself on its first ground contact; there is no
+confirm message any more.
 
 Transfer discipline: the board writes chunks strictly in order and its
 ack is cumulative (next expected offset), classic go-back-N. A lost or
@@ -251,69 +254,75 @@ about 3.8 KB, comfortably inside one UART DMA buffer, and keeps the link
 saturated: the effective rate stays near the 92 KB/s ceiling. Selective
 retransmission is not worth its board-side bookkeeping at these sizes.
 
-Reboot reuses the existing REBOOT_COMMAND; nothing else in the protocol
-moves. Godot never sees these packets (they exist only between hub and
-board), so golden fixtures are needed for the C++ and Python decoders
-only.
+Reboot reuses the existing `Reboot` message; nothing else in the wire
+moves. Godot never sees these messages (they exist only between hub and
+board); the codecs are generated from the one schema, so nothing has to be
+kept in step by hand.
 
 ```mermaid
 sequenceDiagram
     participant H as hub
     participant B as board (firmware)
     participant L as bootloader
-    H->>B: OTA_STATUS_REQUEST
-    B->>H: OTA_STATUS (old build, slot A active)
-    H->>B: OTA_BEGIN (size, crc, session)
+    H->>B: OtaStatusRequest
+    B->>H: OtaStatus (old build, slot A active)
+    H->>B: OtaBegin (size, crc, session)
     Note over B: erase slot B (seconds)
-    B->>H: OTA_ACK (begin, ok)
+    B->>H: OtaAck (BEGIN, OTA_OK)
     loop windows of 16 chunks
-        H->>B: OTA_CHUNK x16
-        B->>H: OTA_CHUNK_ACK (next offset)
+        H->>B: OtaChunk x16
+        B->>H: OtaChunkAck (next offset)
     end
-    H->>B: OTA_FINISH
+    H->>B: OtaFinish
     Note over B: CRC slot B, write STAGED
-    B->>H: OTA_ACK (finish, ok)
-    H->>B: REBOOT_COMMAND
+    B->>H: OtaAck (FINISH, OTA_OK)
+    H->>B: Reboot
     Note over L: STAGED found, mark TESTING\nattempted, boot slot B
-    H->>B: OTA_STATUS_REQUEST
+    H->>B: OtaStatusRequest
     Note over B: first ground contact:\nwrite VALID record (self-confirm)
-    B->>H: OTA_STATUS (new build, slot B, VALID)
+    B->>H: OtaStatus (new build, slot B, VALID)
 ```
 
-### 5.1 What a PROTOCOL_VERSION bump costs
+### 5.1 What a schema change costs
 
-Every packet is demultiplexed on its version byte, OTA packets included, so
-a bump strands the board that is already flashed. The new hub drops the
-running board's telemetry (it logs the mismatch once, look for "a board
-flashed with another protocol version"), the running board drops the new
-hub's OTA packets, and the old hub refuses the new bundle on the version
-check in `ota_bundle.cpp`. Nothing is broken and nothing works: the board
-cannot be reached by the new hub, nor updated by the old one.
+There is no version byte: the wire is whatever `mark4.proto` says, and
+every build computes a 32-bit hash of that file (`WIRE_HASH`) that travels
+in its `Announce`. Protobuf tolerates added fields, but a change to an
+existing field or to the framing strands the board that is already
+flashed: its envelopes decode into nonsense or not at all, and the hub
+drops what it cannot use. The one thing that stays visible is the
+mismatch itself: the hub compares every node's hash with its own, logs it
+once per appearance ("speaks wire ..., this hub speaks ...") and exposes
+`wireMismatch` per node in the `discovery` message, which the console
+shell paints red on the node's chip. The old hub refuses the new bundle on
+the `wireHash` check in `ota_bundle.cpp`, so nothing is broken and nothing
+works: the board cannot be trusted by the new hub, nor updated by the old
+one.
 
 There are two ways out. The blunt one is a single SWD flash of the new
 firmware, which needs the board on the bench. The other is a temporary
-migration hub, built with `PROTOCOL_VERSION` reverted to the version the
-board runs and the bundle version check bypassed: it speaks the old
-protocol on the wire while pushing the new-protocol image, and the update
-is an ordinary OTA exchange from there. The trial slot protects it as
-usual - if the new image never reaches ground contact, the auto-revert puts
-the old protocol back.
+migration hub, built from the commit the board runs (same `mark4.proto`,
+hence same hash) with the bundle hash check bypassed: it speaks the old
+wire while pushing the new-wire image, and the update is an ordinary OTA
+exchange from there. The trial slot protects it as usual - if the new image
+never reaches ground contact, the auto-revert puts the old wire back.
 
-A bump is therefore a bench operation, not a field one. Plan it when the
-board is reachable, and flash before shipping a hub that no longer speaks
-to it.
+A schema change is therefore a bench operation, not a field one. Plan it
+when the board is reachable, and flash before shipping a hub that no longer
+speaks to it.
 
 ## 6. Software architecture
 
 The pieces, placed by the dependency rule (flight-core depends on
 nothing; platform speaks protocol; humans speak to the hub):
 
-- **`protocol/ota.hpp`** - the packets of section 5, the image header of
-  section 4.3 and the slot-state enum. The image header lives here
-  because it crosses a process boundary (packaging script writes it,
-  bootloader and hub read it).
-  Static asserts and golden fixtures like every other wire struct, with
-  a Python-side encoder in the packaging tool.
+- **`mark4.proto`** (the `Ota*` messages and enums of section 5) and
+  **`protocol/ota_image.hpp`** - the image header of section 4.3 and the
+  slot-state bytes as the flash stores them. The image header lives in a
+  header of its own because it crosses a process boundary without being
+  wire (packaging script writes it, bootloader and hub read it); the
+  packaging tool carries a Python-side encoder checked against the C++
+  constants.
 - **`platform/AbsFirmwareStore`** - a seventh abstract platform service:
   slot geometry, erase slot, program in order, read back, compute CRC,
   read and append metadata records. Implementations: `stm32` (internal
@@ -363,10 +372,11 @@ nothing; platform speaks protocol; humans speak to the hub):
 - **ESP32 bridge** - no change, by construction.
 
 Verification, in the spirit of everything else in this repo: unit tests
-on OtaUpdater and the metadata module (torn-record recovery above all),
-golden fixtures for the new packets, and one desktop end-to-end test in
-CI - hub OtaClient against drone_sim's updater through real UDP, full
-update, then a simulated failed trial that must roll back.
+on OtaUpdater and the metadata module (torn-record recovery above all), a
+round trip of every updater message through the generated codec, and one
+desktop end-to-end test in CI - hub OtaClient against drone_sim's updater
+through real UDP, full update, then a simulated failed trial that must
+roll back.
 
 ## 7. Deliberately not in v1
 
