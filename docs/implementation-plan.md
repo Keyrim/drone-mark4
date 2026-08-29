@@ -2,10 +2,9 @@
 
 Status: agreed plan, no calendar attached. This document sequences the
 work needed to go from the current code to the target described in
-`docs/target-architecture.md`, folding in every finding of
-`docs/design-audit.md` (coverage table at the end - nothing from the
-audit is silently dropped). Finding numbers below (2.1, 4.5, ...) refer
-to that audit.
+`docs/target-architecture.md`. The numbers below (2.1, 4.5, ...) are the
+findings of the design audit that motivated it; the coverage table at the
+end says where each one is handled.
 
 ## Principles
 
@@ -28,7 +27,7 @@ flowchart LR
     P3["Phase 3<br/>sim determinism"]
     P4["Phase 4<br/>pages"]
     P5["Phase 5<br/>modes + tuning"]
-    P6["Phase 6<br/>blackbox + fidelity"]
+    P6["Phase 6<br/>fidelity"]
     P7["Phase 7<br/>pre-motor safety<br/>(hardware-gated)"]
     P8["Phase 8<br/>editor extension<br/>(optional)"]
 
@@ -78,18 +77,11 @@ one or two commits with its tests.
 - Fix `FirmwareApp::init` ordering to honor the declaration-order
   promise; document or fix the WFI race, the clock wrap call-rate
   constraint and the single-instance coupling of `g_ticks` (3.8).
-- Deduplicate `sendTelemetry` between drone_sim and drone_replay into
+- Deduplicate `sendTelemetry` into
   `software/components/platform/src/common/` (3.6; the full telemetry publisher move happens
   in phase 1 with 2.6).
 
-### 0.3 Bench-safety interim guard
-
-Until phase 3 removes the RC port from batch entirely: headless guard
-and disable flag on `rc_uplink.gd`, and `run_batch.py` overrides the RC
-port like the others (4.3 interim). One evening, closes the only
-physical-safety finding.
-
-### 0.4 CI honesty
+### 0.3 CI honesty
 
 - `HeaderFilterRegex` so clang-tidy sees headers, including protocol/
   (5.1).
@@ -116,19 +108,15 @@ Everything that breaks the wire format, together, once.
 - **Header**: version byte then type byte on every packet; demux by size
   disappears everywhere (4.1).
 - **Streams**: sourceId and sequence number on telemetry and sim raw
-  (4.5); replay/sim/bridge streams become distinguishable (3.7).
+  (4.5); sim and bridge streams become distinguishable (3.7).
 - **Announce packet** (process kind, ports, protocol version) - the
   basis of phase 2 discovery.
 - **Command set additions**, defined now even if consumed later: RC gains
   the mode field (phase 5), tuning set/get/list/ack packets (phase 5).
 - **Serial framing**: CRC-8/16 replaces XOR-8; the length byte is
   covered (4.7).
-- **Blackbox record moves into protocol/**: sync marker, type byte,
-  CRC per record, versioned with the rest of the wire (4.4, 2.8);
-  content is sensor frames + actuator outputs, extensible to controller
-  internals.
-- **flight-core purity**: telemetry packer and Blackbox writer move to
-  platform; flight-core drops its protocol/ dependency entirely (2.6).
+- **flight-core purity**: the telemetry packer moves to platform;
+  flight-core drops its protocol/ dependency entirely (2.6).
 - **Layout guarantees**: static_assert on little-endianness and field
   offsets; document the packed-struct portability assumptions for the
   future ESP32 bridge (4.8).
@@ -148,12 +136,12 @@ flight-core builds without protocol/.
 ## Phase 2 - Hub daemon and unified command paths
 
 - **Hub process** (desktop C++, links protocol/, never flight-core):
-  UDP and serial transports, discovery from announce packets, stream
-  recording, WebSocket + JSON endpoint. Absorbs `serial_bridge.py` and
-  `stream_record.py`, which are deleted (T1, 5.5 partially).
+  UDP and serial transports, discovery from announce packets,
+  WebSocket + JSON endpoint. It absorbs the python bridge and capture
+  scripts, which are deleted (T1, 5.5 partially).
 - **Scenario launcher CLI** in the hub: one command per scenario (sim,
-  sim lockstep, real board, replay); `run_batch.py` becomes a consumer
-  of the launcher instead of spawning processes itself.
+  sim lockstep, real board); `run_batch.py` becomes a consumer of the
+  launcher instead of spawning processes itself.
 - **RC path unification** (3.5, 3.6): an `RcTracker` helper in
   `software/components/platform/src/common/` (decode, timeout fail-safe, frame grafting),
   testable on desktop, used by firmware and by a new sim
@@ -164,17 +152,17 @@ flight-core builds without protocol/.
   constants.
 
 Definition of done: a full sim session (Godot + drone_sim + live plots
-via any WebSocket client) starts with one command; firmware-over-UART
-session works through the hub without `serial_bridge.py`; RC fail-safe
-has a desktop test.
+via any WebSocket client) starts with one command; a board session works
+through the hub with no python in the path; RC fail-safe has a desktop
+test.
 
 ---
 
 ## Phase 3 - Simulator determinism and batch integrity
 
 - Scenario commands (reset, throw, scripted arming) move in-band onto
-  the lockstep link, tick-stamped; `sim_command.gd` and `rc_uplink.gd`
-  are deleted - batch no longer touches any RC or command port,
+  the lockstep link, tick-stamped; the Godot command and RC uplink
+  scripts are deleted - batch no longer touches any RC or command port,
   closing 4.3 structurally.
 - Sensor-noise RNG reseeds per run from the run seed; Godot restart gets
   a session identity so a comeback within the idle window cannot freeze
@@ -196,15 +184,11 @@ CI proves a full sim round-trip on every push.
 
 One page at a time, each deleting its predecessor:
 
-1. **Plots** (live and from-file): parity with `ground_station.py`, plus
-   sequence-based link health; retires `ground_station.py` and the
-   telemetry-parsing Godot scripts (`attitude_compare.gd`). Fixes the
-   time-alignment inconsistency between live and offline comparison
-   (4.8) by sharing one alignment rule.
+1. **Plots** (live): parity with the python ground station, plus
+   sequence-based link health; retires it and the telemetry-parsing
+   Godot scripts.
 2. **Command console**: arm/reset/reboot, RC state display.
-3. **Blackbox browser**: list, download (via dump when phase 6 lands),
-   decode, plot; retires `blackbox_dump.py` and `stream_compare.py`.
-4. **3D attitude** from the telemetry quaternion (three.js).
+3. **3D attitude** from the telemetry quaternion (three.js).
 
 Definition of done: `tools/` contains only `batch/` (as a launcher
 consumer) and `sim-stub/`; Godot contains only plant code.
@@ -225,9 +209,8 @@ Consumes the packet layouts reserved in phase 1.
   value, bounds, armed-change policy), constructor takes the tuning
   struct, `RateController` gains move out of the function body; protocol
   set/get/list/ack wired end to end; hub stores and pushes named
-  profiles on connection; tuning page in the UI. Batch campaigns and
-  re-execution sweep parameters through the same table without
-  recompiling.
+  profiles on connection; tuning page in the UI. Batch campaigns sweep
+  parameters through the same table without recompiling.
 
 Definition of done: mode change refused while armed (tested); a gain
 changed from the tuning page alters the next simulated flight without
@@ -235,28 +218,22 @@ recompilation; a Monte Carlo sweep varies a gain via the launcher.
 
 ---
 
-## Phase 6 - Blackbox on target and fidelity tooling
+## Phase 6 - Fidelity tooling
 
-- **On-board recording**: SD/flash write path for the protocol/ record
-  format (write-only medium; DMA buffers outside CCM), full-rate sensor
-  frames + actuator outputs, loss counter separate from telemetry
-  (3.8 UART funnel).
-- **Dump**: firmware command streaming the recording over UART; hub
-  writes the file; blackbox browser page consumes it.
-- **Re-execution hardening**: recorded real throws become unit-test
-  fixtures (regression of detectors against real data); `firmware_hil`
-  composition when on-target timing checks become relevant.
-- **Fidelity loop** (target 2.5): replay recorded actuator outputs
-  through the Godot plant, compare simulated sensor traces against
-  recorded ones in a dedicated page; plant parameters (mass, inertia,
-  sensor noise, latency) become data. The sensor-model realism gaps
-  (latency, vibration coupling, sampling offset - 4.8) are addressed
-  here, where they can be measured against reality instead of guessed.
-- First fidelity campaign needs no airframe: model the bare board,
-  record hand maneuvers, match the traces.
+- **Fidelity loop** (target 2.4): drive the Godot plant with the actuator
+  outputs a real flight produced, compare the simulated sensor traces
+  against the ones the board reported, in a dedicated page; plant
+  parameters (mass, inertia, sensor noise, latency) become data. The
+  sensor-model realism gaps (latency, vibration coupling, sampling
+  offset - 4.8) are addressed here, where they can be measured against
+  reality instead of guessed.
+- `firmware_hil` composition when on-target timing checks become
+  relevant.
+- First fidelity campaign needs no airframe: model the bare board, fly
+  hand maneuvers, match the traces.
 
-Definition of done: a real recording dumped, browsed, re-executed on
-desktop and compared against the plant, end to end through the hub.
+Definition of done: a real flight compared against the plant, end to end
+through the hub.
 
 ---
 
@@ -274,7 +251,7 @@ Must be complete before an ESC is ever connected; independent of phases
 - Flash/latency budget: LTO evaluation and a size check in CI (5.8).
 
 Definition of done: a deliberately wedged I2C bus and a forced HardFault
-both end with motors safe and a blackbox trace, on the bench.
+both end with motors safe, on the bench.
 
 ---
 
@@ -298,9 +275,8 @@ consciously deferred, with the reason.
 | 2.3 NaN to motors | 0.1 | |
 | 2.4 tuning ownership | 5 | table + struct + wire |
 | 2.5 dt triplication | 0.1 | merged with 2.2 |
-| 2.6 packer/Blackbox in core | 1 | purity restored |
+| 2.6 packer in core | 1 | purity restored |
 | 2.7 arming chatter/handoff | 0.1 interim, 5 final | modes remove the discontinuity |
-| 2.8 blackbox tear resilience | 1 | marker + type + CRC per record |
 | 2.9 ready() gates nothing | 0.1 | decide: gate or delete |
 | 2.10 sentinels, kill reset, predicate | 0.1 | |
 | 2.11 test gaps | 0.1 | one test per gap |
@@ -310,21 +286,20 @@ consciously deferred, with the reason.
 | 3.4 UdpLink latch | 0.2 | validate before latch |
 | 3.5 RC fail-safe unexercised | 2 | RcTracker + sim command receiver |
 | 3.6 empty common/ | 0.2 + 2 | sendTelemetry then RcTracker |
-| 3.7 replay port collision | 1 + 2 | sourceId + discovery |
+| 3.7 stream port collision | 1 + 2 | sourceId + discovery |
 | 3.8 lifecycle, WFI, wrap, g_ticks, UART funnel | 0.2 + 6 | funnel counter in 6 |
 | 4.1 wire duplication, size demux | 1 | type byte + golden packets |
 | 4.2 seed reproducibility | 3 | in-band commands, reseed, hash |
-| 4.3 batch RC at real board | 0.3 interim, 3 final | structural removal |
-| 4.4 blackbox bypasses protocol/ | 1 | |
+| 4.3 batch RC at real board | 3 | structural removal |
 | 4.5 no seq/sourceId | 1 | |
 | 4.6 Godot restart | 3 | session identity |
 | 4.7 XOR-8 framing | 1 | CRC |
 | 4.8 endianness, broadcast, alignment rule, stub doc, resends, realism | 1 + 3 + 4 + 6 | split as noted; LAN broadcast: backlog, revisit with discovery |
-| 5.1 tidy headers | 0.4 | |
-| 5.2 tidy stm32 | 0.4 | |
-| 5.3 :latest image | 0.4 | |
-| 5.4 Catch2 pinning | 0.4 | |
+| 5.1 tidy headers | 0.3 | |
+| 5.2 tidy stm32 | 0.3 | |
+| 5.3 :latest image | 0.3 | |
+| 5.4 Catch2 pinning | 0.3 | |
 | 5.5 python/CI blind spot | 2 + 3 | tools die; batch smoke lands |
-| 5.6 guidelines vs tidy | 0.4 | |
-| 5.7 CROSSCOMPILING conflation | 0.4 | |
-| 5.8 LTO/size, flags fragility, strict firmware, ci.yml hygiene, ASCII check, devcontainer trigger | 0.4 + 7 | flags-init note and devcontainer trigger: backlog (low risk, low cost to fix when touched) |
+| 5.6 guidelines vs tidy | 0.3 | |
+| 5.7 CROSSCOMPILING conflation | 0.3 | |
+| 5.8 LTO/size, flags fragility, strict firmware, ci.yml hygiene, ASCII check, devcontainer trigger | 0.3 + 7 | flags-init note and devcontainer trigger: backlog (low risk, low cost to fix when touched) |

@@ -45,8 +45,8 @@ hub (desktop) --UDP/WiFi--> ESP32 bridge --UART 921600--> flight controller
   must sit on a DMA circular buffer, which keeps capturing while the CPU
   is stalled.
 - **Two chips, one logic.** mark1 carries an STM32F405 (1 MB flash); the
-  AIO board an STM32F722 (512 KB flash, plus a 16 MB W25Q128 NOR that
-  belongs to the blackbox). The slot geometry is per-chip data; every
+  AIO board an STM32F722 (512 KB flash, plus a 16 MB W25Q128 NOR). The
+  slot geometry is per-chip data; every
   state machine, packet and tool is shared.
 
 ## 3. Functional proposal
@@ -309,9 +309,9 @@ The pieces, placed by the dependency rule (flight-core depends on
 nothing; platform speaks protocol; humans speak to the hub):
 
 - **`protocol/ota.hpp`** - the packets of section 5, the image header of
-  section 4.3 and the slot-state enum. The image header lives here for
-  the same reason the blackbox record format does: it crosses a process
-  boundary (packaging script writes it, bootloader and hub read it).
+  section 4.3 and the slot-state enum. The image header lives here
+  because it crosses a process boundary (packaging script writes it,
+  bootloader and hub read it).
   Static asserts and golden fixtures like every other wire struct, with
   a Python-side encoder in the packaging tool.
 - **`platform/AbsFirmwareStore`** - a seventh abstract platform service:

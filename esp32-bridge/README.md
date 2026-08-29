@@ -78,7 +78,7 @@ USB-serial chip).
 
 ## Using it from the hub
 
-Join the `mark4-bridge` network, then open `udp:192.168.4.1:47830` in the board
-panel where a device path usually goes. The hub treats it as the same framed
-stream a cable carries, reopens it on its own when the network comes back, and
-the line speed field is ignored.
+Join the `mark4-bridge` network, or put the bridge on the same LAN as the
+hub: either way the announce above is what the hub follows, so connecting is
+one click on the bridge row. The hub reads and writes the framed stream
+straight over UDP and reopens it on its own when the network comes back.

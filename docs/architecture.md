@@ -11,18 +11,16 @@ flowchart LR
     subgraph flight["Flight executables - flight-core + platform composition"]
         FW["firmware<br/>STM32F405"]
         DS["drone_sim<br/>desktop (and target)"]
-        DR["drone_replay<br/>desktop"]
     end
 
     ESP["ESP32 bridge<br/>UART <-> UDP WiFi"]
     GODOT["Godot simulator<br/>(plant only)"]
-    HUB["hub<br/>discovery, recording, launcher"]
+    HUB["hub<br/>discovery, decoding, web pages"]
     PAGES["web pages<br/>control, plots"]
     BUS(("Telemetry<br/>UDP broadcast"))
 
     FW <--> ESP
     DS <-->|"sim link: SensorFrame / ActuatorFrame<br/>real-time or lockstep"| GODOT
-    DR -->|"blackbox replay"| BUS
     ESP --> BUS
     DS --> BUS
     BUS --> HUB
@@ -31,7 +29,7 @@ flowchart LR
 
 - **A single output bus**: telemetry goes out as UDP broadcast; any
   combination of tools listens simultaneously, whatever the source (firmware
-  through the ESP32, simulation, replay).
+  through the ESP32, simulation).
 - **Godot and the hub never link flight-core**: they only know `protocol/`
   (packed structs, versioned from the first byte). The web pages only know
   the hub's JSON over WebSocket/HTTP, never the wire.
@@ -54,16 +52,14 @@ flowchart TB
         SINK["AbsMotorSink"]
         TEL["AbsTelemetrySender"]
         CMD["AbsCommandReceiver"]
-        LOG["AbsLogSink"]
         CLK["AbsClock<br/>(internal to platform)"]
     end
 
     MAIN -->|"builds and injects"| CORE
-    MAIN -->|"instantiates one variant:<br/>stm32 / sim / replay"| platform
+    MAIN -->|"instantiates one variant:<br/>stm32 / sim"| platform
     SRC -->|"waitFrame()"| CORE
     CORE -->|"push()"| SINK
     CORE -.-> TEL
-    CORE -.-> LOG
 ```
 
 Structuring principles:

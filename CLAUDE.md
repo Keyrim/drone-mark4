@@ -63,7 +63,7 @@ python3 scripts/build_app.py drone_sim
 
 # Start a bench session: the hub takes no arguments, serves the pages and
 # websocket on http://127.0.0.1:47810 and stays up; everything operational
-# (board UART, recording, replay, profiles) is driven from the pages.
+# (board link, tuning profiles) is driven from the pages.
 # Godot (own terminal or the "godot sim" VS Code task) and drone_sim are
 # started and restarted by hand, discovery picks them up.
 ./software/build/desktop/hub/hub
@@ -88,7 +88,7 @@ godot --path sim-godot --headless --script res://tests/golden_check.gd -- "$(pwd
 
 # Lint (all must be clean before committing; CI runs exactly these)
 git ls-files '*.cpp' '*.hpp' '*.c' '*.h' | xargs clang-format --dry-run --Werror
-run-clang-tidy -p software/build/desktop -quiet "$(pwd)/software/(components|drone_sim|drone_replay|drone_firmware|hub|tests)/"
+run-clang-tidy -p software/build/desktop -quiet "$(pwd)/software/(components|drone_sim|drone_firmware|hub|tests)/"
 ./scripts/tidy_stm32.sh    # clang-tidy over the stm32 compile database
 ./scripts/check_ascii.sh   # ASCII-only hard rule
 ```
@@ -100,7 +100,7 @@ config and only relaxes magic numbers.
 ## Architecture
 
 Everything C++ lives under `software/`: the executables at its top level
-(`drone_sim`, `drone_replay`, `drone_firmware`, `hub`), the libraries in
+(`drone_sim`, `drone_firmware`, `hub`), the libraries in
 `software/components/`. Three libraries, one rule of dependency flow:
 
 - `flight-core/` - pure static lib. Single entry point
@@ -111,18 +111,17 @@ Everything C++ lives under `software/`: the executables at its top level
   first in step(). `flight_core_types` is a separate INTERFACE target so
   platform headers can use SensorFrame/ActuatorFrame without a cycle.
   flight_core links flight_core_types alone: no platform, no protocol/
-  (the telemetry packer and the Blackbox recorder are IO adapters and
-  live in `platform_common`).
-- `platform/` - 6 abstract services in `software/components/platform/include/platform/`
+  (the telemetry packer is an IO adapter and lives in `platform_common`).
+- `platform/` - 5 abstract services in `software/components/platform/include/platform/`
   (AbsSensorSource, AbsMotorSink, AbsCommandReceiver, AbsTelemetrySender,
-  AbsLogSink, AbsClock). `AbsSensorSource::waitFrame()` is the single wait
+  AbsClock). `AbsSensorSource::waitFrame()` is the single wait
   point of the whole system; AbsClock is internal to platform and never
   passed to FlightCore. Implementations live in `software/components/platform/src/<variant>/`
-  (sim, stm32, replay later); each variant's headers stay under its own
+  (sim, stm32); each variant's headers stay under its own
   `src/<variant>/include/`. The `platform` INTERFACE target (headers only)
   carries the interfaces; `platform_common` (header-only) holds the
   composed helpers shared by every variant (TelemetryPublisher,
-  packTelemetry, Blackbox); impl libs (`platform_sim`, `platform_stm32`)
+  packTelemetry); impl libs (`platform_sim`, `platform_stm32`)
   are declared only in the presets where they make sense (the
   DRONE_PLATFORM switch in `software/components/platform/CMakeLists.txt` and
   `software/CMakeLists.txt`) and are linked by the apps.
@@ -145,8 +144,7 @@ as value members, declaration order = construction/init order (destruction
 is automatically the reverse), dependencies injected by reference, reference
 accessors named `accessXxx()`, `bool init()` where the first failure logs
 and returns false. main() only parses arguments, builds the App, runs it.
-Replicate this pattern for firmware and drone_replay when they grow real
-services.
+Replicate this pattern for firmware as it grows real services.
 
 STM32 specifics: generic Cortex-M4F build via
 `software/cmake/toolchain-arm-none-eabi.cmake` (`-nostartfiles`, newlib-nano, nosys).

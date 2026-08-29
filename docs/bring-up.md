@@ -46,7 +46,7 @@ connector and share **I2C1**: a **GY-86** for the IMU and compass, and an
   both of its addresses (0x46 with SDO low, 0x47 with SDO high) and
   locks onto whichever answers with the chip id. A barometer that fails
   to come up is not fatal: the firmware boots without it and the frames
-  carry 0 Pa, which is visible in the blackbox from the ground.
+  carry 0 Pa, which is visible in the telemetry from the ground.
 - **HMC5883L** compass at 0x1E, wired behind the MPU6050 auxiliary bus:
   it only appears on the main bus once the MPU I2C bypass
   (INT_PIN_CFG.I2C_BYPASS_EN) is open.
@@ -60,8 +60,6 @@ Constraints this hardware puts on the firmware:
   core's gyro saturation cutoff must sit below that, and saturation must
   be handled. Measured hand throws tumble at <= 10 rad/s, well within
   range.
-- No SD or flash chip: the blackbox streams over UART (or RTT) to the
-  PC for now.
 
 ## Debug probe
 
@@ -128,17 +126,15 @@ Incremental, one observable win per step:
    scan printing the addresses found on the breakout.
 2. **IMU driver**: MPU6050 over I2C, timer-paced sampling into
    SensorFrames; barometer driver for whatever the scan identified.
-3. **Telemetry**: SensorFrames streamed over UART1 through the FTDI to
-   the PC; blackbox over the same link. Done: 50 Hz
-   TelemetryPacket stream plus full-rate blackbox records at 921600
-   baud (about 40 % of the line), each wrapped in the serial framing of
-   `protocol/serial_framing.hpp` (a UART has no datagram boundaries),
-   interrupt-driven behind a ring buffer, demuxed by payload size on
-   the PC. The `hub` (UART opened from the Board panel of the control
-   page) is the
-   single serial consumer of a session: it re-broadcasts telemetry over
-   UDP, serves the web pages that plot it, and captures `.m4bb` files
-   that `drone_replay` plays back. The uplink carries the pilot state
+3. **Telemetry**: SensorFrames streamed over UART1 to the PC. Done: a
+   50 Hz TelemetryPacket stream at 921600 baud, each packet wrapped in
+   the serial framing of `protocol/serial_framing.hpp` (a UART has no
+   datagram boundaries), interrupt-driven behind a ring buffer, demuxed
+   by payload size on the PC. The `hub` (the board reached through the
+   ESP32 WiFi bridge, connected from the Connections panel of the
+   control page) is the single consumer of that link in a session: it
+   re-broadcasts telemetry over UDP and serves the web pages that plot
+   it. The uplink carries the pilot state
    (RcCommandPacket: kill, arm, throttle): an `rc` message aimed at
    `firmware` on the hub websocket endpoint is framed onto the UART
    verbatim, and 500 ms of silence trips the fail-safe (kill engaged,
