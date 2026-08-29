@@ -1,17 +1,16 @@
 class_name SimLink
 extends Node
 
-## UDP link with the flight process, speaking the project wire.
+## Link between one virtual drone and its flight process, over the transport.
 ##
-## One SimSensor envelope is sent per physics tick to the flight process,
-## which answers with a SimActuator envelope to the address the sensor came
-## from. A single unconnected socket is therefore enough: the local port is
-## picked by the operating system unless local_port says otherwise.
+## One SimSensor envelope is sent per physics tick as a unicast frame to the
+## drone_sim node this drone belongs to, which answers with a SimActuator
+## envelope to this plant's node. The DroneManager owns the transport and
+## dispatches every payload to the drone whose node sent it (receive()).
 ##
 ## The wire is software/components/protocol/mark4.proto; the codec used here
 ## (scripts/gen/mark4.gd) is generated from it by the desktop build (target
-## proto_gd), never edited. The plant is not a transport node: envelopes
-## travel bare in the datagrams of this link.
+## proto_gd), never edited.
 ##
 ## Sensors only: the pilot state is not a sensor reading and does not
 ## travel here, and this project does not hold one. It reaches the flight
@@ -26,9 +25,9 @@ extends Node
 ## envelope it sent, and resends it when the wait times out (UDP may drop
 ## packets, the handshake may not).
 ##
-## A scenario arrives as its own SimScenario envelope on this link, whenever
-## the flight process received one from the ground. A scenario is taken once
-## per change of its sequence, and the repeats are ignored.
+## A scenario arrives as its own SimScenario envelope, whenever the flight
+## process received one from the ground. A scenario is taken once per
+## change of its sequence, and the repeats are ignored.
 ##
 ## Vectors on the wire use the drone body frame of the protocol (x forward,
 ## y left, z up - the accelerometer reads +1 g on z at rest), remapped here
@@ -52,14 +51,6 @@ const LOCKSTEP_POLL_INTERVAL_US := 20
 ## Sensor envelope resends before a lockstep tick gives up.
 const LOCKSTEP_RESEND_LIMIT := 20
 
-@export_group("Endpoint")
-## Address of the flight process (drone_sim).
-@export var flight_host: String = "127.0.0.1"
-## UDP port the flight process listens on, SIM_LINK_PORT in protocol/ports.hpp.
-@export var flight_port: int = 47800
-## Local UDP port, 0 lets the operating system pick an ephemeral one.
-@export var local_port: int = 0
-
 @export_group("Lockstep")
 ## When true the physics tick waits for the actuator reply before completing.
 ## This blocks the main thread and is meant for deterministic runs.
@@ -67,62 +58,45 @@ const LOCKSTEP_RESEND_LIMIT := 20
 ## Maximum wait before giving up and reusing the last known motor commands.
 @export var lockstep_timeout_ms: float = 50.0
 
+## Transport node of the flight process this drone talks to.
+var flight_node: int = 0
 ## Last valid motor commands received, in [0, 1].
 var motor_commands := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
-## Number of sensor envelopes handed to the socket.
+## Number of sensor envelopes handed to the transport.
 var packets_sent: int = 0
 ## Number of valid actuator envelopes decoded.
 var packets_received: int = 0
-## Number of datagrams rejected because they did not decode.
+## Number of payloads rejected because they did not decode.
 var packets_dropped: int = 0
 ## Number of physics ticks that hit the lockstep timeout.
 var lockstep_timeouts: int = 0
 ## Number of sensor envelopes resent while waiting for their echo.
 var lockstep_resends: int = 0
+## Wall time spent in exchange(), for the per-tick cost report [us].
+var exchange_us: int = 0
 
-var _socket := PacketPeerUDP.new()
-var _ready_to_send: bool = false
+var _transport: Mark4Transport = null
 var _pending_echo_us: int = -1
+var _matched: bool = false
 var _last_payload := PackedByteArray()
 var _last_scenario_seq: int = 0
 var _pending_scenario: Dictionary = {}
 
 
-func _ready() -> void:
-	flight_port = SimArgs.get_port("flight-port", flight_port)
+## Bind this link to the transport and the flight process node it serves.
+func setup(transport: Mark4Transport, node: int) -> void:
+	_transport = transport
+	flight_node = node
 	if SimArgs.has_flag("lockstep"):
 		lockstep = true
-	var bind_error := _socket.bind(local_port, "0.0.0.0")
-	if bind_error != OK:
-		push_error("sim link: cannot bind local port %d (error %d)" % [local_port, bind_error])
-		return
-	var destination_error := _socket.set_dest_address(flight_host, flight_port)
-	if destination_error != OK:
-		push_error(
-			(
-				"sim link: cannot resolve %s:%d (error %d)"
-				% [flight_host, flight_port, destination_error]
-			)
-		)
-		return
-	_ready_to_send = true
-	print(
-		(
-			"sim link: local port %d, flight process %s:%d, lockstep %s, wire %08x"
-			% [_socket.get_local_port(), flight_host, flight_port, str(lockstep), WireHash.VALUE]
-		)
-	)
-
-
-func _exit_tree() -> void:
-	_socket.close()
 
 
 ## Send one sensor envelope and collect the replies.
 ##
-## In free running mode the pending replies are drained without blocking, so
-## the motor commands applied on this tick usually answer the previous one. In
-## lockstep mode the call blocks until a reply arrives or the timeout expires.
+## In free running mode the replies were dispatched by the manager's poll
+## at the beginning of the tick, so the motor commands applied on this tick
+## usually answer the previous one. In lockstep mode the call blocks until
+## the reply to this very envelope arrives or the timeout expires.
 ##
 ## @param timestamp_us simulated time of the sample [us].
 ## @param gyro_rad_s body angular rates [rad/s], Godot axes.
@@ -142,16 +116,47 @@ func exchange(
 	position: Vector3,
 	velocity: Vector3
 ) -> void:
-	if not _ready_to_send:
+	if _transport == null:
 		return
+	var started_us := Time.get_ticks_usec()
 	_send_sensor(
 		timestamp_us, gyro_rad_s, accel_mps2, baro_pa, reset_count, body_basis, position, velocity
 	)
-	if lockstep:
-		if not _wait_for_reply():
-			lockstep_timeouts += 1
-	else:
-		_drain_replies()
+	if lockstep and not _wait_for_reply():
+		lockstep_timeouts += 1
+	exchange_us += Time.get_ticks_usec() - started_us
+
+
+## One payload the transport delivered from this drone's flight process.
+func receive(payload: PackedByteArray) -> void:
+	if payload.is_empty():
+		packets_dropped += 1
+		return
+	# One byte tells the body apart before the codec runs: telemetry and
+	# the rest of what the flight process broadcasts is not for the plant.
+	match payload[0]:
+		Mark4Announce.TAG_SIM_ACTUATOR:
+			var envelope := Mark4.Envelope.new()
+			if envelope.from_bytes(payload) != Mark4.PB_ERR.NO_ERRORS:
+				packets_dropped += 1
+				return
+			var echo := _take_actuator(envelope.get_sim_actuator())
+			if echo < 0:
+				packets_dropped += 1
+				return
+			packets_received += 1
+			if echo == _pending_echo_us:
+				_matched = true
+		Mark4Announce.TAG_SIM_SCENARIO:
+			var envelope := Mark4.Envelope.new()
+			if envelope.from_bytes(payload) != Mark4.PB_ERR.NO_ERRORS:
+				packets_dropped += 1
+				return
+			_take_scenario(envelope.get_sim_scenario())
+		Mark4Announce.TAG_ANNOUNCE:
+			pass
+		_:
+			packets_dropped += 1
 
 
 ## Take the scenario received since the last call, if any.
@@ -206,8 +211,9 @@ func _send_sensor(
 
 	var payload := envelope.to_bytes()
 	_pending_echo_us = timestamp_us
+	_matched = false
 	_last_payload = payload
-	if _socket.put_packet(payload) == OK:
+	if _transport.send(flight_node, payload):
 		packets_sent += 1
 
 
@@ -218,46 +224,25 @@ func _add_vector(add: Callable, vector: Vector3) -> void:
 	add.call(vector.z)
 
 
+## Pump the transport until the echo of the pending envelope arrives: the
+## manager dispatches it back into receive() synchronously from poll().
 func _wait_for_reply() -> bool:
 	var resends := 0
 	var deadline_us := Time.get_ticks_usec() + int(lockstep_timeout_ms * 1000.0)
 	while true:
-		if _drain_replies() > 0:
+		_transport.poll(Time.get_ticks_usec())
+		if _matched:
 			return true
 		if Time.get_ticks_usec() >= deadline_us:
 			if resends >= LOCKSTEP_RESEND_LIMIT:
 				return false
 			resends += 1
 			lockstep_resends += 1
-			var _sent := _socket.put_packet(_last_payload)
+			var _sent := _transport.send(flight_node, _last_payload)
 			deadline_us = Time.get_ticks_usec() + int(lockstep_timeout_ms * 1000.0)
 		else:
 			OS.delay_usec(LOCKSTEP_POLL_INTERVAL_US)
 	return false
-
-
-## Decode every pending datagram, return how many answered the pending envelope.
-func _drain_replies() -> int:
-	var matched := 0
-	while _socket.get_available_packet_count() > 0:
-		var envelope := Mark4.Envelope.new()
-		if envelope.from_bytes(_socket.get_packet()) != Mark4.PB_ERR.NO_ERRORS:
-			packets_dropped += 1
-			continue
-		match envelope.get_body_case():
-			Mark4.Envelope.BodyCase.SIM_ACTUATOR:
-				var echo := _take_actuator(envelope.get_sim_actuator())
-				if echo >= 0:
-					packets_received += 1
-					if echo == _pending_echo_us:
-						matched += 1
-				else:
-					packets_dropped += 1
-			Mark4.Envelope.BodyCase.SIM_SCENARIO:
-				_take_scenario(envelope.get_sim_scenario())
-			_:
-				packets_dropped += 1
-	return matched
 
 
 ## @return the echoed timestamp of a valid actuator message, -1 when rejected.

@@ -2,8 +2,9 @@ class_name SimHud
 extends Label
 
 ## On screen overlay: simulated time, link health, motor commands and the
-## headline sensor values. Refreshed a few times per second, which is enough to
-## read it and cheap enough to stay out of the way of the physics.
+## headline sensor values of the followed drone, plus how many drones the
+## plant hosts. Refreshed a few times per second, which is enough to read it
+## and cheap enough to stay out of the way of the physics.
 ##
 ## No pilot state here: this project holds none. Kill, arm and throttle live
 ## on the RC path, between the cockpit and the flight process.
@@ -11,18 +12,18 @@ extends Label
 ## Delay between two overlay updates [s].
 const REFRESH_PERIOD_S := 0.1
 
-## Drone the overlay reads its values from.
-@export var drone_path: NodePath
+## Manager whose followed drone the overlay reads.
+@export var drones_path: NodePath
 
-var _drone: Drone = null
+var _drones: DroneManager = null
 var _elapsed_s: float = 0.0
 
 
 func _ready() -> void:
-	if not drone_path.is_empty():
-		_drone = get_node_or_null(drone_path) as Drone
-	if _drone == null:
-		push_warning("overlay: no drone to watch")
+	if not drones_path.is_empty():
+		_drones = get_node_or_null(drones_path) as DroneManager
+	if _drones == null:
+		push_warning("overlay: no drone manager to watch")
 	_refresh()
 
 
@@ -35,16 +36,24 @@ func _process(delta: float) -> void:
 
 
 func _refresh() -> void:
-	if _drone == null:
-		text = "no drone"
+	if _drones == null:
+		text = "no drone manager"
 		return
-	var link := _drone.sim_link
 	var lines := PackedStringArray()
-	lines.append("sim time   %8.3f s" % _drone.simulated_time_s())
-	lines.append("wire       %08x" % WireHash.VALUE)
+	lines.append("plant      node %08x  wire %08x" % [_drones.transport.node_id, WireHash.VALUE])
+	lines.append("drones     %d" % _drones.drones.size())
+	var drone := _drones.followed
+	if drone == null:
+		lines.append("no flight process yet: start a drone_sim")
+		lines.append("keys       ESC quit")
+		text = "\n".join(lines)
+		return
+	var link := drone.sim_link
+	lines.append("following  %08x" % link.flight_node)
+	lines.append("sim time   %8.3f s" % drone.simulated_time_s())
 	lines.append("motors     %s" % link.motor_commands_text())
-	lines.append("accel      %6.2f g" % _drone.sensors.accel_magnitude_g())
-	lines.append("altitude   %6.2f m" % _drone.altitude_m())
+	lines.append("accel      %6.2f g" % drone.sensors.accel_magnitude_g())
+	lines.append("altitude   %6.2f m" % drone.altitude_m())
 	lines.append(
 		(
 			"link       sent %d  received %d  dropped %d"

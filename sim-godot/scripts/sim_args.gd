@@ -3,8 +3,8 @@ extends Node
 ## Command line configuration for scripted runs (batch campaigns).
 ##
 ## Parses the user arguments placed after the `--` separator, e.g.:
-##   godot --headless --path sim-godot -- --flight-port 48000 \
-##     --raw-port 48002 --lockstep --time-scale 20
+##   godot --headless --path sim-godot -- --discovery-port 48001 \
+##     --lockstep --time-scale 20
 ##
 ## Interactive sessions pass no user arguments: every script keeps its
 ## inspector defaults. Registered as an autoload, so the values are parsed

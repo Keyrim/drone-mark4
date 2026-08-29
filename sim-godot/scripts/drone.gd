@@ -110,9 +110,14 @@ var _scheduled_swing_s: float = 0.0
 ## reset, so no draw of a run depends on how many runs came before it.
 var _rng := RandomNumberGenerator.new()
 
+## One-shot world key requests, set by the DroneManager on the followed drone
+## and consumed on the next physics tick, so they land on a tick boundary.
+var _throw_requested: bool = false
+var _grab_requested: bool = false
+var _reset_requested: bool = false
+
 @onready var sensors: DroneSensors = $Sensors
 @onready var sim_link: SimLink = $SimLink
-@onready var pilot: PilotInput = $PilotInput
 @onready var hand: SimHand = $Hand
 
 
@@ -135,14 +140,18 @@ func _physics_process(delta: float) -> void:
 		_pending_scenario = scenario
 		_pending_seed = int(scenario["seed"])
 		_reset_pending = true
-	if pilot.take_reset_request():
+	if _reset_requested:
 		# The keyboard goes through the same door, keeping the seed it has.
+		_reset_requested = false
 		_pending_scenario = {}
 		_pending_seed = sensors.rng_seed
 		_reset_pending = true
-	if pilot.take_grab_request() and not hand.is_holding():
-		hand.grab(_random_held_basis())
-	if pilot.take_throw_request():
+	if _grab_requested:
+		_grab_requested = false
+		if not hand.is_holding():
+			hand.grab(_random_held_basis())
+	if _throw_requested:
+		_throw_requested = false
 		if hand.is_holding():
 			# The hand throw: swing arc, rotating grip, tilted release.
 			hand.start_swing(throw_delta_velocity_mps, throw_angular_velocity_rad_s, 0.35)
@@ -234,6 +243,19 @@ func _fire_scheduled() -> void:
 		hand.grab(_scheduled_held_basis, _scheduled_held_s)
 		hand.plan_swing(_scheduled_velocity, _scheduled_angular, _scheduled_swing_s)
 	_scheduled = Scheduled.NONE
+
+
+## World keys, applied on the next physics tick.
+func request_reset() -> void:
+	_reset_requested = true
+
+
+func request_grab() -> void:
+	_grab_requested = true
+
+
+func request_throw() -> void:
+	_throw_requested = true
 
 
 ## Simulated time of the current tick [us]. It comes from the tick counter and

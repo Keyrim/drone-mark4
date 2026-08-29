@@ -48,6 +48,11 @@ func _ready() -> void:
 	print("arena: wall ring at %.1f m" % radius_m)
 
 
+## Fade the segments crossing the sightline to another node; null fades none.
+func set_target(target: Node3D) -> void:
+	_target = target
+
+
 func _process(_delta: float) -> void:
 	if _camera == null or _target == null:
 		return

@@ -1,0 +1,81 @@
+[gd_scene format=3 uid="uid://b3v7q2m8xw5kd"]
+
+[ext_resource type="Script" uid="uid://dcsk425cxn3mx" path="res://scripts/drone.gd" id="1_drone"]
+[ext_resource type="Script" uid="uid://cf36xsm0lp6s8" path="res://scripts/sensors.gd" id="2_sensors"]
+[ext_resource type="Script" uid="uid://ccw6ntdwiuw1g" path="res://scripts/sim_link.gd" id="3_sim_link"]
+[ext_resource type="Script" path="res://scripts/hand.gd" id="4_hand"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_frame"]
+size = Vector3(0.17, 0.05, 0.17)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_frame"]
+albedo_color = Color(0.12, 0.13, 0.15, 1)
+metallic = 0.3
+roughness = 0.5
+
+[sub_resource type="BoxMesh" id="BoxMesh_frame"]
+material = SubResource("StandardMaterial3D_frame")
+size = Vector3(0.16, 0.03, 0.16)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_motor_rear"]
+albedo_color = Color(0.9, 0.9, 0.9, 1)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_motor_rear"]
+material = SubResource("StandardMaterial3D_motor_rear")
+top_radius = 0.012
+bottom_radius = 0.012
+height = 0.02
+radial_segments = 12
+rings = 1
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_motor_front"]
+albedo_color = Color(0.85, 0.16, 0.16, 1)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_motor_front"]
+material = SubResource("StandardMaterial3D_motor_front")
+top_radius = 0.012
+bottom_radius = 0.012
+height = 0.02
+radial_segments = 12
+rings = 1
+
+[node name="Drone" type="RigidBody3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.03, 0)
+mass = 0.65
+center_of_mass_mode = 1
+inertia = Vector3(0.0023, 0.004, 0.0023)
+can_sleep = false
+linear_damp_mode = 1
+angular_damp_mode = 1
+script = ExtResource("1_drone")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("BoxShape3D_frame")
+
+[node name="Frame" type="MeshInstance3D" parent="."]
+mesh = SubResource("BoxMesh_frame")
+
+[node name="Motor0" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0566, 0.02, 0.0566)
+mesh = SubResource("CylinderMesh_motor_rear")
+
+[node name="Motor1" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0566, 0.02, -0.0566)
+mesh = SubResource("CylinderMesh_motor_front")
+
+[node name="Motor2" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0566, 0.02, 0.0566)
+mesh = SubResource("CylinderMesh_motor_rear")
+
+[node name="Motor3" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0566, 0.02, -0.0566)
+mesh = SubResource("CylinderMesh_motor_front")
+
+[node name="Sensors" type="Node" parent="."]
+script = ExtResource("2_sensors")
+
+[node name="SimLink" type="Node" parent="."]
+script = ExtResource("3_sim_link")
+
+[node name="Hand" type="Node" parent="."]
+script = ExtResource("4_hand")

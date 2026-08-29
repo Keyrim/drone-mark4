@@ -21,10 +21,15 @@ var _target: Node3D = null
 
 
 func _ready() -> void:
+	# Usually empty: the DroneManager hands the followed drone over with
+	# set_target() once a flight process shows up.
 	if not target_path.is_empty():
 		_target = get_node_or_null(target_path) as Node3D
-	if _target == null:
-		push_warning("camera: no target, staying where it is")
+
+
+## Follow another node; null parks the camera where it is.
+func set_target(target: Node3D) -> void:
+	_target = target
 
 
 func _process(delta: float) -> void:
