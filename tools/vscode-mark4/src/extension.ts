@@ -243,6 +243,7 @@ export function activate(context: vscode.ExtensionContext): void {
             logs.show();
         }),
         vscode.commands.registerCommand("mark4.clearLogs", () => logs.clear()),
+        vscode.commands.registerCommand("mark4.showLogs", () => logs.show()),
         vscode.commands.registerCommand("mark4.openControl", () => openPage("control", vscode.ViewColumn.Active)),
         vscode.commands.registerCommand("mark4.openPlots", () => openPage("plots", vscode.ViewColumn.Active)),
         vscode.commands.registerCommand("mark4.benchSession", benchSession),

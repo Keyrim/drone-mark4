@@ -193,6 +193,12 @@
                 "icon": "$(clear-all)"
             },
             {
+                "command": "mark4.showLogs",
+                "title": "Show Logs",
+                "category": "Mark4",
+                "icon": "$(output)"
+            },
+            {
                 "command": "mark4.stopGodot",
                 "title": "Stop Godot Sim",
                 "category": "Mark4",
@@ -253,6 +259,11 @@
                     "command": "mark4.clearLogs",
                     "when": "view == mark4.logLevels",
                     "group": "navigation@4"
+                },
+                {
+                    "command": "mark4.showLogs",
+                    "when": "view == mark4.logLevels",
+                    "group": "navigation@5"
                 }
             ],
             "view/item/context": [
@@ -335,6 +346,13 @@
                     "when": "false"
                 }
             ]
-        }
+        },
+        "keybindings": [
+            {
+                "command": "mark4.showLogs",
+                "key": "ctrl+alt+l",
+                "mac": "cmd+alt+l"
+            }
+        ]
     }
 }
