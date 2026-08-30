@@ -13,6 +13,11 @@ namespace mark4
     {
         m_last = frame;
         ++m_pushCount;
+        if (m_link.plant() == 0U)
+        {
+            ++m_droppedCount;
+            return;
+        }
 
         if (m_scenarioPending && emitScenario(m_pendingScenario))
         {

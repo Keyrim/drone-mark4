@@ -36,12 +36,6 @@ namespace mark4
     class DroneSimApp
     {
       public:
-        /// Granularity of the sensor wait [ms]. A silent plant does not end
-        /// the run - the platform is just not ready, like a dead sensor on a
-        /// real board - but the loop must keep waking up to announce itself,
-        /// and the announce contract is one per second.
-        static constexpr std::uint32_t IDLE_TIMEOUT_MS = 500U;
-
         /// Size of the buffer holding the emulated-flash directory. The
         /// store builds its own file paths inside it, so this only has to
         /// hold the directory itself.
@@ -72,7 +66,9 @@ namespace mark4
         bool init();
 
         /// @brief Runs the waitFrame -> step -> push -> record loop until the
-        ///        requested number of frames is reached.
+        ///        requested number of frames is reached. Whether a plant
+        ///        drives the frames is the platform's business: without one
+        ///        the frames come without sensors and the core stays idle.
         /// @return number of steps executed
         std::uint32_t run();
 
@@ -163,9 +159,8 @@ namespace mark4
 
         /// @brief Drains the command uplink: RC into the tracker, scenarios
         ///        to the plant, tuning answered, the updater served. Runs on
-        ///        every loop wakeup, frames or not - the command path needs no
-        ///        world, so tuning a grounded drone works while the platform
-        ///        is not ready.
+        ///        every frame, sensors or not - the command path needs no
+        ///        world, so tuning a grounded drone works without a plant.
         /// @param nowUs instant handed to the RC fail-safe [us]
         void drainCommands(std::uint64_t nowUs);
 
@@ -192,9 +187,8 @@ namespace mark4
         /// The sim link: the plant's frames off the transport, sorted for
         /// the sensor source and the command receiver; the wait point of
         /// the flight loop sleeps on the link's sockets through it.
-        mark4::PlantLink m_plantLink{
-            m_transport, m_udpLink, m_clock, m_commandReceiver, IDLE_TIMEOUT_MS};
-        mark4::SensorSourceSim m_sensorSource{m_plantLink};
+        mark4::PlantLink m_plantLink{m_transport, m_udpLink, m_clock, m_commandReceiver};
+        mark4::SensorSourceSim m_sensorSource{m_plantLink, m_clock};
         mark4::MotorSinkSim m_motorSink{m_plantLink};
         mark4::TelemetrySenderTransport m_telemetrySender{m_transport};
         mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender};

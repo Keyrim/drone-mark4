@@ -39,9 +39,10 @@ namespace mark4
         m_transport.poll(m_clock.nowUs(), &PlantLink::OnPayload, this);
     }
 
-    bool PlantLink::waitSensor(mark4_SimSensor &sensorOut, std::uint32_t &srcOut)
+    bool PlantLink::waitSensor(mark4_SimSensor &sensorOut,
+                               std::uint32_t &srcOut,
+                               std::uint64_t deadlineUs)
     {
-        const std::uint64_t deadlineUs = m_clock.nowUs() + m_waitTimeoutUs;
         for (;;)
         {
             poll();

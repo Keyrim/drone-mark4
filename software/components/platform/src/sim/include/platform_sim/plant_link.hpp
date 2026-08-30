@@ -22,12 +22,12 @@ namespace mark4
     /// Pumps the transport and sorts what it delivers: a SimSensor envelope
     /// is stashed for the sensor source, everything else goes to the command
     /// ring. waitSensor() is the one blocking point of the flight loop: a
-    /// poll(2) on the link's sockets bounded by the wait timeout, so the
-    /// beacon and the node expiry keep running while the plant is silent.
+    /// poll(2) on the link's sockets bounded by the caller's deadline, so
+    /// the beacon and the node expiry keep running while the plant is
+    /// silent.
     ///
-    /// The plant is whichever node sent the first SimSensor the sensor
-    /// source validated, until the transport forgets it; a SimSensor from
-    /// any other node is ignored while one is held. Replies are cached so a
+    /// The plant is the node the sensor source adopted, and the sensor
+    /// source alone decides when there is none. Replies are cached so a
     /// resent tick gets the exact answer it missed.
     class PlantLink
     {
@@ -40,17 +40,14 @@ namespace mark4
         /// @param clock wall clock the transport is polled on (the beacon
         ///        cadence is a real-time contract whatever the sim time scale)
         /// @param commands ring every non-sensor payload is queued in
-        /// @param waitTimeoutMs how long waitSensor() blocks before giving up
         PlantLink(Transport &transport,
                   UdpLink &link,
                   AbsClock &clock,
-                  CommandReceiverTransport &commands,
-                  std::uint32_t waitTimeoutMs)
+                  CommandReceiverTransport &commands)
             : m_transport(transport),
               m_link(link),
               m_clock(clock),
-              m_commands(commands),
-              m_waitTimeoutUs(static_cast<std::uint64_t>(waitTimeoutMs) * US_PER_MS)
+              m_commands(commands)
         {
         }
 
@@ -58,29 +55,26 @@ namespace mark4
         void poll();
 
         /// @brief Blocks until a SimSensor envelope arrives from any node or
-        ///        the wait timeout expires; every other payload delivered
-        ///        meanwhile lands in the command ring.
+        ///        the clock reaches the deadline; every other payload
+        ///        delivered meanwhile lands in the command ring.
         /// @param[out] sensorOut the envelope body
         /// @param[out] srcOut node it came from
+        /// @param deadlineUs clock instant the wait gives up at [us]
         /// @return true when a sensor message was taken
-        bool waitSensor(mark4_SimSensor &sensorOut, std::uint32_t &srcOut);
+        bool waitSensor(mark4_SimSensor &sensorOut,
+                        std::uint32_t &srcOut,
+                        std::uint64_t deadlineUs);
 
-        /// @return node id of the plant, 0 when none was adopted yet
+        /// @return node id of the plant, 0 when none drives
         [[nodiscard]] std::uint32_t plant() const
         {
             return m_plant;
         }
 
-        /// @return true when the plant is known and the transport still
-        ///         hears it
-        [[nodiscard]] bool plantAlive() const
-        {
-            return m_plant != 0U && m_transport.isAlive(m_plant);
-        }
-
-        /// @brief Adopts one node as the plant: the sensor source calls it
-        ///        once a SimSensor validated, never on a stray payload.
-        /// @param nodeId the plant's node id
+        /// @brief Adopts one node as the plant (or none, with 0): the sensor
+        ///        source calls it once a SimSensor validated, never on a
+        ///        stray payload, and when the plant fell silent.
+        /// @param nodeId the plant's node id, 0 for none
         void setPlant(std::uint32_t nodeId)
         {
             m_plant = nodeId;
@@ -131,7 +125,6 @@ namespace mark4
         UdpLink &m_link;                                       ///< its UDP link
         AbsClock &m_clock;                                     ///< wall clock for the transport
         CommandReceiverTransport &m_commands;                  ///< everything but sensors goes here
-        std::uint64_t m_waitTimeoutUs;                         ///< waitSensor() budget [us]
         std::uint32_t m_plant = 0U;                            ///< adopted plant, 0 = none
         mark4_SimSensor m_pending = mark4_SimSensor_init_zero; ///< stashed sensor message
         std::uint32_t m_pendingSrc = 0U;                       ///< node it came from

@@ -453,11 +453,9 @@ namespace mark4
         std::uint32_t announcedThrows = 0U;
         mark4::FlightPhase previousPhase = mark4::FlightPhase::IDLE;
         std::uint32_t lastResetCount = 0U;
-        std::uint32_t lastPlantRestarts = 0U;
+        std::uint32_t lastSession = 0U;
         bool resetCountSeen = false;
         bool runSealed = false;
-        // Starts true so the very first silent wait says "not ready" once
-        bool platformReady = true;
         while (m_maxFrames == 0U || steps < m_maxFrames)
         {
             if (m_otaUpdater.has_value() && m_otaUpdater->sessionActive())
@@ -470,62 +468,53 @@ namespace mark4
             }
             if (m_sensorSource.waitFrame(frame) != mark4::FrameWait::FRAME)
             {
-                // No sensor data: the plant is gone, or not there yet. On a
-                // real board a silent sensor grounds the drone but does not
-                // reboot it, so this composition stays up too - it keeps
-                // announcing itself and waits for the world to come back.
-                if (platformReady)
-                {
-                    LINK.info("platform not ready, waiting for a plant node to send sensor frames");
-                    platformReady = false;
-                }
-                // The command path needs no world: tuning reads and writes
-                // keep answering and the RC stream keeps being tracked, so
-                // the bench can push coefficients to a grounded drone. Only
-                // flying needs sensors. The last frame timestamp is the best
-                // "now" available while the sim clock is silent.
-                drainCommands(frame.timestampUs);
-                continue;
+                continue; // the sim source always produces a frame
             }
-            if (!platformReady)
+            // The time base of the frames changed (the platform switched
+            // between its clock and a plant's, or the plant's clock started
+            // over): nothing the flight core remembers about time applies,
+            // so it restarts from scratch, exactly like a power cycle on the
+            // bench, and the next frame with sensors opens a new run.
+            if (m_sensorSource.sessionCount() != lastSession)
             {
-                LINK.info("platform ready, sensor frames are flowing");
-                platformReady = true;
-            }
-            // A simulator world reset teleports the drone: no estimator can
-            // (or should) track that, so the flight core restarts from
-            // scratch, exactly like a power cycle on the bench. Tuned
-            // parameters return to their defaults with it, like flash-less
-            // hardware. A plant that restarted (its clock went backwards) is
-            // the same event.
-            const bool newPlant = m_sensorSource.plantRestarts() != lastPlantRestarts;
-            if (newPlant)
-            {
-                LINK.info("a new plant is driving (simulated clock restarted)");
-            }
-            lastPlantRestarts = m_sensorSource.plantRestarts();
-
-            const bool worldReset =
-                resetCountSeen && (m_sensorSource.resetCount() != lastResetCount || newPlant);
-            if (worldReset)
-            {
+                lastSession = m_sensorSource.sessionCount();
                 m_core = mark4::FlightCore{};
                 announcedThrows = 0U;
                 previousPhase = mark4::FlightPhase::IDLE;
-                LINK.info("simulator reset at t=%.3f s: flight core restarted",
-                          static_cast<double>(frame.timestampUs) / US_PER_S);
+                resetCountSeen = false;
+                LINK.info("time base changed: flight core restarted");
             }
-            if (worldReset || !resetCountSeen)
+            if (frame.imuValid)
             {
-                // A run is what happens between two resets: the hash of the
-                // previous one is finished, this one starts from scratch, on
-                // the window the scenario that opened it asked for.
-                m_runTracker.beginRun(
-                    m_sensorSource.resetCount(), frame.timestampUs, m_pendingHashWindowUs);
-                runSealed = false;
+                // A simulator world reset teleports the drone: no estimator
+                // can (or should) track that, so the flight core restarts
+                // from scratch too. Tuned parameters return to their defaults
+                // with it, like flash-less hardware. Only frames with sensors
+                // come from a world: the others carry no reset counter and
+                // never enter a run.
+                const bool worldReset =
+                    resetCountSeen && m_sensorSource.resetCount() != lastResetCount;
+                if (worldReset)
+                {
+                    m_core = mark4::FlightCore{};
+                    announcedThrows = 0U;
+                    previousPhase = mark4::FlightPhase::IDLE;
+                    LINK.info("simulator reset at t=%.3f s: flight core restarted",
+                              static_cast<double>(frame.timestampUs) / US_PER_S);
+                }
+                if (worldReset || !resetCountSeen)
+                {
+                    // A run is what happens between two resets: the hash of
+                    // the previous one is finished, this one starts from
+                    // scratch, on the window the scenario that opened it
+                    // asked for.
+                    m_runTracker.beginRun(
+                        m_sensorSource.resetCount(), frame.timestampUs, m_pendingHashWindowUs);
+                    runSealed = false;
+                }
+                lastResetCount = m_sensorSource.resetCount();
+                resetCountSeen = true;
             }
-            lastResetCount = m_sensorSource.resetCount();
-            resetCountSeen = true;
 
             // Drain the command uplink before the step below, so a value
             // written from the ground is in effect for the whole of the next
@@ -555,21 +544,30 @@ namespace mark4
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);
             // The plant's exact state rides next to the estimate, so a ground
-            // tool compares the two sample by sample.
-            m_telemetryPublisher.publish(frame, actuators, m_core, &m_sensorSource.truth());
+            // tool compares the two sample by sample; a frame without sensors
+            // has no plant behind it and no truth.
+            m_telemetryPublisher.publish(
+                frame, actuators, m_core, frame.imuValid ? &m_sensorSource.truth() : nullptr);
             // Paced answers to a list request: one description per frame, so
             // a table dump never bursts ahead of the telemetry it shares the
             // link with.
             m_tuningService.pump();
-            m_runTracker.update(frame, actuators);
-            m_runTracker.noteLink(m_sensorSource.lockstepTimeouts(),
-                                  m_sensorSource.duplicateFrameCount());
-            m_runTracker.publish();
+            if (frame.imuValid)
+            {
+                // The run is the plant's trajectory: frames without sensors
+                // are not part of it and never touch the hash.
+                m_runTracker.update(frame, actuators);
+                m_runTracker.noteLink(m_sensorSource.lockstepTimeouts(),
+                                      m_sensorSource.duplicateFrameCount());
+                m_runTracker.publish();
+            }
             if ((steps % LINK_DEBUG_PERIOD_FRAMES) == 0U)
             {
-                LINK.debug("t=%.3f s, %u frames, %u lockstep timeouts, %u resent frames",
+                LINK.debug("t=%.3f s, %u frames (%u without a plant), %u lockstep timeouts, "
+                           "%u resent frames",
                            static_cast<double>(frame.timestampUs) / US_PER_S,
                            steps,
+                           m_sensorSource.clockFrameCount(),
                            m_sensorSource.lockstepTimeouts(),
                            m_sensorSource.duplicateFrameCount());
             }
@@ -605,6 +603,10 @@ namespace mark4
                 {
                     FLIGHT.warn("safety cutoff: motors stopped, release the arm switch and "
                                 "lower the throttle to rearm");
+                }
+                if (m_core.flightPhase() == mark4::FlightPhase::FAULT)
+                {
+                    FLIGHT.error("FAULT: imu lost in flight, motors cut");
                 }
                 previousPhase = m_core.flightPhase();
             }

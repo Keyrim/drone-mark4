@@ -13,7 +13,8 @@ namespace mark4
 {
     /// Sends every actuator frame to the plant as a SimActuator envelope,
     /// unicast to the node the plant link holds, and keeps the last frame
-    /// for reporting.
+    /// for reporting. Without a plant the frame is dropped and counted: the
+    /// answer to a frame without sensors has nobody to go to.
     ///
     /// It also carries scenarios to the plant, each as its own SimScenario
     /// envelope on the same link. A scenario handed over before a plant is
@@ -52,6 +53,12 @@ namespace mark4
             return m_pushCount;
         }
 
+        /// @return frames pushed while no plant drove, never sent
+        [[nodiscard]] std::uint32_t droppedCount() const
+        {
+            return m_droppedCount;
+        }
+
       private:
         /// @brief Encodes and sends one scenario envelope.
         /// @param scenario run to play
@@ -61,7 +68,8 @@ namespace mark4
         PlantLink &m_link;           ///< plant link, owned by the composition root
         mark4::ActuatorFrame m_last; ///< last frame pushed
         mark4_SimScenario m_pendingScenario = mark4_SimScenario_init_zero; ///< waiting for a plant
-        bool m_scenarioPending = false; ///< m_pendingScenario is still to send
-        std::uint32_t m_pushCount = 0U; ///< frames pushed since construction
+        bool m_scenarioPending = false;    ///< m_pendingScenario is still to send
+        std::uint32_t m_pushCount = 0U;    ///< frames pushed since construction
+        std::uint32_t m_droppedCount = 0U; ///< frames pushed without a plant
     };
 } // namespace mark4

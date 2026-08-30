@@ -172,8 +172,8 @@ namespace
         mark4::UdpLink udpLink;
         mark4::Transport transport{DRONE_NODE};
         mark4::CommandReceiverTransport commands;
-        mark4::PlantLink link{transport, udpLink, clock, commands, TEST_TIMEOUT_MS};
-        mark4::SensorSourceSim source{link};
+        mark4::PlantLink link{transport, udpLink, clock, commands};
+        mark4::SensorSourceSim source{link, clock};
         mark4::MotorSinkSim sink{link};
     };
 
@@ -183,6 +183,24 @@ namespace
         actuators.timestampUs = timestampUs;
         actuators.motor = {0.1f, 0.2f, 0.3f, 0.4f};
         return actuators;
+    }
+
+    /// @brief Waits for the next frame carrying the plant's sensors. The
+    ///        source never blocks past its own tick: while the plant's
+    ///        datagram is in flight it hands out clock frames without
+    ///        sensors, which the flight loop would step and drop.
+    /// @return true when a plant frame came within the test timeout
+    bool waitPlantFrame(DroneSide &drone, mark4::SensorFrame &frame)
+    {
+        const std::uint64_t deadlineUs = drone.clock.nowUs() + TEST_TIMEOUT_MS * 1000U;
+        while (drone.clock.nowUs() < deadlineUs)
+        {
+            if (drone.source.waitFrame(frame) == mark4::FrameWait::FRAME && frame.imuValid)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 } // namespace
 
@@ -195,17 +213,22 @@ TEST_CASE("a sensor frame from the plant node is decoded into a sensor frame")
     plant.send(makeSensor());
 
     mark4::SensorFrame frame;
-    REQUIRE(drone.source.waitFrame(frame) == mark4::FrameWait::FRAME);
+    REQUIRE(waitPlantFrame(drone, frame));
     REQUIRE(frame.timestampUs == TEST_TIMESTAMP_US);
     REQUIRE(frame.gyroRadS == TEST_GYRO_RAD_S);
     REQUIRE(frame.accelMps2 == TEST_ACCEL_MPS2);
     REQUIRE(frame.baroPa == TEST_BARO_PA);
+    // Fresh measurements from a world: both sensors valid.
+    REQUIRE(frame.imuValid);
+    REQUIRE(frame.baroValid);
     // The sensor message carries no RC: the decoded frame keeps the safe
     // defaults until the composition root grafts the tracked state onto it.
     REQUIRE(frame.rc.killSwitch == true);
     REQUIRE(drone.source.resetCount() == TEST_RESET_COUNT);
     REQUIRE(drone.source.lockstepTimeouts() == TEST_LOCKSTEP_TIMEOUTS);
-    REQUIRE(drone.source.plantRestarts() == 0U);
+    // Adopting the plant is the first change of time base.
+    REQUIRE(drone.source.sessionCount() == 1U);
+    REQUIRE(drone.source.plantConnected());
     // The plant's exact state travels with the sample, for the telemetry.
     REQUIRE(drone.source.truth().attitude_quat[0] == 1.0f);
     REQUIRE(drone.source.truth().position_m[2] == 1.5f);
@@ -230,7 +253,7 @@ TEST_CASE("payloads that are not sensor frames go to the command ring")
     plant.send(makeSensor());
 
     mark4::SensorFrame frame;
-    REQUIRE(drone.source.waitFrame(frame) == mark4::FrameWait::FRAME);
+    REQUIRE(waitPlantFrame(drone, frame));
     REQUIRE(frame.timestampUs == TEST_TIMESTAMP_US);
 
     std::array<std::uint8_t, mark4::MAX_PAYLOAD> payload{};
@@ -252,22 +275,26 @@ TEST_CASE("a second plant cannot take over the sim link while the first is alive
 
     plant.send(makeSensor());
     mark4::SensorFrame frame;
-    REQUIRE(drone.source.waitFrame(frame) == mark4::FrameWait::FRAME);
+    REQUIRE(waitPlantFrame(drone, frame));
 
-    // Another node's sensor frames are counted and ignored: the wait times
-    // out instead of stepping on somebody else's world.
-    intruder.send(makeSensor(TEST_TIMESTAMP_US + 2000U));
-    REQUIRE(drone.source.waitFrame(frame) == mark4::FrameWait::TIMEOUT);
-    REQUIRE(drone.source.foreignFrameCount() == 1U);
-    REQUIRE(drone.link.plant() == PLANT_NODE);
-
-    // The motor reply still reaches the plant, not the intruder.
+    // The motor reply reaches the plant, not the intruder.
     drone.sink.push(makeActuators(frame.timestampUs));
     const Received reply = plant.receive();
     REQUIRE(reply.size > 0U);
     CHECK(reply.header.src == DRONE_NODE);
     CHECK(reply.header.dst == PLANT_NODE);
     REQUIRE(intruder.receive().size == 0U);
+
+    // Another node's sensor frames are counted and ignored: the wait goes
+    // on for the plant's own next tick instead of stepping on somebody
+    // else's world. Here the plant never speaks again, so the wait ends
+    // with the plant lost and a clock frame; the intruder still did not
+    // take over.
+    intruder.send(makeSensor(TEST_TIMESTAMP_US + 2000U));
+    REQUIRE(drone.source.waitFrame(frame) == mark4::FrameWait::FRAME);
+    REQUIRE(!frame.imuValid);
+    REQUIRE(drone.source.foreignFrameCount() == 1U);
+    REQUIRE(drone.link.plant() == 0U);
 }
 
 TEST_CASE("a resent sensor frame is answered again instead of stepped twice")
@@ -279,16 +306,19 @@ TEST_CASE("a resent sensor frame is answered again instead of stepped twice")
     const mark4_Envelope sensor = makeSensor();
     plant.send(sensor);
     mark4::SensorFrame frame;
-    REQUIRE(drone.source.waitFrame(frame) == mark4::FrameWait::FRAME);
+    REQUIRE(waitPlantFrame(drone, frame));
     drone.sink.push(makeActuators(frame.timestampUs));
     const Received first = plant.receive();
     REQUIRE(first.size > 0U);
 
     // The same tick arrives again, as a new frame of the plant (the
     // transport would drop an exact repeat of the sequence as a duplicate):
-    // the plant never got its reply.
+    // the plant never got its reply. Nothing else follows, so the wait
+    // ends on the plant's silence with a clock frame: the resend itself
+    // was never handed out as a frame.
     plant.send(sensor);
-    REQUIRE(drone.source.waitFrame(frame) == mark4::FrameWait::TIMEOUT);
+    REQUIRE(drone.source.waitFrame(frame) == mark4::FrameWait::FRAME);
+    REQUIRE(!frame.imuValid);
     REQUIRE(drone.source.duplicateFrameCount() == 1U);
     REQUIRE(drone.sink.pushCount() == 1U); // the core was not stepped a second time
 
@@ -306,14 +336,14 @@ TEST_CASE("a restarted plant is a new plant, not a resend")
 
     plant.send(makeSensor(TEST_TIMESTAMP_US));
     mark4::SensorFrame frame;
-    REQUIRE(drone.source.waitFrame(frame) == mark4::FrameWait::FRAME);
+    REQUIRE(waitPlantFrame(drone, frame));
 
     // The same node, its simulated clock starting over: a genuine new
-    // sample, and the restart is counted.
+    // sample, and a second change of time base after the adoption.
     plant.send(makeSensor(1000U));
-    REQUIRE(drone.source.waitFrame(frame) == mark4::FrameWait::FRAME);
+    REQUIRE(waitPlantFrame(drone, frame));
     REQUIRE(frame.timestampUs == 1000U);
-    REQUIRE(drone.source.plantRestarts() == 1U);
+    REQUIRE(drone.source.sessionCount() == 2U);
     REQUIRE(drone.source.duplicateFrameCount() == 0U);
 }
 
@@ -337,7 +367,7 @@ TEST_CASE("a scenario goes to the plant as its own frame")
 
     plant.send(makeSensor());
     mark4::SensorFrame frame;
-    REQUIRE(drone.source.waitFrame(frame) == mark4::FrameWait::FRAME);
+    REQUIRE(waitPlantFrame(drone, frame));
     drone.sink.push(makeActuators(frame.timestampUs));
 
     // The pending scenario goes first, then the reply to the tick.
@@ -358,11 +388,72 @@ TEST_CASE("a scenario goes to the plant as its own frame")
     REQUIRE(plant.receiveEnvelope().which_body == 0U);
 }
 
-TEST_CASE("an idle sim link times out")
+TEST_CASE("without a plant the source paces frames without sensors from the clock")
 {
     DroneSide drone(pickFreePort());
     mark4::SensorFrame frame;
-    REQUIRE(drone.source.waitFrame(frame) == mark4::FrameWait::TIMEOUT);
+    frame.gyroRadS = {1.0f, 2.0f, 3.0f};
+    frame.baroPa = TEST_BARO_PA;
+    const std::uint64_t startUs = drone.clock.nowUs();
+    REQUIRE(drone.source.waitFrame(frame) == mark4::FrameWait::FRAME);
+    REQUIRE(!frame.imuValid);
+    REQUIRE(!frame.baroValid);
+    REQUIRE(frame.gyroRadS == std::array<float, 3>{});
+    REQUIRE(frame.accelMps2 == std::array<float, 3>{});
+    REQUIRE(frame.baroPa == 0.0f);
+    REQUIRE(frame.timestampUs >= startUs);
+    REQUIRE(!drone.source.plantConnected());
+    REQUIRE(drone.source.sessionCount() == 0U);
+
+    // The next frames come at the nominal period, timestamps from the clock,
+    // strictly increasing.
+    std::uint64_t previousUs = frame.timestampUs;
+    constexpr std::uint32_t FRAMES = 50U;
+    for (std::uint32_t i = 0U; i < FRAMES; ++i)
+    {
+        REQUIRE(drone.source.waitFrame(frame) == mark4::FrameWait::FRAME);
+        REQUIRE(!frame.imuValid);
+        REQUIRE(frame.timestampUs > previousUs);
+        previousUs = frame.timestampUs;
+    }
+    REQUIRE(drone.source.clockFrameCount() == FRAMES + 1U);
+    const std::uint64_t elapsedUs = previousUs - startUs;
+    // 50 periods of 2 ms, with a generous margin for a loaded host.
+    REQUIRE(elapsedUs >= FRAMES * mark4::SensorSourceSim::TICK_US);
+    REQUIRE(elapsedUs < 4U * FRAMES * mark4::SensorSourceSim::TICK_US);
+
+    // Pushing motors without a plant drops them, counted.
+    drone.sink.push(makeActuators(frame.timestampUs));
+    REQUIRE(drone.sink.pushCount() == 1U);
+    REQUIRE(drone.sink.droppedCount() == 1U);
+}
+
+TEST_CASE("a plant that falls silent is lost and the clock takes over")
+{
+    const std::uint16_t port = pickFreePort();
+    DroneSide drone(port);
+    FakePlant plant(PLANT_NODE, port, drone.udpLink.dataPort());
+
+    plant.send(makeSensor());
+    mark4::SensorFrame frame;
+    REQUIRE(waitPlantFrame(drone, frame));
+    REQUIRE(drone.source.plantConnected());
+    REQUIRE(drone.source.sessionCount() == 1U);
+
+    // Nothing more from the plant: the wait lasts the silence budget, then
+    // the plant is dropped and a clock frame comes out.
+    const std::uint64_t startUs = drone.clock.nowUs();
+    REQUIRE(drone.source.waitFrame(frame) == mark4::FrameWait::FRAME);
+    REQUIRE(!frame.imuValid);
+    REQUIRE(!drone.source.plantConnected());
+    REQUIRE(drone.source.sessionCount() == 2U);
+    REQUIRE(drone.clock.nowUs() - startUs >= mark4::SensorSourceSim::PLANT_SILENCE_US / 2U);
+
+    // The plant speaking again is adopted again: a third time base.
+    plant.send(makeSensor(TEST_TIMESTAMP_US + 2000U));
+    REQUIRE(waitPlantFrame(drone, frame));
+    REQUIRE(frame.timestampUs == TEST_TIMESTAMP_US + 2000U);
+    REQUIRE(drone.source.sessionCount() == 3U);
 }
 
 TEST_CASE("pushed motors are unicast to the plant node with the echoed timestamp")
@@ -373,7 +464,7 @@ TEST_CASE("pushed motors are unicast to the plant node with the echoed timestamp
 
     plant.send(makeSensor());
     mark4::SensorFrame frame;
-    REQUIRE(drone.source.waitFrame(frame) == mark4::FrameWait::FRAME);
+    REQUIRE(waitPlantFrame(drone, frame));
 
     const mark4::ActuatorFrame actuators = makeActuators(frame.timestampUs);
     drone.sink.push(actuators);
