@@ -43,6 +43,7 @@ export const FLIGHT_PHASE_NAMES = [
     "hover",
     "cutoff",
     "manual",
+    "fault",
 ];
 
 const AXES = ["x", "y", "z"];

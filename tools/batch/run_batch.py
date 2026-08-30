@@ -90,6 +90,7 @@ PHASE_HOVER = pb.PHASE_HOVER
 PHASE_CUTOFF = pb.PHASE_CUTOFF
 PHASE_NAMES = [
     "idle", "altitude", "armed", "ballistic", "recovery", "hover", "cutoff", "manual",
+    "fault",
 ]
 
 # One transport discovery port per instance: Godot, drone_sim and the

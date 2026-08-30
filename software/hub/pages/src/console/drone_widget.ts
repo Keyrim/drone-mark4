@@ -71,6 +71,8 @@ export class DroneWidget {
     private latestAtMs = 0;
     private readonly repaint: ReturnType<typeof setInterval>;
     private readonly phaseChip: HTMLElement;
+    /** Sensor validity badges, keyed by sensor name, red while invalid. */
+    private readonly sensorBadges = new Map<string, HTMLElement>();
     private readonly readings = new Map<string, HTMLElement>();
     private readonly motorFills: HTMLElement[] = [];
     private readonly motorValues: HTMLElement[] = [];
@@ -145,6 +147,14 @@ export class DroneWidget {
         this.phaseChip.className = "dw-phase";
         this.phaseChip.textContent = "-";
         observe.appendChild(this.phaseChip);
+        for (const sensor of ["imu", "baro"]) {
+            const badge = document.createElement("span");
+            badge.className = "badge";
+            badge.textContent = sensor;
+            badge.title = `${sensor} sample fresh on the last frame`;
+            observe.appendChild(badge);
+            this.sensorBadges.set(sensor, badge);
+        }
         for (const label of ["throw", "throws", "alt", "vz", "apex"]) {
             const cell = document.createElement("span");
             cell.className = "dw-reading";
@@ -451,7 +461,13 @@ export class DroneWidget {
         this.phaseChip.textContent = FLIGHT_PHASE_NAMES[phase] ?? String(phase);
         this.phaseChip.className =
             "dw-phase" +
-            (phase === FlightPhase.PHASE_HOVER ? " good" : phase === FlightPhase.PHASE_CUTOFF ? " bad" : "");
+            (phase === FlightPhase.PHASE_HOVER
+                ? " good"
+                : phase === FlightPhase.PHASE_CUTOFF || phase === FlightPhase.PHASE_FAULT
+                  ? " bad"
+                  : "");
+        this.sensorBadges.get("imu")!.className = "badge" + (m.imuValid ? "" : " bad");
+        this.sensorBadges.get("baro")!.className = "badge" + (m.baroValid ? "" : " bad");
         const set = (label: string, text: string): void => {
             this.readings.get(label)!.textContent = text;
         };
