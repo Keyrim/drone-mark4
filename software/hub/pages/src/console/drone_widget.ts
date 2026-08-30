@@ -121,9 +121,7 @@ export class DroneWidget {
         const spacer = document.createElement("span");
         spacer.className = "bar-grow";
         head.appendChild(spacer);
-        if (node.kind === NodeKind.FIRMWARE) {
-            head.appendChild(this.rebootButton());
-        }
+        head.appendChild(this.rebootButton());
         this.root.appendChild(head);
 
         // Observation, the same whatever the nature
