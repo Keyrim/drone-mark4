@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "platform_stm32/i2c_bus.hpp"
+#include "platform_stm32/sensor_health.hpp"
 
 namespace mark4
 {
@@ -35,11 +36,19 @@ namespace mark4
         /// margin over OUTPUT_RATE_HZ.
         static constexpr std::uint32_t TICKS_PER_READ = 3U;
 
+        /// Oldest age a solution may have for a frame to carry it as valid
+        /// [us]. The chip publishes every 12.5 ms and is read every
+        /// TICKS_PER_READ ticks, so a working baro is always well inside;
+        /// past it the frame says "no baro" rather than repeating a stale
+        /// pressure.
+        static constexpr std::uint64_t FRESH_MAX_AGE_US = 50000U;
+
+        /// Failure duration after which the WARN of the first failed read
+        /// becomes an ERROR [us].
+        static constexpr std::uint64_t FAULT_HORIZON_US = 500000U;
+
         /// @param bus initialized I2C bus the chip sits on
-        explicit Bmp581(I2cBus &bus)
-            : m_bus(bus)
-        {
-        }
+        explicit Bmp581(I2cBus &bus);
 
         /// @brief Probes both addresses for the chip id, soft-resets the
         ///        chip, checks the power-on and NVM status, writes the
@@ -51,11 +60,22 @@ namespace mark4
 
         /// @brief Reads the latest temperature and pressure output, once
         ///        every TICKS_PER_READ calls. Call it once per frame tick.
-        ///        An I2C failure is counted and the previous solution
-        ///        stays exposed. Inert until a successful init(), so a
-        ///        chip that never came up costs nothing per frame and
-        ///        simply reports no pressure.
-        void update();
+        ///        An I2C failure or an implausible solution is counted, fed
+        ///        to the health tracker (which logs the transitions) and
+        ///        leaves the previous solution exposed; fresh() says
+        ///        whether that solution is recent enough to trust. Inert
+        ///        until a successful init(), so a chip that never came up
+        ///        costs nothing per frame and simply reports no pressure.
+        /// @param nowUs instant of the call [us]
+        void update(std::uint64_t nowUs);
+
+        /// @param nowUs current instant [us]
+        /// @return true when a plausible solution was read no more than
+        ///         FRESH_MAX_AGE_US ago
+        [[nodiscard]] bool fresh(std::uint64_t nowUs) const
+        {
+            return m_health.freshWithin(nowUs, FRESH_MAX_AGE_US);
+        }
 
         /// @return latest compensated pressure [Pa], 0 until the first
         ///         solution is read
@@ -92,5 +112,6 @@ namespace mark4
         float m_temperatureC = 0.0f;      ///< latest solution [degC]
         std::uint32_t m_failures = 0U;    ///< failed bus reads
         std::uint32_t m_implausible = 0U; ///< solutions rejected by the gate
+        SensorHealth m_health;            ///< read outcomes and their logs
     };
 } // namespace mark4

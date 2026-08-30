@@ -216,7 +216,13 @@ namespace mark4
         return true;
     }
 
-    void Bmp581::update()
+    Bmp581::Bmp581(I2cBus &bus)
+        : m_bus(bus),
+          m_health(MODULE, FAULT_HORIZON_US)
+    {
+    }
+
+    void Bmp581::update(std::uint64_t nowUs)
     {
         if (!m_ready)
         {
@@ -233,6 +239,7 @@ namespace mark4
         if (!m_bus.readRegisters(m_address, REG_TEMP_DATA_XLSB, burst, sizeof(burst)))
         {
             ++m_failures;
+            m_health.note(false, nowUs);
             return;
         }
 
@@ -258,8 +265,10 @@ namespace mark4
                             static_cast<long>(pressurePa));
             }
             ++m_implausible;
+            m_health.note(false, nowUs);
             return;
         }
+        m_health.note(true, nowUs);
         m_pressurePa = pressurePa;
         // Temperature is signed over 24 bits: sign extend before scaling.
         // The datasheet only calls the format signed, it never spells out

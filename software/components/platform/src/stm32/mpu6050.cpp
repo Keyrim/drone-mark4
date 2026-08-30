@@ -107,10 +107,18 @@ namespace mark4
         return true;
     }
 
-    bool Mpu6050::readSample(Mpu6050Sample &sample)
+    Mpu6050::Mpu6050(I2cBus &bus)
+        : m_bus(bus),
+          m_health(MODULE, FAULT_HORIZON_US)
+    {
+    }
+
+    bool Mpu6050::readSample(Mpu6050Sample &sample, std::uint64_t nowUs)
     {
         std::uint8_t burst[SAMPLE_BURST_SIZE];
-        if (!m_bus.readRegisters(I2C_ADDRESS, REG_ACCEL_XOUT_H, burst, sizeof(burst)))
+        const bool ok = m_bus.readRegisters(I2C_ADDRESS, REG_ACCEL_XOUT_H, burst, sizeof(burst));
+        m_health.note(ok, nowUs);
+        if (!ok)
         {
             return false;
         }

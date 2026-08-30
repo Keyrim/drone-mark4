@@ -44,9 +44,12 @@ namespace mark4
         ///        initSystemClock().
         void init();
 
-        /// @brief Sleeps until the next tick, then reads the IMU. On an
-        ///        I2C failure the previous sample is reused and the frame
-        ///        is delivered anyway: one glitch must not stop the loop.
+        /// @brief Sleeps until the next tick, then reads the IMU and
+        ///        updates the baro. The frame is delivered whatever the bus
+        ///        did: a failed IMU burst leaves imuValid false and the
+        ///        gyro / accel at zero, never the previous sample; baroValid
+        ///        is true when the baro holds a plausible solution younger
+        ///        than Bmp581::FRESH_MAX_AGE_US, and baroPa is 0 otherwise.
         ///        A tick firing between the counter test and the WFI makes
         ///        the sleep last one extra tick, counted as an overrun;
         ///        the race is accepted - it costs one 2 ms hiccup, never a
@@ -62,8 +65,7 @@ namespace mark4
             return m_overruns;
         }
 
-        /// @return IMU bursts that failed and were papered over with the
-        ///         previous sample
+        /// @return IMU bursts that failed, each delivered as an invalid frame
         [[nodiscard]] std::uint32_t readFailures() const
         {
             return m_readFailures;
@@ -73,7 +75,6 @@ namespace mark4
         Mpu6050 &m_imu;                     ///< sample producer, not owned
         Bmp581 &m_baro;                     ///< pressure producer, not owned
         ClockStm32 &m_clock;                ///< frame timestamps, not owned
-        Mpu6050Sample m_lastSample{};       ///< reused when a burst fails
         std::uint32_t m_consumedTicks = 0U; ///< ticks turned into frames
         std::uint32_t m_overruns = 0U;      ///< missed deadlines
         std::uint32_t m_readFailures = 0U;  ///< failed IMU bursts

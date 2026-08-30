@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "platform_stm32/i2c_bus.hpp"
+#include "platform_stm32/sensor_health.hpp"
 
 namespace mark4
 {
@@ -36,11 +37,12 @@ namespace mark4
         /// Accelerometer scale at +/-16 g [m/s^2 per count].
         static constexpr float ACCEL_MPS2_PER_LSB = (16.0F / 32768.0F) * 9.80665F;
 
+        /// Failure duration after which the WARN of the first failed read
+        /// becomes an ERROR [us]: the flight core's own fault horizon.
+        static constexpr std::uint64_t FAULT_HORIZON_US = 20000U;
+
         /// @param bus initialized I2C bus the chip sits on
-        explicit Mpu6050(I2cBus &bus)
-            : m_bus(bus)
-        {
-        }
+        explicit Mpu6050(I2cBus &bus);
 
         /// @brief Checks WHO_AM_I, wakes the chip on the gyro PLL clock,
         ///        selects the ranges above and a 44 Hz low-pass, and opens
@@ -50,11 +52,15 @@ namespace mark4
         bool init();
 
         /// @brief Reads one accelerometer + temperature + gyroscope burst.
+        ///        The outcome feeds the health tracker, which logs the
+        ///        transitions (first failure, lasting outage, recovery).
         /// @param sample receives the decoded raw counts
+        /// @param nowUs instant of the read [us]
         /// @return true when the burst transfer completed
-        bool readSample(Mpu6050Sample &sample);
+        bool readSample(Mpu6050Sample &sample, std::uint64_t nowUs);
 
       private:
-        I2cBus &m_bus; ///< transport, not owned
+        I2cBus &m_bus;         ///< transport, not owned
+        SensorHealth m_health; ///< read outcomes and their logs
     };
 } // namespace mark4

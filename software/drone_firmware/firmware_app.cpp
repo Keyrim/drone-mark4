@@ -23,6 +23,7 @@ namespace
     mark4::LogModule RC{mark4::LOG_MODULE_RC, "rc"};
     mark4::LogModule OTA{mark4::LOG_MODULE_OTA_UPDATER, "ota/updater"};
     mark4::LogModule UART{mark4::LOG_MODULE_TRANSPORT_UART, "transport/uart"};
+    mark4::LogModule FLIGHT{mark4::LOG_MODULE_FLIGHT_CORE, "flight/core"};
 
     constexpr std::uint32_t US_PER_MS = 1000U;
 
@@ -366,8 +367,13 @@ namespace mark4
                 frame.rc.armSwitch = false;
             }
 
+            const FlightPhase phaseBefore = m_core.flightPhase();
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);
+            if (m_core.flightPhase() == FlightPhase::FAULT && phaseBefore != FlightPhase::FAULT)
+            {
+                FLIGHT.error("FAULT: imu lost in flight, motors cut");
+            }
             updateStatusLeds(m_core.flightPhase(), frame.rc.killSwitch, degraded, frames);
 
             ++frames;

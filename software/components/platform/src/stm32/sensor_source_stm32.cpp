@@ -49,18 +49,19 @@ namespace mark4
         m_overruns += (ticks - m_consumedTicks) - 1U;
         m_consumedTicks = ticks;
 
+        const std::uint64_t nowUs = m_clock.nowUs();
+        frameOut.timestampUs = nowUs;
+
+        // A failed burst is a frame without an IMU, zeros and the flag down:
+        // replaying the previous sample would have the core integrate a
+        // frozen gyro as if the drone had stopped moving.
         Mpu6050Sample sample{};
-        if (m_imu.readSample(sample))
-        {
-            m_lastSample = sample;
-        }
-        else
+        frameOut.imuValid = m_imu.readSample(sample, nowUs);
+        if (!frameOut.imuValid)
         {
             ++m_readFailures;
-            sample = m_lastSample;
+            sample = Mpu6050Sample{};
         }
-
-        frameOut.timestampUs = m_clock.nowUs();
         // Chip axes taken as body axes for now: the breakout sits flat, z
         // up; the mapping gets a proper calibration once the mounting is
         // final. TODO(tmagne): axis map from the mechanical mounting.
@@ -71,12 +72,14 @@ namespace mark4
             frameOut.accelMps2[axis] =
                 static_cast<float>(sample.accel[axis]) * Mpu6050::ACCEL_MPS2_PER_LSB;
         }
-        // The barometer publishes at its own rate (80 Hz) and is read once
-        // per tick, so the frame always carries its latest solution; 0.0
-        // until the first one lands, and for good if the chip never
-        // came up.
-        m_baro.update();
-        frameOut.baroPa = m_baro.pressurePa();
+        // The barometer publishes at its own rate (80 Hz) and is read every
+        // few ticks, so most frames carry a held solution: it counts as
+        // valid while it is younger than the driver's freshness window,
+        // and the frame says "no baro" past it (or if the chip never came
+        // up).
+        m_baro.update(nowUs);
+        frameOut.baroValid = m_baro.fresh(nowUs);
+        frameOut.baroPa = frameOut.baroValid ? m_baro.pressurePa() : 0.0f;
         frameOut.rc = RcInput{}; // no receiver yet: kill switch engaged
         return FrameWait::FRAME;
     }
