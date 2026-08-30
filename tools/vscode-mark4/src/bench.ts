@@ -1,10 +1,10 @@
-// The bench view: hub state, godot state, and the two page entries. The hub
-// state is one HTTP ping; the URL is the only thing the extension knows
-// about the hub.
+// The bench view: what is not a node. Presence and start/stop of the local
+// processes belong to the nodes view, which reads the gateway; what is left
+// here is the hub URL (an HTTP ping, used by the bench session) and the two
+// pages to dock.
 
 import * as http from "node:http";
 import * as vscode from "vscode";
-import { findExecution, godotRunning, log } from "./tasks";
 
 export const HUB_URL = "http://127.0.0.1:47810";
 
@@ -38,29 +38,6 @@ function pageItem(label: string, command: string, icon: string): vscode.TreeItem
 }
 
 export class BenchProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-    private readonly changed = new vscode.EventEmitter<void>();
-    readonly onDidChangeTreeData = this.changed.event;
-    private hubUp = false;
-    private godotUp = false;
-
-    constructor(context: vscode.ExtensionContext) {
-        const poll = async (): Promise<void> => {
-            const hub = await pingHub();
-            const godot = await godotRunning();
-            if (hub !== this.hubUp || godot !== this.godotUp) {
-                log.info(`state change: hub ${hub ? "up" : "down"}, godot ${godot ? "up" : "down"}`);
-                this.hubUp = hub;
-                this.godotUp = godot;
-                this.changed.fire();
-            }
-        };
-        void poll();
-        const timer = setInterval(() => void poll(), 3000);
-        context.subscriptions.push(new vscode.Disposable(() => clearInterval(timer)));
-        vscode.tasks.onDidStartTask(() => this.changed.fire(), undefined, context.subscriptions);
-        vscode.tasks.onDidEndTask(() => this.changed.fire(), undefined, context.subscriptions);
-    }
-
     getTreeItem(item: vscode.TreeItem): vscode.TreeItem {
         return item;
     }
@@ -70,31 +47,8 @@ export class BenchProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
             return [];
         }
         return [
-            this.hubItem(),
-            this.godotItem(),
             pageItem("control page", "mark4.openControl", "browser"),
             pageItem("plots page", "mark4.openPlots", "graph-line"),
         ];
-    }
-
-    private hubItem(): vscode.TreeItem {
-        const item = new vscode.TreeItem("hub");
-        const execution = findExecution("run", "hub");
-        item.description = this.hubUp ? HUB_URL : execution ? "starting" : "down";
-        item.iconPath = this.hubUp
-            ? new vscode.ThemeIcon("circle-filled", new vscode.ThemeColor("testing.iconPassed"))
-            : new vscode.ThemeIcon("circle-outline");
-        item.contextValue = execution ? "hubTask" : this.hubUp ? "hubExternal" : "hubDown";
-        return item;
-    }
-
-    private godotItem(): vscode.TreeItem {
-        const item = new vscode.TreeItem("godot sim");
-        item.description = this.godotUp ? "running" : "";
-        item.iconPath = this.godotUp
-            ? new vscode.ThemeIcon("circle-filled", new vscode.ThemeColor("testing.iconPassed"))
-            : new vscode.ThemeIcon("circle-outline");
-        item.contextValue = this.godotUp ? "godotTask" : "godotIdle";
-        return item;
     }
 }

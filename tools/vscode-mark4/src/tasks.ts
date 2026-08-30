@@ -6,6 +6,8 @@ import { execFile } from "node:child_process";
 import * as path from "node:path";
 import * as vscode from "vscode";
 
+import { simNodeId } from "./model";
+
 export type Action = "build" | "run" | "godot";
 
 /** The audit trail: every action and task event lands here, timestamped. */
@@ -47,6 +49,40 @@ export function runTask(app: string): vscode.Task {
         reveal: vscode.TaskRevealKind.Always,
         panel: vscode.TaskPanelKind.Dedicated,
     });
+}
+
+/** The task name of one extension-started drone_sim instance. */
+export function simTaskName(instance: number): string {
+    return `drone_sim#${instance}`;
+}
+
+/**
+ * One more drone_sim: its own emulated flash directory so the instances do
+ * not share slots, and the node id the extension gave it so its line in the
+ * nodes view knows which task to stop. Built through build_app.py like every
+ * other run, then started directly because run_app.py passes no arguments.
+ */
+export function droneSimTask(instance: number): vscode.Task {
+    const root = folder().uri.fsPath;
+    const build = path.join(root, "scripts", "build_app.py");
+    const binary = path.join(root, "software", "build", "desktop", "drone_sim", "drone_sim");
+    const otaDirectory = path.join(root, "software", "build", "desktop", "drone_sim", `ota_flash_${instance}`);
+    const command =
+        `python3 '${build}' drone_sim && '${binary}'` +
+        ` --node-id ${simNodeId(instance)} --ota-dir '${otaDirectory}'`;
+    return make("run", simTaskName(instance), new vscode.ShellExecution(command), [], {
+        reveal: vscode.TaskRevealKind.Always,
+        panel: vscode.TaskPanelKind.Dedicated,
+    });
+}
+
+/** The lowest instance number no running task holds. */
+export function freeSimInstance(): number {
+    let instance = 1;
+    while (findExecution("run", simTaskName(instance)) !== undefined) {
+        instance += 1;
+    }
+    return instance;
 }
 
 export function godotTask(): vscode.Task {

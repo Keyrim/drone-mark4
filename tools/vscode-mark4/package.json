@@ -3,7 +3,7 @@
     "displayName": "Mark4",
     "description": "Bench tooling: build and run the apps, drive the bench, dock the hub pages in the editor.",
     "publisher": "tmagne",
-    "version": "0.1.7",
+    "version": "0.2.0",
     "private": true,
     "type": "module",
     "packageManager": "pnpm@11.21.0",
@@ -15,16 +15,26 @@
     ],
     "main": "./dist/extension.cjs",
     "scripts": {
-        "build": "node esbuild.js",
-        "watch": "node esbuild.js --watch",
-        "typecheck": "tsc --noEmit",
+        "gen": "mkdir -p src/gen && python3 -m grpc_tools.protoc -I ../../software/components/protocol --plugin=protoc-gen-es=./node_modules/.bin/protoc-gen-es --es_out=src/gen --es_opt=target=ts mark4.proto gateway.proto",
+        "build": "pnpm gen && node esbuild.js",
+        "watch": "pnpm gen && node esbuild.js --watch",
+        "typecheck": "pnpm gen && tsc --noEmit",
+        "test": "pnpm gen && node --import tsx --test test/*.test.ts",
+        "smoke": "pnpm gen && node --import tsx scripts/smoke.ts",
         "package": "vsce package --no-dependencies --allow-missing-repository --skip-license"
     },
+    "dependencies": {
+        "@bufbuild/protobuf": "2.14.0",
+        "ws": "8.21.3"
+    },
     "devDependencies": {
+        "@bufbuild/protoc-gen-es": "2.14.0",
         "@types/node": "22.19.0",
         "@types/vscode": "1.100.0",
+        "@types/ws": "8.18.1",
         "@vscode/vsce": "^3.9.2",
         "esbuild": "0.25.12",
+        "tsx": "4.20.6",
         "typescript": "5.9.3"
     },
     "contributes": {
@@ -55,6 +65,14 @@
                 {
                     "id": "mark4.apps",
                     "name": "Apps"
+                },
+                {
+                    "id": "mark4.nodes",
+                    "name": "Nodes"
+                },
+                {
+                    "id": "mark4.logLevels",
+                    "name": "Log levels"
                 },
                 {
                     "id": "mark4.bench",
@@ -103,7 +121,31 @@
                 "command": "mark4.startGodot",
                 "title": "Start Godot Sim",
                 "category": "Mark4",
-                "icon": "$(play)"
+                "icon": "$(globe)"
+            },
+            {
+                "command": "mark4.addDroneSim",
+                "title": "Start One More drone_sim",
+                "category": "Mark4",
+                "icon": "$(add)"
+            },
+            {
+                "command": "mark4.stopNode",
+                "title": "Stop Node",
+                "category": "Mark4",
+                "icon": "$(debug-stop)"
+            },
+            {
+                "command": "mark4.setLogLevel",
+                "title": "Set level...",
+                "category": "Mark4",
+                "icon": "$(settings)"
+            },
+            {
+                "command": "mark4.toggleLogGrouping",
+                "title": "Group By Node Or By Module",
+                "category": "Mark4",
+                "icon": "$(list-tree)"
             },
             {
                 "command": "mark4.stopGodot",
@@ -136,6 +178,21 @@
                     "command": "mark4.benchSession",
                     "when": "view == mark4.bench",
                     "group": "navigation"
+                },
+                {
+                    "command": "mark4.addDroneSim",
+                    "when": "view == mark4.nodes",
+                    "group": "navigation@1"
+                },
+                {
+                    "command": "mark4.startGodot",
+                    "when": "view == mark4.nodes",
+                    "group": "navigation@2"
+                },
+                {
+                    "command": "mark4.toggleLogGrouping",
+                    "when": "view == mark4.logLevels",
+                    "group": "navigation"
                 }
             ],
             "view/item/context": [
@@ -161,22 +218,17 @@
                 },
                 {
                     "command": "mark4.startHub",
-                    "when": "view == mark4.bench && viewItem == hubDown",
+                    "when": "view == mark4.nodes && viewItem == gatewayDown",
                     "group": "inline"
                 },
                 {
-                    "command": "mark4.stopHub",
-                    "when": "view == mark4.bench && viewItem == hubTask",
+                    "command": "mark4.stopNode",
+                    "when": "view == mark4.nodes && viewItem =~ /:stop/",
                     "group": "inline"
                 },
                 {
-                    "command": "mark4.startGodot",
-                    "when": "view == mark4.bench && viewItem == godotIdle",
-                    "group": "inline"
-                },
-                {
-                    "command": "mark4.stopGodot",
-                    "when": "view == mark4.bench && viewItem == godotTask",
+                    "command": "mark4.setLogLevel",
+                    "when": "view == mark4.logLevels && viewItem == logTarget",
                     "group": "inline"
                 }
             ],
@@ -203,6 +255,14 @@
                 },
                 {
                     "command": "mark4.stopGodot",
+                    "when": "false"
+                },
+                {
+                    "command": "mark4.stopNode",
+                    "when": "false"
+                },
+                {
+                    "command": "mark4.setLogLevel",
                     "when": "false"
                 }
             ]

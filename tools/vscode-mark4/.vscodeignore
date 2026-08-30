@@ -1,4 +1,6 @@
 src/
+test/
+scripts/
 esbuild.js
 tsconfig.json
 pnpm-lock.yaml

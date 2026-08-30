@@ -1,12 +1,30 @@
 // Thin bench tooling: the apps tree shells out to the repo build scripts,
-// the bench view starts and stops the hub and the Godot sim as tasks, the
-// pages open as webviews around an iframe on the hub URL. The extension
-// knows the hub URL and nothing else: no wire structs, no JSON.
+// the nodes and log levels views read the gateway's websocket, the pages
+// open as webviews around an iframe on the hub URL.
 
 import * as vscode from "vscode";
+
 import { AppItem, AppsProvider } from "./appsTree";
 import { BenchProvider, HUB_URL, pingHub, waitForHub } from "./bench";
-import { buildTask, findExecution, godotRunning, godotTask, log, runTask, stopGodot } from "./tasks";
+import { GatewayClient } from "./gateway";
+import { NodeKind } from "./gen/mark4_pb";
+import { LevelTreeItem, LogLevelsProvider } from "./logLevelsTree";
+import { LogChannel } from "./logs";
+import { LEVEL_NAMES } from "./logTree";
+import { simInstance } from "./model";
+import { NodeItem, NodesProvider } from "./nodesTree";
+import {
+    buildTask,
+    droneSimTask,
+    findExecution,
+    freeSimInstance,
+    godotRunning,
+    godotTask,
+    log,
+    runTask,
+    simTaskName,
+    stopGodot,
+} from "./tasks";
 import { openPage } from "./webviews";
 
 async function startHub(): Promise<void> {
@@ -15,6 +33,29 @@ async function startHub(): Promise<void> {
         return;
     }
     await vscode.tasks.executeTask(runTask("hub"));
+}
+
+async function startGodot(): Promise<void> {
+    if (!(await godotRunning())) {
+        await vscode.tasks.executeTask(godotTask());
+    }
+}
+
+/** Stops the local process behind a node, when the extension owns one. */
+function stopNode(item: NodeItem): void {
+    log.info(`stopNode: ${item.row.kindName} ${item.row.hex}`);
+    if (item.row.kind === NodeKind.PLANT) {
+        stopGodot();
+        return;
+    }
+    if (item.row.kind === NodeKind.GATEWAY) {
+        findExecution("run", "hub")?.terminate();
+        return;
+    }
+    const instance = simInstance(item.row.id);
+    if (instance !== undefined) {
+        findExecution("run", simTaskName(instance))?.terminate();
+    }
 }
 
 let sessionActive = false;
@@ -61,7 +102,31 @@ async function benchSessionInner(): Promise<void> {
 
 export function activate(context: vscode.ExtensionContext): void {
     log.info("extension activated");
+    const nodes = new NodesProvider();
+    const levels = new LogLevelsProvider();
+    const logs = new LogChannel();
+    const gateway = new GatewayClient({
+        onNodes: (table) => {
+            nodes.setTable(table);
+            levels.setTable(table);
+            logs.setTable(table);
+        },
+        onStatus: (status) => nodes.setStatus(status),
+        onEnvelope: (src, envelope) => logs.write(src, envelope),
+        onState: (open, reconnected) => {
+            log.info(`gateway link ${open ? "open" : "closed"}`);
+            nodes.setOnline(open);
+            if (!open) {
+                levels.setTable(undefined);
+            } else if (reconnected) {
+                logs.noteReconnect();
+            }
+        },
+    });
+
     context.subscriptions.push(
+        new vscode.Disposable(() => gateway.dispose()),
+        logs,
         vscode.tasks.onDidStartTask((event) =>
             log.info(`task started: [${event.execution.task.source}] ${event.execution.task.name}`),
         ),
@@ -72,7 +137,9 @@ export function activate(context: vscode.ExtensionContext): void {
             ),
         ),
         vscode.window.registerTreeDataProvider("mark4.apps", new AppsProvider(context)),
-        vscode.window.registerTreeDataProvider("mark4.bench", new BenchProvider(context)),
+        vscode.window.registerTreeDataProvider("mark4.bench", new BenchProvider()),
+        vscode.window.registerTreeDataProvider("mark4.nodes", nodes),
+        vscode.window.registerTreeDataProvider("mark4.logLevels", levels),
         vscode.commands.registerCommand("mark4.buildApp", (item: AppItem) => {
             log.info(`buildApp: ${item.app.name}`);
             return vscode.tasks.executeTask(buildTask(item.app.name));
@@ -95,12 +162,33 @@ export function activate(context: vscode.ExtensionContext): void {
             log.info("stopHub");
             findExecution("run", "hub")?.terminate();
         }),
-        vscode.commands.registerCommand("mark4.startGodot", async () => {
-            if (!(await godotRunning())) {
-                await vscode.tasks.executeTask(godotTask());
+        vscode.commands.registerCommand("mark4.startGodot", startGodot),
+        vscode.commands.registerCommand("mark4.stopGodot", stopGodot),
+        vscode.commands.registerCommand("mark4.addDroneSim", () => {
+            const instance = freeSimInstance();
+            log.info(`addDroneSim: instance ${instance}`);
+            return vscode.tasks.executeTask(droneSimTask(instance));
+        }),
+        vscode.commands.registerCommand("mark4.stopNode", stopNode),
+        vscode.commands.registerCommand("mark4.toggleLogGrouping", () => {
+            log.info(`log levels grouped ${levels.toggleMode()}`);
+        }),
+        vscode.commands.registerCommand("mark4.setLogLevel", async (item: LevelTreeItem) => {
+            const picked = await vscode.window.showQuickPick([...LEVEL_NAMES], {
+                placeHolder: `level of ${item.item.label} (${item.item.targets.length} module(s))`,
+            });
+            if (picked === undefined) {
+                return;
+            }
+            const level = LEVEL_NAMES.indexOf(picked as (typeof LEVEL_NAMES)[number]);
+            log.info(`setLogLevel: ${item.item.key} -> ${picked}`);
+            for (const target of item.item.targets) {
+                gateway.setLogLevel(target.nodeId, target.moduleId, level);
+            }
+            for (const nodeId of new Set(item.item.targets.map((target) => target.nodeId))) {
+                gateway.queryLogModules(nodeId);
             }
         }),
-        vscode.commands.registerCommand("mark4.stopGodot", stopGodot),
         vscode.commands.registerCommand("mark4.openControl", () => openPage("control", vscode.ViewColumn.Active)),
         vscode.commands.registerCommand("mark4.openPlots", () => openPage("plots", vscode.ViewColumn.Active)),
         vscode.commands.registerCommand("mark4.benchSession", benchSession),

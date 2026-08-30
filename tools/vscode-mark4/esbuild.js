@@ -13,7 +13,9 @@ const options = {
     format: "cjs",
     platform: "node",
     target: "node20",
-    external: ["vscode"],
+    // vscode is provided by the host; the two ws speedups are optional
+    // native modules ws only requires inside a try/catch.
+    external: ["vscode", "bufferutil", "utf-8-validate"],
     sourcemap: watch,
     minify: !watch,
     logLevel: "info",
