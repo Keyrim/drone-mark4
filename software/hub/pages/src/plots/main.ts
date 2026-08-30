@@ -1,5 +1,5 @@
 /**
- * Plots page: the hub telemetry drawn as a stack of lanes.
+ * Plots page: the telemetry of one node drawn as a stack of lanes.
  *
  * The viewport rides the right edge of the stream over a fixed window;
  * zooming or panning leaves follow mode and the Follow button comes back to
@@ -14,21 +14,21 @@ import { LanesView } from "../lanes/lanes";
 import { SeriesBuffer, type LaneConfig } from "../lanes/model";
 import { Ruler, RULER_H } from "../lanes/ruler";
 import { clampToData, pan, ticks, zoom, type Viewport } from "../lanes/timebase";
-import { HubSocket, type HubMessage } from "../shared/hub_socket";
-import { DEFAULT_LANES, LIVE_SERIES, LiveSampler, SOURCE_NAMES } from "../shared/series";
+import { GatewaySocket } from "../shared/gateway_socket";
+import { isDrone } from "../shared/nodes";
+import { DEFAULT_LANES, LIVE_SERIES, sampleTelemetry } from "../shared/series";
 import { Shell } from "../shared/shell";
 
 const WINDOWS_S = [5, 10, 20, 60];
 const DEFAULT_WINDOW_S = 20;
 const US_PER_S = 1e6;
 
-const socket = new HubSocket();
+const socket = new GatewaySocket();
 const shell = new Shell(socket);
 
 const buffers = new Map<string, SeriesBuffer>(
     LIVE_SERIES.map((def) => [def.key, new SeriesBuffer(def)])
 );
-const sampler = new LiveSampler();
 
 let originUs: number | null = null;
 let windowS = DEFAULT_WINDOW_S;
@@ -85,40 +85,63 @@ function toolbarButton(label: string, onClick: (button: HTMLButtonElement) => vo
     return button;
 }
 
-// Several drones may stream at once; the lanes draw exactly one. The first
-// source seen locks the selector, switching it starts the buffers over.
-let sourceKind: number | null = null;
+// Several drones may stream at once; the lanes draw exactly one, by node
+// id. The first drone seen locks the selector, switching it starts the
+// buffers over.
+let sourceNode: number | null = null;
 const seenSources = new Set<number>();
 const sourceSelect = document.createElement("select");
 sourceSelect.className = "config-select";
-sourceSelect.title = "telemetry source the lanes draw";
+sourceSelect.title = "node whose telemetry the lanes draw";
 sourceSelect.addEventListener("change", () => {
-    sourceKind = Number(sourceSelect.value);
+    sourceNode = Number(sourceSelect.value);
+    clearBuffers();
+});
+shell.toolbar.appendChild(sourceSelect);
+
+function clearBuffers(): void {
     for (const buffer of buffers.values()) {
         buffer.clear();
     }
     originUs = null;
     dirty = true;
-});
-shell.toolbar.appendChild(sourceSelect);
+}
 
-function noteSource(kind: number): void {
-    if (seenSources.has(kind)) {
-        return;
-    }
-    seenSources.add(kind);
-    if (sourceKind === null) {
-        sourceKind = kind;
-    }
+function paintSources(): void {
     sourceSelect.replaceChildren();
     for (const id of [...seenSources].sort((a, b) => a - b)) {
         const option = document.createElement("option");
         option.value = String(id);
-        option.textContent = SOURCE_NAMES.get(id) ?? `source ${id}`;
+        const node = shell.nodes.get(id);
+        option.textContent = node === undefined ? `node ${id}` : `${node.name} (node ${id})`;
         sourceSelect.appendChild(option);
     }
-    sourceSelect.value = String(sourceKind);
+    sourceSelect.value = String(sourceNode);
 }
+
+function noteSource(id: number): void {
+    if (seenSources.has(id)) {
+        return;
+    }
+    seenSources.add(id);
+    if (sourceNode === null) {
+        sourceNode = id;
+    }
+    paintSources();
+}
+
+shell.nodes.onChange((nodes) => {
+    // A source that streams is a source, named or not; the names come from
+    // the table, and a first drone listed before it streams is the default.
+    if (sourceNode === null) {
+        const drone = nodes.filter(isDrone).sort((a, b) => a.id - b.id)[0];
+        if (drone !== undefined) {
+            sourceNode = drone.id;
+            seenSources.add(drone.id);
+        }
+    }
+    paintSources();
+});
 
 const windowButtons = WINDOWS_S.map((seconds) =>
     toolbarButton(`${seconds} s`, () => {
@@ -141,13 +164,7 @@ const pauseButton = toolbarButton("Pause", () => {
     dirty = true;
 });
 
-const clearButton = toolbarButton("Clear", () => {
-    for (const buffer of buffers.values()) {
-        buffer.clear();
-    }
-    originUs = null;
-    dirty = true;
-});
+const clearButton = toolbarButton("Clear", () => clearBuffers());
 clearButton.title = "Drop every buffered sample";
 
 const configButton = toolbarButton("Lanes", () => {
@@ -175,22 +192,17 @@ function relativeS(timestampUs: number): number {
     return (timestampUs - originUs) / US_PER_S;
 }
 
-socket.on("simRaw", (message: HubMessage) => {
-    if (!paused) {
-        // Latch only: the exact state is sampled by the next telemetry row
-        sampler.latchSimRaw(message);
-    }
-});
-
-socket.on("telemetry", (message: HubMessage) => {
-    if (paused) {
+socket.onEnvelope((src, envelope) => {
+    if (paused || envelope.body.case !== "telemetry") {
         return;
     }
-    noteSource(Number(message["sourceId"]));
-    if (Number(message["sourceId"]) !== sourceKind) {
+    noteSource(src);
+    if (src !== sourceNode) {
         return;
     }
-    const row = sampler.sample(message);
+    // The exact state, when the sender has a plant, rides inside the same
+    // message: one row carries both the estimate and the truth.
+    const row = sampleTelemetry(envelope.body.value);
     const t = relativeS(row.timestampUs);
     for (const [key, value] of row.values) {
         buffers.get(key)?.push(t, value);

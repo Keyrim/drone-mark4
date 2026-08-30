@@ -1,25 +1,42 @@
 /**
- * The tunable parameter table of one flight process, and the profiles the hub
+ * The tunable parameter table of one node, and the profiles the gateway
  * stores beside it.
  *
- * The table is paged: `tuningList` only asks for a start index, and the
- * process unrolls one description per flight frame. The ack to the request
+ * The table is paged: TuningList only asks for a start index, and the
+ * process unrolls one TuningInfo per flight frame. The ack to the request
  * says it went out, nothing more, so the page watches the descriptions
  * arrive and resumes from the last index it saw when they stop coming - a
  * lost datagram costs one more request, never the whole table.
  *
- * A `tuningAck` is broadcast to every client and carries no correlation id,
- * so it is matched on (source, paramId): the answer to a write on this
- * process, for this parameter.
+ * A TuningAck is broadcast by the node and carries no correlation id, so it
+ * is matched on (node, id): the answer to a write on this node, for this
+ * parameter.
  */
 
-import type { HubMessage, HubSocket } from "../shared/hub_socket";
+import { create } from "@bufbuild/protobuf";
+
+import { GatewayMessageSchema, ProfileCommand_Op } from "../gen/gateway_pb";
+import {
+    type Envelope,
+    EnvelopeSchema,
+    type TuningAck,
+    type TuningInfo,
+    TuningStatus,
+} from "../gen/mark4_pb";
+import type { GatewaySocket } from "../shared/gateway_socket";
 
 /** No description for this long means the page asks again [ms]. */
 const RESUME_AFTER_MS = 1500;
 
 /** Requests a stalled table gets before the page gives up on it. */
 const MAX_RESUMES = 5;
+
+const STATUS_NAMES: Record<number, string> = {
+    [TuningStatus.OK]: "ok",
+    [TuningStatus.UNKNOWN_ID]: "unknownId",
+    [TuningStatus.OUT_OF_BOUNDS]: "outOfBounds",
+    [TuningStatus.LOCKED_WHILE_ARMED]: "lockedWhileArmed",
+};
 
 interface Param {
     index: number;
@@ -37,6 +54,21 @@ interface Row {
     status: HTMLElement;
 }
 
+/** A ProfileCommand message, the gateway-local service behind the profiles. */
+function profileCommand(op: ProfileCommand_Op, fields: { name?: string; targetNode?: number; values?: { id: number; value: number }[] }) {
+    return create(GatewayMessageSchema, {
+        body: {
+            case: "profileCommand",
+            value: {
+                op,
+                name: fields.name ?? "",
+                targetNode: fields.targetNode ?? 0,
+                values: fields.values ?? [],
+            },
+        },
+    });
+}
+
 export class TuningPanel {
     readonly root: HTMLElement;
     private readonly body: HTMLTableSectionElement;
@@ -51,10 +83,20 @@ export class TuningPanel {
     private highestIndex = -1;
     private resumes = 0;
     private watchdog: ReturnType<typeof setInterval> | null = null;
+    private readonly onEnvelope = (src: number, envelope: Envelope): void => {
+        if (src !== this.nodeId) {
+            return;
+        }
+        if (envelope.body.case === "tuningInfo") {
+            this.onInfo(envelope.body.value);
+        } else if (envelope.body.case === "tuningAck") {
+            this.onAck(envelope.body.value);
+        }
+    };
 
     constructor(
-        private readonly socket: HubSocket,
-        private readonly target: () => string,
+        private readonly socket: GatewaySocket,
+        private readonly nodeId: number,
         private readonly notify: (text: string, ok: boolean) => void
     ) {
         this.root = document.createElement("section");
@@ -109,15 +151,25 @@ export class TuningPanel {
         this.root.appendChild(bar);
         this.root.appendChild(scroll);
 
-        socket.on("tuningInfo", (message) => this.onInfo(message));
-        socket.on("tuningAck", (message) => this.onAck(message));
-        socket.on("profiles", (message) => this.onProfiles(message));
-        socket.on("profile", (message) => this.onProfile(message));
+        socket.onEnvelope(this.onEnvelope);
+        socket.on("profiles", (list) => this.onProfiles(list.names));
+        socket.on("profile", (profile) => {
+            this.loaded = new Map(profile.values.map((pair) => [pair.id, pair.value]));
+            this.loadedName = profile.name;
+            this.render();
+            this.notify(`profile ${this.loadedName} loaded, ${this.loaded.size} values`, true);
+        });
     }
 
     /** Asks for the profile names; the table is read on demand. */
     start(): void {
-        void this.socket.request({ type: "profileList" }).catch(() => undefined);
+        void this.socket.request(profileCommand(ProfileCommand_Op.LIST, {})).catch(() => undefined);
+    }
+
+    /** The widget is leaving: stop listening for the node's answers. */
+    destroy(): void {
+        this.socket.offEnvelope(this.onEnvelope);
+        this.stopWatchdog();
     }
 
     /** Drops the table: it belongs to the process that answered it. */
@@ -131,7 +183,7 @@ export class TuningPanel {
         this.stopWatchdog();
     }
 
-    /** Walks the table of the current target from the start. */
+    /** Walks the table of the node from the start. */
     refresh(): void {
         this.clear();
         this.resumes = 0;
@@ -141,14 +193,10 @@ export class TuningPanel {
     }
 
     private request(startIndex: number): void {
-        const target = this.target();
-        if (target === "") {
-            this.notify("no flight process to read the table from", false);
-            return;
-        }
         this.note.textContent = `reading from index ${startIndex}...`;
+        const list = create(EnvelopeSchema, { body: { case: "tuningList", value: { startIndex } } });
         void this.socket
-            .request({ type: "tuningList", target, startIndex })
+            .requestEnvelope(this.nodeId, list)
             .then((ack) => {
                 if (!ack.ok) {
                     this.notify(`tuningList: ${ack.error}`, false);
@@ -177,21 +225,16 @@ export class TuningPanel {
         this.request(this.highestIndex + 1);
     }
 
-    private onInfo(message: HubMessage): void {
-        if (message["source"] !== this.target()) {
-            return;
-        }
-        const paramId = Number(message["paramId"]);
-        const index = Number(message["index"]);
-        this.count = Number(message["count"]);
-        this.highestIndex = Math.max(this.highestIndex, index);
-        this.params.set(paramId, {
-            index,
-            name: String(message["name"] ?? ""),
-            value: Number(message["value"]),
-            minValue: Number(message["minValue"]),
-            maxValue: Number(message["maxValue"]),
-            armedChange: message["armedChange"] === true,
+    private onInfo(info: TuningInfo): void {
+        this.count = info.count;
+        this.highestIndex = Math.max(this.highestIndex, info.index);
+        this.params.set(info.id, {
+            index: info.index,
+            name: info.name,
+            value: info.value,
+            minValue: info.minValue,
+            maxValue: info.maxValue,
+            armedChange: info.armedChange,
         });
         this.render();
         this.note.textContent = `${this.params.size}/${this.count} parameters`;
@@ -200,35 +243,27 @@ export class TuningPanel {
         }
     }
 
-    private onAck(message: HubMessage): void {
-        if (message["source"] !== this.target()) {
-            return;
-        }
-        const paramId = Number(message["paramId"]);
-        const row = this.rows.get(paramId);
-        const param = this.params.get(paramId);
+    private onAck(ack: TuningAck): void {
+        const row = this.rows.get(ack.id);
+        const param = this.params.get(ack.id);
         if (!row || !param) {
             return;
         }
         // The value in the ack is the one actually in effect, refused or not
-        param.value = Number(message["value"]);
+        param.value = ack.value;
         row.input.value = String(param.value);
-        const status = String(message["statusName"] ?? "");
+        const status = STATUS_NAMES[ack.status] ?? `status ${ack.status}`;
         row.status.textContent = status;
-        row.status.className = status === "ok" ? "cell-ok" : "cell-bad";
-        if (status === "lockedWhileArmed") {
-            this.notify(
-                `${param.name} is locked while armed: disarm to change it`,
-                false
-            );
-        } else if (status !== "ok") {
+        row.status.className = ack.status === TuningStatus.OK ? "cell-ok" : "cell-bad";
+        if (ack.status === TuningStatus.LOCKED_WHILE_ARMED) {
+            this.notify(`${param.name} is locked while armed: disarm to change it`, false);
+        } else if (ack.status !== TuningStatus.OK) {
             this.notify(`${param.name}: ${status}`, false);
         }
         this.render();
     }
 
-    private onProfiles(message: HubMessage): void {
-        const names = (message["names"] as string[]) ?? [];
+    private onProfiles(names: string[]): void {
         this.profileSelect.replaceChildren();
         const head = document.createElement("option");
         head.value = "";
@@ -245,31 +280,25 @@ export class TuningPanel {
         }
     }
 
-    private onProfile(message: HubMessage): void {
-        const values = (message["values"] as Record<string, number>) ?? {};
-        this.loaded = new Map(Object.entries(values).map(([id, value]) => [Number(id), value]));
-        this.loadedName = String(message["name"] ?? "");
-        this.render();
-        this.notify(`profile ${this.loadedName} loaded, ${this.loaded.size} values`, true);
-    }
-
     private loadProfile(): void {
         const name = this.profileSelect.value;
         if (name === "") {
             this.notify("pick a profile first", false);
             return;
         }
-        this.ask({ type: "profileLoad", name }, `load ${name}`);
+        this.ask(profileCommand(ProfileCommand_Op.LOAD, { name }), `load ${name}`);
     }
 
     private pushProfile(): void {
         const name = this.profileSelect.value;
-        const target = this.target();
-        if (name === "" || target === "") {
-            this.notify("pick a profile and a target first", false);
+        if (name === "") {
+            this.notify("pick a profile first", false);
             return;
         }
-        this.ask({ type: "profilePush", name, target }, `push ${name} to ${target}`);
+        this.ask(
+            profileCommand(ProfileCommand_Op.PUSH, { name, targetNode: this.nodeId }),
+            `push ${name} to node ${this.nodeId}`
+        );
     }
 
     private saveProfile(): void {
@@ -281,16 +310,13 @@ export class TuningPanel {
         if (name === null || name === "") {
             return;
         }
-        const values: Record<string, number> = {};
-        for (const [paramId, param] of this.params) {
-            values[String(paramId)] = param.value;
-        }
-        this.ask({ type: "profileSave", name, values }, `save ${name}`);
+        const values = [...this.params].map(([id, param]) => ({ id, value: param.value }));
+        this.ask(profileCommand(ProfileCommand_Op.SAVE, { name, values }), `save ${name}`);
     }
 
-    private ask(payload: Record<string, unknown>, what: string): void {
+    private ask(message: ReturnType<typeof profileCommand>, what: string): void {
         void this.socket
-            .request(payload)
+            .request(message)
             .then((ack) => this.notify(ack.ok ? `${what}: ok` : `${what}: ${ack.error}`, ack.ok))
             .catch((error: unknown) => this.notify(`${what}: ${String(error)}`, false));
     }
@@ -352,21 +378,20 @@ export class TuningPanel {
             return;
         }
         if (value < param.minValue || value > param.maxValue) {
-            this.notify(
-                `${param.name} must stay in [${param.minValue}, ${param.maxValue}]`,
-                false
-            );
+            this.notify(`${param.name} must stay in [${param.minValue}, ${param.maxValue}]`, false);
             input.value = String(param.value);
             return;
         }
-        const target = this.target();
+        const set = create(EnvelopeSchema, {
+            body: { case: "tuningSet", value: { id: paramId, value } },
+        });
         void this.socket
-            .request({ type: "tuningSet", target, paramId, value })
+            .requestEnvelope(this.nodeId, set)
             .then((ack) => {
                 if (!ack.ok) {
                     this.notify(`${param.name}: ${ack.error}`, false);
                 }
-                // The value in effect comes back as a tuningAck, not here
+                // The value in effect comes back as a TuningAck, not here
             })
             .catch((error: unknown) => this.notify(`${param.name}: ${String(error)}`, false));
     }

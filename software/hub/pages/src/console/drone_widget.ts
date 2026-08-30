@@ -1,7 +1,8 @@
 /**
- * One connected drone, one widget: the color it wears in the 3D view, the
+ * One live drone node, one widget: the color it wears in the 3D view, the
  * observation block every nature shares (phase, throw detector, altitude,
- * vertical, apex, motors), and the controls its nature calls for.
+ * vertical, apex, motors), and the controls its nature calls for. Every
+ * command it sends is an Envelope to THIS node's id.
  *
  * A real or simulated drone gets the transmitter: kill, arm and mode are
  * switches, the throttle is a slider, and the widget streams the RC state
@@ -9,32 +10,27 @@
  * silence fail-safe of the drone itself covers a closed tab or a frozen
  * browser, and hiding the page flips the kill switch on.
  *
- * The simulated drone also carries the scenario block, and both pilotable
- * natures carry the tuning table, folded until needed.
+ * The simulated drone also carries the scenario block, and both natures
+ * carry the tuning table, folded until needed.
  */
 
-import type { HubMessage, HubSocket } from "../shared/hub_socket";
-import { FLIGHT_PHASE_NAMES, sourceColor } from "../shared/series";
+import { create } from "@bufbuild/protobuf";
+
+import { type GatewayMessage } from "../gen/gateway_pb";
 import {
-    MODE_ALTITUDE_AUTO,
-    MODE_MANUAL,
-    SAFE_RC,
-    TICK_MS,
-    clamp01,
-    rcPayload,
-    type RcState,
-} from "./rc";
+    EnvelopeSchema,
+    FlightPhase,
+    NodeKind,
+    SimScenarioKind,
+    type Telemetry,
+} from "../gen/mark4_pb";
+import { frameMessage, type GatewaySocket } from "../shared/gateway_socket";
+import { type NodeView, nodeColor } from "../shared/nodes";
+import { FLIGHT_PHASE_NAMES } from "../shared/series";
+import { MODE_ALTITUDE_AUTO, MODE_MANUAL, SAFE_RC, TICK_MS, clamp01, rcEnvelope, type RcState } from "./rc";
 import { TuningPanel } from "./tuning";
 
 const THROW_STATE_NAMES = ["idle", "thrust", "ballistic"];
-
-/** FlightPhase values the chip colors: recovered, and latched cutoff. */
-const PHASE_HOVER = 5;
-const PHASE_CUTOFF = 6;
-
-/** StreamSource kinds, the nature of the drone behind the widget. */
-const KIND_FIRMWARE = 1;
-const KIND_DRONE_SIM = 2;
 
 /** How often the readout repaints: telemetry lands far faster than eyes read. */
 const READOUT_MS = 100;
@@ -54,17 +50,24 @@ const GOODBYE_FRAMES = 2;
 
 const MOTOR_COUNT = 4;
 
+/** Highest scenario sequence before wrapping; 0 is "no scenario" on the wire. */
+const MAX_SCENARIO_SEQUENCE = 255;
+
+/** Rolling scenario number of this tab: two scenarios in a row are two runs. */
+let scenarioSequence = 0;
+
 /** What the widget needs from the page around it. */
 export interface WidgetHooks {
     notify(text: string, ok: boolean): void;
-    ask(payload: Record<string, unknown>, what: string): void;
+    ask(message: GatewayMessage, what: string): void;
 }
 
 export class DroneWidget {
     readonly root: HTMLElement;
+    readonly nodeId: number;
     private state: RcState = SAFE_RC;
     private timer: ReturnType<typeof setInterval> | null = null;
-    private latest: HubMessage | null = null;
+    private latest: Telemetry | null = null;
     private latestAtMs = 0;
     private readonly repaint: ReturnType<typeof setInterval>;
     private readonly phaseChip: HTMLElement;
@@ -72,6 +75,7 @@ export class DroneWidget {
     private readonly motorFills: HTMLElement[] = [];
     private readonly motorValues: HTMLElement[] = [];
     private killInput: HTMLInputElement | null = null;
+    private tuning: TuningPanel | null = null;
     private readonly onHide = (): void => {
         // A pilot who cannot see the drone is not piloting it
         if (document.visibilityState === "hidden") {
@@ -91,33 +95,33 @@ export class DroneWidget {
     }
 
     constructor(
-        private readonly socket: HubSocket,
-        readonly kind: number,
-        readonly kindName: string,
-        via: string,
+        private readonly socket: GatewaySocket,
+        readonly node: NodeView,
         private readonly hooks: WidgetHooks
     ) {
+        this.nodeId = node.id;
+        const color = nodeColor(node.id);
         this.root = document.createElement("section");
         this.root.className = "panel drone-widget";
-        this.root.style.borderLeft = `3px solid ${sourceColor(kind)}`;
+        this.root.style.borderLeft = `3px solid ${color}`;
 
         const head = document.createElement("div");
         head.className = "panel-bar";
         const dot = document.createElement("span");
         dot.className = "lane-dot";
-        dot.style.background = sourceColor(kind);
+        dot.style.background = color;
         head.appendChild(dot);
         const name = document.createElement("b");
-        name.textContent = kindName;
+        name.textContent = node.name;
         head.appendChild(name);
-        const transport = document.createElement("span");
-        transport.className = "panel-note";
-        transport.textContent = via;
-        head.appendChild(transport);
+        const detail = document.createElement("span");
+        detail.className = "panel-note";
+        detail.textContent = `${node.kindName} node ${node.id}`;
+        head.appendChild(detail);
         const spacer = document.createElement("span");
         spacer.className = "bar-grow";
         head.appendChild(spacer);
-        if (kind === KIND_FIRMWARE) {
+        if (node.kind === NodeKind.FIRMWARE) {
             head.appendChild(this.rebootButton());
         }
         this.root.appendChild(head);
@@ -167,21 +171,19 @@ export class DroneWidget {
         this.root.appendChild(motors);
 
         // Controls, by nature
-        if (kind === KIND_FIRMWARE || kind === KIND_DRONE_SIM) {
-            this.root.appendChild(this.transmitter());
-            if (kind === KIND_DRONE_SIM) {
-                this.root.appendChild(this.scenarioBlock());
-            }
-            this.root.appendChild(this.tuningBlock());
+        this.root.appendChild(this.transmitter());
+        if (node.kind === NodeKind.DRONE_SIM) {
+            this.root.appendChild(this.scenarioBlock());
         }
+        this.root.appendChild(this.tuningBlock());
 
         document.addEventListener("visibilitychange", this.onHide);
         this.repaint = setInterval(() => this.paint(), READOUT_MS);
     }
 
-    /** Telemetry of THIS drone, routed by the page. */
-    onTelemetry(message: HubMessage): void {
-        this.latest = message;
+    /** Telemetry of THIS node, routed by the page. */
+    onTelemetry(telemetry: Telemetry): void {
+        this.latest = telemetry;
         this.latestAtMs = Date.now();
     }
 
@@ -189,6 +191,7 @@ export class DroneWidget {
     destroy(): void {
         document.removeEventListener("visibilitychange", this.onHide);
         clearInterval(this.repaint);
+        this.tuning?.destroy();
         if (this.timer !== null) {
             clearInterval(this.timer);
             this.timer = null;
@@ -260,7 +263,7 @@ export class DroneWidget {
     }
 
     private send(): void {
-        this.socket.send(rcPayload(this.state, this.kindName));
+        this.socket.sendEnvelope(this.nodeId, rcEnvelope(this.state));
     }
 
     private switchRow(
@@ -297,7 +300,8 @@ export class DroneWidget {
                 armedUntil = 0;
                 button.textContent = "Reboot";
                 button.classList.remove("active");
-                this.hooks.ask({ type: "reboot", target: this.kindName }, "reboot");
+                const reboot = create(EnvelopeSchema, { body: { case: "reboot", value: {} } });
+                this.hooks.ask(frameMessage(this.nodeId, reboot), "reboot");
                 return;
             }
             armedUntil = Date.now() + CONFIRM_MS;
@@ -351,32 +355,37 @@ export class DroneWidget {
 
         const buttons = document.createElement("div");
         buttons.className = "panel-body";
-        for (const scenario of ["reset", "throw", "handThrow"]) {
+        const kinds: [string, SimScenarioKind][] = [
+            ["reset", SimScenarioKind.RESET],
+            ["throw", SimScenarioKind.THROW],
+            ["handThrow", SimScenarioKind.HAND_THROW],
+        ];
+        for (const [label, kind] of kinds) {
             const button = document.createElement("button");
             button.className = "btn";
-            button.textContent = scenario;
+            button.textContent = label;
             button.addEventListener("click", () => {
-                const read = (label: string): number => inputs.get(label)?.() ?? 0;
-                const payload: Record<string, unknown> = {
-                    type: "simScenario",
-                    target: this.kindName,
-                    scenario,
-                    seed: read("seed"),
-                };
-                if (scenario !== "reset") {
-                    payload["velocityMps"] = [0, 0, read("velocityMps z")];
-                    payload["angularVelocityRadS"] = [0, 0, read("angularVelocityRadS z")];
-                }
-                if (scenario === "throw") {
-                    payload["throwDelayUs"] = read("throwDelayUs");
-                }
-                if (scenario === "handThrow") {
-                    payload["heldSeconds"] = read("heldSeconds");
-                    payload["heldTiltRad"] = read("heldTiltRad");
-                    payload["heldAzimuthRad"] = read("heldAzimuthRad");
-                    payload["swingSeconds"] = read("swingSeconds");
-                }
-                this.hooks.ask(payload, scenario);
+                const read = (name: string): number => inputs.get(name)?.() ?? 0;
+                scenarioSequence = (scenarioSequence % MAX_SCENARIO_SEQUENCE) + 1;
+                const scenario = create(EnvelopeSchema, {
+                    body: {
+                        case: "simScenario",
+                        value: {
+                            sequence: scenarioSequence,
+                            kind,
+                            seed: BigInt(Math.trunc(read("seed"))),
+                            throwDelayUs: kind === SimScenarioKind.THROW ? Math.trunc(read("throwDelayUs")) : 0,
+                            velocityMps: kind === SimScenarioKind.RESET ? [] : [0, 0, read("velocityMps z")],
+                            angularVelocityRadS:
+                                kind === SimScenarioKind.RESET ? [] : [0, 0, read("angularVelocityRadS z")],
+                            heldSeconds: kind === SimScenarioKind.HAND_THROW ? read("heldSeconds") : 0,
+                            heldTiltRad: kind === SimScenarioKind.HAND_THROW ? read("heldTiltRad") : 0,
+                            heldAzimuthRad: kind === SimScenarioKind.HAND_THROW ? read("heldAzimuthRad") : 0,
+                            swingSeconds: kind === SimScenarioKind.HAND_THROW ? read("swingSeconds") : 0,
+                        },
+                    },
+                });
+                this.hooks.ask(frameMessage(this.nodeId, scenario), label);
             });
             buttons.appendChild(button);
         }
@@ -391,9 +400,8 @@ export class DroneWidget {
         const summary = document.createElement("summary");
         summary.textContent = "Tuning";
         details.appendChild(summary);
-        const tuning = new TuningPanel(this.socket, () => this.kindName, (text, ok) =>
-            this.hooks.notify(text, ok)
-        );
+        const tuning = new TuningPanel(this.socket, this.nodeId, (text, ok) => this.hooks.notify(text, ok));
+        this.tuning = tuning;
         let started = false;
         details.addEventListener("toggle", () => {
             if (details.open && !started) {
@@ -416,22 +424,22 @@ export class DroneWidget {
             this.phaseChip.className = "dw-phase warn";
             return;
         }
-        const m = this.latest as HubMessage;
-        const phase = Number(m["flightPhase"]);
+        const m = this.latest as Telemetry;
+        const phase = m.flightPhase;
         this.phaseChip.textContent = FLIGHT_PHASE_NAMES[phase] ?? String(phase);
         this.phaseChip.className =
-            "dw-phase" + (phase === PHASE_HOVER ? " good" : phase === PHASE_CUTOFF ? " bad" : "");
+            "dw-phase" +
+            (phase === FlightPhase.PHASE_HOVER ? " good" : phase === FlightPhase.PHASE_CUTOFF ? " bad" : "");
         const set = (label: string, text: string): void => {
             this.readings.get(label)!.textContent = text;
         };
-        set("throw", THROW_STATE_NAMES[Number(m["throwState"])] ?? String(m["throwState"]));
-        set("throws", String(m["throwCount"]));
-        set("alt", `${Number(m["altitudeM"]).toFixed(2)} m`);
-        set("vz", `${Number(m["verticalVelocityMps"]).toFixed(2)} m/s`);
-        set("apex", `${Number(m["apexAltitudeM"]).toFixed(2)} m`);
-        const motorValues = (m["motor"] as number[]) ?? [];
+        set("throw", THROW_STATE_NAMES[m.throwState] ?? String(m.throwState));
+        set("throws", String(m.throwCount));
+        set("alt", `${m.altitudeM.toFixed(2)} m`);
+        set("vz", `${m.verticalVelocityMps.toFixed(2)} m/s`);
+        set("apex", `${m.apexAltitudeM.toFixed(2)} m`);
         this.motorFills.forEach((fill, i) => {
-            const value = motorValues[i];
+            const value = m.motor[i];
             fill.style.width = `${clamp01(value ?? 0) * 100}%`;
             this.motorValues[i]!.textContent = value === undefined ? "-" : value.toFixed(2);
         });

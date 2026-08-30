@@ -15,16 +15,20 @@
  * - The throttle is clamped to [0, 1] whatever the input element reports.
  */
 
+import { create } from "@bufbuild/protobuf";
+
+import { type Envelope, EnvelopeSchema, RcMode } from "../gen/mark4_pb";
+
 /** Stream period once a widget transmits [ms]. */
 export const TICK_MS = 100;
 
-export const MODE_MANUAL = 0;
-export const MODE_ALTITUDE_AUTO = 1;
+export const MODE_MANUAL = RcMode.RC_MANUAL;
+export const MODE_ALTITUDE_AUTO = RcMode.RC_ALTITUDE_AUTO;
 
 export interface RcState {
     readonly kill: boolean;
     readonly arm: boolean;
-    readonly mode: number;
+    readonly mode: RcMode;
     /** Normalized [0, 1] */
     readonly throttle: number;
 }
@@ -41,14 +45,17 @@ export function clamp01(value: number): number {
     return value < 0 ? 0 : value > 1 ? 1 : Number.isNaN(value) ? 0 : value;
 }
 
-/** The rc message body for one state, exactly what the hub expects. */
-export function rcPayload(state: RcState, target: string): Record<string, unknown> {
-    return {
-        type: "rc",
-        target,
-        kill: state.kill ? 1 : 0,
-        arm: state.arm ? 1 : 0,
-        mode: state.mode,
-        throttle: clamp01(state.throttle),
-    };
+/** The Rc envelope for one state, exactly what the flight process reads. */
+export function rcEnvelope(state: RcState): Envelope {
+    return create(EnvelopeSchema, {
+        body: {
+            case: "rc",
+            value: {
+                kill: state.kill,
+                arm: state.arm,
+                mode: state.mode,
+                throttle: clamp01(state.throttle),
+            },
+        },
+    });
 }

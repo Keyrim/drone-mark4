@@ -1,24 +1,19 @@
 /**
- * Page shell shared by the two hub windows: the top bar opens with the
- * chips naming the drones the hub can see (the page name already sits in
- * the tab title), then the connection dot, and the toast strip every page
- * reports through.
+ * Page shell shared by the two hub windows: the top bar opens with one chip
+ * per node the gateway hears (kind, name, node id, age, and the wire
+ * mismatch flag), then the gateway counters, the connection dot, and the
+ * toast strip every page reports through.
  *
  * There is no in-page navigation: control and plots are two windows meant
- * to live on two screens, each with its own websocket to the hub.
+ * to live on two screens, each with its own websocket to the gateway.
  */
 
-import type { Ack, HubMessage, HubSocket } from "./hub_socket";
+import { type GatewayMessage } from "../gen/gateway_pb";
+import { LogLevel } from "../gen/mark4_pb";
+import { type Ack, type GatewaySocket } from "./gateway_socket";
+import { NodeModel, type NodeView, nodeColor } from "./nodes";
 
-interface DiscoveredProcess {
-    kindName: string;
-    sessionId: number;
-    ageMs: number;
-    /** The node was built on another mark4.proto than the hub: it is listed, and mute. */
-    wireMismatch: boolean;
-}
-
-/** A process not seen for this long is stale, whatever the hub still lists. */
+/** A node not heard for this long is stale, whatever the gateway still lists. */
 const STALE_MS = 3000;
 
 /** How long a toast stays on screen [ms]. */
@@ -29,19 +24,21 @@ export class Shell {
     readonly content: HTMLElement;
     /** Right-hand side of the toolbar, for the per-page controls. */
     readonly toolbar: HTMLElement;
+    /** The node table every page reads its world from. */
+    readonly nodes = new NodeModel();
     private readonly dot: HTMLElement;
     private readonly dotLabel: HTMLElement;
-    private readonly discovery: HTMLElement;
+    private readonly chips: HTMLElement;
     private readonly counters: HTMLElement;
     private readonly toasts: HTMLElement;
 
-    constructor(private readonly socket: HubSocket) {
+    constructor(private readonly socket: GatewaySocket) {
         const nav = document.createElement("nav");
         nav.className = "nav";
 
-        this.discovery = document.createElement("div");
-        this.discovery.className = "discovery";
-        nav.appendChild(this.discovery);
+        this.chips = document.createElement("div");
+        this.chips.className = "discovery";
+        nav.appendChild(this.chips);
 
         this.toolbar = document.createElement("div");
         this.toolbar.className = "nav-tools";
@@ -67,28 +64,45 @@ export class Shell {
         document.body.appendChild(nav);
         document.body.appendChild(this.content);
         document.body.appendChild(this.toasts);
-        this.setDiscovery([]);
+        this.paintChips([]);
         if (window.parent !== window) {
             forwardShortcuts();
         }
 
+        this.nodes.onChange((nodes) => this.paintChips(nodes));
         socket.onState((state) => {
             this.dot.className = `dot ${state}`;
             this.dotLabel.textContent = state;
             if (state !== "open") {
-                this.setDiscovery([]);
+                this.nodes.clear();
             }
         });
-        socket.on("discovery", (message: HubMessage) => {
-            this.setDiscovery((message["processes"] as DiscoveredProcess[]) ?? []);
+        socket.on("nodes", (table) => this.nodes.applyTable(table));
+        socket.on("status", (status) => {
+            this.nodes.setGatewayWireHash(status.wireHash);
+            const parts: string[] = [];
+            if (status.badFrames > 0) {
+                parts.push(`${status.badFrames} bad`);
+            }
+            if (status.dropped > 0) {
+                parts.push(`${status.dropped} dropped`);
+            }
+            if (status.rcClients > 1) {
+                parts.push(`${status.rcClients} RC PILOTS`);
+            }
+            this.counters.textContent = parts.join(" | ");
         });
-        socket.on("status", (message: HubMessage) => this.setStatus(message));
-        // A console line of a node that has no console on this desk: the
-        // board behind its relay. Level 0 is INFO; anything above is bad.
-        socket.on("log", (message: HubMessage) => {
-            const level = typeof message["level"] === "number" ? (message["level"] as number) : 0;
-            this.notify(`${String(message["source"])}: ${String(message["text"])}`, level === 0);
+        socket.onEnvelope((src, envelope) => {
+            this.nodes.noteFrame(src);
+            // A console line of a node that has no console on this desk: the
+            // board behind its relay. INFO is fine; anything above is bad.
+            if (envelope.body.case === "log") {
+                const line = envelope.body.value;
+                const who = this.nodes.get(src)?.name ?? `node ${src}`;
+                this.notify(`${who}: ${line.text}`, line.level === LogLevel.INFO);
+            }
         });
+        socket.on("log", (line) => this.notify(`gateway: ${line.text}`, line.level === LogLevel.INFO));
     }
 
     /** One line to the operator, shared by the page and the shell itself. */
@@ -101,55 +115,43 @@ export class Shell {
     }
 
     /** Sends one request and reports its ack as a toast. */
-    ask(payload: Record<string, unknown>, what: string): void {
+    ask(message: GatewayMessage, what: string): void {
         void this.socket
-            .request(payload)
+            .request(message)
             .then((ack: Ack) => this.notify(ack.ok ? `${what}: ok` : `${what}: ${ack.error}`, ack.ok))
             .catch((error: unknown) => this.notify(`${what}: ${String(error)}`, false));
     }
 
-    private setDiscovery(processes: DiscoveredProcess[]): void {
-        this.discovery.replaceChildren();
-        if (processes.length === 0) {
+    private paintChips(nodes: NodeView[]): void {
+        this.chips.replaceChildren();
+        if (nodes.length === 0) {
             const empty = document.createElement("span");
             empty.className = "discovery-empty";
-            empty.textContent = "no flight process announced";
-            this.discovery.appendChild(empty);
+            empty.textContent = "no node heard";
+            this.chips.appendChild(empty);
             return;
         }
-        for (const process of processes) {
+        for (const node of [...nodes].sort((a, b) => a.id - b.id)) {
             const chip = document.createElement("span");
             chip.className =
                 "chip" +
-                (process.ageMs > STALE_MS ? " stale" : "") +
-                (process.wireMismatch ? " mismatch" : "");
-            if (process.wireMismatch) {
-                chip.title = "built on another wire schema than the hub: rebuild and reflash";
+                (node.ageMs > STALE_MS ? " stale" : "") +
+                (node.wireMismatch ? " mismatch" : "");
+            chip.style.borderLeft = `3px solid ${nodeColor(node.id)}`;
+            if (node.wireMismatch) {
+                chip.title = "built on another wire schema than the gateway: rebuild and reflash";
             }
             const name = document.createElement("b");
-            name.textContent = process.kindName;
+            name.textContent = node.kindName === node.name ? node.name : `${node.kindName} ${node.name}`;
             chip.appendChild(name);
             const detail = document.createElement("span");
             detail.textContent =
-                ` node ${process.sessionId}` +
-                ` ${(process.ageMs / 1000).toFixed(1)} s ago` +
-                (process.wireMismatch ? " WIRE MISMATCH" : "");
+                ` node ${node.id}` +
+                ` ${(node.ageMs / 1000).toFixed(1)} s ago` +
+                (node.wireMismatch ? " WIRE MISMATCH" : "");
             chip.appendChild(detail);
-            this.discovery.appendChild(chip);
+            this.chips.appendChild(chip);
         }
-    }
-
-    private setStatus(message: HubMessage): void {
-        const counts = (message["counts"] ?? {}) as Record<string, number>;
-        const parts: string[] = [];
-        if ((counts["badFrames"] ?? 0) > 0) {
-            parts.push(`${counts["badFrames"]} bad`);
-        }
-        const rcClients = Number(message["rcClients"] ?? 0);
-        if (rcClients > 1) {
-            parts.push(`${rcClients} RC PILOTS`);
-        }
-        this.counters.textContent = parts.join(" | ");
     }
 }
 

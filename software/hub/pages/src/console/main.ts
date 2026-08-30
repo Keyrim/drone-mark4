@@ -1,180 +1,76 @@
 /**
- * Control page: one connected drone, its widget, and the 3D view.
+ * Control page: one widget per live drone node, the firmware panel, and the
+ * 3D view.
  *
- * Whatever the drone (desktop flight process, the board through its
- * relay), the workflow is the same: every announced node is a row of the
- * Connections panel, and nothing is wired to the controls until the
- * operator clicks Connect. The hub holds the connection, so every tab shows the same drone.
- * A connected drone that goes silent keeps its widget and its row, marked
- * lost; the hub reconnects on its own when the same drone comes back, and
- * the transmitter is parked safe in between.
+ * The node table is the world: a drone (the board through its relay, a
+ * desktop flight process) gets a widget the moment the gateway lists it and
+ * loses it when the gateway forgets it, transmitter parked safe on the way
+ * out. Nothing is connected to, nothing is picked: every widget commands
+ * the node id it was built for.
  *
- * Every command is a websocket message with a correlation id; the answer is
- * an ack that comes back to the toast strip. Nothing here reaches a socket
- * or a packed struct: the hub is the only translator in the system.
+ * Every command is a GatewayMessage with a correlation id; the answer is an
+ * Ack that comes back to the toast strip. Nothing here reaches a UDP socket:
+ * the gateway forwards the frames.
  */
 
-import { HubSocket, type HubMessage } from "../shared/hub_socket";
+import { GatewaySocket } from "../shared/gateway_socket";
+import { isDrone } from "../shared/nodes";
 import { Shell } from "../shared/shell";
 import { AttitudePanel } from "./attitude_panel";
-import {
-    NO_CONNECTION,
-    candidateRows,
-    type AnnouncedProcess,
-    type Connection,
-} from "./connection";
 import { DroneWidget, type WidgetHooks } from "./drone_widget";
 import { OtaPanel } from "./ota_panel";
 
-const socket = new HubSocket();
+const socket = new GatewaySocket();
 const shell = new Shell(socket);
 
 const hooks: WidgetHooks = {
     notify: (text, ok) => shell.notify(text, ok),
-    ask: (payload, what) => shell.ask(payload, what),
+    ask: (message, what) => shell.ask(message, what),
 };
 
-/* -------------------- the connected drone -------------------- */
+/* -------------------- the drones -------------------- */
 
 const droneList = document.createElement("div");
 droneList.className = "drone-list";
 const empty = document.createElement("span");
 empty.className = "panel-note";
-empty.textContent = "no drone connected: pick one below";
+empty.textContent = "no drone on the network: start a flight process or power the board";
 droneList.appendChild(empty);
 
 const attitude = new AttitudePanel(socket);
+const widgets = new Map<number, DroneWidget>();
 
-let connection: Connection = NO_CONNECTION;
-let widget: DroneWidget | null = null;
-/** Route and identity behind the current widget, "" when there is none. */
-let widgetKey = "";
-
-function applyConnection(next: Connection): void {
-    const key = next.via === "none" ? "" : `${next.via}:${next.id}`;
-    if (key !== widgetKey) {
-        widget?.destroy();
-        widget = null;
-        widgetKey = key;
-        if (key !== "") {
-            widget = new DroneWidget(socket, next.kind, next.kindName, next.via, hooks);
+shell.nodes.onChange((_nodes, diff) => {
+    for (const id of diff.removed) {
+        widgets.get(id)?.destroy();
+        widgets.delete(id);
+    }
+    for (const node of diff.added) {
+        if (isDrone(node) && !widgets.has(node.id)) {
+            const widget = new DroneWidget(socket, node, hooks);
+            widgets.set(node.id, widget);
             droneList.appendChild(widget.root);
         }
-    } else if (widget !== null && connection.live && !next.live) {
-        // The drone was lost: park the transmitter safe, so the drone that
-        // comes back (usually rebooted) is not greeted with an armed stick.
-        widget.killNow();
     }
-    connection = next;
-    empty.hidden = widget !== null;
-    attitude.setActive(new Set(widget === null ? [] : [connection.kind]));
-    renderConnections();
-}
-
-socket.on("telemetry", (message: HubMessage) => {
-    if (widget !== null && Number(message["sourceId"]) === connection.kind) {
-        widget.onTelemetry(message);
+    if (diff.added.length > 0 || diff.removed.length > 0) {
+        empty.hidden = widgets.size > 0;
+        attitude.setActive(new Map([...widgets.values()].map((widget) => [widget.nodeId, widget.node.name])));
     }
 });
 
-/* -------------------- connections -------------------- */
-
-let processes: AnnouncedProcess[] = [];
-
-const connectBlock = document.createElement("section");
-connectBlock.className = "panel";
-const connectBar = document.createElement("div");
-connectBar.className = "panel-bar";
-const connectTitle = document.createElement("b");
-connectTitle.textContent = "Connections";
-connectBar.appendChild(connectTitle);
-const connectHint = document.createElement("span");
-connectHint.className = "panel-note";
-connectHint.textContent = "drones announce themselves here";
-connectBar.appendChild(connectHint);
-connectBlock.appendChild(connectBar);
-
-const candidateList = document.createElement("div");
-connectBlock.appendChild(candidateList);
-
-function stateChip(state: "connected" | "lost"): HTMLElement {
-    const chip = document.createElement("span");
-    chip.className = `conn-state ${state}`;
-    chip.textContent = state === "connected" ? "connected" : "connection lost, waiting";
-    return chip;
-}
-
-function disconnectButton(): HTMLButtonElement {
-    const button = document.createElement("button");
-    button.className = "btn active";
-    button.textContent = "Disconnect";
-    button.addEventListener("click", () => shell.ask({ type: "disconnect" }, "disconnect"));
-    return button;
-}
-
-function renderConnections(): void {
-    candidateList.replaceChildren();
-    const rows = candidateRows(processes, connection);
-    if (rows.length === 0) {
-        const note = document.createElement("div");
-        note.className = "panel-body";
-        const text = document.createElement("span");
-        text.className = "panel-note";
-        text.textContent = "nothing on the network: start a drone or power the board";
-        note.appendChild(text);
-        candidateList.appendChild(note);
-    }
-    for (const row of rows) {
-        const line = document.createElement("div");
-        line.className = "panel-body";
-        const name = document.createElement("b");
-        name.textContent = row.label;
-        line.appendChild(name);
-        const detail = document.createElement("span");
-        detail.className = "panel-note";
-        detail.textContent = row.detail;
-        line.appendChild(detail);
-        if (row.state !== "available") {
-            line.appendChild(stateChip(row.state));
-            line.appendChild(disconnectButton());
-        } else if (row.connect !== null) {
-            const payload = row.connect;
-            const button = document.createElement("button");
-            button.className = "btn";
-            button.textContent = "Connect";
-            button.addEventListener("click", () => shell.ask(payload, `connect ${row.label}`));
-            line.appendChild(button);
-        }
-        candidateList.appendChild(line);
-    }
-}
-
-socket.on("discovery", (message: HubMessage) => {
-    processes = (message["processes"] as AnnouncedProcess[]) ?? [];
-    renderConnections();
-});
-
-socket.on("status", (message: HubMessage) => {
-    const raw = message["connection"] as Connection | undefined;
-    const next = raw ?? NO_CONNECTION;
-    if (
-        next.via !== connection.via ||
-        next.id !== connection.id ||
-        next.live !== connection.live
-    ) {
-        applyConnection(next);
+socket.onEnvelope((src, envelope) => {
+    if (envelope.body.case === "telemetry") {
+        widgets.get(src)?.onTelemetry(envelope.body.value);
     }
 });
-
-renderConnections();
 
 /* -------------------- firmware update -------------------- */
 
-// Reflashing the board is an operation on the drone that is already there,
-// not a way to add one, so it sits below the drone list rather than inside a
-// widget: it has to stay readable while the board is rebooting and its
-// widget has momentarily disappeared.
-const update = new OtaPanel(socket, (text, ok) => shell.notify(text, ok));
+// Reflashing is an operation on a node of the table, not a way to add one,
+// so it sits below the drone list rather than inside a widget: it has to
+// stay readable while the board is rebooting and its widget has momentarily
+// disappeared.
+const update = new OtaPanel(socket, shell.nodes, (text, ok) => shell.notify(text, ok));
 
 /* -------------------- layout -------------------- */
 
@@ -183,7 +79,6 @@ const left = document.createElement("div");
 left.className = "console-col";
 left.appendChild(droneList);
 left.appendChild(update.root);
-left.appendChild(connectBlock);
 const right = document.createElement("div");
 right.className = "console-col observe";
 right.appendChild(attitude.root);

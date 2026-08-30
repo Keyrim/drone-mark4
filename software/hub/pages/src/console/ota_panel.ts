@@ -11,27 +11,32 @@
  *   and the verdict dismisses itself because the board block already tells
  *   the durable outcome.
  *
- * The hub owns the whole state machine and publishes it as one `ota`
- * message on every change, so this panel never derives anything of its own:
- * it paints what the last message said. It asks for a fresh board status on
- * a slow timer while nothing is running, because the slot rows must stay
- * true whether or not anyone updates anything.
+ * The target is a node: the panel lists the drones the node table holds
+ * (the board, or a desktop flight process with its emulated flash) and
+ * every OtaCommand names the chosen one. The gateway owns the whole state
+ * machine and publishes it as one OtaState on every change, so this panel
+ * never derives anything of its own: it paints what the last message said.
  */
 
-import type { HubMessage, HubSocket } from "../shared/hub_socket";
+import { create } from "@bufbuild/protobuf";
+
+import { GatewayMessageSchema, type OtaState, OtaCommand_Op } from "../gen/gateway_pb";
+import type { GatewaySocket } from "../shared/gateway_socket";
+import type { NodeModel, NodeView } from "../shared/nodes";
 import {
     IDLE_OTA,
+    TERMINAL,
     identityText,
     otaActions,
     otaRunning,
     phaseLabel,
     phaseTone,
+    progressPercent,
     progressText,
-    readOtaState,
     slotLetter,
+    slotStateName,
     slotTone,
     verdictText,
-    type OtaState,
 } from "./ota";
 
 /** How often the panel asks the board what it runs while idle [ms]. */
@@ -43,15 +48,14 @@ const CONFIRM_MS = 4000;
 /** How long a verdict stays on screen before the session block folds [ms]. */
 const VERDICT_MS = 10000;
 
-/** Phases that end a session one way or the other. */
-const TERMINAL = new Set<string>(["confirmed", "rolledBack", "failed"]);
-
 export class OtaPanel {
     readonly root: HTMLElement;
     private state: OtaState = IDLE_OTA;
-    private boardLinked = false;
-    /** True once the operator has typed a path, which then wins over the hub's. */
+    /** Node id the operator picked, 0 = none. */
+    private target = 0;
+    /** True once the operator has typed a path, which then wins over the gateway's. */
     private pathEdited = false;
+    private readonly targetSelect: HTMLSelectElement;
     private readonly slotRows: HTMLElement;
     private readonly sessionIdle: HTMLElement;
     private readonly sessionLive: HTMLElement;
@@ -67,10 +71,11 @@ export class OtaPanel {
     /** When the current verdict appeared, 0 while none is on screen. */
     private verdictShownAt = 0;
     /** The terminal phase the timestamp above belongs to. */
-    private verdictPhase = "";
+    private verdictPhase = -1;
 
     constructor(
-        private readonly socket: HubSocket,
+        private readonly socket: GatewaySocket,
+        private readonly nodes: NodeModel,
         private readonly notify: (text: string, ok: boolean) => void
     ) {
         this.root = document.createElement("section");
@@ -81,6 +86,15 @@ export class OtaPanel {
         const title = document.createElement("b");
         title.textContent = "Firmware";
         bar.appendChild(title);
+        this.targetSelect = document.createElement("select");
+        this.targetSelect.className = "config-select";
+        this.targetSelect.title = "the node to update";
+        this.targetSelect.addEventListener("change", () => {
+            this.target = Number(this.targetSelect.value);
+            this.refresh();
+            this.paint();
+        });
+        bar.appendChild(this.targetSelect);
         this.root.appendChild(bar);
 
         // Block one: the slots, the durable truth of the board.
@@ -105,9 +119,7 @@ export class OtaPanel {
         this.bundleLine = document.createElement("span");
         this.bundleLine.className = "panel-note ota-bundle-id";
         this.sessionIdle.appendChild(this.bundleLine);
-        this.startButton = this.button(this.sessionIdle, "Update", "btn danger", () =>
-            this.start()
-        );
+        this.startButton = this.button(this.sessionIdle, "Update", "btn danger", () => this.start());
         session.appendChild(this.sessionIdle);
 
         this.sessionLive = document.createElement("div");
@@ -127,7 +139,7 @@ export class OtaPanel {
         this.barText.className = "panel-note ota-bytes";
         progressRow.appendChild(this.barText);
         this.abortButton = this.button(progressRow, "Abort", "btn", () => {
-            this.ask({ type: "otaAbort" }, "abort");
+            this.ask(OtaCommand_Op.ABORT, "abort");
         });
         this.sessionLive.appendChild(progressRow);
         this.verdictLine = document.createElement("div");
@@ -137,35 +149,64 @@ export class OtaPanel {
 
         this.root.appendChild(session);
 
-        socket.on("ota", (message: HubMessage) => this.onOta(message));
-        socket.on("status", (message: HubMessage) => {
-            // The board is linked when it is THE connected drone and alive:
-            // it is a node like the others, there is no link to be open.
-            const connection = (message["connection"] ?? {}) as Record<string, unknown>;
-            this.boardLinked = connection["kindName"] === "firmware" && connection["live"] === true;
+        socket.on("otaState", (state) => {
+            this.state = state;
+            if (state.targetNode !== 0 && !otaRunning(state) && this.target === 0) {
+                // The gateway remembers the last target across tabs
+                this.target = state.targetNode;
+            }
+            if (!this.pathEdited && state.bundle !== undefined && state.bundle.path !== "") {
+                this.bundleInput.value = state.bundle.path;
+            }
             this.paint();
         });
+        nodes.onChange((list) => this.paintTargets(list));
         // A board that was just plugged in has slots to show, not an event:
         // the question is asked on a slow timer whenever no session runs -
-        // during one, the hub polls the board itself.
+        // during one, the gateway polls the board itself.
         setInterval(() => this.refresh(), REFRESH_MS);
+        this.paint();
+    }
+
+    /** The node the commands go to is alive in the table. */
+    private boardLinked(): boolean {
+        return this.target !== 0 && this.nodes.get(this.target) !== undefined;
+    }
+
+    private paintTargets(list: NodeView[]): void {
+        const drones = list.filter((node) => node.kindName === "firmware" || node.kindName === "drone_sim");
+        if (this.target === 0 && drones.length > 0) {
+            this.target = (drones.find((node) => node.kindName === "firmware") ?? drones[0]!).id;
+        }
+        this.targetSelect.replaceChildren();
+        if (drones.length === 0) {
+            const option = document.createElement("option");
+            option.value = "0";
+            option.textContent = "no drone on the network";
+            this.targetSelect.appendChild(option);
+        }
+        for (const node of drones) {
+            const option = document.createElement("option");
+            option.value = String(node.id);
+            option.textContent = `${node.name} (node ${node.id})`;
+            this.targetSelect.appendChild(option);
+        }
+        this.targetSelect.value = String(this.target);
         this.paint();
     }
 
     /** Asks the board what it runs, without bothering the operator on failure. */
     private refresh(): void {
-        if (!this.boardLinked || otaRunning(this.state)) {
+        if (!this.boardLinked() || otaRunning(this.state)) {
             return;
         }
-        void this.socket.request({ type: "otaStatus" }).catch(() => undefined);
+        void this.socket.request(this.command(OtaCommand_Op.STATUS_REQUEST)).catch(() => undefined);
     }
 
-    private onOta(message: HubMessage): void {
-        this.state = readOtaState(message);
-        if (!this.pathEdited && this.state.bundle.path !== "") {
-            this.bundleInput.value = this.state.bundle.path;
-        }
-        this.paint();
+    private command(op: OtaCommand_Op, bundlePath = "") {
+        return create(GatewayMessageSchema, {
+            body: { case: "otaCommand", value: { op, targetNode: this.target, bundlePath } },
+        });
     }
 
     /**
@@ -180,17 +221,13 @@ export class OtaPanel {
             return;
         }
         this.startArmedUntil = 0;
-        const payload: Record<string, unknown> = { type: "otaStart" };
-        if (this.bundleInput.value !== "") {
-            payload["bundle"] = this.bundleInput.value;
-        }
-        this.ask(payload, "update");
+        this.ask(OtaCommand_Op.START, "update", this.bundleInput.value);
         this.paint();
     }
 
-    private ask(payload: Record<string, unknown>, what: string): void {
+    private ask(op: OtaCommand_Op, what: string, bundlePath = ""): void {
         void this.socket
-            .request(payload)
+            .request(this.command(op, bundlePath))
             .then((ack) => {
                 if (!ack.ok) {
                     this.notify(`${what}: ${ack.error}`, false);
@@ -204,7 +241,7 @@ export class OtaPanel {
     private verdictVisible(): boolean {
         if (!TERMINAL.has(this.state.phase)) {
             this.verdictShownAt = 0;
-            this.verdictPhase = "";
+            this.verdictPhase = -1;
             return false;
         }
         if (this.verdictPhase !== this.state.phase) {
@@ -218,10 +255,11 @@ export class OtaPanel {
 
     private paint(): void {
         const state = this.state;
-        const actions = otaActions(state, this.boardLinked);
+        const linked = this.boardLinked();
+        const actions = otaActions(state, linked);
         const running = otaRunning(state);
 
-        this.paintSlots(running);
+        this.paintSlots(running, linked);
 
         // The session block: live while a session runs or its verdict is
         // fresh, folded to the one idle row otherwise.
@@ -229,20 +267,21 @@ export class OtaPanel {
         this.sessionLive.style.display = live ? "" : "none";
         this.sessionIdle.style.display = live ? "none" : "";
 
-        this.bundleLine.textContent = state.bundle.loaded
-            ? identityText(state.bundle.buildEpoch, state.bundle.gitHash)
-            : "";
+        const bundle = state.bundle;
+        this.bundleLine.textContent =
+            bundle !== undefined && bundle.loaded ? identityText(bundle.buildEpoch, bundle.gitHash) : "";
         this.bundleInput.disabled = !actions.editBundle;
         const armed = Date.now() < this.startArmedUntil;
         this.startButton.disabled = !actions.start;
         this.startButton.textContent = armed ? "Update: click again" : "Update";
         this.startButton.classList.toggle("active", armed);
+        this.targetSelect.disabled = running;
 
         this.phaseChip.textContent = phaseLabel(state.phase);
         const tone = phaseTone(state);
         this.phaseChip.className = tone === "" ? "dw-phase" : `dw-phase ${tone}`;
         this.abortButton.disabled = !actions.abort;
-        this.barFill.style.width = `${Math.max(0, Math.min(100, state.progress.percent))}%`;
+        this.barFill.style.width = `${progressPercent(state)}%`;
         this.barText.textContent = progressText(state);
 
         const verdict = verdictText(state);
@@ -250,21 +289,17 @@ export class OtaPanel {
         this.verdictLine.style.display = verdict === "" ? "none" : "";
         this.verdictLine.className =
             "panel-body ota-verdict" +
-            (state.phase === "confirmed"
-                ? " cell-ok"
-                : state.phase === "failed" || state.phase === "rolledBack"
-                  ? " cell-bad"
-                  : "");
+            (tone === "good" ? " cell-ok" : tone === "bad" ? " cell-bad" : "");
     }
 
     /** Repaints the slot rows, the always-true block. */
-    private paintSlots(running: boolean): void {
+    private paintSlots(running: boolean, linked: boolean): void {
         this.slotRows.textContent = "";
         const board = this.state.board;
-        if (!board.seen || board.slots.length === 0) {
+        if (board === undefined || !board.seen || board.slots.length === 0) {
             const empty = document.createElement("div");
             empty.className = "panel-body panel-note";
-            empty.textContent = this.boardLinked ? "asking the board..." : "no board link";
+            empty.textContent = linked ? "asking the board..." : "pick a drone to update";
             this.slotRows.appendChild(empty);
             return;
         }
@@ -283,9 +318,9 @@ export class OtaPanel {
             row.appendChild(letter);
 
             const chip = document.createElement("span");
-            const tone = slotTone(slot.stateName);
+            const tone = slotTone(slot.state);
             chip.className = tone === "" ? "dw-phase" : `dw-phase ${tone}`;
-            chip.textContent = slot.stateName;
+            chip.textContent = slotStateName(slot.state);
             row.appendChild(chip);
 
             const identity = document.createElement("span");
@@ -303,11 +338,11 @@ export class OtaPanel {
 
             // Revert lives on the slot it would boot: an action on durable
             // state, not on the session.
-            if (index !== board.runningSlot && slot.stateName === "valid") {
+            if (index !== board.runningSlot && slotStateName(slot.state) === "valid") {
                 const revert = this.button(row, "Revert to this", "btn", () => {
-                    this.ask({ type: "otaRevert" }, "revert");
+                    this.ask(OtaCommand_Op.REVERT, "revert");
                 });
-                revert.disabled = !this.boardLinked || running;
+                revert.disabled = !linked || running;
             }
 
             this.slotRows.appendChild(row);

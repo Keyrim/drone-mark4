@@ -4,19 +4,25 @@
     "type": "module",
     "packageManager": "pnpm@11.21.0",
     "scripts": {
-        "build": "node esbuild.js",
-        "watch": "node esbuild.js --watch",
-        "typecheck": "tsc --noEmit",
-        "test": "node --import tsx --test test/*.test.ts"
+        "gen": "mkdir -p src/gen && python3 -m grpc_tools.protoc -I ../../components/protocol --plugin=protoc-gen-es=./node_modules/.bin/protoc-gen-es --es_out=src/gen --es_opt=target=ts mark4.proto gateway.proto",
+        "build": "pnpm gen && node esbuild.js",
+        "watch": "pnpm gen && node esbuild.js --watch",
+        "typecheck": "pnpm gen && tsc --noEmit",
+        "test": "pnpm gen && node --import tsx --test test/*.test.ts",
+        "smoke": "pnpm gen && node --import tsx scripts/smoke.ts"
     },
     "dependencies": {
+        "@bufbuild/protobuf": "2.14.0",
         "three": "0.182.0",
         "uplot": "1.6.32"
     },
     "devDependencies": {
+        "@bufbuild/protoc-gen-es": "2.14.0",
         "@types/node": "22.19.0",
+        "@types/ws": "8.18.1",
         "esbuild": "0.25.12",
         "tsx": "4.20.6",
-        "typescript": "5.9.3"
+        "typescript": "5.9.3",
+        "ws": "8.21.3"
     }
 }
