@@ -5,7 +5,17 @@ import { create } from "@bufbuild/protobuf";
 
 import { NodeTableSchema } from "../src/gen/gateway_pb";
 import { NodeKind } from "../src/gen/mark4_pb";
-import { NodeModel, diffNodes, isDrone, nodeColor, wireMismatch, type NodeView } from "../src/shared/nodes";
+import {
+    FADING_MS,
+    NodeModel,
+    diffNodes,
+    hexNodeId,
+    isDrone,
+    nodeColor,
+    nodeLabel,
+    wireMismatch,
+    type NodeView,
+} from "../src/shared/nodes";
 
 const GATEWAY_HASH = 0x7e8201a9;
 
@@ -130,4 +140,48 @@ test("diffNodes reports kind changes on both sides and nothing for an identical 
 test("a node color is stable and comes from the palette", () => {
     assert.equal(nodeColor(0x51300001), nodeColor(0x51300001));
     assert.match(nodeColor(7), /^#[0-9a-f]{6}$/);
+});
+
+test("a node reads as its name plus its id in 8 hex digits", () => {
+    assert.equal(hexNodeId(0x51300001), "51300001");
+    assert.equal(hexNodeId(0xffffffff), "ffffffff");
+    const model = new NodeModel();
+    model.applyTable(table([{ id: 0x51300001, kind: NodeKind.FIRMWARE }]));
+    assert.equal(nodeLabel(model.get(10)!), "sim-a 0000000a");
+    // An unnamed node falls back to its kind, so a label is never just an id
+    assert.equal(nodeLabel(model.get(0x51300001)!), "firmware 51300001");
+});
+
+test("a widget header names the drone, badges its kind and shows its id", () => {
+    const model = new NodeModel();
+    model.setGatewayWireHash(GATEWAY_HASH);
+    model.applyTable(table([{ id: 12, kind: NodeKind.FIRMWARE, wireHash: 0x11111111 }]));
+    // What the header draws: title, badge, muted id, and the wire flag
+    const header = (node: NodeView) => [node.name, node.kindName, hexNodeId(node.id), node.wireMismatch];
+    assert.deepEqual(header(model.get(10)!), ["sim-a", "drone_sim", "0000000a", false]);
+    assert.deepEqual(header(model.get(12)!), ["firmware", "firmware", "0000000c", true]);
+});
+
+test("a widget fades on the age the table reports, and a frame clears it", () => {
+    const model = new NodeModel();
+    model.applyTable(
+        create(NodeTableSchema, {
+            nodes: [
+                { id: 10, lastSeenMsAgo: FADING_MS - 1, announce: { kind: NodeKind.DRONE_SIM, name: "sim-a" } },
+                { id: 11, lastSeenMsAgo: FADING_MS, announce: { kind: NodeKind.DRONE_SIM, name: "sim-b" } },
+            ],
+        })
+    );
+    const fading = (id: number) => model.get(id)!.ageMs >= FADING_MS;
+    assert.equal(fading(10), false);
+    assert.equal(fading(11), true);
+    model.noteFrame(11);
+    assert.equal(fading(11), false);
+});
+
+test("the source selector lists the drones only, in a stable order", () => {
+    const model = new NodeModel();
+    model.applyTable(table([{ id: 3, kind: NodeKind.BATCH }, { id: 12, kind: NodeKind.FIRMWARE }]));
+    // The plots selector and the update panel share this list
+    assert.deepEqual(model.drones().map(nodeLabel), ["sim-a 0000000a", "sim-b 0000000b", "firmware 0000000c"]);
 });
