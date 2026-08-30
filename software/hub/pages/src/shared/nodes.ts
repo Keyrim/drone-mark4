@@ -63,6 +63,7 @@ export const KIND_NAMES: Record<number, string> = {
     [NodeKind.PLANT]: "plant",
     [NodeKind.GATEWAY]: "gateway",
     [NodeKind.BATCH]: "batch",
+    [NodeKind.RELAY]: "relay",
 };
 
 export function kindName(kind: NodeKind): string {

@@ -65,7 +65,9 @@ value by value in `platform_common/telemetry_packer.hpp` and
   answers and the `Announce` beacon: flight process to ground, as transport
   broadcasts (drone_sim, and the board through the ESP32 relay).
   `Telemetry.truth` is the plant's exact state when the sender has one; the
-  pages read it straight out of the frame the hub forwards.
+  pages read it straight out of the frame the hub forwards. The relay
+  beacons its own `Announce` too, kind `RELAY` and mcu `ESP32C3`, on both
+  of its links, so the board and the LAN see it as one more node.
 - `Log` (one line, module by id) and `LogModules` (the node's module table,
   paged): any node to everyone, as broadcasts, the hub included (its own
   lines leave from its node id). `LogControl` (query the table, set one
