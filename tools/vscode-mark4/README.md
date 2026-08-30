@@ -76,6 +76,38 @@ what arrives from then on** - the node was not emitting them before, so
 nothing was received to show. Nothing is persisted: closing the window
 empties the store and resets the filter.
 
+The channel is created with a language of its own (`mark4-log`, the grammar
+`syntaxes/mark4-log.tmLanguage.json`), so the columns are colored by the
+theme in use. One rule matches the whole line and hands each column a
+standard scope; a line that does not hold the layout (a wrapped line, a kind
+wider than its column) matches nothing and stays plain rather than being
+colored wrong.
+
+| Column | Scope | Dark+ | Light+ |
+| --- | --- | --- | --- |
+| time | `comment` | green grey | green |
+| `TRACE` `DEBUG` | `comment` | green grey | green |
+| `INFO` | `keyword.other` | blue | blue |
+| `WARN` | `string` | orange | dark red |
+| `ERROR` | `invalid.illegal` | red | red |
+| kind `firmware` | `entity.name.type` | teal | teal |
+| kind `drone_sim` | `entity.name.function` | yellow | brown |
+| kind `plant` | `variable.parameter` | pale blue | navy |
+| kind `gateway` | `keyword.control` | purple | purple |
+| kind `relay` | `string` | orange | dark red |
+| kind `batch` | `constant.numeric` | pale green | green |
+| kind `unknown` | `comment` | green grey | green |
+| node id | `constant.numeric` | pale green | green |
+| module | `entity.name.tag` | blue | dark red |
+| text | none | default | default |
+
+The `gateway link` pseudo node is a `gateway` line like any other, so it is
+colored by that row. Inside the text only an 8 hex digit word is scoped, as
+a node id; every other number is left alone. The default themes hold fewer
+distinct colors than the table has rows, so a scope is shared across columns
+(`WARN` and the `relay` kind, the node id and the `batch` kind): the columns
+are at fixed offsets, which is what tells them apart.
+
 Several `drone_sim` at once: the `+` action starts each instance with its own
 emulated flash (`software/build/desktop/drone_sim/ota_flash_<n>`) and with a
 node id the extension picks (`0xd500000<n>`), which is what ties the line of

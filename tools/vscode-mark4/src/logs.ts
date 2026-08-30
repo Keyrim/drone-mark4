@@ -36,7 +36,9 @@ function namesOf(table: NodeTable): NameTable {
 }
 
 export class LogChannel {
-    private readonly channel = vscode.window.createOutputChannel("Mark4 Logs");
+    // The channel is a plain one, given the language of the columns it
+    // writes: the grammar of syntaxes/ colors them, nothing else is added.
+    private readonly channel = vscode.window.createOutputChannel("Mark4 Logs", "mark4-log");
     private readonly store = new LogStore();
     private readonly filter = new LogFilter();
     private names: NameTable = new Map([[LINK_NODE_ID, LINK_NAMES]]);

@@ -1,0 +1,44 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "Mark4 log",
+    "scopeName": "source.mark4-log",
+    "patterns": [
+        {
+            "comment": "One log line as formatLogLine writes it: time, level, kind, node id, module, text, two spaces between fixed columns. A line that does not hold the layout matches nothing and stays uncolored.",
+            "match": "^(\\d{2}:\\d{2}:\\d{2}\\.\\d{3})  (TRACE|DEBUG|INFO |WARN |ERROR)  (.{9})  ([0-9a-f]{8})  (.{24})  (.*)$",
+            "captures": {
+                "1": { "name": "comment.line.timestamp.mark4-log" },
+                "2": {
+                    "patterns": [
+                        { "match": "TRACE|DEBUG", "name": "comment.line.level.mark4-log" },
+                        { "match": "INFO", "name": "keyword.other.level.info.mark4-log" },
+                        { "match": "WARN", "name": "string.unquoted.level.warn.mark4-log" },
+                        { "match": "ERROR", "name": "invalid.illegal.level.error.mark4-log" }
+                    ]
+                },
+                "3": {
+                    "patterns": [
+                        { "match": "firmware", "name": "entity.name.type.kind.firmware.mark4-log" },
+                        { "match": "drone_sim", "name": "entity.name.function.kind.drone-sim.mark4-log" },
+                        { "match": "plant", "name": "variable.parameter.kind.plant.mark4-log" },
+                        { "match": "gateway", "name": "keyword.control.kind.gateway.mark4-log" },
+                        { "match": "relay", "name": "string.unquoted.kind.relay.mark4-log" },
+                        { "match": "batch", "name": "constant.numeric.kind.batch.mark4-log" },
+                        { "match": "unknown", "name": "comment.line.kind.unknown.mark4-log" }
+                    ]
+                },
+                "4": { "name": "constant.numeric.node-id.mark4-log" },
+                "5": { "name": "entity.name.tag.module.mark4-log" },
+                "6": {
+                    "patterns": [
+                        {
+                            "comment": "A node id quoted inside the text reads like the node id column.",
+                            "match": "\\b[0-9a-f]{8}\\b",
+                            "name": "constant.numeric.node-id.mark4-log"
+                        }
+                    ]
+                }
+            }
+        }
+    ]
+}

@@ -38,6 +38,21 @@
         "typescript": "5.9.3"
     },
     "contributes": {
+        "languages": [
+            {
+                "id": "mark4-log",
+                "aliases": [
+                    "Mark4 log"
+                ]
+            }
+        ],
+        "grammars": [
+            {
+                "language": "mark4-log",
+                "scopeName": "source.mark4-log",
+                "path": "./syntaxes/mark4-log.tmLanguage.json"
+            }
+        ],
         "taskDefinitions": [
             {
                 "type": "mark4",
