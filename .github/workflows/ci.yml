@@ -104,6 +104,8 @@ jobs:
         working-directory: software
       - run: cmake --build --preset desktop-san
         working-directory: software
+      # Same as the desktop job: the Godot tests need the imported project.
+      - run: godot --path sim-godot --headless --import
       - run: ctest --preset desktop-san
         working-directory: software
 
