@@ -147,9 +147,11 @@ clearInterval(rcTimer);
 for (let i = 0; i < 2; ++i) ws.send(encodeGatewayMessage(frameMessage(pilot, rcEnvelope(SAFE_RC))));
 
 // The profile service.
+// The answer is broadcast before the ack: listen first, then ask.
+const namesPending = waitFor("ProfileList", (m) => (m.body.case === "profiles" ? m.body.value.names : undefined));
 const listAck = await request(create(GatewayMessageSchema, { body: { case: "profileCommand", value: { op: ProfileCommand_Op.LIST } } }));
 if (!listAck.ok) fail(`profile list refused: ${listAck.error}`);
-const names = await waitFor("ProfileList", (m) => (m.body.case === "profiles" ? m.body.value.names : undefined));
+const names = await namesPending;
 log(`profiles: [${names.join(", ")}]`);
 
 // An OTA against the first drone_sim, when a bundle is given.

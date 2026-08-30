@@ -77,11 +77,10 @@ namespace mark4
         /// @return the messages, oldest first
         std::vector<InboundMessage> drainInbound();
 
+        /// @brief Counts the live connections, as the library tracks them.
+        ///        Called from the poll loop only.
         /// @return number of connected clients
-        [[nodiscard]] std::size_t clientCount() const
-        {
-            return m_clients.load();
-        }
+        [[nodiscard]] std::size_t clientCount() const;
 
         /// @brief Reports whether a client connected since the last call, so
         ///        the poll loop knows it owes the world a fresh snapshot of
@@ -97,7 +96,6 @@ namespace mark4
         HttpConfig m_http;                        ///< what the HTTP side reads from
         std::mutex m_inboundMutex;                ///< guards the inbound queue
         std::vector<InboundMessage> m_inbound;    ///< messages waiting for the poll loop
-        std::atomic_size_t m_clients{0U};         ///< connected clients
         std::atomic_bool m_connected{false};      ///< a client connected since last asked
     };
 } // namespace mark4

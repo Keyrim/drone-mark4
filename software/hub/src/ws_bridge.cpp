@@ -78,15 +78,7 @@ namespace mark4
                 switch (message->type)
                 {
                     case ix::WebSocketMessageType::Open:
-                        ++m_clients;
                         m_connected.store(true);
-                        break;
-                    case ix::WebSocketMessageType::Close:
-                    case ix::WebSocketMessageType::Error:
-                        if (m_clients.load() > 0U)
-                        {
-                            --m_clients;
-                        }
                         break;
                     case ix::WebSocketMessageType::Message: {
                         if (!message->binary)
@@ -128,7 +120,13 @@ namespace mark4
             m_server->stop();
             m_server.reset();
         }
-        m_clients.store(0U);
+    }
+
+    std::size_t WsBridge::clientCount() const
+    {
+        // The library forgets a connection whatever way it ended; a counter
+        // kept here missed the abrupt ones.
+        return m_server ? m_server->getClients().size() : 0U;
     }
 
     void WsBridge::broadcastBinary(const std::string &bytes)
