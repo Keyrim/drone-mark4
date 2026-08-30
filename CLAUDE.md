@@ -95,8 +95,8 @@ python3 tools/batch/run_batch.py --runs 100 --parallel 4 [--godot /path/to/godot
 
 # Lint (all must be clean before committing; CI runs exactly these)
 git ls-files '*.cpp' '*.hpp' '*.c' '*.h' | xargs clang-format --dry-run --Werror
-# (clang-tidy reads the generated mark4.pb.h: build the protocol target of the
-# preset first, a full build does it)
+# (clang-tidy reads the generated mark4.pb.h / gateway.pb.h: build the protocol
+# and nanopb_gateway targets of the preset first, a full build does it)
 run-clang-tidy -p software/build/desktop -quiet "$(pwd)/software/(components|drone_sim|drone_firmware|hub|tests)/"
 ./scripts/tidy_stm32.sh    # clang-tidy over the stm32 compile database
 ./scripts/check_ascii.sh   # ASCII-only hard rule
