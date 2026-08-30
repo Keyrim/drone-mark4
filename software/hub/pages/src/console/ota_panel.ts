@@ -21,8 +21,9 @@
 import { create } from "@bufbuild/protobuf";
 
 import { GatewayMessageSchema, type OtaState, OtaCommand_Op } from "../gen/gateway_pb";
+import { NodeKind } from "../gen/mark4_pb";
 import type { GatewaySocket } from "../shared/gateway_socket";
-import { type NodeModel, type NodeView, hexNodeId } from "../shared/nodes";
+import { type NodeModel, type NodeView, isDrone, nodeLabel } from "../shared/nodes";
 import {
     IDLE_OTA,
     TERMINAL,
@@ -174,9 +175,9 @@ export class OtaPanel {
     }
 
     private paintTargets(list: NodeView[]): void {
-        const drones = list.filter((node) => node.kindName === "firmware" || node.kindName === "drone_sim");
+        const drones = list.filter(isDrone);
         if (this.target === 0 && drones.length > 0) {
-            this.target = (drones.find((node) => node.kindName === "firmware") ?? drones[0]!).id;
+            this.target = (drones.find((node) => node.kind === NodeKind.FIRMWARE) ?? drones[0]!).id;
         }
         this.targetSelect.replaceChildren();
         if (drones.length === 0) {
@@ -188,7 +189,7 @@ export class OtaPanel {
         for (const node of drones) {
             const option = document.createElement("option");
             option.value = String(node.id);
-            option.textContent = `${node.name} (node ${hexNodeId(node.id)})`;
+            option.textContent = nodeLabel(node);
             this.targetSelect.appendChild(option);
         }
         this.targetSelect.value = String(this.target);

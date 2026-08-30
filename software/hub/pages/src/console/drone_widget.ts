@@ -25,7 +25,7 @@ import {
     type Telemetry,
 } from "../gen/mark4_pb";
 import { frameMessage, type GatewaySocket } from "../shared/gateway_socket";
-import { type NodeView, hexNodeId, nodeColor } from "../shared/nodes";
+import { FADING_MS, type NodeView, hexNodeId, nodeColor } from "../shared/nodes";
 import { FLIGHT_PHASE_NAMES } from "../shared/series";
 import { MODE_ALTITUDE_AUTO, MODE_MANUAL, SAFE_RC, TICK_MS, clamp01, rcEnvelope, type RcState } from "./rc";
 import { TuningPanel } from "./tuning";
@@ -75,6 +75,7 @@ export class DroneWidget {
     private readonly motorFills: HTMLElement[] = [];
     private readonly motorValues: HTMLElement[] = [];
     private killInput: HTMLInputElement | null = null;
+    private readonly mismatch: HTMLElement;
     private tuning: TuningPanel | null = null;
     private readonly onHide = (): void => {
         // A pilot who cannot see the drone is not piloting it
@@ -105,6 +106,9 @@ export class DroneWidget {
         this.root.className = "panel drone-widget";
         this.root.style.borderLeft = `3px solid ${color}`;
 
+        // Header: what this drone is called, what it is, which node id it
+        // is, in that order of prominence. No age is written: a node the
+        // gateway stops hearing dims, and leaves when it drops out.
         const head = document.createElement("div");
         head.className = "panel-bar";
         const dot = document.createElement("span");
@@ -114,15 +118,25 @@ export class DroneWidget {
         const name = document.createElement("b");
         name.textContent = node.name;
         head.appendChild(name);
-        const detail = document.createElement("span");
-        detail.className = "panel-note";
-        detail.textContent = `${node.kindName} node ${hexNodeId(node.id)}`;
-        head.appendChild(detail);
+        const kind = document.createElement("span");
+        kind.className = "badge";
+        kind.textContent = node.kindName;
+        head.appendChild(kind);
+        const id = document.createElement("span");
+        id.className = "dw-id";
+        id.textContent = hexNodeId(node.id);
+        head.appendChild(id);
+        this.mismatch = document.createElement("span");
+        this.mismatch.className = "badge bad";
+        this.mismatch.textContent = "WIRE MISMATCH";
+        this.mismatch.title = "built on another wire schema than the gateway: rebuild and reflash";
+        head.appendChild(this.mismatch);
         const spacer = document.createElement("span");
         spacer.className = "bar-grow";
         head.appendChild(spacer);
         head.appendChild(this.rebootButton());
         this.root.appendChild(head);
+        this.update(node);
 
         // Observation, the same whatever the nature
         const observe = document.createElement("div");
@@ -177,6 +191,16 @@ export class DroneWidget {
 
         document.addEventListener("visibilitychange", this.onHide);
         this.repaint = setInterval(() => this.paint(), READOUT_MS);
+    }
+
+    /**
+     * The node as the last table describes it: one the gateway has not
+     * heard from lately dims, and the wire flag can only be judged once the
+     * gateway's own hash has arrived, which may be after the widget exists.
+     */
+    update(node: NodeView): void {
+        this.root.classList.toggle("fading", node.ageMs >= FADING_MS);
+        this.mismatch.hidden = !node.wireMismatch;
     }
 
     /** Telemetry of THIS node, routed by the page. */

@@ -40,7 +40,7 @@ droneList.appendChild(empty);
 const attitude = new AttitudePanel(socket);
 const widgets = new Map<number, DroneWidget>();
 
-shell.nodes.onChange((_nodes, diff) => {
+shell.nodes.onChange((nodes, diff) => {
     for (const id of diff.removed) {
         widgets.get(id)?.destroy();
         widgets.delete(id);
@@ -51,6 +51,9 @@ shell.nodes.onChange((_nodes, diff) => {
             widgets.set(node.id, widget);
             droneList.appendChild(widget.root);
         }
+    }
+    for (const node of nodes) {
+        widgets.get(node.id)?.update(node);
     }
     if (diff.added.length > 0 || diff.removed.length > 0) {
         empty.hidden = widgets.size > 0;

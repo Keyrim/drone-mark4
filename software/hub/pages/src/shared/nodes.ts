@@ -3,7 +3,7 @@
  * known by node id, fed by the gateway's NodeTable and refreshed by the
  * frames that arrive between two tables. Every UI element is keyed by node
  * id; the kind of a node (from its Announce) only decides what it gets (a
- * drone gets a widget, a plant gets a chip).
+ * drone gets a widget, anything else is only routing).
  *
  * Pure: no DOM, no socket. The console and the plots build on it, and the
  * tests drive it directly.
@@ -35,6 +35,21 @@ export interface NodeView {
 export function hexNodeId(id: number): string {
     return (id >>> 0).toString(16).padStart(8, "0");
 }
+
+/**
+ * How a node is named on screen, wherever one line has to carry both: its
+ * name, then its id as 8 hex digits. Selectors use it whole; the widget
+ * headers split it in two, a title and a muted id.
+ */
+export function nodeLabel(node: { id: number; name: string }): string {
+    return `${node.name} ${hexNodeId(node.id)}`;
+}
+
+/**
+ * A node heard this long ago is fading: the widget dims, and the node
+ * leaves for good when the gateway drops it from the table.
+ */
+export const FADING_MS = 1500;
 
 /** The name of a node's log module, or "#id" when its table does not list it. */
 export function logModuleName(node: NodeView | undefined, moduleId: number): string {
@@ -75,8 +90,8 @@ export const PALETTE = [
 ];
 
 /**
- * One stable color per node id, shared by the widgets, the chips and the
- * 3D view so an operator maps them at a glance. A hash of the id, so the
+ * One stable color per node id, shared by the widgets and the 3D view so
+ * an operator maps them at a glance. A hash of the id, so the
  * same drone wears the same color in every tab and after a reload.
  */
 export function nodeColor(id: number): string {

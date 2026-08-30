@@ -1,8 +1,8 @@
 /**
- * Page shell shared by the two hub windows: the top bar opens with one chip
- * per node the gateway hears (kind, name, node id, age, and the wire
- * mismatch flag), then the gateway counters, the connection dot, and the
- * toast strip every page reports through.
+ * Page shell shared by the two hub windows: a thin top bar with the page's
+ * own controls, the gateway connection state, and the toast strip every
+ * page reports through. The inventory of nodes is not shown here: a page
+ * shows drones, the editor extension shows the network.
  *
  * There is no in-page navigation: control and plots are two windows meant
  * to live on two screens, each with its own websocket to the gateway.
@@ -11,10 +11,7 @@
 import { type GatewayMessage } from "../gen/gateway_pb";
 import { LogLevel } from "../gen/mark4_pb";
 import { type Ack, type GatewaySocket } from "./gateway_socket";
-import { NodeModel, type NodeView, hexNodeId, logModuleName, nodeColor } from "./nodes";
-
-/** A node not heard for this long is stale, whatever the gateway still lists. */
-const STALE_MS = 3000;
+import { NodeModel, hexNodeId, logModuleName } from "./nodes";
 
 /** How long a toast stays on screen [ms]. */
 const TOAST_MS = 6000;
@@ -28,25 +25,22 @@ export class Shell {
     readonly nodes = new NodeModel();
     private readonly dot: HTMLElement;
     private readonly dotLabel: HTMLElement;
-    private readonly chips: HTMLElement;
-    private readonly counters: HTMLElement;
+    private readonly pilots: HTMLElement;
     private readonly toasts: HTMLElement;
 
     constructor(private readonly socket: GatewaySocket) {
         const nav = document.createElement("nav");
         nav.className = "nav";
 
-        this.chips = document.createElement("div");
-        this.chips.className = "discovery";
-        nav.appendChild(this.chips);
-
         this.toolbar = document.createElement("div");
         this.toolbar.className = "nav-tools";
         nav.appendChild(this.toolbar);
 
-        this.counters = document.createElement("span");
-        this.counters.className = "nav-counters";
-        nav.appendChild(this.counters);
+        // The one counter worth an operator's attention: two tabs piloting
+        // the same drone is a safety matter, not an inventory line.
+        this.pilots = document.createElement("span");
+        this.pilots.className = "nav-pilots";
+        nav.appendChild(this.pilots);
 
         this.dot = document.createElement("span");
         this.dot.className = "dot";
@@ -64,15 +58,13 @@ export class Shell {
         document.body.appendChild(nav);
         document.body.appendChild(this.content);
         document.body.appendChild(this.toasts);
-        this.paintChips([]);
         if (window.parent !== window) {
             forwardShortcuts();
         }
 
-        this.nodes.onChange((nodes) => this.paintChips(nodes));
         socket.onState((state) => {
             this.dot.className = `dot ${state}`;
-            this.dotLabel.textContent = state;
+            this.dotLabel.textContent = state === "open" ? "connected" : "reconnecting";
             if (state !== "open") {
                 this.nodes.clear();
             }
@@ -80,17 +72,7 @@ export class Shell {
         socket.on("nodes", (table) => this.nodes.applyTable(table));
         socket.on("status", (status) => {
             this.nodes.setGatewayWireHash(status.wireHash);
-            const parts: string[] = [];
-            if (status.badFrames > 0) {
-                parts.push(`${status.badFrames} bad`);
-            }
-            if (status.dropped > 0) {
-                parts.push(`${status.dropped} dropped`);
-            }
-            if (status.rcClients > 1) {
-                parts.push(`${status.rcClients} RC PILOTS`);
-            }
-            this.counters.textContent = parts.join(" | ");
+            this.pilots.textContent = status.rcClients > 1 ? `${status.rcClients} RC PILOTS` : "";
         });
         socket.onEnvelope((src, envelope) => {
             this.nodes.noteFrame(src);
@@ -120,38 +102,6 @@ export class Shell {
             .request(message)
             .then((ack: Ack) => this.notify(ack.ok ? `${what}: ok` : `${what}: ${ack.error}`, ack.ok))
             .catch((error: unknown) => this.notify(`${what}: ${String(error)}`, false));
-    }
-
-    private paintChips(nodes: NodeView[]): void {
-        this.chips.replaceChildren();
-        if (nodes.length === 0) {
-            const empty = document.createElement("span");
-            empty.className = "discovery-empty";
-            empty.textContent = "no node heard";
-            this.chips.appendChild(empty);
-            return;
-        }
-        for (const node of [...nodes].sort((a, b) => a.id - b.id)) {
-            const chip = document.createElement("span");
-            chip.className =
-                "chip" +
-                (node.ageMs > STALE_MS ? " stale" : "") +
-                (node.wireMismatch ? " mismatch" : "");
-            chip.style.borderLeft = `3px solid ${nodeColor(node.id)}`;
-            if (node.wireMismatch) {
-                chip.title = "built on another wire schema than the gateway: rebuild and reflash";
-            }
-            const name = document.createElement("b");
-            name.textContent = node.kindName === node.name ? node.name : `${node.kindName} ${node.name}`;
-            chip.appendChild(name);
-            const detail = document.createElement("span");
-            detail.textContent =
-                ` node ${hexNodeId(node.id)}` +
-                ` ${(node.ageMs / 1000).toFixed(1)} s ago` +
-                (node.wireMismatch ? " WIRE MISMATCH" : "");
-            chip.appendChild(detail);
-            this.chips.appendChild(chip);
-        }
     }
 }
 

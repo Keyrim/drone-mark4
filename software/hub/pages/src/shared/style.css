@@ -40,7 +40,7 @@ body {
     flex-direction: column;
 }
 
-/* ===== Shell: nav, connection dot, discovery bar ===== */
+/* ===== Shell: nav, connection dot ===== */
 
 .nav {
     display: flex;
@@ -59,11 +59,17 @@ body {
     gap: 6px;
 }
 
-.nav-counters,
 .nav-state {
     font-family: var(--mono);
     font-size: 11px;
     color: var(--fg-dim);
+}
+
+.nav-pilots {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--bad);
 }
 
 .dot {
@@ -84,46 +90,6 @@ body {
 
 .dot.closed {
     background: var(--bad);
-}
-
-.discovery {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    overflow-x: auto;
-    min-width: 0;
-}
-
-
-.discovery-empty {
-    color: var(--fg-dim);
-    white-space: nowrap;
-}
-
-.chip {
-    display: inline-flex;
-    gap: 5px;
-    align-items: baseline;
-    padding: 2px 8px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--bg-panel);
-    white-space: nowrap;
-}
-
-.chip span {
-    font-family: var(--mono);
-    color: var(--fg-dim);
-}
-
-.chip.stale {
-    opacity: 0.45;
-}
-
-.chip.mismatch {
-    border-color: #e66767;
-    color: #e66767;
 }
 
 .content {
@@ -486,6 +452,32 @@ input.config-title {
 .dw-phase.warn {
     background: var(--warn);
     color: #191104;
+}
+
+/* Fading drone: the gateway has not heard its node lately */
+.drone-widget.fading {
+    opacity: 0.55;
+}
+
+.badge {
+    padding: 1px 6px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--fg-dim);
+}
+
+.badge.bad {
+    border-color: var(--bad);
+    color: var(--bad);
+}
+
+.dw-id {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-dim);
 }
 
 /* Silent drone: the readings are history, not state */
