@@ -84,8 +84,11 @@ godot --path sim-godot
 # smoke (a ws client against a live bench)
 cd software/hub/pages && pnpm install --frozen-lockfile && pnpm build
 
-# Editor extension (Mark4 sidebar + hub pages as webviews; local .vsix, no
-# marketplace, no CI job). Install: "Extensions: Install from VSIX".
+# Editor extension (Mark4 sidebar: apps, nodes, log levels, bench, plus the
+# hub pages as webviews and a "Mark4 Logs" output channel; it is one more
+# gateway.proto client and generates its own TypeScript codec with `pnpm
+# gen`. Local .vsix, no marketplace, no CI job). Install: "Extensions:
+# Install from VSIX".
 cd tools/vscode-mark4 && pnpm install --frozen-lockfile && pnpm build && pnpm package
 
 # Monte Carlo throw campaign through headless Godot (see tools/batch/README.md;
