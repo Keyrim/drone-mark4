@@ -75,8 +75,8 @@ medium) is ignored.
 Sequence accounting per node: an exact repeat of the last sequence is a
 duplicate and is dropped; a forward gap below `RESYNC_THRESHOLD` (1024) is
 counted as lost frames; a larger jump is a restarted sender and counts as
-nothing. The hub's `status.links[]` carries these counters as `transport`
-entries.
+nothing. The hub publishes these counters per node in its `NodeTable`
+(`gateway.proto`).
 
 ## Presence
 

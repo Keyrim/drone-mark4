@@ -17,9 +17,13 @@ meant launching three or more processes with consistent arguments.
 ## Proposal - one hub, one binary boundary, thin UI clients
 
 Green = compile-checked against the generated `protocol/` codec. The hub is
-the single process that speaks the binary protocol on behalf of humans;
-everything above it is JSON over one WebSocket endpoint and knows nothing
-about ports or wire messages.
+a gateway: one transport node whose WebSocket clients receive every frame
+it hears and send frames back, as binary `GatewayMessage`s of
+`gateway.proto` (the second schema, generated for the pages with
+protoc-gen-es). The pages decode the same `Envelope` the drones emit and
+model the system as nodes by node id; the hub interprets nothing and owns
+only what a browser cannot (the OTA bundle, the tuning profiles on disk,
+the node table). No JSON anywhere, no port above the discovery port.
 
 ```mermaid
 flowchart LR
@@ -32,9 +36,9 @@ flowchart LR
 
     subgraph hub["hub daemon - links protocol/ directly, zero duplication"]
         TR["transport node (UDP),<br/>board through<br/>the ESP32 relay"]
-        DISC["discovery<br/>from the beacons the<br/>transport hears, no port wiring"]
-        SVC["commands / rc<br/>tuning profiles"]
-        WS["single WebSocket + JSON<br/>endpoint"]
+        DISC["node table<br/>from the beacons the<br/>transport hears, no port wiring"]
+        SVC["OTA bundle<br/>tuning profiles"]
+        WS["single WebSocket endpoint<br/>binary gateway.proto: frames both ways"]
         TR --- DISC --- SVC --- WS
     end
 

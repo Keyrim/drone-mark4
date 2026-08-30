@@ -73,7 +73,10 @@ godot --path sim-godot
 ./software/build/desktop/drone_sim/drone_sim
 
 # Web pages (TypeScript, pnpm via corepack; the hub serves
-# software/hub/pages/dist). Also: watch / typecheck / test
+# software/hub/pages/dist). Every script first runs `pnpm gen`, which
+# generates the TypeScript codecs of mark4.proto and gateway.proto into
+# src/gen/ (gitignored) with protoc-gen-es. Also: watch / typecheck / test /
+# smoke (a ws client against a live bench)
 cd software/hub/pages && pnpm install --frozen-lockfile && pnpm build
 
 # Editor extension (Mark4 sidebar + hub pages as webviews; local .vsix, no
@@ -143,10 +146,17 @@ Everything C++ lives under `software/`: the executables at its top level
   CMake) travels in every `Announce` and the hub flags `wireMismatch`.
   `protocol/ota_image.hpp` keeps what is not wire (the on-flash image
   header). External processes (Godot plant, hub, ESP32 relay) speak ONLY
-  the wire, inside transport frames, and never link flight-core; the web pages
-  (`software/hub/pages/`) speak only the hub's JSON over WebSocket/HTTP
-  and never the wire. protocol/ is payload only: it names no address and
-  no route. See `software/components/protocol/README.md`.
+  the wire, inside transport frames, and never link flight-core. The hub
+  is a GATEWAY: its websocket carries binary `GatewayMessage`s of the
+  second schema, `gateway.proto` (a transport `Frame` = src, dst, one
+  encoded Envelope, forwarded both ways without interpretation; the
+  `NodeTable`; the gateway-local services: `OtaCommand`/`OtaState`,
+  `ProfileCommand`; `Ack`), never JSON. The web pages
+  (`software/hub/pages/`) generate their own TypeScript codec of both
+  schemas at build time (`pnpm gen`, protoc-gen-es) and model the system
+  as nodes by node id, never by kind or "connection". protocol/ is payload
+  only: it names no address and no route. See
+  `software/components/protocol/README.md` and `software/hub/README.md`.
 - `transport/` - static lib, the interface manager between processes and
   boards (`software/components/transport/README.md`). Frames an opaque
   payload with `src u32, dst u32, seq u16, hops u8`, learns every node from

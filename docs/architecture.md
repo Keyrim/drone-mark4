@@ -15,7 +15,7 @@ flowchart LR
 
     ESP["ESP32 relay<br/>transport node: UART <-> UDP WiFi"]
     GODOT["Godot simulator<br/>(plant only)"]
-    HUB["hub<br/>discovery, decoding, web pages"]
+    HUB["hub<br/>gateway: node table, frames to the pages"]
     PAGES["web pages<br/>control, plots"]
     BUS(("transport<br/>frames over UDP"))
 
@@ -35,8 +35,10 @@ flowchart LR
   relays its frames between the UART and the WiFi LAN.
 - **Godot and the hub never link flight-core**: they only know the wire of
   `protocol/mark4.proto`, through codecs generated at build time (nanopb,
-  godobuf). The web pages only know the hub's JSON over WebSocket/HTTP,
-  never the wire.
+  godobuf). The web pages speak `gateway.proto` over the hub's WebSocket
+  (binary, generated with protoc-gen-es): transport frames forwarded both
+  ways, whose `Envelope` they decode themselves, plus the gateway-local
+  services (OTA bundle, tuning profiles, node table). Never JSON.
 - The sim link's **lockstep** mode (the simulator waits for the motor
   response before advancing its physics) buys determinism, faster-than-real-
   time runs and debugger single-stepping.

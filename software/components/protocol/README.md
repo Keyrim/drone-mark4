@@ -1,15 +1,23 @@
 # protocol
 
-The wire of the project: one schema, `mark4.proto`, and the codecs the
-build generates from it. Every datagram and every serial frame between the
-flight processes, the board, the plant and the ground tools carries exactly
-one `Envelope`, a `oneof` over every message of the system (telemetry, the
-lockstep sensor and actuator frames, RC, announce, log, scenario and run
-stats, tuning, updater). Nothing generated is committed.
+The wire of the project: two schemas and the codecs the build generates
+from them. `mark4.proto` is THE wire: every datagram and every serial frame
+between the flight processes, the board, the plant and the ground tools
+carries exactly one `Envelope`, a `oneof` over every message of the system
+(telemetry, the lockstep sensor and actuator frames, RC, announce, log,
+scenario and run stats, tuning, updater). `gateway.proto` (imports it) is
+the contract between the hub and its websocket clients: `GatewayMessage`,
+a `oneof` over a transport `Frame` (src, dst, one encoded `Envelope`), the
+`NodeTable`, the `GatewayStatus`, the update client's `OtaCommand` /
+`OtaState`, the `ProfileCommand` / `ProfileList` / `Profile` of the tuning
+profiles, and `Ack`; it never crosses the LAN. Nothing generated is
+committed.
 
 | Consumer | Generator | Output | When |
 |----------|-----------|--------|------|
 | every C/C++ target, desktop and STM32 | nanopb (FetchContent, `nanopb-0.4.9.2`, `PB_NO_MALLOC`, `PB_BUFFER_ONLY`, `PB_NO_ERRMSG` on the board) | `software/build/<preset>/gen/nanopb/mark4.pb.{c,h}` | the `nanopb` target, on every build |
+| the hub (gateway.proto, desktop only) | nanopb, `gateway.options` | `software/build/desktop/gen/nanopb/gateway.pb.{c,h}` | the `nanopb_gateway` target of the desktop preset |
+| the web pages (both schemas) | `protoc-gen-es` (`@bufbuild/protoc-gen-es`, npm) run by the `protoc` of `grpcio-tools` | `software/hub/pages/src/gen/{mark4,gateway}_pb.ts` (gitignored) | `pnpm gen`, run by every pnpm script of `software/hub/pages` |
 | the Godot plant | godobuf, the addon committed in `sim-godot/addons/godobuf/` (pinned commit, BSD-3) run by a headless Godot through `scripts/gen_godobuf.py` | `sim-godot/scripts/gen/mark4.gd` and `wire_hash.gd` (gitignored) | target `proto_gd` of the desktop preset, when `godot` is on the PATH |
 | the batch tool | `python3 -m grpc_tools.protoc --python_out` | `software/build/desktop/gen/python/mark4_pb2.py` and `mark4_wire_hash.py` | target `proto_py` of the desktop preset |
 
@@ -31,8 +39,10 @@ says so when they are missing.
 - `protocol/wire_hash.hpp`: `WIRE_HASH`, the first 8 hex characters of the
   SHA-256 of `mark4.proto`, computed by CMake at configure time and
   regenerated on every edit of the schema. Every `Announce` carries it; the
-  hub compares it with its own and exposes `wireMismatch` per node in its
-  `discovery` JSON, the console shell paints the chip red. The packaging
+  hub publishes its own in `GatewayStatus.wire_hash` and every node's last
+  `Announce` in the `NodeTable`, the console shell compares the two and
+  paints a mismatching chip red. `gateway.proto` is not part of the hash:
+  the pages are generated from the same tree as the hub. The packaging
   script stamps it into the `.ota` manifest (`wireHash`) and the hub
   refuses a bundle built on another schema. The Godot plant and the batch
   tool read theirs from `wire_hash.gd` / `mark4_wire_hash.py`.
@@ -53,7 +63,7 @@ value by value in `platform_common/telemetry_packer.hpp` and
   answers and the `Announce` beacon: flight process to ground, as transport
   broadcasts (drone_sim, and the board through the ESP32 relay).
   `Telemetry.truth` is the plant's exact state when the sender has one; the
-  hub renders it as the `simRaw` JSON message.
+  pages read it straight out of the frame the hub forwards.
 - `Rc`, `Reboot`, `SimScenario`, `Tuning{Set,Get,List}`, the `Ota*`
   requests: ground to flight process, as transport unicasts or serial
   frames.
@@ -70,8 +80,8 @@ per frame behind a two-byte length, 512 bytes at most like the transport's
 ## Changing the schema
 
 Edit `mark4.proto` (and `mark4.options` when a bound moves), rebuild: the
-three codecs regenerate, the wire hash changes, and every node built before
-shows up as a `wireMismatch` in the hub instead of a silent bench. A board
+codecs regenerate, the wire hash changes, and every node built before
+shows up as a wire mismatch on the pages instead of a silent bench. A board
 running the previous schema still has to be reflashed once over SWD (or
 updated by a hub built on the previous schema): see `docs/ota-design.md`.
 The C++ unit tests round-trip every message

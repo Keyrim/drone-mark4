@@ -297,10 +297,11 @@ in its `Announce`. Protobuf tolerates added fields, but a change to an
 existing field or to the framing strands the board that is already
 flashed: its envelopes decode into nonsense or not at all, and the hub
 drops what it cannot use. The one thing that stays visible is the
-mismatch itself: the hub compares every node's hash with its own, logs it
-once per appearance ("speaks wire ..., this hub speaks ...") and exposes
-`wireMismatch` per node in the `discovery` message, which the console
-shell paints red on the node's chip. The old hub refuses the new bundle on
+mismatch itself: the hub logs every node whose hash differs from its own
+("speaks wire ..., this hub speaks ...") and publishes both hashes
+(`GatewayStatus.wire_hash`, `Node.announce.wire_hash` in the `NodeTable`),
+which the console shell compares and paints red on the node's chip. The
+old hub refuses the new bundle on
 the `wireHash` check in `ota_bundle.cpp`, so nothing is broken and nothing
 works: the board cannot be trusted by the new hub, nor updated by the old
 one.
@@ -370,8 +371,9 @@ nothing; platform speaks protocol; humans speak to the hub):
   OTA_STATUS, runs the windowed transfer with retries and timeouts,
   drives reboot, watches the board come back and reads the verdict off
   the status (the trial image confirms itself on first contact), exposes
-  the whole thing as JSON over the existing WebSocket: status, start,
-  progress events, revert. The pages stay protocol-blind as always.
+  the whole thing over the existing WebSocket as the `OtaCommand` /
+  `OtaState` messages of `gateway.proto`: a command names the target node,
+  the state is republished on every change.
 - **Pages** - an update panel on the control page: running build
   against bundle build, phase and progress, the confirmed-or-rolled-back
   verdict, a revert button.
