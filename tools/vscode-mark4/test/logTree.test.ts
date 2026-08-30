@@ -5,6 +5,7 @@ import { LogLevel, NodeKind } from "../src/gen/mark4_pb";
 import {
     buildLevelTree,
     diffLevelTree,
+    everyTarget,
     type LevelItem,
     type LevelNode,
     planLevelChange,
@@ -146,4 +147,25 @@ test("one gesture moves the nodes and the view over the same scope", () => {
     assert.deepEqual(plan.display, node.targets, "the view follows the same scope");
     assert.deepEqual(plan.queryNodes, [sim.id], "one query per node, whatever the module count");
     assert.deepEqual(planLevelChange([], LogLevel.INFO).queryNodes, []);
+});
+
+test("everything means every module of every node that published one", () => {
+    const quiet: LevelNode = {
+        id: 0x00000042,
+        kind: NodeKind.FIRMWARE,
+        kindName: "firmware",
+        name: "board",
+        logModules: [],
+    };
+    const scope = everyTarget([sim, quiet, hub]);
+    assert.deepEqual(scope.skipped, [quiet.id], "a node with no table is named, not guessed at");
+    assert.deepEqual(scope.targets, [
+        { nodeId: sim.id, moduleId: 1 },
+        { nodeId: sim.id, moduleId: 2 },
+        { nodeId: sim.id, moduleId: 3 },
+        { nodeId: hub.id, moduleId: 1 },
+        { nodeId: hub.id, moduleId: 7 },
+    ]);
+    assert.deepEqual(planLevelChange(scope.targets, LogLevel.TRACE).queryNodes, [sim.id, hub.id]);
+    assert.deepEqual(everyTarget([]), { targets: [], skipped: [] });
 });

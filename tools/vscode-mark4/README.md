@@ -34,10 +34,15 @@ extension is one more client of `gateway.proto`, like the pages.
   confirmed rather than what was asked; the same gesture moves what the log
   channel shows of that same scope, so the lines follow the level. On a
   node, "Hide / Show in logs" (eye) drops its lines from the channel and
-  touches nothing on the wire. The title bar searches the logs (magnifier,
-  an empty answer clears the search) and clears them (the store, not the
-  filter). Like the nodes view, it only redraws the subtrees that read
-  differently.
+  touches nothing on the wire. The title bar has the same gesture over the
+  whole bench, "Set level for everything..." (gear): every module of every
+  node of the table at once. `Mark4: Reset Levels To INFO` (command palette)
+  is that same change at INFO, the level a node starts at. A node that has
+  not published its module table yet has no module to set: it is skipped and
+  named in the `Mark4` channel. The title bar also searches the logs
+  (magnifier, an empty answer clears the search) and clears them (the store,
+  not the filter). Like the nodes view, it only redraws the subtrees that
+  read differently.
 - **Bench**: what is not a node, the two pages to dock. `Mark4: Bench
   Session` (rocket icon) builds and starts the hub, starts the Godot sim,
   then docks the control and plots pages in two editor groups.

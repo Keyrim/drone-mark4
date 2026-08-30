@@ -63,6 +63,11 @@ export class LogLevelsProvider implements vscode.TreeDataProvider<LevelTreeItem>
         this.rebuild();
     }
 
+    /** The nodes the view stands on, for a level change over all of them. */
+    levelNodes(): readonly LevelNode[] {
+        return this.nodes;
+    }
+
     /** Switches the grouping; the title action calls it. */
     toggleMode(): LevelMode {
         this.mode = this.mode === "byNode" ? "byModule" : "byNode";

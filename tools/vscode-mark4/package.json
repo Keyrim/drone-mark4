@@ -157,6 +157,18 @@
                 "icon": "$(settings)"
             },
             {
+                "command": "mark4.setLogLevelAll",
+                "title": "Set level for everything...",
+                "category": "Mark4",
+                "icon": "$(settings)"
+            },
+            {
+                "command": "mark4.resetLogLevels",
+                "title": "Reset levels to INFO",
+                "category": "Mark4",
+                "icon": "$(discard)"
+            },
+            {
                 "command": "mark4.toggleLogGrouping",
                 "title": "Group By Node Or By Module",
                 "category": "Mark4",
@@ -223,19 +235,24 @@
                     "group": "navigation@2"
                 },
                 {
-                    "command": "mark4.toggleLogGrouping",
+                    "command": "mark4.setLogLevelAll",
                     "when": "view == mark4.logLevels",
                     "group": "navigation@1"
                 },
                 {
-                    "command": "mark4.searchLogs",
+                    "command": "mark4.toggleLogGrouping",
                     "when": "view == mark4.logLevels",
                     "group": "navigation@2"
                 },
                 {
-                    "command": "mark4.clearLogs",
+                    "command": "mark4.searchLogs",
                     "when": "view == mark4.logLevels",
                     "group": "navigation@3"
+                },
+                {
+                    "command": "mark4.clearLogs",
+                    "when": "view == mark4.logLevels",
+                    "group": "navigation@4"
                 }
             ],
             "view/item/context": [

@@ -201,6 +201,33 @@ export interface LevelPlan {
     readonly queryNodes: number[];
 }
 
+/** Every module of every node, and the nodes that have none to move yet. */
+export interface EveryTarget {
+    readonly targets: LevelTarget[];
+    /** Ids of the nodes that published no module table: nothing to set. */
+    readonly skipped: number[];
+}
+
+/**
+ * The scope of a level change meant for the whole bench. A node that has
+ * not published its table yet is not addressable module by module, so it is
+ * named rather than guessed at.
+ */
+export function everyTarget(nodes: readonly LevelNode[]): EveryTarget {
+    const targets: LevelTarget[] = [];
+    const skipped: number[] = [];
+    for (const node of nodes) {
+        if (node.logModules.length === 0) {
+            skipped.push(node.id);
+            continue;
+        }
+        for (const module of node.logModules) {
+            targets.push({ nodeId: node.id, moduleId: module.id });
+        }
+    }
+    return { targets, skipped };
+}
+
 export function planLevelChange(targets: readonly LevelTarget[], level: LogLevel): LevelPlan {
     const scope = [...targets];
     return {

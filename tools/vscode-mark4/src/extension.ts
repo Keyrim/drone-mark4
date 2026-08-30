@@ -7,10 +7,10 @@ import * as vscode from "vscode";
 import { AppItem, AppsProvider } from "./appsTree";
 import { BenchProvider, HUB_URL, pingHub, waitForHub } from "./bench";
 import { GatewayClient } from "./gateway";
-import { type LogLevel, NodeKind } from "./gen/mark4_pb";
+import { LogLevel, NodeKind } from "./gen/mark4_pb";
 import { LevelTreeItem, LogLevelsProvider } from "./logLevelsTree";
 import { LogChannel } from "./logs";
-import { LEVEL_NAMES, planLevelChange } from "./logTree";
+import { everyTarget, LEVEL_NAMES, type LevelTarget, planLevelChange } from "./logTree";
 import { hexNodeId, simInstance } from "./model";
 import { NodeItem, NodesProvider } from "./nodesTree";
 import {
@@ -124,6 +124,41 @@ export function activate(context: vscode.ExtensionContext): void {
         },
     });
 
+    // One gesture, two effects: the nodes are moved and what the log channel
+    // shows of them is moved the same way.
+    const applyLevel = (targets: readonly LevelTarget[], level: LogLevel): void => {
+        const plan = planLevelChange(targets, level);
+        for (const target of plan.control) {
+            gateway.setLogLevel(target.nodeId, target.moduleId, plan.level);
+        }
+        for (const nodeId of plan.queryNodes) {
+            gateway.queryLogModules(nodeId);
+        }
+        logs.setLevel(plan.display, plan.level);
+    };
+
+    /** The same change over every module of every node of the table. */
+    const applyLevelToAll = (level: LogLevel): void => {
+        const scope = everyTarget(levels.levelNodes());
+        log.info(`log level ${LEVEL_NAMES[level]} for everything: ${scope.targets.length} module(s)`);
+        for (const nodeId of scope.skipped) {
+            log.info(`  ${hexNodeId(nodeId)} has published no module table yet, skipped`);
+        }
+        if (scope.targets.length === 0) {
+            void vscode.window.showInformationMessage("mark4: no node has published a log module table yet");
+            return;
+        }
+        applyLevel(scope.targets, level);
+    };
+
+    /** The quick pick behind every "Set level...", TRACE first. */
+    const pickLevel = async (what: string): Promise<LogLevel | undefined> => {
+        const picked = await vscode.window.showQuickPick([...LEVEL_NAMES], { placeHolder: `level of ${what}` });
+        return picked === undefined
+            ? undefined
+            : (LEVEL_NAMES.indexOf(picked as (typeof LEVEL_NAMES)[number]) as LogLevel);
+    };
+
     context.subscriptions.push(
         new vscode.Disposable(() => gateway.dispose()),
         logs,
@@ -173,26 +208,22 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand("mark4.toggleLogGrouping", () => {
             log.info(`log levels grouped ${levels.toggleMode()}`);
         }),
-        // One gesture, two effects: the nodes are moved and what the log
-        // channel shows of them is moved the same way.
         vscode.commands.registerCommand("mark4.setLogLevel", async (item: LevelTreeItem) => {
-            const picked = await vscode.window.showQuickPick([...LEVEL_NAMES], {
-                placeHolder: `level of ${item.item.label} (${item.item.targets.length} module(s))`,
-            });
-            if (picked === undefined) {
+            const level = await pickLevel(`${item.item.label} (${item.item.targets.length} module(s))`);
+            if (level === undefined) {
                 return;
             }
-            const level = LEVEL_NAMES.indexOf(picked as (typeof LEVEL_NAMES)[number]) as LogLevel;
-            const plan = planLevelChange(item.item.targets, level);
-            log.info(`setLogLevel: ${item.item.key} -> ${picked}`);
-            for (const target of plan.control) {
-                gateway.setLogLevel(target.nodeId, target.moduleId, plan.level);
-            }
-            for (const nodeId of plan.queryNodes) {
-                gateway.queryLogModules(nodeId);
-            }
-            logs.setLevel(plan.display, plan.level);
+            log.info(`setLogLevel: ${item.item.key} -> ${LEVEL_NAMES[level]}`);
+            applyLevel(item.item.targets, level);
         }),
+        vscode.commands.registerCommand("mark4.setLogLevelAll", async () => {
+            const level = await pickLevel("every module of every node");
+            if (level !== undefined) {
+                applyLevelToAll(level);
+            }
+        }),
+        // INFO is what a node starts at, so this is "back to the default".
+        vscode.commands.registerCommand("mark4.resetLogLevels", () => applyLevelToAll(LogLevel.INFO)),
         vscode.commands.registerCommand("mark4.toggleLogVisibility", (item: LevelTreeItem) => {
             const nodeId = item.item.nodeId;
             if (nodeId === undefined) {
