@@ -9,6 +9,8 @@
 #include <cstring>
 
 #include "drone_sim_app.hpp"
+#include "log/module.hpp"
+#include "log_modules.hpp"
 #include "transport/node_id.hpp"
 #include "transport/udp_link.hpp"
 
@@ -22,6 +24,8 @@
 
 namespace
 {
+    mark4::LogModule MODULE{mark4::LOG_MODULE_APP_MAIN, "app/main"};
+
     constexpr std::uint32_t MAX_FRAMES = DRONE_SIM_FRAME_LIMIT;
     constexpr int STRTOL_BASE = 10;
     constexpr std::uint64_t US_PER_MS = 1000U;
@@ -132,47 +136,41 @@ int main(int argc, char **argv)
         nodeId = mark4::randomNodeId();
         if (nodeId == 0U)
         {
-            static_cast<void>(std::fprintf(stderr, "drone_sim: cannot draw a node id\n"));
+            MODULE.error("cannot draw a node id");
             return 1;
         }
     }
     mark4::DroneSimApp app(MAX_FRAMES, discoveryPort, nodeId, otaDirectory.data());
     if (!app.init())
     {
-        static_cast<void>(std::fprintf(stderr, "drone_sim: initialization failed\n"));
+        MODULE.error("initialization failed");
         return 1;
     }
-
-    std::printf("drone_sim: transport node %u on discovery udp/%u, waiting for a plant\n",
-                static_cast<unsigned>(nodeId),
-                static_cast<unsigned>(discoveryPort));
 
     const std::uint32_t steps = app.run();
     if (steps == 0U)
     {
-        static_cast<void>(std::fprintf(
-            stderr, "drone_sim: no sensor frame ever arrived: is the simulator running?\n"));
+        MODULE.error("no sensor frame ever arrived: is the simulator running?");
         return 1;
     }
     const std::uint64_t elapsedMs = app.accessClock().nowUs() / US_PER_MS;
 
     const auto &telemetry = app.accessTelemetrySender();
     const auto &motor = app.accessMotorSink().last().motor;
-    std::printf(
-        "drone_sim: %u steps in %llu ms, %u telemetry packets (%zu bytes), %zu nodes seen\n",
-        steps,
-        static_cast<unsigned long long>(elapsedMs),
-        telemetry.packetCount(),
-        telemetry.byteCount(),
-        app.accessTransport().nodeCount());
-    std::printf("drone_sim: last motors [%.2f %.2f %.2f %.2f]\n",
+    MODULE.info("%u steps in %llu ms, %u telemetry packets (%zu bytes), %zu nodes seen",
+                steps,
+                static_cast<unsigned long long>(elapsedMs),
+                telemetry.packetCount(),
+                telemetry.byteCount(),
+                app.accessTransport().nodeCount());
+    MODULE.info("last motors [%.2f %.2f %.2f %.2f]",
                 static_cast<double>(motor[0]),
                 static_cast<double>(motor[1]),
                 static_cast<double>(motor[2]),
                 static_cast<double>(motor[3]));
 
     const auto &tracker = app.accessRunTracker();
-    std::printf("drone_sim: run %u hash %016llx (%s), %u resent frames rejected%s\n",
+    MODULE.info("run %u hash %016llx (%s), %u resent frames rejected%s",
                 static_cast<unsigned>(tracker.runId()),
                 static_cast<unsigned long long>(tracker.hash()),
                 tracker.sealed() ? "sealed" : "partial",

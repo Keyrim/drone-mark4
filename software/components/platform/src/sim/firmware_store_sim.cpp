@@ -5,6 +5,8 @@
 #include <cstring>
 #include <sys/stat.h>
 
+#include "log/module.hpp"
+#include "log/module_ids.hpp"
 #include "platform_common/crc32_mpeg2.hpp"
 #include "platform_common/ota_meta_log.hpp"
 
@@ -12,6 +14,8 @@ namespace mark4
 {
     namespace
     {
+        LogModule MODULE{LOG_MODULE_OTA_STORE, "ota/store"};
+
         /// Erased-flash byte: what an unwritten range reads back as.
         constexpr std::uint8_t BLANK_BYTE = 0xFFU;
 
@@ -28,11 +32,7 @@ namespace mark4
         /// @param path file the operation was applied to
         void logErrno(const char *what, const char *path)
         {
-            static_cast<void>(std::fprintf(stderr,
-                                           "FirmwareStoreSim: %s failed on '%s': %s\n",
-                                           what,
-                                           path,
-                                           std::strerror(errno)));
+            MODULE.error("%s failed on '%s': %s", what, path, std::strerror(errno));
         }
 
         /// @param path file to look for
@@ -280,8 +280,7 @@ namespace mark4
     {
         if (!m_pathsOk)
         {
-            static_cast<void>(
-                std::fprintf(stderr, "FirmwareStoreSim: backing file paths do not fit\n"));
+            MODULE.error("backing file paths do not fit");
             return false;
         }
 

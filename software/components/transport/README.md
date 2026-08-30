@@ -126,7 +126,10 @@ forwarded, one per link for a broadcast.
   right now (an isolated container, a network that is down) the link
   falls back to `127.255.255.255`, the loopback broadcast, which Linux
   also delivers to every local listener, and tries the global address
-  again on the next send. `DISCOVERY_PORT` = 47820 is the one port a
+  again on the next send; `loopbackFallback()` says it happened, and the
+  application logs it (the link itself prints nothing: this library does
+  not link the log library, a failed system call is a `false` from
+  `init()`). `DISCOVERY_PORT` = 47820 is the one port a
   deployment must agree on; the constructor takes another one so a batch
   campaign isolates itself from a live bench. `discoveryFd()` /
   `dataFd()` let a caller `poll(2)` instead of spinning. The same source

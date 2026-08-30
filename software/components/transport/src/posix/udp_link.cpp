@@ -2,8 +2,6 @@
 
 #include <algorithm>
 #include <cerrno>
-#include <cstdio>
-#include <cstring>
 #include <initializer_list>
 
 #include <arpa/inet.h>
@@ -30,14 +28,6 @@ namespace mark4
         /// loopback network, which Linux delivers to every local listener.
         constexpr std::uint32_t LOOPBACK_BROADCAST = 0x7FFFFFFFU;
 
-        /// @brief Reports a failed system call and the reason behind it.
-        /// @param what name of the system call that failed
-        void logErrno(const char *what)
-        {
-            static_cast<void>(
-                std::fprintf(stderr, "UdpLink: %s failed: %s\n", what, std::strerror(errno)));
-        }
-
         /// @brief Opens one UDP socket bound to INADDR_ANY.
         /// @param port port to bind, 0 for an ephemeral one
         /// @param shared true to allow other sockets on the same port
@@ -47,7 +37,6 @@ namespace mark4
             const int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
             if (fd < 0)
             {
-                logErrno("socket");
                 return -1;
             }
             const int enable = 1;
@@ -60,7 +49,6 @@ namespace mark4
             }
             if (::setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &enable, sizeof(enable)) < 0)
             {
-                logErrno("setsockopt(SO_BROADCAST)");
                 static_cast<void>(::close(fd));
                 return -1;
             }
@@ -70,7 +58,6 @@ namespace mark4
             address.sin_addr.s_addr = htonl(INADDR_ANY);
             if (::bind(fd, reinterpret_cast<const sockaddr *>(&address), sizeof(address)) < 0)
             {
-                logErrno("bind");
                 static_cast<void>(::close(fd));
                 return -1;
             }
@@ -87,8 +74,7 @@ namespace mark4
     {
         if (m_discoveryFd >= 0 || m_dataFd >= 0)
         {
-            static_cast<void>(std::fprintf(stderr, "UdpLink: already open\n"));
-            return false;
+            return false; // already open
         }
         m_discoveryFd = openBound(m_discoveryPort, true);
         if (m_discoveryFd < 0)
@@ -105,7 +91,6 @@ namespace mark4
         socklen_t boundSize = sizeof(bound);
         if (::getsockname(m_dataFd, reinterpret_cast<sockaddr *>(&bound), &boundSize) < 0)
         {
-            logErrno("getsockname");
             closeSockets();
             return false;
         }
@@ -144,14 +129,7 @@ namespace mark4
         // Tried again on every send: a network that comes back (a WiFi
         // link, a host that was briefly offline) must not leave the node
         // talking to itself for the rest of its run.
-        if (!m_loopbackWarned)
-        {
-            m_loopbackWarned = true;
-            static_cast<void>(std::fprintf(stderr,
-                                           "UdpLink: no route for 255.255.255.255 (%s): "
-                                           "broadcasting on the loopback until one appears\n",
-                                           std::strerror(errno)));
-        }
+        m_loopbackFallback = true;
         return sendTo(data, size, LOOPBACK_BROADCAST, m_discoveryPort);
     }
 
@@ -225,7 +203,6 @@ namespace mark4
             {
                 if (received < 0 && errno != EAGAIN && errno != EINTR)
                 {
-                    logErrno("recvfrom");
                 }
                 return 0U;
             }

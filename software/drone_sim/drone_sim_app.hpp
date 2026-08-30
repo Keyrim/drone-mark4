@@ -9,6 +9,8 @@
 #include <optional>
 
 #include "flight_core/flight_core.hpp"
+#include "log/console_sink_posix.hpp"
+#include "log/wire.hpp"
 #include "platform_common/command_receiver_transport.hpp"
 #include "platform_common/ota_updater.hpp"
 #include "platform_common/rc_tracker.hpp"
@@ -167,6 +169,16 @@ namespace mark4
         /// @param nowUs instant handed to the RC fail-safe [us]
         void drainCommands(std::uint64_t nowUs);
 
+        /// @brief Route of every log line and of the module table: a
+        ///        transport broadcast, like everything this process emits.
+        static bool SendLog(void *context, const std::uint8_t *data, std::size_t size);
+
+        /// @brief Clock the log records are stamped with: simulated time.
+        static std::uint64_t LogClock(void *context);
+
+        /// @brief Broadcasts the module table (LogModules pages).
+        void publishLogModules();
+
         std::uint32_t m_maxFrames; ///< frame budget for run()
 
         // Declaration order = construction order; dependencies are injected by
@@ -174,6 +186,8 @@ namespace mark4
         mark4::ClockSim m_clock;
         mark4::UdpLink m_udpLink;
         mark4::Transport m_transport;
+        mark4::ConsoleSinkPosix m_consoleSink;
+        mark4::TransportSink m_transportSink{&DroneSimApp::SendLog, this};
         mark4::CommandReceiverTransport m_commandReceiver;
         /// The sim link: the plant's frames off the transport, sorted for
         /// the sensor source and the command receiver; the wait point of
@@ -208,5 +222,8 @@ namespace mark4
         /// Hash window asked for by the last scenario, applied to the run
         /// that scenario opens [us]; 0 means the tracker default.
         std::uint32_t m_pendingHashWindowUs = 0U;
+
+        /// The module table goes out once the first beacon did.
+        bool m_logModulesPublished = false;
     };
 } // namespace mark4

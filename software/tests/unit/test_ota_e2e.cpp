@@ -844,3 +844,175 @@ TEST_CASE("an OtaCommand from a gateway client drives the update of the node it 
     sim.stop();
     std::filesystem::remove_all(runDirectory, error);
 }
+
+namespace
+{
+    /// A ground node that keeps every envelope it hears, for the log tests:
+    /// the hub's table side without the update client.
+    class Listener
+    {
+      public:
+        explicit Listener(std::uint16_t discoveryPort)
+            : m_udp(discoveryPort)
+        {
+        }
+
+        bool open()
+        {
+            return m_udp.init() && m_transport.addLink(m_udp) && m_transport.init();
+        }
+
+        bool send(const mark4_Envelope &envelope)
+        {
+            std::array<std::uint8_t, mark4::MAX_ENVELOPE_SIZE> bytes{};
+            std::size_t size = 0U;
+            return mark4::encodeEnvelope(envelope, bytes.data(), bytes.size(), size) &&
+                   m_transport.send(SIM_NODE, bytes.data(), size);
+        }
+
+        /// @brief Polls until an envelope heard so far satisfies the
+        ///        predicate (what arrived before the call counts).
+        /// @return true when one did before the budget ran out
+        template <typename Predicate>
+        bool waitFor(Predicate predicate, std::uint64_t budgetMs = STEP_BUDGET_MS)
+        {
+            const std::uint64_t deadlineUs = nowUs() + (budgetMs * US_PER_MS);
+            for (;;)
+            {
+                m_transport.poll(nowUs(), &Listener::Deliver, this);
+                for (const mark4_Envelope &envelope : heard)
+                {
+                    if (predicate(envelope))
+                    {
+                        return true;
+                    }
+                }
+                if (nowUs() >= deadlineUs)
+                {
+                    return false;
+                }
+                sleepStep();
+            }
+        }
+
+        std::vector<mark4_Envelope> heard; ///< everything the sim broadcast, in order
+
+      private:
+        static void Deliver(void *context,
+                            std::uint32_t src,
+                            const std::uint8_t *payload,
+                            std::size_t size)
+        {
+            auto *self = static_cast<Listener *>(context);
+            mark4_Envelope envelope;
+            if (src == SIM_NODE && mark4::decodeEnvelope(payload, size, envelope))
+            {
+                self->heard.push_back(envelope);
+            }
+        }
+
+        mark4::UdpLink m_udp;
+        mark4::Transport m_transport{GROUND_NODE};
+    };
+
+    bool isLogModules(const mark4_Envelope &envelope)
+    {
+        return envelope.which_body == mark4_Envelope_log_modules_tag;
+    }
+
+    /// @return the level a page gives the module, -1 when no page lists it
+    int levelOf(const std::vector<mark4_Envelope> &heard, std::uint32_t moduleId)
+    {
+        for (const mark4_Envelope &envelope : heard)
+        {
+            if (!isLogModules(envelope))
+            {
+                continue;
+            }
+            const mark4_LogModules &page = envelope.body.log_modules;
+            for (pb_size_t i = 0U; i < page.modules_count; ++i)
+            {
+                if (page.modules[i].id == moduleId)
+                {
+                    return static_cast<int>(page.modules[i].level);
+                }
+            }
+        }
+        return -1;
+    }
+
+    /// @return the id of the module named, 0 when no page listed it
+    std::uint32_t moduleIdOf(const std::vector<mark4_Envelope> &heard, const char *name)
+    {
+        for (const mark4_Envelope &envelope : heard)
+        {
+            if (!isLogModules(envelope))
+            {
+                continue;
+            }
+            const mark4_LogModules &page = envelope.body.log_modules;
+            for (pb_size_t i = 0U; i < page.modules_count; ++i)
+            {
+                if (std::strcmp(page.modules[i].name, name) == 0)
+                {
+                    return page.modules[i].id;
+                }
+            }
+        }
+        return 0U;
+    }
+} // namespace
+
+TEST_CASE("a live drone_sim publishes its log modules and takes a level from the wire",
+          "[log][e2e]")
+{
+    std::error_code error;
+    const std::filesystem::path runDirectory = std::filesystem::temp_directory_path(error) /
+                                               ("mark4_log_e2e_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(runDirectory, error);
+    REQUIRE(std::filesystem::create_directories(runDirectory, error));
+
+    const std::uint16_t discoveryPort = pickFreePort();
+    Listener ground(discoveryPort);
+    REQUIRE(ground.open());
+    SimProcess sim;
+    REQUIRE(sim.start(runDirectory, (runDirectory / "flash").string(), discoveryPort, SIM_NODE));
+
+    // The table follows the first beacon, unasked, and names the boot line's
+    // module; the boot line itself is a Log carrying that module's id.
+    REQUIRE(ground.waitFor(isLogModules));
+    const std::uint32_t bootId = moduleIdOf(ground.heard, "app/boot");
+    const std::uint32_t linkId = moduleIdOf(ground.heard, "sim/link");
+    REQUIRE(bootId != 0U);
+    REQUIRE(linkId != 0U);
+    REQUIRE(ground.waitFor([bootId](const mark4_Envelope &envelope) {
+        return envelope.which_body == mark4_Envelope_log_tag &&
+               envelope.body.log.module_id == bootId &&
+               std::strncmp(envelope.body.log.text, "boot: node 51300001", 19U) == 0;
+    }));
+
+    // Setting one module publishes the table again, with the new level.
+    mark4_Envelope control = mark4_Envelope_init_zero;
+    control.which_body = mark4_Envelope_log_control_tag;
+    control.body.log_control.which_request = mark4_LogControl_set_tag;
+    control.body.log_control.request.set.module_id = linkId;
+    control.body.log_control.request.set.level = mark4_LogLevel_DEBUG;
+    ground.heard.clear();
+    REQUIRE(ground.send(control));
+    REQUIRE(ground.waitFor([linkId](const mark4_Envelope &envelope) {
+        return levelOf({envelope}, linkId) == mark4_LogLevel_DEBUG;
+    }));
+
+    // A query answers with the table as it stands: the module set, every
+    // other one at its default.
+    control.body.log_control.which_request = mark4_LogControl_query_tag;
+    control.body.log_control.request.query = true;
+    ground.heard.clear();
+    REQUIRE(ground.send(control));
+    REQUIRE(ground.waitFor([bootId](const mark4_Envelope &envelope) {
+        return levelOf({envelope}, bootId) == mark4_LogLevel_INFO;
+    }));
+    CHECK(levelOf(ground.heard, linkId) == mark4_LogLevel_DEBUG);
+    sim.stop();
+    std::filesystem::remove_all(runDirectory, error);
+}

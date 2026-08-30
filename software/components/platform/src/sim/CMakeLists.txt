@@ -12,5 +12,5 @@ target_include_directories(platform_sim PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/inclu
 # sink expose wire structs, the run tracker is a header of this library and
 # sends through the shared envelope helper.
 target_link_libraries(platform_sim
-    PUBLIC platform protocol platform_common
+    PUBLIC platform protocol platform_common log
     PRIVATE drone_warnings drone_strict)

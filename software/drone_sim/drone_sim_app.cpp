@@ -7,6 +7,8 @@
 #include <cstring>
 
 #include "flight_core/throw_detector.hpp"
+#include "log/module.hpp"
+#include "log_modules.hpp"
 #include "platform_common/envelope_io.hpp"
 #include "platform_common/ota_boot_policy.hpp"
 #include "protocol/envelope.hpp"
@@ -14,8 +16,16 @@
 
 namespace
 {
+    mark4::LogModule BOOT{mark4::LOG_MODULE_APP_BOOT, "app/boot"};
+    mark4::LogModule LINK{mark4::LOG_MODULE_SIM_LINK, "sim/link"};
+    mark4::LogModule FLIGHT{mark4::LOG_MODULE_FLIGHT_CORE, "flight/core"};
+    mark4::LogModule OTA{mark4::LOG_MODULE_OTA_UPDATER, "ota/updater"};
+
     constexpr double US_PER_S = 1e6;
     constexpr long NS_PER_US = 1000L;
+
+    /// Frames between two sim/link DEBUG lines: about one per simulated second.
+    constexpr std::uint32_t LINK_DEBUG_PERIOD_FRAMES = 500U;
 
     /// Payload prefix of a fake image that boots but never reaches the
     /// checkpoint where a trial confirms itself (see bootFirmware).
@@ -81,13 +91,31 @@ namespace mark4
     {
     }
 
+    bool DroneSimApp::SendLog(void *context, const std::uint8_t *data, std::size_t size)
+    {
+        return static_cast<DroneSimApp *>(context)->m_transport.send(BROADCAST_NODE, data, size);
+    }
+
+    std::uint64_t DroneSimApp::LogClock(void *context)
+    {
+        return static_cast<DroneSimApp *>(context)->m_clock.nowUs();
+    }
+
+    void DroneSimApp::publishLogModules()
+    {
+        static_cast<void>(logPublishModules(&DroneSimApp::SendLog, this));
+    }
+
     bool DroneSimApp::init()
     {
+        logSetClock(&DroneSimApp::LogClock, this);
+        static_cast<void>(logAddSink(m_consoleSink));
         if (!m_udpLink.init() || !m_transport.addLink(m_udpLink) || !m_transport.init())
         {
-            static_cast<void>(std::fprintf(stderr, "drone_sim: transport initialization failed\n"));
+            BOOT.error("transport initialization failed");
             return false;
         }
+        static_cast<void>(logAddSink(m_transportSink));
         // The announce is the beacon: the transport broadcasts it once per
         // second and hands it to every node the moment it appears.
         mark4_Envelope announce = mark4_Envelope_init_zero;
@@ -101,11 +129,14 @@ namespace mark4
         std::size_t beaconSize = 0U;
         if (!encodeEnvelope(announce, beacon.data(), beacon.size(), beaconSize))
         {
-            static_cast<void>(
-                std::fprintf(stderr, "drone_sim: the announce does not fit a beacon\n"));
+            BOOT.error("the announce does not fit a beacon");
             return false;
         }
         m_transport.setBeacon(beacon.data(), beaconSize);
+        BOOT.info("boot: node %08x on discovery udp/%u, wire %08x",
+                  m_transport.nodeId(),
+                  static_cast<unsigned>(m_udpLink.discoveryPort()),
+                  WIRE_HASH);
         return bootFirmware();
     }
 
@@ -147,15 +178,13 @@ namespace mark4
             meta.slotState[slot] = OTA_SLOT_BAD;
             meta.trialAttempted = false;
             static_cast<void>(m_firmwareStore->writeMeta(meta));
-            std::printf("drone_sim: boot: slot %c failed validation, falling back\n",
-                        slot == OTA_SLOT_B ? 'B' : 'A');
+            BOOT.warn("slot %c failed validation, falling back", slot == OTA_SLOT_B ? 'B' : 'A');
             slot = (slot == OTA_SLOT_A) ? OTA_SLOT_B : OTA_SLOT_A;
             if (!imageValidates(slot))
             {
                 // A board with nothing bootable blinks and waits for SWD; a
                 // process has nowhere to blink, so it says so and stops.
-                static_cast<void>(
-                    std::fprintf(stderr, "drone_sim: boot: neither slot holds a valid image\n"));
+                BOOT.error("neither slot holds a valid image");
                 return false;
             }
         }
@@ -179,22 +208,22 @@ namespace mark4
         m_otaUpdater.emplace(*m_firmwareStore, !broken);
         refreshArmInterlock();
 
-        std::printf("drone_sim: boot: running slot %c, active slot %c, states %02x/%02x, "
-                    "emulated flash in %s%s\n",
-                    slot == OTA_SLOT_B ? 'B' : 'A',
-                    meta.activeSlot == OTA_SLOT_B ? 'B' : 'A',
-                    static_cast<unsigned>(meta.slotState[OTA_SLOT_A]),
-                    static_cast<unsigned>(meta.slotState[OTA_SLOT_B]),
-                    m_otaDirectory.data(),
-                    m_armInhibited ? ", ON TRIAL: arming refused until confirmed" : "");
-        static_cast<void>(std::fflush(stdout));
+        BOOT.info("running slot %c, active slot %c, states %02x/%02x, emulated flash in %s",
+                  slot == OTA_SLOT_B ? 'B' : 'A',
+                  meta.activeSlot == OTA_SLOT_B ? 'B' : 'A',
+                  static_cast<unsigned>(meta.slotState[OTA_SLOT_A]),
+                  static_cast<unsigned>(meta.slotState[OTA_SLOT_B]),
+                  m_otaDirectory.data());
+        if (m_armInhibited)
+        {
+            OTA.warn("running slot on trial, arming refused until confirmed");
+        }
         return true;
     }
 
     void DroneSimApp::rebootFirmware()
     {
-        std::printf("drone_sim: reboot command: re-running the boot decision\n");
-        static_cast<void>(std::fflush(stdout));
+        BOOT.info("reboot command: re-running the boot decision");
         if (!bootFirmware())
         {
             // Nothing bootable: the updater stops being served, which is the
@@ -299,8 +328,7 @@ namespace mark4
 
     void DroneSimApp::runUpdateMode()
     {
-        std::printf("drone_sim: ota session open, lockstep loop parked, no actuator frames\n");
-        static_cast<void>(std::fflush(stdout));
+        OTA.info("session open, lockstep loop parked, no actuator frames");
 
         // Nothing is pushed to the motor sink for as long as this loop runs,
         // so the plant gets no actuator frame and the motors are silent -
@@ -339,8 +367,7 @@ namespace mark4
             sleepMicroseconds(UPDATE_POLL_US);
         }
 
-        std::printf("drone_sim: ota session closed, resuming the lockstep loop\n");
-        static_cast<void>(std::fflush(stdout));
+        OTA.info("session closed, resuming the lockstep loop");
         if (reboot)
         {
             rebootFirmware();
@@ -350,6 +377,12 @@ namespace mark4
     void DroneSimApp::drainCommands(std::uint64_t nowUs)
     {
         m_plantLink.poll();
+        if (!m_logModulesPublished)
+        {
+            // The first poll sent the first beacon: the table follows it.
+            m_logModulesPublished = true;
+            publishLogModules();
+        }
         std::array<std::uint8_t, MAX_PAYLOAD> command{};
         bool reboot = false;
         for (;;)
@@ -387,6 +420,12 @@ namespace mark4
                     // process and applies to the run the reset is about to open.
                     m_motorSink.sendScenario(envelope.body.sim_scenario);
                     m_pendingHashWindowUs = envelope.body.sim_scenario.hash_window_us;
+                    break;
+                case mark4_Envelope_log_control_tag:
+                    if (logHandleControl(envelope.body.log_control))
+                    {
+                        publishLogModules();
+                    }
                     break;
                 default:
                     static_cast<void>(m_tuningService.handle(envelope));
@@ -435,9 +474,7 @@ namespace mark4
                 // announcing itself and waits for the world to come back.
                 if (platformReady)
                 {
-                    std::printf("drone_sim: platform not ready, waiting for a plant node to "
-                                "send sensor frames\n");
-                    static_cast<void>(std::fflush(stdout));
+                    LINK.info("platform not ready, waiting for a plant node to send sensor frames");
                     platformReady = false;
                 }
                 // The command path needs no world: tuning reads and writes
@@ -450,8 +487,7 @@ namespace mark4
             }
             if (!platformReady)
             {
-                std::printf("drone_sim: platform ready, sensor frames are flowing\n");
-                static_cast<void>(std::fflush(stdout));
+                LINK.info("platform ready, sensor frames are flowing");
                 platformReady = true;
             }
             // A simulator world reset teleports the drone: no estimator can
@@ -463,8 +499,7 @@ namespace mark4
             const bool newPlant = m_sensorSource.plantRestarts() != lastPlantRestarts;
             if (newPlant)
             {
-                std::printf("drone_sim: a new plant is driving (simulated clock restarted)\n");
-                static_cast<void>(std::fflush(stdout));
+                LINK.info("a new plant is driving (simulated clock restarted)");
             }
             lastPlantRestarts = m_sensorSource.plantRestarts();
 
@@ -475,9 +510,8 @@ namespace mark4
                 m_core = mark4::FlightCore{};
                 announcedThrows = 0U;
                 previousPhase = mark4::FlightPhase::IDLE;
-                std::printf("drone_sim: simulator reset at t=%.3f s: flight core restarted\n",
-                            static_cast<double>(frame.timestampUs) / US_PER_S);
-                static_cast<void>(std::fflush(stdout));
+                LINK.info("simulator reset at t=%.3f s: flight core restarted",
+                          static_cast<double>(frame.timestampUs) / US_PER_S);
             }
             if (worldReset || !resetCountSeen)
             {
@@ -529,47 +563,47 @@ namespace mark4
             m_runTracker.noteLink(m_sensorSource.lockstepTimeouts(),
                                   m_sensorSource.duplicateFrameCount());
             m_runTracker.publish();
+            if ((steps % LINK_DEBUG_PERIOD_FRAMES) == 0U)
+            {
+                LINK.debug("t=%.3f s, %u frames, %u lockstep timeouts, %u resent frames",
+                           static_cast<double>(frame.timestampUs) / US_PER_S,
+                           steps,
+                           m_sensorSource.lockstepTimeouts(),
+                           m_sensorSource.duplicateFrameCount());
+            }
             if (m_runTracker.sealed() && !runSealed)
             {
                 runSealed = true;
-                std::printf("drone_sim: run %u hash %016llx over %u frames%s\n",
+                FLIGHT.info("run %u hash %016llx over %u frames%s",
                             static_cast<unsigned>(m_runTracker.runId()),
                             static_cast<unsigned long long>(m_runTracker.hash()),
                             m_runTracker.hashedFrames(),
                             m_runTracker.degraded() ? ", LINK DEGRADED" : "");
-                static_cast<void>(std::fflush(stdout));
             }
             const mark4::ThrowDetector &detector = m_core.throwDetector();
             if (detector.throwCount() > announcedThrows)
             {
                 announcedThrows = detector.throwCount();
-                std::printf("drone_sim: throw #%u detected: release %.2f m/s at t=%.3f s, "
-                            "predicted apex %.2f m at t=%.3f s\n",
+                FLIGHT.info("throw #%u detected: release %.2f m/s at t=%.3f s, "
+                            "predicted apex %.2f m at t=%.3f s",
                             announcedThrows,
                             static_cast<double>(detector.releaseVelocityMps()),
                             static_cast<double>(detector.releaseTimestampUs()) / US_PER_S,
                             static_cast<double>(detector.apexAltitudeM()),
                             static_cast<double>(detector.apexTimestampUs()) / US_PER_S);
-                // Flushed so the line shows up immediately even when stdout is
-                // piped (VS Code debug console, redirections): the whole point
-                // is seeing the detection live.
-                static_cast<void>(std::fflush(stdout));
             }
 
             if (m_core.flightPhase() != previousPhase)
             {
-                std::printf("drone_sim: phase %s -> %s at t=%.3f s\n",
+                FLIGHT.info("phase %s -> %s at t=%.3f s",
                             phaseName(previousPhase),
                             phaseName(m_core.flightPhase()),
                             static_cast<double>(frame.timestampUs) / US_PER_S);
                 if (m_core.flightPhase() == mark4::FlightPhase::CUTOFF)
                 {
-                    std::printf("drone_sim: safety cutoff: motors stopped, release the "
-                                "arm switch and lower the throttle to rearm\n");
+                    FLIGHT.warn("safety cutoff: motors stopped, release the arm switch and "
+                                "lower the throttle to rearm");
                 }
-                // Flushed so the line shows up immediately even when stdout is
-                // piped (VS Code debug console, redirections).
-                static_cast<void>(std::fflush(stdout));
                 previousPhase = m_core.flightPhase();
             }
         }

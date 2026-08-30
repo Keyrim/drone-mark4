@@ -62,6 +62,14 @@ namespace mark4
         ///        included.
         bool broadcast(const std::uint8_t *data, std::size_t size) override;
 
+        /// @return true once a broadcast had to fall back to the loopback:
+        ///         the host had no route for 255.255.255.255 at that moment.
+        ///         The link prints nothing; the application logs this.
+        [[nodiscard]] bool loopbackFallback() const
+        {
+            return m_loopbackFallback;
+        }
+
         /// @brief Takes one pending datagram, unicast first. A broadcast
         ///        this very socket sent comes back from the kernel like any
         ///        other (own data port, own address) and is dropped here: it
@@ -130,7 +138,7 @@ namespace mark4
         int m_discoveryFd = -1;                  ///< bound to m_discoveryPort, -1 when closed
         int m_dataFd = -1;                       ///< bound to m_dataPort, -1 when closed
         std::uint16_t m_dataPort = 0U;           ///< ephemeral port the kernel picked
-        bool m_loopbackWarned = false;           ///< the loopback fallback was logged once
+        bool m_loopbackFallback = false;         ///< a broadcast fell back to the loopback
         std::vector<std::uint32_t> m_localHosts; ///< this host's IPv4 addresses at init(),
                                                  ///< host byte order, echo detection
     };
