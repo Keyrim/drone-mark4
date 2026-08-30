@@ -1,0 +1,176 @@
+// The wire between the gateway (the hub) and its websocket clients (the
+// pages, a script). One GatewayMessage per websocket binary message, both
+// directions. Nothing here crosses the LAN: the gateway forwards transport
+// frames as-is inside Frame and owns the few services a browser cannot
+// (the OTA bundle on disk, the tuning profiles, the node table counters).
+// The codecs are generated at build time: nanopb for the hub, protoc-gen-es
+// for the pages.
+
+syntax = "proto3";
+
+package mark4;
+
+import "mark4.proto";
+
+message GatewayMessage {
+  oneof body {
+    Frame frame = 1;
+    NodeTable nodes = 2;
+    GatewayStatus status = 3;
+    OtaCommand ota_command = 10;
+    OtaState ota_state = 11;
+    ProfileCommand profile_command = 20;
+    ProfileList profiles = 21;
+    Profile profile = 22;
+    Ack ack = 30;
+    Log log = 31;
+  }
+  // Correlation id a client sets on a command (never 0); the gateway echoes
+  // it on the Ack answering that command.
+  uint32 id = 100;
+}
+
+// One transport frame. Gateway to client: every payload the transport
+// delivered to the gateway (unicast to it or broadcast), src set, dst left
+// 0 (the transport does not report it). Client to gateway: a payload to
+// send, dst set (0 = broadcast), src ignored.
+message Frame {
+  uint32 src = 1;
+  uint32 dst = 2;
+  bytes payload = 3;  // one encoded Envelope, at most 512 bytes
+}
+
+// One node of the gateway's transport table, plus the last beacon it sent.
+message Node {
+  uint32 id = 1;
+  string address = 2;          // IPv4 dotted, empty for the gateway itself
+  uint32 port = 3;
+  uint32 last_seen_ms_ago = 4;
+  uint32 received = 5;
+  uint32 lost = 6;
+  uint32 duplicates = 7;
+  Announce announce = 8;       // absent until the node beaconed
+}
+
+// The whole table, the gateway itself included as its first entry.
+// Published every second and on every change.
+message NodeTable {
+  repeated Node nodes = 1;
+}
+
+// The gateway's own counters, published every second.
+message GatewayStatus {
+  uint32 node_id = 1;
+  uint32 wire_hash = 2;     // hash of mark4.proto as built into the gateway
+  uint32 clients = 3;       // websocket clients connected
+  uint32 rc_clients = 4;    // clients that sent an Rc frame recently
+  uint32 frames_in = 5;     // transport payloads delivered to the gateway
+  uint32 frames_out = 6;    // frames sent on behalf of clients
+  uint32 dropped = 7;       // transport frames dropped
+  uint32 bad_frames = 8;    // client frames refused (bad Envelope, unknown dst)
+}
+
+// Client to gateway: drive the firmware update client.
+message OtaCommand {
+  enum Op {
+    OP_UNSPECIFIED = 0;
+    START = 1;           // load bundle_path (empty = the build output) and update target_node
+    ABORT = 2;           // drop the running session
+    REVERT = 3;          // ask target_node to activate its other slot
+    STATUS_REQUEST = 4;  // ask target_node what it runs
+  }
+  Op op = 1;
+  uint32 target_node = 2;
+  string bundle_path = 3;
+}
+
+// Gateway to client: the whole state of the update client, on every change
+// and to every client that connects.
+message OtaState {
+  enum Phase {
+    IDLE = 0;
+    QUERY = 1;
+    ERASING = 2;
+    TRANSFER = 3;
+    VERIFYING = 4;
+    REBOOTING = 5;
+    WAITING_BOARD = 6;
+    TESTING = 7;
+    CONFIRMED = 8;
+    ROLLED_BACK = 9;
+    REVERTING = 10;
+    FAILED = 11;
+  }
+  enum Verdict {
+    VERDICT_NONE = 0;
+    VERDICT_CONFIRMED = 1;
+    VERDICT_ROLLED_BACK = 2;
+    VERDICT_REVERTED = 3;
+    VERDICT_FAILED = 4;
+  }
+  message Bundle {
+    bool loaded = 1;
+    string path = 2;         // path a start would use, loaded or not
+    string name = 3;
+    uint32 mcu = 4;          // OTA_MCU_* of the images
+    uint32 build_epoch = 5;
+    string git_hash = 6;
+    string wire_hash = 7;    // 8 hex characters
+    uint32 image_count = 8;
+  }
+  message Board {
+    bool seen = 1;
+    Mcu mcu = 2;
+    uint32 running_slot = 3;
+    uint32 active_slot = 4;
+    bool updater_busy = 5;
+    repeated OtaSlotStatus slots = 6;  // 2
+    uint32 slot_size = 7;
+    uint32 max_chunk_data = 8;
+  }
+  message Progress {
+    uint32 sent_bytes = 1;
+    uint32 acked_bytes = 2;  // what the board wrote: the progress bar
+    uint32 total_bytes = 3;
+    uint32 retries = 4;
+  }
+  Phase phase = 1;
+  Verdict verdict = 2;
+  string verdict_text = 3;
+  string last_error = 4;
+  uint32 target_node = 5;   // node the session talks to, 0 = none yet
+  int32 target_slot = 6;    // slot being filled, -1 outside a session
+  Bundle bundle = 7;
+  Board board = 8;
+  Progress progress = 9;
+}
+
+// Client to gateway: the tuning profiles on the gateway's disk.
+message ProfileCommand {
+  enum Op {
+    OP_UNSPECIFIED = 0;
+    LIST = 1;  // answer: ProfileList
+    SAVE = 2;  // name + values
+    LOAD = 3;  // name; answer: Profile
+    PUSH = 4;  // name + target_node: one TuningSet frame per value
+  }
+  Op op = 1;
+  string name = 2;
+  repeated TuningSet values = 3;
+  uint32 target_node = 4;
+}
+
+message ProfileList {
+  repeated string names = 1;
+}
+
+message Profile {
+  string name = 1;
+  repeated TuningSet values = 2;
+}
+
+// Answer to a command that carried an id (echoed in GatewayMessage.id).
+message Ack {
+  bool ok = 1;
+  string error = 2;
+}

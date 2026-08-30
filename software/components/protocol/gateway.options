@@ -1,0 +1,28 @@
+# nanopb bounds for gateway.proto: the hub is the only C++ consumer and it
+# is a desktop process, so the bounds are generous rather than tight. Every
+# enum gets a fixed 32-bit underlying type like mark4.options does.
+
+*                                   enum_intsize:IS_32
+
+mark4.Frame.payload                 max_size:512
+
+mark4.Node.address                  max_size:16
+mark4.NodeTable.nodes               max_count:33
+
+mark4.OtaCommand.bundle_path        max_size:256
+
+mark4.OtaState.verdict_text         max_size:160
+mark4.OtaState.last_error           max_size:160
+mark4.OtaState.Bundle.path          max_size:256
+mark4.OtaState.Bundle.name          max_size:33
+mark4.OtaState.Bundle.git_hash      max_size:9
+mark4.OtaState.Bundle.wire_hash     max_size:9
+mark4.OtaState.Board.slots          max_count:2
+
+mark4.ProfileCommand.name           max_size:33
+mark4.ProfileCommand.values         max_count:64
+mark4.ProfileList.names             max_count:32 max_size:33
+mark4.Profile.name                  max_size:33
+mark4.Profile.values                max_count:64
+
+mark4.Ack.error                     max_size:160

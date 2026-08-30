@@ -80,6 +80,25 @@ target_include_directories(protocol PUBLIC
 target_link_libraries(protocol PUBLIC nanopb PRIVATE drone_warnings drone_strict)
 
 if(DRONE_PLATFORM STREQUAL "desktop")
+    # The gateway schema: what the hub speaks to its websocket clients.
+    # Desktop only, the board never sees it; the pages generate their own
+    # codec from the same two files (software/hub/pages, protoc-gen-es).
+    set(DRONE_GATEWAY_PROTO_FILE ${CMAKE_CURRENT_SOURCE_DIR}/gateway.proto)
+    add_custom_command(
+        OUTPUT ${DRONE_PROTO_GEN_DIR}/nanopb/gateway.pb.c ${DRONE_PROTO_GEN_DIR}/nanopb/gateway.pb.h
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${DRONE_PROTO_GEN_DIR}/nanopb
+        COMMAND ${Python3_EXECUTABLE} ${nanopb_SOURCE_DIR}/generator/nanopb_generator.py -q
+                -I ${CMAKE_CURRENT_SOURCE_DIR} -D ${DRONE_PROTO_GEN_DIR}/nanopb gateway.proto
+        DEPENDS ${DRONE_GATEWAY_PROTO_FILE} ${CMAKE_CURRENT_SOURCE_DIR}/gateway.options
+                ${DRONE_PROTO_FILE} ${CMAKE_CURRENT_SOURCE_DIR}/mark4.options
+        COMMENT "generating the nanopb codec of gateway.proto"
+        VERBATIM)
+    add_library(nanopb_gateway STATIC ${DRONE_PROTO_GEN_DIR}/nanopb/gateway.pb.c)
+    target_link_libraries(nanopb_gateway PUBLIC nanopb)
+    set_target_properties(nanopb_gateway PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS ON)
+endif()
+
+if(DRONE_PLATFORM STREQUAL "desktop")
     # Python codec for the batch tool (tools/batch/run_batch.py).
     add_custom_command(
         OUTPUT ${DRONE_PROTO_GEN_DIR}/python/mark4_pb2.py
