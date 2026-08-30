@@ -21,24 +21,60 @@ extension is one more client of `gateway.proto`, like the pages.
   (the hub, the Godot plant, a drone_sim the extension started); the title
   bar starts one more `drone_sim` (`+`) or the Godot sim (globe). With no
   gateway the view is one line, "gateway offline: start the hub", with a
-  start action.
+  start action. The table arrives once a second and almost never differs:
+  the view is only redrawn for the lines that read differently (a name, a
+  kind, live or fading, a wire mismatch), and only the whole view when
+  nodes appear or leave. The counters and the last-seen of the tooltip are
+  not a reason to redraw, so they are one refresh behind at worst.
 - **Log levels**: every module of every node with its current threshold,
   grouped by node or by module name (the title action switches). A `/` in
   the names makes a folder (`platform/`) when two modules or more share it.
   "Set level..." on a leaf, a folder or a node sends one `LogControl.set` per
   module below it and then a query, so the tree shows what the nodes
-  confirmed rather than what was asked.
+  confirmed rather than what was asked; the same gesture moves what the log
+  channel shows of that same scope, so the lines follow the level. On a
+  node, "Hide / Show in logs" (eye) drops its lines from the channel and
+  touches nothing on the wire. The title bar searches the logs (magnifier,
+  an empty answer clears the search) and clears them (the store, not the
+  filter). Like the nodes view, it only redraws the subtrees that read
+  differently.
 - **Bench**: what is not a node, the two pages to dock. `Mark4: Bench
   Session` (rocket icon) builds and starts the hub, starts the Godot sim,
   then docks the control and plots pages in two editor groups.
 
-The **Mark4 Logs** output channel prints every `Log` envelope the gateway
-forwards, one line, through the matching level so VS Code owns the filter and
-the colors: `kind | node id | module | text`, in columns (a longer kind or
-module is cut, `drone_sim` reads `drone_si`). The kind and the module name
-come from the node table; an unknown module prints as `#id`. The gateway's
-own lines arrive as frames from its node id like every other node's. Nothing
-is buffered: a reconnection writes one line and the stream resumes.
+The **Mark4 Logs** output channel separates what was received from what is
+shown. Every `Log` envelope the gateway forwards is stored raw (a ring of
+50000 records: the extension's own clock at reception, the node, the module
+id, the level, the text) and nothing is formatted at ingest. The channel is
+then the projection of that store, redrawn (at most five times a second)
+whenever a node table, the display filter or the search changes; new lines
+that pass are appended. The extension owns the whole line, so the columns
+line up:
+
+```
+HH:MM:SS.mmm  LEVEL  kind       node id   module                    text
+11:54:38.887  DEBUG  drone_sim  da532bb1  sim/link                  t=4.004 s, 2000 frames
+```
+
+Two spaces between fixed columns: the time to the millisecond, the level in
+5 characters (`TRACE DEBUG INFO  WARN  ERROR`), the kind padded to 9 and
+never cut, the node id in 8 hex digits, the module padded or cut to 24. The
+kind and the module name are resolved at render time from the node table, so
+a node announcing late names the lines it sent before: until then they read
+`unknown` and `#id`, and the next redraw names them all. The gateway's own
+lines arrive as frames from its node id like every other node's; the state of
+the link itself has no node, so "reconnected to the gateway" is stored as a
+line of a pseudo node `00000000` named `gateway link` and survives the
+redraws like any other.
+
+What is shown of the store is a minimum level per (node, module), INFO until
+a "Set level..." says otherwise, plus a hidden flag per node and one text
+search (case insensitive, over the whole rendered line: a kind, a node id or
+a module name is searched like the text). Hence the one thing to know:
+**lowering a level shows the stored lines at once, raising it only shows
+what arrives from then on** - the node was not emitting them before, so
+nothing was received to show. Nothing is persisted: closing the window
+empties the store and resets the filter.
 
 Several `drone_sim` at once: the `+` action starts each instance with its own
 emulated flash (`software/build/desktop/drone_sim/ota_flash_<n>`) and with a
@@ -78,8 +114,12 @@ plus F5 (Extension Development Host) works for iterating.
 ## Deliberate simplifications
 
 - No settings and no persistence: the hub URL is a constant, the grouping of
-  the log levels view resets with the window.
-- The log channel keeps no history of its own; VS Code's output view is the
-  scrollback.
+  the log levels view, the display filter and the log store reset with the
+  window.
+- The display filter is keyed by (node, module) pair: a level set on a node
+  or on a folder is written on every module below it, and a module that
+  appears later starts at INFO like everything else.
+- The search filters the rendered lines rather than the records, which is
+  what makes it search the kind and the module name too. No regex, no case.
 - The nodes view refreshes on the gateway's table (once a second), so the
   live/fading dot is that old at worst.

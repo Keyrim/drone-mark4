@@ -3,7 +3,7 @@
     "displayName": "Mark4",
     "description": "Bench tooling: build and run the apps, drive the bench, dock the hub pages in the editor.",
     "publisher": "tmagne",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "private": true,
     "type": "module",
     "packageManager": "pnpm@11.21.0",
@@ -148,6 +148,24 @@
                 "icon": "$(list-tree)"
             },
             {
+                "command": "mark4.toggleLogVisibility",
+                "title": "Hide / Show In Logs",
+                "category": "Mark4",
+                "icon": "$(eye)"
+            },
+            {
+                "command": "mark4.searchLogs",
+                "title": "Search Logs...",
+                "category": "Mark4",
+                "icon": "$(search)"
+            },
+            {
+                "command": "mark4.clearLogs",
+                "title": "Clear Logs",
+                "category": "Mark4",
+                "icon": "$(clear-all)"
+            },
+            {
                 "command": "mark4.stopGodot",
                 "title": "Stop Godot Sim",
                 "category": "Mark4",
@@ -192,7 +210,17 @@
                 {
                     "command": "mark4.toggleLogGrouping",
                     "when": "view == mark4.logLevels",
-                    "group": "navigation"
+                    "group": "navigation@1"
+                },
+                {
+                    "command": "mark4.searchLogs",
+                    "when": "view == mark4.logLevels",
+                    "group": "navigation@2"
+                },
+                {
+                    "command": "mark4.clearLogs",
+                    "when": "view == mark4.logLevels",
+                    "group": "navigation@3"
                 }
             ],
             "view/item/context": [
@@ -228,8 +256,13 @@
                 },
                 {
                     "command": "mark4.setLogLevel",
-                    "when": "view == mark4.logLevels && viewItem == logTarget",
-                    "group": "inline"
+                    "when": "view == mark4.logLevels && viewItem =~ /^logTarget/",
+                    "group": "inline@1"
+                },
+                {
+                    "command": "mark4.toggleLogVisibility",
+                    "when": "view == mark4.logLevels && viewItem =~ /:node$/",
+                    "group": "inline@2"
                 }
             ],
             "commandPalette": [
@@ -263,6 +296,10 @@
                 },
                 {
                     "command": "mark4.setLogLevel",
+                    "when": "false"
+                },
+                {
+                    "command": "mark4.toggleLogVisibility",
                     "when": "false"
                 }
             ]

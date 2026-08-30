@@ -1,9 +1,10 @@
 /**
  * Bench smoke of what the extension reads, without an editor: the same
  * GatewayClient the views use, against a running hub with a drone_sim.
- * Prints the node lines of the nodes view, the first log lines as the
- * output channel formats them, then moves sim/link to DEBUG, shows the
- * DEBUG lines that follow and queries the table back.
+ * Prints the node lines of the nodes view, then the same stored log lines
+ * twice, once with no node table (names unresolved) and once with it (the
+ * retroactive resolution the channel does on every redraw), then moves
+ * sim/link to DEBUG on the node and in the view and shows what follows.
  *
  *   pnpm smoke               # against ws://127.0.0.1:47810
  *   HUB_URL=ws://host:port pnpm smoke
@@ -14,7 +15,9 @@
 import { type NodeTable } from "../src/gen/gateway_pb";
 import { LogLevel, NodeKind } from "../src/gen/mark4_pb";
 import { GatewayClient, GATEWAY_URL } from "../src/gateway";
-import { formatLogLine, levelName } from "../src/logTree";
+import { LogStore } from "../src/logStore";
+import { levelName } from "../src/logTree";
+import { LogFilter, type NameTable, type NodeNames, renderLogs } from "../src/logView";
 import { hexNodeId, kindName, nodeRows } from "../src/model";
 
 const startedAt = Date.now();
@@ -26,21 +29,33 @@ const fail = (text: string): never => {
 
 let table: NodeTable | undefined;
 let wireHash = 0;
-const kinds = new Map<number, string>();
-const modules = new Map<number, Map<number, string>>();
-let printed = 0;
+let names: NameTable = new Map();
+const store = new LogStore();
+const filter = new LogFilter();
 let debugLines = 0;
 let watchDebug = 0;
+
+/** The first lines of a projection, as the output channel would print them. */
+const showLines = (text: string, count = 6): void => {
+    const lines = text === "" ? [] : text.split("\n");
+    for (const line of lines.slice(0, count)) {
+        log(`  ${line}`);
+    }
+    log(`  (${lines.length} line(s) shown of ${store.size} stored)`);
+};
 
 const client = new GatewayClient({
     onNodes: (received) => {
         table = received;
-        kinds.clear();
-        modules.clear();
-        for (const node of received.nodes) {
-            kinds.set(node.id, kindName(node.announce?.kind ?? NodeKind.NODE_KIND_UNSPECIFIED));
-            modules.set(node.id, new Map(node.logModules.map((module) => [module.id, module.name])));
-        }
+        names = new Map<number, NodeNames>(
+            received.nodes.map((node) => [
+                node.id,
+                {
+                    kind: kindName(node.announce?.kind ?? NodeKind.NODE_KIND_UNSPECIFIED),
+                    modules: new Map(node.logModules.map((module) => [module.id, module.name])),
+                },
+            ]),
+        );
     },
     onStatus: (status) => {
         wireHash = status.wireHash;
@@ -50,21 +65,17 @@ const client = new GatewayClient({
             return;
         }
         const record = envelope.body.value;
-        const line = formatLogLine(
-            kinds.get(src) ?? "?",
-            src,
-            modules.get(src)?.get(record.moduleId) ?? `#${record.moduleId}`,
-            record.text,
-        );
-        if (printed < 10 && watchDebug === 0) {
-            printed += 1;
-            log(`${levelName(record.level).padEnd(5)} ${line}`);
-        }
+        // Nothing is formatted at ingest: the store keeps the raw record and
+        // the extension's own clock, the names are resolved at render time.
+        store.push({
+            receivedAt: new Date(),
+            nodeId: src,
+            moduleId: record.moduleId,
+            level: record.level,
+            text: record.text,
+        });
         if (watchDebug === src && record.level === LogLevel.DEBUG) {
             debugLines += 1;
-            if (debugLines <= 5) {
-                log(`DEBUG ${line}`);
-            }
         }
     },
     onState: (open, reconnected) => log(`link ${open ? "open" : "closed"}${reconnected ? " (reconnected)" : ""}`),
@@ -94,20 +105,24 @@ for (const row of nodeRows(table?.nodes ?? [], wireHash)) {
     log(`  ${row.live ? "*" : "."} ${row.name} [${row.kindName} ${row.hex}]${row.mismatch ? " WIRE MISMATCH" : ""}`);
 }
 
-log(`log lines (kind | node | module | text), ${sim.logModules.length} modules known for ${hexNodeId(sim.id)}:`);
-// A healthy bench is quiet: whatever comes in the window is what there is.
-await sleep(5000);
-log(`${printed} line(s) in 5 s`);
-
 const link = sim.logModules.find((module) => module.name === "sim/link") ?? fail("no sim/link module on the sim");
 watchDebug = sim.id;
+// One gesture, two effects: the node is moved and so is what the view shows
+// (a level raised on the node alone would print nothing: the display filter
+// starts at INFO).
 client.setLogLevel(sim.id, link.id, LogLevel.DEBUG);
-log(`sent sim/link -> DEBUG to ${hexNodeId(sim.id)}, listening 3 s`);
-await sleep(3000);
+filter.setLevel([{ nodeId: sim.id, moduleId: link.id }], LogLevel.DEBUG);
+log(`sent sim/link -> DEBUG to ${hexNodeId(sim.id)}, storing 5 s of lines`);
+await sleep(5000);
 if (debugLines === 0) {
     fail("no DEBUG line after the set (is the plant driving the sim?)");
 }
-log(`${debugLines} DEBUG lines`);
+// The store holds raw records: the same ones read differently once the node
+// table is known, which is what a late Announce does to the lines before it.
+log("with no node table, the kind and the module are unresolved:");
+showLines(renderLogs(store.records(), new Map(), filter));
+log("with the table, every stored line is named again:");
+showLines(renderLogs(store.records(), names, filter));
 
 client.queryLogModules(sim.id);
 const refreshed = await waitFor("the table with sim/link at DEBUG", () =>

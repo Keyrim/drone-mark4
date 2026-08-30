@@ -5,7 +5,6 @@ import { LogLevel, NodeKind } from "../src/gen/mark4_pb";
 import {
     buildLevelTree,
     diffLevelTree,
-    formatLogLine,
     type LevelItem,
     type LevelNode,
     planLevelChange,
@@ -39,15 +38,6 @@ const find = (items: LevelItem[], label: string): LevelItem => {
     assert.ok(found, `no item labelled ${label} in [${items.map((item) => item.label).join(", ")}]`);
     return found;
 };
-
-test("a log line is padded into columns and cut to keep them", () => {
-    assert.equal(
-        formatLogLine("gateway", 0xd5000001, "gateway/ws", "up"),
-        "gateway  | d5000001 | gateway/ws               | up",
-    );
-    const long = formatLogLine("drone_sim", 1, "a".repeat(30), "x");
-    assert.equal(long, `drone_si | 00000001 | ${"a".repeat(24)} | x`);
-});
 
 test("by node, modules sit under their prefix and show their level", () => {
     const roots = buildLevelTree([sim], "byNode");

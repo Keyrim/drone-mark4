@@ -7,11 +7,11 @@ import * as vscode from "vscode";
 import { AppItem, AppsProvider } from "./appsTree";
 import { BenchProvider, HUB_URL, pingHub, waitForHub } from "./bench";
 import { GatewayClient } from "./gateway";
-import { NodeKind } from "./gen/mark4_pb";
+import { type LogLevel, NodeKind } from "./gen/mark4_pb";
 import { LevelTreeItem, LogLevelsProvider } from "./logLevelsTree";
 import { LogChannel } from "./logs";
-import { LEVEL_NAMES } from "./logTree";
-import { simInstance } from "./model";
+import { LEVEL_NAMES, planLevelChange } from "./logTree";
+import { hexNodeId, simInstance } from "./model";
 import { NodeItem, NodesProvider } from "./nodesTree";
 import {
     buildTask,
@@ -173,6 +173,8 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand("mark4.toggleLogGrouping", () => {
             log.info(`log levels grouped ${levels.toggleMode()}`);
         }),
+        // One gesture, two effects: the nodes are moved and what the log
+        // channel shows of them is moved the same way.
         vscode.commands.registerCommand("mark4.setLogLevel", async (item: LevelTreeItem) => {
             const picked = await vscode.window.showQuickPick([...LEVEL_NAMES], {
                 placeHolder: `level of ${item.item.label} (${item.item.targets.length} module(s))`,
@@ -180,15 +182,36 @@ export function activate(context: vscode.ExtensionContext): void {
             if (picked === undefined) {
                 return;
             }
-            const level = LEVEL_NAMES.indexOf(picked as (typeof LEVEL_NAMES)[number]);
+            const level = LEVEL_NAMES.indexOf(picked as (typeof LEVEL_NAMES)[number]) as LogLevel;
+            const plan = planLevelChange(item.item.targets, level);
             log.info(`setLogLevel: ${item.item.key} -> ${picked}`);
-            for (const target of item.item.targets) {
-                gateway.setLogLevel(target.nodeId, target.moduleId, level);
+            for (const target of plan.control) {
+                gateway.setLogLevel(target.nodeId, target.moduleId, plan.level);
             }
-            for (const nodeId of new Set(item.item.targets.map((target) => target.nodeId))) {
+            for (const nodeId of plan.queryNodes) {
                 gateway.queryLogModules(nodeId);
             }
+            logs.setLevel(plan.display, plan.level);
         }),
+        vscode.commands.registerCommand("mark4.toggleLogVisibility", (item: LevelTreeItem) => {
+            const nodeId = item.item.nodeId;
+            if (nodeId === undefined) {
+                return;
+            }
+            log.info(`logs of ${hexNodeId(nodeId)} ${logs.toggleHidden(nodeId) ? "hidden" : "shown"}`);
+        }),
+        vscode.commands.registerCommand("mark4.searchLogs", async () => {
+            const text = await vscode.window.showInputBox({
+                prompt: "Show only the log lines containing this text (empty shows them all)",
+                value: logs.currentSearch(),
+            });
+            if (text === undefined) {
+                return;
+            }
+            logs.setSearch(text);
+            logs.show();
+        }),
+        vscode.commands.registerCommand("mark4.clearLogs", () => logs.clear()),
         vscode.commands.registerCommand("mark4.openControl", () => openPage("control", vscode.ViewColumn.Active)),
         vscode.commands.registerCommand("mark4.openPlots", () => openPage("plots", vscode.ViewColumn.Active)),
         vscode.commands.registerCommand("mark4.benchSession", benchSession),

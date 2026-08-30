@@ -1,6 +1,6 @@
-// The log side of the extension, pure: how a Log line is printed, and what
-// the log levels view shows. The provider only turns these items into
-// TreeItems, so the shapes below are what the tests drive.
+// The log levels view, pure: what the tree shows and what a level change
+// applies to. The provider only turns these items into TreeItems, so the
+// shapes below are what the tests drive.
 
 import { LogLevel } from "./gen/mark4_pb";
 
@@ -11,22 +11,6 @@ export const LEVEL_NAMES = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"] as const;
 
 export function levelName(level: LogLevel): string {
     return LEVEL_NAMES[level] ?? `level ${level}`;
-}
-
-/** Pads to a width, cutting what is longer: the columns must stay columns. */
-function column(text: string, width: number): string {
-    return text.length > width ? text.slice(0, width) : text.padEnd(width);
-}
-
-const KIND_WIDTH = 8;
-const MODULE_WIDTH = 24;
-
-/**
- * One log line as the output channel prints it (the channel prepends its own
- * timestamp and level): kind, node id, module, then the text.
- */
-export function formatLogLine(kind: string, nodeId: number, module: string, text: string): string {
-    return `${column(kind, KIND_WIDTH)} | ${hexNodeId(nodeId)} | ${column(module, MODULE_WIDTH)} | ${text}`;
 }
 
 /** One (node, module) pair a level change applies to. */
