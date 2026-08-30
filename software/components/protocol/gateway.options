@@ -7,6 +7,8 @@
 mark4.Frame.payload                 max_size:512
 
 mark4.Node.address                  max_size:16
+# 32 per node: with 33 nodes the table must stay under nanopb's 64 kB struct.
+mark4.Node.log_modules              max_count:32
 mark4.NodeTable.nodes               max_count:33
 
 mark4.OtaCommand.bundle_path        max_size:256

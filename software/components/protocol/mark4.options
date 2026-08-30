@@ -23,6 +23,8 @@ mark4.Telemetry.gyro_bias_rad_s     max_count:3 fixed_count:true
 mark4.Telemetry.motor               max_count:4 fixed_count:true
 
 mark4.Log.text                      max_size:97
+mark4.LogModuleInfo.name            max_size:33
+mark4.LogModules.modules            max_count:8
 
 mark4.SimSensor.gyro_rad_s          max_count:3 fixed_count:true
 mark4.SimSensor.accel_mps2          max_count:3 fixed_count:true

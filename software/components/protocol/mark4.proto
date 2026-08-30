@@ -22,6 +22,8 @@ message Envelope {
     Rc rc = 4;
     Announce announce = 5;
     Log log = 6;
+    LogModules log_modules = 7;
+    LogControl log_control = 8;
     SimScenario sim_scenario = 16;
     SimRunStats sim_run_stats = 17;
     Reboot reboot = 18;
@@ -136,17 +138,52 @@ message Rc {
 // flight process).
 message Reboot {}
 
+// Same values as the log library's LogLevel; nothing persists them.
 enum LogLevel {
-  INFO = 0;
-  WARN = 1;
-  ERROR = 2;
+  TRACE = 0;
+  DEBUG = 1;
+  INFO = 2;
+  WARN = 3;
+  ERROR = 4;
 }
 
-// One line of a flight process's console, at most 96 characters.
+// One line of a node's log, broadcast. The module is named by id: the
+// node's LogModules table gives the name.
 message Log {
   uint64 timestamp_us = 1;
   LogLevel level = 2;
-  string text = 3;
+  uint32 module_id = 3;
+  string text = 4;  // at most 96 characters
+}
+
+// One logging module of a node and its current threshold.
+message LogModuleInfo {
+  uint32 id = 1;
+  string name = 2;  // hierarchical, "area/thing", at most 32 characters
+  LogLevel level = 3;
+}
+
+// The node's module table, broadcast once after boot, on every level
+// change and on a LogControl query, in pages of at most 8 modules: a
+// whole table does not fit one frame.
+message LogModules {
+  uint32 start_index = 1;              // index of modules[0] in the table
+  uint32 total = 2;                    // modules in the whole table
+  repeated LogModuleInfo modules = 3;  // 8 at most
+}
+
+message LogModuleLevel {
+  uint32 module_id = 1;
+  LogLevel level = 2;
+}
+
+// Ground to node: ask for the table, or move one module's threshold. A
+// client wanting a prefix ("platform/") sends one set per matching id.
+message LogControl {
+  oneof request {
+    bool query = 1;
+    LogModuleLevel set = 2;
+  }
 }
 
 // Sensor frame of the plant, one per physics tick, lockstep link.

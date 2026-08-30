@@ -23,7 +23,8 @@ message GatewayMessage {
     ProfileList profiles = 21;
     Profile profile = 22;
     Ack ack = 30;
-    Log log = 31;
+    // 31 was the gateway's own Log: the gateway is a node and its lines
+    // travel as Log envelopes in Frame like everyone else's. Never reuse.
   }
   // Correlation id a client sets on a command (never 0); the gateway echoes
   // it on the Ack answering that command.
@@ -50,6 +51,9 @@ message Node {
   uint32 lost = 6;
   uint32 duplicates = 7;
   Announce announce = 8;       // absent until the node beaconed
+  // The node's last LogModules table, whole, so a client connecting late
+  // knows every module and level; empty until the node published it.
+  repeated LogModuleInfo log_modules = 9;
 }
 
 // The whole table, the gateway itself included as its first entry.

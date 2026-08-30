@@ -245,12 +245,44 @@ TEST_CASE("the command and identity messages round trip")
     mark4_Envelope log = withBody(mark4_Envelope_log_tag);
     log.body.log.timestamp_us = 12U;
     log.body.log.level = mark4_LogLevel_WARN;
+    log.body.log.module_id = 17U;
     static_cast<void>(
-        std::snprintf(log.body.log.text, sizeof(log.body.log.text), "%s", "baro: init failed"));
+        std::snprintf(log.body.log.text, sizeof(log.body.log.text), "%s", "init failed"));
     const mark4_Log &backLog = roundTrip(log, size).body.log;
     CHECK(backLog.timestamp_us == 12U);
     CHECK(backLog.level == mark4_LogLevel_WARN);
-    CHECK(std::string(backLog.text) == "baro: init failed");
+    CHECK(backLog.module_id == 17U);
+    CHECK(std::string(backLog.text) == "init failed");
+
+    mark4_Envelope modules = withBody(mark4_Envelope_log_modules_tag);
+    modules.body.log_modules.start_index = 8U;
+    modules.body.log_modules.total = 9U;
+    modules.body.log_modules.modules_count = 1U;
+    modules.body.log_modules.modules[0].id = 17U;
+    modules.body.log_modules.modules[0].level = mark4_LogLevel_TRACE;
+    static_cast<void>(std::snprintf(modules.body.log_modules.modules[0].name,
+                                    sizeof(modules.body.log_modules.modules[0].name),
+                                    "%s",
+                                    "platform/baro"));
+    const mark4_LogModules &backModules = roundTrip(modules, size).body.log_modules;
+    CHECK(backModules.start_index == 8U);
+    CHECK(backModules.total == 9U);
+    REQUIRE(backModules.modules_count == 1U);
+    CHECK(backModules.modules[0].id == 17U);
+    CHECK(backModules.modules[0].level == mark4_LogLevel_TRACE);
+    CHECK(std::string(backModules.modules[0].name) == "platform/baro");
+
+    mark4_Envelope control = withBody(mark4_Envelope_log_control_tag);
+    control.body.log_control.which_request = mark4_LogControl_set_tag;
+    control.body.log_control.request.set.module_id = 17U;
+    control.body.log_control.request.set.level = mark4_LogLevel_DEBUG;
+    const mark4_LogControl &backControl = roundTrip(control, size).body.log_control;
+    REQUIRE(backControl.which_request == mark4_LogControl_set_tag);
+    CHECK(backControl.request.set.module_id == 17U);
+    CHECK(backControl.request.set.level == mark4_LogLevel_DEBUG);
+    control.body.log_control.which_request = mark4_LogControl_query_tag;
+    control.body.log_control.request.query = true;
+    CHECK(roundTrip(control, size).body.log_control.which_request == mark4_LogControl_query_tag);
 
     // The bodies with no field at all still name themselves on the wire.
     CHECK(roundTrip(withBody(mark4_Envelope_reboot_tag), size).which_body ==
@@ -367,9 +399,9 @@ TEST_CASE("the updater messages round trip, the chunk at its full size")
     REQUIRE(backChunk.data.size == chunk.body.ota_chunk.data.size);
     CHECK(std::memcmp(backChunk.data.bytes, chunk.body.ota_chunk.data.bytes, backChunk.data.size) ==
           0);
-    // The full chunk is the largest message of the wire, within the varint
-    // slack the bound leaves for the session and the offset.
-    CHECK(size > mark4::MAX_ENVELOPE_SIZE - 8U);
+    // The full chunk was the largest message of the wire until a LogModules
+    // page took over; it still has to carry its 240 bytes.
+    CHECK(size > 240U);
 
     mark4_Envelope chunkAck = withBody(mark4_Envelope_ota_chunk_ack_tag);
     chunkAck.body.ota_chunk_ack.session = 1U;
