@@ -30,6 +30,11 @@ live in `docs/plan-dev.md`; read it before starting any new milestone.
 - `float` everywhere with the lowercase `f` suffix; `-Wdouble-promotion` is
   an error on all presets (desktop must behave like the single-precision
   FPU of the F405).
+- **No `printf` / `fprintf` / `rttWrite` for diagnostics**: every line goes
+  through the log library with a module (`software/components/log/`,
+  `static LogModule MODULE{id, "area/thing"}` then `MODULE.info(...)`).
+  Only `main()`'s usage text on a bad argument stays a plain `fprintf`.
+  Node ids print as 8 hex digits everywhere.
 
 ## Commands
 
@@ -110,7 +115,7 @@ config and only relaxes magic numbers.
 
 Everything C++ lives under `software/`: the executables at its top level
 (`drone_sim`, `drone_firmware`, `hub`), the libraries in
-`software/components/`. Four libraries, one rule of dependency flow:
+`software/components/`. Five libraries, one rule of dependency flow:
 
 - `flight-core/` - pure static lib. Single entry point
   `FlightCore::step(const SensorFrame&, ActuatorFrame&)`: synchronous,
@@ -186,9 +191,28 @@ Everything C++ lives under `software/`: the executables at its top level
   from `software/components/`. The hub holds one `UdpLink`, relays
   nothing, and sees the board as one more node (kind `firmware`, its own
   Announce, at the relay's address). The firmware broadcasts everything
-  it emits (telemetry, answers, `Log` lines through `LogSinkTransport`)
-  and takes commands through `CommandReceiverTransport` fed by
-  `Transport::poll()` once per flight frame.
+  it emits (telemetry, answers, `Log` lines through the log library's
+  `TransportSink`) and takes commands through `CommandReceiverTransport`
+  fed by `Transport::poll()` once per flight frame.
+- `log/` - the logging library of every node
+  (`software/components/log/README.md`). `log` is a leaf (static lib,
+  `drone_warnings` alone, no heap, no iostream): `LogModule` declared once
+  per source file as a static object with a `uint16_t` id and a
+  hierarchical name (`platform/imu`, `ota/updater`, `app/boot`), linked
+  into an intrusive registry; five levels `TRACE..ERROR` checked before
+  `vsnprintf` into 96 bytes; up to 2 `AbsLogSink`s (`ConsoleSinkPosix` on
+  desktop, `RttSink` in platform_stm32); the clock is a registered
+  function pointer, the library never reads one. `log_wire` (links
+  `protocol`) adds `TransportSink` (a `Log` envelope per line, 50 lines/s,
+  drops reported as a `log/core` WARN), `logPublishModules()` (the node's
+  table as `LogModules` pages) and `logHandleControl()` (`LogControl`:
+  query or set one module). Shared files take their ids from
+  `log/module_ids.hpp`, each app its own from its `log_modules.hpp` (from
+  256). The gateway keeps every node's table (`Node.log_modules`), queries
+  a node when it appears, and is a node itself: its lines go out as `Log`
+  frames from its own id (mirrored to its clients, never fed back to
+  itself). The pages toast WARN/ERROR only, module name resolved from
+  the table.
 
 Each executable is flight-core plus one composition of platform services,
 assembled in an App class (see `software/drone_sim/drone_sim_app.hpp`): services

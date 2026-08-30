@@ -113,7 +113,10 @@ JLinkGDBServer -device STM32F405RG -if SWD -speed 4000 &
 gdb-multiarch software/build/stm32/drone_firmware/drone_firmware.elf \
     -ex "target extended-remote localhost:2331"
 
-# RTT console (printf-style logs, no UART needed)
+# RTT console: the RttSink of the log library writes every line the
+# board's modules let through ("t_ms LEVL module: text"); the same lines
+# leave as Log frames through the ESP32 relay, so the hub sees them without
+# a probe. Periodic status lines are DEBUG: raise app/status from a client.
 JLinkRTTClient
 ```
 

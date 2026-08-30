@@ -4,8 +4,9 @@ The wire of the project: two schemas and the codecs the build generates
 from them. `mark4.proto` is THE wire: every datagram and every serial frame
 between the flight processes, the board, the plant and the ground tools
 carries exactly one `Envelope`, a `oneof` over every message of the system
-(telemetry, the lockstep sensor and actuator frames, RC, announce, log,
-scenario and run stats, tuning, updater). `gateway.proto` (imports it) is
+(telemetry, the lockstep sensor and actuator frames, RC, announce, the log
+line, the log module table and its control, scenario and run stats,
+tuning, updater). `gateway.proto` (imports it) is
 the contract between the hub and its websocket clients: `GatewayMessage`,
 a `oneof` over a transport `Frame` (src, dst, one encoded `Envelope`), the
 `NodeTable`, the `GatewayStatus`, the update client's `OtaCommand` /
@@ -33,7 +34,8 @@ says so when they are missing.
 
 - `protocol/envelope.hpp`: `mark4.pb.h` plus `encodeEnvelope()` /
   `decodeEnvelope()`, buffer in, buffer out, no allocation, and
-  `MAX_ENVELOPE_SIZE` (259 bytes today: the full OTA chunk). Static asserts
+  `MAX_ENVELOPE_SIZE` (367 bytes today: a full `LogModules` page, ahead of
+  the 255-byte OTA chunk). Static asserts
   keep `sizeof(mark4_Envelope)` under 400 bytes, and the transport and
   serial framing check that every envelope fits their payloads.
 - `protocol/wire_hash.hpp`: `WIRE_HASH`, the first 8 hex characters of the
@@ -64,6 +66,11 @@ value by value in `platform_common/telemetry_packer.hpp` and
   broadcasts (drone_sim, and the board through the ESP32 relay).
   `Telemetry.truth` is the plant's exact state when the sender has one; the
   pages read it straight out of the frame the hub forwards.
+- `Log` (one line, module by id) and `LogModules` (the node's module table,
+  paged): any node to everyone, as broadcasts, the hub included (its own
+  lines leave from its node id). `LogControl` (query the table, set one
+  module's level): ground to node, as a unicast; every node answers with
+  its table. See `software/components/log/README.md`.
 - `Rc`, `Reboot`, `SimScenario`, `Tuning{Set,Get,List}`, the `Ota*`
   requests: ground to flight process, as transport unicasts or serial
   frames.
