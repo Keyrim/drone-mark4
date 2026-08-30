@@ -53,6 +53,8 @@ namespace
                 return "cutoff";
             case mark4::FlightPhase::MANUAL:
                 return "manual";
+            case mark4::FlightPhase::FAULT:
+                return "fault";
         }
         return "?";
     }

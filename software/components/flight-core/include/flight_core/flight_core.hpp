@@ -47,6 +47,7 @@ namespace mark4
         HOVER = 5U,         ///< recovered: altitude hold until the pilot takes over
         CUTOFF = 6U,        ///< safety cutoff latched: motors stopped until rearm
         MANUAL = 7U,        ///< piloted flight: the stick commands the collective
+        FAULT = 8U,         ///< IMU lost with the motors running: stopped until the kill
     };
 
     /// Synchronous, single-threaded flight core, paced by data arrival
@@ -66,6 +67,16 @@ namespace mark4
         ///   glitch frame costs nothing; a persistent stream of them leaves
         ///   the motors on their last command, and the RC kill (silence means
         ///   kill) stays the way out, as for any other frozen input.
+        /// - Sensor health comes next, from the imuValid / baroValid flags the
+        ///   platform sets per frame. An invalid IMU frame integrates nothing
+        ///   (no attitude, no altitude, no throw detection) and never arms.
+        ///   With the motors off it is a passing condition: valid frames
+        ///   resume normal operation. With the motors on, IMU_FAULT_FRAMES
+        ///   consecutive invalid frames latch FAULT: motors cut, the kill
+        ///   switch is the only way out. Before the threshold the last
+        ///   command is held. An invalid baro is never a fault: the vertical
+        ///   estimate coasts on the accelerometer, arming is refused while
+        ///   it lasts on the ground, a flight in progress continues.
         /// - A timestamp not strictly above the last accepted one is a
         ///   transport artifact: rejected, and the time reference does not
         ///   move (a rebased stream is a new session; the composition signals
@@ -208,6 +219,11 @@ namespace mark4
         /// this value.
         static constexpr float STICK_VZ_RANGE_MPS = 2.0f;
 
+        /// Consecutive invalid IMU frames with the motors running before
+        /// FAULT latches (20 ms at 500 Hz): a lone I2C glitch holds the
+        /// command, a dead sensor cuts the motors before the drone tumbles.
+        static constexpr std::uint32_t IMU_FAULT_FRAMES = 10U;
+
         /// Frames further apart than this are gaps in the stream: the step
         /// still runs but dt is forced to 0, so no estimator or control
         /// integrator ever integrates the hole. Owned here, for every module.
@@ -287,11 +303,19 @@ namespace mark4
 
         /// @return true in every phase where the motors may run, ARMED
         ///         included: the drone is one detection away from flying
-        ///         there. CUTOFF is not armed - it is latched motors off on
-        ///         the ground, which is precisely where retuning belongs.
+        ///         there. CUTOFF and FAULT are not armed - they are latched
+        ///         motors off, which is precisely where retuning belongs.
         [[nodiscard]] bool armed() const
         {
-            return m_phase != FlightPhase::IDLE && m_phase != FlightPhase::CUTOFF;
+            return m_phase != FlightPhase::IDLE && m_phase != FlightPhase::CUTOFF &&
+                   m_phase != FlightPhase::FAULT;
+        }
+
+        /// @return consecutive frames stepped without a valid IMU, 0 after
+        ///         a valid one
+        [[nodiscard]] std::uint32_t imuInvalidRun() const
+        {
+            return m_imuInvalidRun;
         }
 
         /// @brief Maps a stick position to the vertical velocity it commands,
@@ -314,6 +338,9 @@ namespace mark4
         ///        reference keep their monotonic history.
         void resetMission();
         void updateEstimators(const SensorFrame &sensors, float dt);
+        /// @brief Handles a frame without a valid IMU: nothing integrates,
+        ///        the outputs hold or FAULT latches.
+        void stepWithoutImu(const SensorFrame &sensors, ActuatorFrame &actuators);
         void advancePhase(const SensorFrame &sensors);
         void runControl(const SensorFrame &sensors, float dt, ActuatorFrame &actuators);
         /// @return true when the accel norm says impact
@@ -348,6 +375,7 @@ namespace mark4
         std::uint32_t m_stepCount = 0U;
         std::uint32_t m_staleFrameCount = 0U;   ///< frames with a non-increasing timestamp
         std::uint32_t m_invalidFrameCount = 0U; ///< frames with a NaN or Inf field
+        std::uint32_t m_imuInvalidRun = 0U;     ///< consecutive frames without a valid IMU
         std::array<float, 4> m_lastMotor{};     ///< outputs held when a frame is rejected
         AttitudeEstimator m_attitudeEstimator;
         VerticalEstimator m_verticalEstimator;

@@ -120,6 +120,8 @@ namespace
         frame.rc.throttle = 0.5f;
         frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
         frame.baroPa = HELPER_BARO_PA;
+        frame.imuValid = true;
+        frame.baroValid = true;
         for (std::uint32_t i = 0U; i < 200U; ++i)
         {
             frame.timestampUs = static_cast<std::uint64_t>(i + 1U) * STEP_US;

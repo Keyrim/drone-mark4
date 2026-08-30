@@ -48,6 +48,8 @@ namespace
                 frame.gyroRadS = m_gyroRadS;
                 frame.accelMps2 = m_accelMps2;
                 frame.baroPa = HELPER_BARO_PA;
+                frame.imuValid = true;
+                frame.baroValid = true;
                 m_core.step(frame, m_actuators);
                 m_timestampUs += STEP_US;
             }

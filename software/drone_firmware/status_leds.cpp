@@ -56,6 +56,9 @@ namespace
                 return PATTERN_ARMED;
             case mark4::FlightPhase::CUTOFF:
                 return PATTERN_CUTOFF;
+            case mark4::FlightPhase::FAULT:
+                // The IMU died in flight: same latched-off blink, same exit.
+                return PATTERN_CUTOFF;
             case mark4::FlightPhase::ALTITUDE_AUTO:
             case mark4::FlightPhase::MANUAL:
             case mark4::FlightPhase::BALLISTIC:

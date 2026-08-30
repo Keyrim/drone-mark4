@@ -28,9 +28,10 @@ namespace mark4
     ///
     /// The baro channel is gated, because a barometer over I2C will
     /// produce garbage eventually, and a dead one produces nothing at
-    /// all: a pressure outside the plausible window is a
-    /// sensor fault and contributes nothing (the estimate coasts on the
-    /// accelerometer), and the innovation of a plausible sample is clamped,
+    /// all: a frame without a fresh sample (baroValid false) or a pressure
+    /// outside the plausible window is a sensor fault and contributes
+    /// nothing (the estimate coasts on the accelerometer), and the
+    /// innovation of a plausible sample is clamped,
     /// so one glitched frame moves the estimate by millimeters instead of
     /// railing the vertical loop.
     ///

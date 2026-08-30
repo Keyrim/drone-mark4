@@ -15,6 +15,8 @@ TEST_CASE("packTelemetry carries the estimated attitude next to the raw frame")
     frame.gyroRadS = {0.1f, 0.2f, 0.3f};
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
     frame.baroPa = 101325.0f;
+    frame.imuValid = true;
+    frame.baroValid = true;
     frame.rc.killSwitch = false;
     frame.rc.armSwitch = true;
     frame.rc.mode = mark4::PilotMode::MANUAL;
@@ -53,6 +55,16 @@ TEST_CASE("packTelemetry carries the estimated attitude next to the raw frame")
     REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
     REQUIRE(telemetry.flight_phase == mark4_FlightPhase_PHASE_MANUAL);
     REQUIRE(static_cast<int>(telemetry.flight_phase) == 7);
+
+    // The validity flags travel as the platform set them on this frame.
+    REQUIRE(telemetry.imu_valid);
+    REQUIRE(telemetry.baro_valid);
+    frame.baroValid = false;
+    mark4::packTelemetry(frame, actuators, core, telemetry);
+    REQUIRE(telemetry.imu_valid);
+    REQUIRE(!telemetry.baro_valid);
+    frame.baroValid = true;
+    mark4::packTelemetry(frame, actuators, core, telemetry);
 
     // And the message survives the wire.
     mark4_Envelope envelope = mark4_Envelope_init_zero;

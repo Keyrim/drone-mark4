@@ -26,6 +26,7 @@ namespace mark4
     static_assert(static_cast<int>(FlightPhase::HOVER) == mark4_FlightPhase_PHASE_HOVER);
     static_assert(static_cast<int>(FlightPhase::CUTOFF) == mark4_FlightPhase_PHASE_CUTOFF);
     static_assert(static_cast<int>(FlightPhase::MANUAL) == mark4_FlightPhase_PHASE_MANUAL);
+    static_assert(static_cast<int>(FlightPhase::FAULT) == mark4_FlightPhase_PHASE_FAULT);
     static_assert(static_cast<int>(ThrowState::IDLE) == mark4_ThrowState_THROW_IDLE);
     static_assert(static_cast<int>(ThrowState::THRUST) == mark4_ThrowState_THROW_THRUST);
     static_assert(static_cast<int>(ThrowState::BALLISTIC) == mark4_ThrowState_THROW_BALLISTIC);
@@ -58,6 +59,8 @@ namespace mark4
         out.baro_altitude_m = core.baroAltitudeM();
         out.vertical_velocity_mps = core.verticalVelocityMps();
         out.flight_phase = static_cast<mark4_FlightPhase>(core.flightPhase());
+        out.imu_valid = frame.imuValid;
+        out.baro_valid = frame.baroValid;
         const ThrowDetector &detector = core.throwDetector();
         out.throw_state = static_cast<mark4_ThrowState>(detector.state());
         out.throw_count = detector.throwCount();

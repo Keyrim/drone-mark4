@@ -85,6 +85,7 @@ enum FlightPhase {
   PHASE_HOVER = 5;
   PHASE_CUTOFF = 6;
   PHASE_MANUAL = 7;
+  PHASE_FAULT = 8;   // IMU lost with the motors running, latched until the kill
 }
 
 // Same names and values as the flight core's ThrowState.
@@ -119,6 +120,8 @@ message Telemetry {
   uint64 apex_timestamp_us = 13;      // last predicted apex instant [us]
   float apex_altitude_m = 14;         // last predicted apex altitude [m]
   optional PlantTruth truth = 15;     // the plant's exact state, sim only
+  bool imu_valid = 16;                // the frame carried a fresh IMU sample
+  bool baro_valid = 17;               // the frame carried a fresh baro sample
 }
 
 // Same values as the flight core's PilotMode.

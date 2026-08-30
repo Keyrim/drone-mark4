@@ -30,7 +30,9 @@ namespace
                        bool armSwitch = false,
                        float accelX = 0.0f,
                        mark4::PilotMode mode = mark4::PilotMode::ALTITUDE_AUTO,
-                       float throttle = 0.5f)
+                       float throttle = 0.5f,
+                       bool imuValid = true,
+                       bool baroValid = true)
     {
         std::uint64_t timestamp = fromUs;
         for (std::uint32_t i = 0U; i < steps; ++i)
@@ -43,6 +45,8 @@ namespace
             frame.rc.throttle = throttle;
             frame.accelMps2 = {accelX, 0.0f, accelZ};
             frame.baroPa = HELPER_BARO_PA;
+            frame.imuValid = imuValid;
+            frame.baroValid = baroValid;
             core.step(frame, actuators);
             timestamp += STEP_US;
         }
@@ -94,6 +98,8 @@ namespace
         frame.rc.mode = mark4::PilotMode::MANUAL;
         frame.rc.throttle = throttle;
         frame.baroPa = HELPER_BARO_PA;
+        frame.imuValid = true;
+        frame.baroValid = true;
     }
 
     /// @brief Plays rest, then a hand thrust, up to the confirmed detection.
@@ -154,6 +160,8 @@ TEST_CASE("the kill switch ends the mission and disarms the state machine")
 
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
     frame.baroPa = HELPER_BARO_PA;
+    frame.imuValid = true;
+    frame.baroValid = true;
     frame.rc.killSwitch = false;
     frame.rc.armSwitch = true;
     frame.rc.mode = mark4::PilotMode::ALTITUDE_AUTO;
@@ -322,6 +330,8 @@ TEST_CASE("a throttle below the arming threshold keeps the motors stopped")
     frame.rc.throttle = 0.0f;
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
     frame.baroPa = HELPER_BARO_PA;
+    frame.imuValid = true;
+    frame.baroValid = true;
     frame.timestampUs = timestamp;
     core.step(frame, actuators);
 
@@ -369,6 +379,8 @@ TEST_CASE("taking a hover over drives the motors through the altitude stack")
     frame.rc.throttle = 0.6f; // off centre: the takeover gesture
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
     frame.baroPa = HELPER_BARO_PA;
+    frame.imuValid = true;
+    frame.baroValid = true;
     frame.timestampUs = timestamp;
     core.step(frame, actuators);
     REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
@@ -458,6 +470,8 @@ TEST_CASE("a sustained unrecoverable tilt cuts the motors")
     // toward a tilt far beyond what the hover stack can recover.
     frame.accelMps2 = {0.0f, 0.985f * mark4::GRAVITY_MPS2, 0.174f * mark4::GRAVITY_MPS2};
     frame.baroPa = HELPER_BARO_PA;
+    frame.imuValid = true;
+    frame.baroValid = true;
 
     for (std::uint32_t i = 0U; i < 2500U; ++i)
     {
@@ -502,6 +516,8 @@ TEST_CASE("arming waits for the baro reference capture")
     frame.rc.throttle = 0.5f;
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
     frame.baroPa = HELPER_BARO_PA;
+    frame.imuValid = true;
+    frame.baroValid = true;
 
     // One frame short of the capture window: still not ready, still IDLE.
     std::uint64_t timestamp = 0U;
@@ -582,6 +598,9 @@ TEST_CASE("a detected throw spins up ahead of the apex and recovers into a hover
     frame.rc.armSwitch = true;
     frame.rc.mode = mark4::PilotMode::ALTITUDE_AUTO;
     frame.rc.throttle = 0.7f;
+    frame.imuValid = true;
+    frame.baroValid = true;
+    frame.baroPa = HELPER_BARO_PA;
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
     core.step(frame, actuators);
     REQUIRE(core.flightPhase() == mark4::FlightPhase::ALTITUDE_AUTO);
@@ -650,6 +669,8 @@ TEST_CASE("a kill mid-recovery cuts the motors and ends the mission")
     frame.rc.killSwitch = true;
     frame.rc.armSwitch = true;
     frame.baroPa = HELPER_BARO_PA;
+    frame.imuValid = true;
+    frame.baroValid = true;
     core.step(frame, actuators);
     REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
     for (const float m : actuators.motor)
@@ -684,6 +705,8 @@ TEST_CASE("a kill mid-hover cuts the motors and ends the mission")
     frame.rc.armSwitch = true;
     frame.accelMps2 = {0.0f, 0.0f, mark4::GRAVITY_MPS2};
     frame.baroPa = HELPER_BARO_PA;
+    frame.imuValid = true;
+    frame.baroValid = true;
     core.step(frame, actuators);
     REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
     for (const float m : actuators.motor)
@@ -768,6 +791,8 @@ TEST_CASE("a recovery that never levels times out into a cutoff")
     frame.rc.armSwitch = true;
     frame.gyroRadS = {3.0f, 0.0f, 0.0f};
     frame.baroPa = HELPER_BARO_PA;
+    frame.imuValid = true;
+    frame.baroValid = true;
     for (std::uint32_t i = 0U; i < 250U; ++i)
     {
         frame.timestampUs = timestamp;
@@ -809,6 +834,8 @@ TEST_CASE("saturated rates during the ballistic coast cut instead of spinning up
     frame.rc.armSwitch = true;
     frame.gyroRadS = {35.0f, 0.0f, 0.0f};
     frame.baroPa = HELPER_BARO_PA;
+    frame.imuValid = true;
+    frame.baroValid = true;
     core.step(frame, actuators);
 
     REQUIRE(core.flightPhase() == mark4::FlightPhase::CUTOFF);
@@ -935,4 +962,221 @@ TEST_CASE("the braking is one-shot: a reborn estimate never re-leans the drone")
     feed(core, actuators, timestamp, 5U, mark4::GRAVITY_MPS2, true);
     REQUIRE(core.flightPhase() == mark4::FlightPhase::HOVER);
     REQUIRE(std::fabs(actuators.motor[1] - actuators.motor[0]) < 0.003f);
+}
+
+namespace
+{
+    /// @brief Feeds frames whose IMU (and optionally baro) is flagged invalid,
+    ///        as a platform does when the sensor could not be read: zeros,
+    ///        the flag down. RC armed, altitude-auto interlock satisfied.
+    /// @return timestamp to continue the stream from
+    std::uint64_t feedInvalid(mark4::FlightCore &core,
+                              mark4::ActuatorFrame &actuators,
+                              std::uint64_t fromUs,
+                              std::uint32_t steps,
+                              bool armSwitch,
+                              bool baroValid = false,
+                              mark4::PilotMode mode = mark4::PilotMode::ALTITUDE_AUTO,
+                              float throttle = 0.5f)
+    {
+        return feed(core,
+                    actuators,
+                    fromUs,
+                    steps,
+                    0.0f,
+                    armSwitch,
+                    0.0f,
+                    mode,
+                    throttle,
+                    false,
+                    baroValid);
+    }
+
+    /// @return true when the two quaternions are bitwise equal
+    bool sameAttitude(const mark4::Quaternion &a, const mark4::Quaternion &b)
+    {
+        return a.w == b.w && a.x == b.x && a.y == b.y && a.z == b.z;
+    }
+} // namespace
+
+TEST_CASE("an invalid IMU with the motors off integrates nothing and refuses to arm")
+{
+    mark4::FlightCore core;
+    mark4::ActuatorFrame actuators;
+    std::uint64_t timestamp = settle(core, actuators);
+    const mark4::Quaternion before = core.attitude();
+    const float altitudeBefore = core.altitudeM();
+    const std::uint32_t throwsBefore = core.throwDetector().throwCount();
+
+    // A dead IMU, arm switch on, stick centered: nothing moves, nothing arms.
+    timestamp = feedInvalid(core, actuators, timestamp, 100U, true);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
+    REQUIRE(core.imuInvalidRun() == 100U);
+    REQUIRE(sameAttitude(core.attitude(), before));
+    REQUIRE(core.altitudeM() == altitudeBefore);
+    REQUIRE(core.throwDetector().throwCount() == throwsBefore);
+    for (const float m : actuators.motor)
+    {
+        REQUIRE(m == 0.0f);
+    }
+
+    // No latch: the sensor coming back is enough, the same arm request
+    // now goes through.
+    feed(core, actuators, timestamp, 1U, mark4::GRAVITY_MPS2, true);
+    REQUIRE(core.imuInvalidRun() == 0U);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ARMED);
+}
+
+TEST_CASE("an invalid IMU under the fault threshold holds the last command")
+{
+    mark4::FlightCore core;
+    mark4::ActuatorFrame actuators;
+    std::uint64_t timestamp = enterManual(core, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    timestamp = feed(core,
+                     actuators,
+                     timestamp,
+                     20U,
+                     mark4::GRAVITY_MPS2,
+                     true,
+                     0.0f,
+                     mark4::PilotMode::MANUAL,
+                     0.5f);
+    const std::array<float, 4> held = actuators.motor;
+    REQUIRE(held[0] > 0.0f);
+
+    feedInvalid(core,
+                actuators,
+                timestamp,
+                mark4::FlightCore::IMU_FAULT_FRAMES - 1U,
+                true,
+                true,
+                mark4::PilotMode::MANUAL,
+                0.5f);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(actuators.motor == held);
+}
+
+TEST_CASE("an invalid IMU with the motors running latches the fault and cuts the motors")
+{
+    mark4::FlightCore core;
+    mark4::ActuatorFrame actuators;
+    std::uint64_t timestamp = enterManual(core, actuators);
+    timestamp = feed(core,
+                     actuators,
+                     timestamp,
+                     20U,
+                     mark4::GRAVITY_MPS2,
+                     true,
+                     0.0f,
+                     mark4::PilotMode::MANUAL,
+                     0.5f);
+    REQUIRE(actuators.motor[0] > 0.0f);
+
+    timestamp = feedInvalid(core,
+                            actuators,
+                            timestamp,
+                            mark4::FlightCore::IMU_FAULT_FRAMES,
+                            true,
+                            true,
+                            mark4::PilotMode::MANUAL,
+                            0.5f);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::FAULT);
+    REQUIRE(!core.armed());
+    for (const float m : actuators.motor)
+    {
+        REQUIRE(m == 0.0f);
+    }
+
+    // Valid frames again, still armed, stick up: latched, motors stay cut.
+    timestamp = feed(core,
+                     actuators,
+                     timestamp,
+                     50U,
+                     mark4::GRAVITY_MPS2,
+                     true,
+                     0.0f,
+                     mark4::PilotMode::MANUAL,
+                     0.5f);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::FAULT);
+    for (const float m : actuators.motor)
+    {
+        REQUIRE(m == 0.0f);
+    }
+
+    // Releasing the arm switch is not enough either: only the kill leaves.
+    timestamp = feed(core,
+                     actuators,
+                     timestamp,
+                     5U,
+                     mark4::GRAVITY_MPS2,
+                     false,
+                     0.0f,
+                     mark4::PilotMode::MANUAL,
+                     0.0f);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::FAULT);
+    mark4::SensorFrame kill;
+    kill.timestampUs = timestamp;
+    kill.rc.killSwitch = true;
+    core.step(kill, actuators);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
+}
+
+TEST_CASE("an invalid baro on the ground refuses to arm and is not a fault")
+{
+    mark4::FlightCore core;
+    mark4::ActuatorFrame actuators;
+    std::uint64_t timestamp = settle(core, actuators);
+
+    timestamp = feed(core,
+                     actuators,
+                     timestamp,
+                     100U,
+                     mark4::GRAVITY_MPS2,
+                     true,
+                     0.0f,
+                     mark4::PilotMode::ALTITUDE_AUTO,
+                     0.5f,
+                     true,
+                     false);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::IDLE);
+    REQUIRE(core.imuInvalidRun() == 0U);
+
+    feed(core, actuators, timestamp, 1U, mark4::GRAVITY_MPS2, true);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::ARMED);
+}
+
+TEST_CASE("an invalid baro in flight keeps flying on the inertial estimate")
+{
+    mark4::FlightCore core;
+    mark4::ActuatorFrame actuators;
+    std::uint64_t timestamp = enterManual(core, actuators);
+    timestamp = feed(core,
+                     actuators,
+                     timestamp,
+                     20U,
+                     mark4::GRAVITY_MPS2,
+                     true,
+                     0.0f,
+                     mark4::PilotMode::MANUAL,
+                     0.5f);
+    const float baroAltitude = core.baroAltitudeM();
+
+    // Level, 1 g, no baro for a full second: the flight goes on and the
+    // raw baro channel stops moving while the fused estimate coasts.
+    feed(core,
+         actuators,
+         timestamp,
+         500U,
+         mark4::GRAVITY_MPS2,
+         true,
+         0.0f,
+         mark4::PilotMode::MANUAL,
+         0.5f,
+         true,
+         false);
+    REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(actuators.motor[0] > 0.0f);
+    REQUIRE(core.baroAltitudeM() == baroAltitude);
+    REQUIRE(std::fabs(core.altitudeM()) < 0.5f);
 }

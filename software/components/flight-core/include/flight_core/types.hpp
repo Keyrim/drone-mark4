@@ -46,9 +46,17 @@ namespace mark4
     /// travels inside the frame, the flight core never reads a clock.
     /// Body frame convention, for every producer: x forward, y left, z up,
     /// right-handed - the accelerometer reads +GRAVITY_MPS2 on z at rest.
+    ///
+    /// Validity contract: a sensor field is valid only when it is a fresh
+    /// measurement acquired for this frame. A platform that could not read
+    /// the sensor leaves the flag false and the field zero; it never replays
+    /// an old sample. The flags default to false so a frame nobody filled
+    /// is a frame without sensors.
     struct SensorFrame
     {
         std::uint64_t timestampUs = 0U;   ///< acquisition time [us]
+        bool imuValid = false;            ///< gyroRadS and accelMps2 are fresh measurements
+        bool baroValid = false;           ///< baroPa is a fresh measurement
         std::array<float, 3> gyroRadS{};  ///< body angular rates [rad/s]
         std::array<float, 3> accelMps2{}; ///< specific force [m/s^2] (0 g in free fall)
         float baroPa = 0.0f;              ///< static pressure [Pa]

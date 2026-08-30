@@ -25,8 +25,10 @@ namespace mark4
 
     void VerticalEstimator::update(const SensorFrame &frame, float dtS, const Quaternion &attitude)
     {
+        // A frame without a fresh baro sample is the same thing as an
+        // implausible one: no correction, the estimate coasts.
         const bool baroPlausible =
-            frame.baroPa >= MIN_PLAUSIBLE_PA && frame.baroPa <= MAX_PLAUSIBLE_PA;
+            frame.baroValid && frame.baroPa >= MIN_PLAUSIBLE_PA && frame.baroPa <= MAX_PLAUSIBLE_PA;
         const float baroAltitudeM = PressureAltitudeM(frame.baroPa);
 
         if (!m_ready)

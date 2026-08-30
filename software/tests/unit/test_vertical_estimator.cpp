@@ -25,6 +25,7 @@ namespace
         frame.timestampUs = timestampUs;
         frame.accelMps2 = {0.0f, 0.0f, accelZ};
         frame.baroPa = pressureAtAltitude(altitudeM);
+        frame.baroValid = true;
         return frame;
     }
 

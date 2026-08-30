@@ -54,6 +54,8 @@ namespace
             frame.accelMps2 = {0.0f, 0.0f, accelZ};
             frame.gyroRadS = {gyroX, 0.0f, 0.0f};
             frame.baroPa = HELPER_BARO_PA;
+            frame.imuValid = true;
+            frame.baroValid = true;
             core.step(frame, actuators);
             timestamp += STEP_US;
         }

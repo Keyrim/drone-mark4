@@ -48,7 +48,11 @@ namespace mark4
             m_lastMotor = actuators.motor;
             if (isFrameFinite(sensors) && acceptsTimestamp(sensors.timestampUs))
             {
-                updateEstimators(sensors, deriveDt(sensors.timestampUs));
+                const float dt = deriveDt(sensors.timestampUs);
+                if (sensors.imuValid)
+                {
+                    updateEstimators(sensors, dt);
+                }
             }
             resetMission();
             return;
@@ -74,10 +78,46 @@ namespace mark4
         }
 
         const float dt = deriveDt(sensors.timestampUs);
+        if (!sensors.imuValid)
+        {
+            stepWithoutImu(sensors, actuators);
+            return;
+        }
+        m_imuInvalidRun = 0U;
         updateEstimators(sensors, dt);
         advancePhase(sensors);
         runControl(sensors, dt, actuators);
         m_lastMotor = actuators.motor;
+    }
+
+    void FlightCore::stepWithoutImu(const SensorFrame &sensors, ActuatorFrame &actuators)
+    {
+        // No measurement, so nothing integrates and no phase advances: the
+        // attitude stays where it was, a throw cannot be detected and IDLE
+        // is never left. What the motors do depends on whether they run.
+        ++m_imuInvalidRun;
+        bool motorsOn = false;
+        for (const float m : m_lastMotor)
+        {
+            motorsOn = motorsOn || m > 0.0f;
+        }
+        if (motorsOn && m_imuInvalidRun >= IMU_FAULT_FRAMES)
+        {
+            // Flying blind for this long is a dead sensor, not a glitch: cut
+            // and latch. The kill switch is the only way out, so the pilot
+            // decides when the drone is safe to touch again.
+            m_phase = FlightPhase::FAULT;
+            m_rateController.reset();
+            m_verticalController.reset();
+            m_lastMotor.fill(0.0f);
+        }
+        else if (!motorsOn && !sensors.rc.armSwitch && m_phase != FlightPhase::FAULT)
+        {
+            // The arm switch keeps its meaning without sensors: releasing it
+            // ends whatever mission was in progress, exactly as with them.
+            resetMission();
+        }
+        actuators.motor = m_lastMotor;
     }
 
     bool FlightCore::acceptsTimestamp(std::uint64_t timestampUs) const
@@ -145,12 +185,13 @@ namespace mark4
         switch (m_phase)
         {
             case FlightPhase::IDLE:
-                if (!m_verticalEstimator.ready())
+                if (!m_verticalEstimator.ready() || !sensors.baroValid)
                 {
                     // No mission before the vertical estimate runs. The baro
                     // reference only captures at rest, so a core rebooted
                     // mid-air stays here, motors off, until the drone is back
-                    // on the ground with a fresh reference.
+                    // on the ground with a fresh reference. A baro that went
+                    // silent afterwards grounds the drone the same way.
                     break;
                 }
                 if (!arm)
@@ -282,6 +323,12 @@ namespace mark4
                     m_phase = FlightPhase::IDLE;
                 }
                 break;
+            case FlightPhase::FAULT:
+                // Latched harder than CUTOFF: the IMU died with the motors
+                // running, and valid frames coming back say nothing about
+                // whether the sensor can be trusted. Only the kill switch
+                // (resetMission) leaves.
+                break;
         }
     }
 
@@ -298,6 +345,7 @@ namespace mark4
             case FlightPhase::ARMED:
             case FlightPhase::BALLISTIC:
             case FlightPhase::CUTOFF:
+            case FlightPhase::FAULT:
                 actuators.motor.fill(0.0f);
                 m_rateController.reset();
                 m_verticalController.reset();
