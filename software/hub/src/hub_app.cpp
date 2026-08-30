@@ -1,7 +1,7 @@
 /// @file
 /// @brief hub composition root implementation: the single poll loop that
-///        drains every source, routes every message and keeps the discovery
-///        table honest.
+///        drains the transport and the websocket, forwards frames both ways
+///        and publishes the node table.
 
 #include "hub/hub_app.hpp"
 
@@ -16,8 +16,9 @@
 #include <system_error>
 #include <unistd.h>
 #include <utility>
-#include <variant>
+#include <vector>
 
+#include "hub/gateway_codec.hpp"
 #include "transport/node_id.hpp"
 
 namespace mark4
@@ -28,6 +29,11 @@ namespace mark4
 
         /// Size of the buffer the path of the running executable is read into.
         constexpr std::size_t PATH_BUFFER_SIZE = 4096U;
+
+        /// First byte of an encoded Envelope carrying an Rc: the one thing the
+        /// gateway reads in a client frame, to count the pilots.
+        constexpr std::uint8_t RC_TAG_BYTE =
+            static_cast<std::uint8_t>((mark4_Envelope_rc_tag << PB_TAG_FIELD_SHIFT) | PB_WT_STRING);
 
         /// @brief Default path of a directory or a file of the source tree,
         ///        resolved from the running executable so a build tree
@@ -67,16 +73,24 @@ namespace mark4
                 std::chrono::duration_cast<std::chrono::microseconds>(now).count());
         }
 
-        /// @brief Encodes one envelope for a link.
-        /// @param envelope message to encode
-        /// @param[out] bytes destination
-        /// @param[out] sizeOut bytes written
-        /// @return true when the message encoded
-        bool encodeForLink(const mark4_Envelope &envelope,
-                           std::array<std::uint8_t, MAX_ENVELOPE_SIZE> &bytes,
-                           std::size_t &sizeOut)
+        /// @return true when two beacons say the same thing
+        bool sameAnnounce(const mark4_Announce &a, const mark4_Announce &b)
         {
-            return encodeEnvelope(envelope, bytes.data(), bytes.size(), sizeOut);
+            return a.kind == b.kind && a.mcu == b.mcu && a.build_epoch == b.build_epoch &&
+                   a.wire_hash == b.wire_hash && std::strcmp(a.name, b.name) == 0 &&
+                   std::strcmp(a.git_hash, b.git_hash) == 0;
+        }
+
+        /// @return "hub-<hostname>", cut to what an Announce name holds
+        std::string gatewayName()
+        {
+            std::array<char, PATH_BUFFER_SIZE> host{};
+            std::string name = "hub";
+            if (::gethostname(host.data(), host.size() - 1U) == 0 && host[0] != '\0')
+            {
+                name += std::string("-") + host.data();
+            }
+            return name.substr(0U, sizeof(mark4_Announce::name) - 1U);
         }
     } // namespace
 
@@ -98,17 +112,20 @@ namespace mark4
             static_cast<void>(std::fprintf(stderr, "hub: cannot start the transport\n"));
             return false;
         }
-        // The hub's own beacon: every node learns the gateway and the schema
-        // it speaks, and the flight processes learn where to unicast.
+        m_transport.setNodeCallbacks(&HubApp::OnNodeUp, &HubApp::OnNodeDown, this);
+        // The gateway's own beacon: every node learns the gateway and the
+        // schema it speaks, and the flight processes learn where to unicast.
+        m_ownAnnounce.kind = mark4_NodeKind_GATEWAY;
+        m_ownAnnounce.mcu = mark4_Mcu_SIM;
+        m_ownAnnounce.wire_hash = WIRE_HASH;
+        copyWireString(gatewayName(), m_ownAnnounce.name, sizeof(m_ownAnnounce.name));
         mark4_Envelope announce = mark4_Envelope_init_zero;
         announce.which_body = mark4_Envelope_announce_tag;
-        announce.body.announce.kind = mark4_NodeKind_GATEWAY;
-        static_cast<void>(
-            std::snprintf(announce.body.announce.name, sizeof(announce.body.announce.name), "hub"));
-        announce.body.announce.wire_hash = WIRE_HASH;
+        announce.body.announce = m_ownAnnounce;
         std::array<std::uint8_t, MAX_ENVELOPE_SIZE> beacon{};
         std::size_t beaconSize = 0U;
-        if (!encodeForLink(announce, beacon, beaconSize) || beaconSize > Transport::MAX_BEACON_SIZE)
+        if (!encodeEnvelope(announce, beacon.data(), beacon.size(), beaconSize) ||
+            beaconSize > Transport::MAX_BEACON_SIZE)
         {
             static_cast<void>(std::fprintf(stderr, "hub: the announce does not fit a beacon\n"));
             return false;
@@ -121,7 +138,7 @@ namespace mark4
         std::error_code failure;
         if (!std::filesystem::is_directory(m_config.pagesDir, failure))
         {
-            // A hub without pages still decodes and serves the websocket:
+            // A hub without pages still forwards and serves the websocket:
             // the pages are a client, not a dependency.
             static_cast<void>(
                 std::printf("hub: no pages in %s, serving none\n", m_config.pagesDir.c_str()));
@@ -146,11 +163,10 @@ namespace mark4
             m_config.otaBundlePath = unresolved ? candidate.string() : folded.string();
         }
         m_ota.setDefaultBundlePath(m_config.otaBundlePath);
-        // The update client owns no socket: it sends through the same routing
-        // as every other command, so an updater message reaches the board
-        // exactly like an RC frame does, a transport unicast to its node.
+        // The update client owns no socket: its messages are unicasts to the
+        // node the OtaCommand named, exactly like a client's own frames.
         m_ota.setSink([this](const mark4_Envelope &envelope, std::string &errorOut) {
-            return sendToTarget(m_otaTarget, envelope, errorOut);
+            return sendEnvelope(m_otaTarget, envelope, errorOut);
         });
         m_ota.setOnChange([this]() { broadcastOta(); });
         return true;
@@ -190,468 +206,303 @@ namespace mark4
         static_cast<HubApp *>(context)->onFrame(src, data, size);
     }
 
+    void HubApp::OnNodeUp(void *context, const Transport::Node &node)
+    {
+        static_cast<void>(std::printf("hub: node %u appeared\n", node.id));
+        static_cast<HubApp *>(context)->m_nodesDirty = true;
+    }
+
+    void HubApp::OnNodeDown(void *context, const Transport::Node &node)
+    {
+        static_cast<void>(std::printf("hub: node %u disappeared\n", node.id));
+        auto *self = static_cast<HubApp *>(context);
+        self->m_announces.erase(node.id);
+        self->m_nodesDirty = true;
+    }
+
     void HubApp::onFrame(std::uint32_t src, const std::uint8_t *data, std::size_t size)
     {
+        ++m_framesIn;
+        if (size > sizeof(mark4_Frame::payload.bytes))
+        {
+            return;
+        }
+        mark4_GatewayMessage message = mark4_GatewayMessage_init_zero;
+        message.which_body = mark4_GatewayMessage_frame_tag;
+        message.body.frame.src = src;
+        message.body.frame.payload.size = static_cast<pb_size_t>(size);
+        std::memcpy(message.body.frame.payload.bytes, data, size);
+        broadcast(message);
+
+        // The two things the gateway reads: who is who, and the updater's
+        // answers. Everything else is the clients' business.
         mark4_Envelope envelope;
         if (!decodeEnvelope(data, size, envelope))
         {
-            ++m_badFrames;
             return;
         }
-        // The kind comes from the node's own announce; a node that never
-        // announced (or announced on another schema) still has its telemetry
-        // rendered, under the kind nobody claims.
-        mark4_NodeKind source = mark4_NodeKind_NODE_KIND_UNSPECIFIED;
-        static_cast<void>(m_registry.kindOf(src, source));
-        onEnvelope(envelope, src, source);
-    }
-
-    void HubApp::onEnvelope(const mark4_Envelope &envelope,
-                            std::uint32_t nodeId,
-                            mark4_NodeKind kind)
-    {
-        const std::uint64_t nowUs = monotonicUs();
         switch (envelope.which_body)
         {
             case mark4_Envelope_announce_tag: {
-                // The beacon of a node: the node it came from is the address
-                // every command to that process goes to.
-                const auto change = m_registry.onAnnounce(nodeId, envelope.body.announce, nowUs);
-                if (change.has_value())
+                auto [entry, inserted] = m_announces.try_emplace(src, envelope.body.announce);
+                if (inserted || !sameAnnounce(entry->second, envelope.body.announce))
                 {
-                    onDiscoveryChange(*change);
+                    entry->second = envelope.body.announce;
+                    m_nodesDirty = true;
+                    if (envelope.body.announce.wire_hash != WIRE_HASH)
+                    {
+                        static_cast<void>(std::fprintf(
+                            stderr,
+                            "hub: node %u speaks wire %08x, this hub speaks %08x: rebuild and "
+                            "reflash it (docs/ota-design.md)\n",
+                            src,
+                            envelope.body.announce.wire_hash,
+                            WIRE_HASH));
+                    }
                 }
                 return;
             }
-            case mark4_Envelope_telemetry_tag:
-                m_ws.broadcastText(telemetryToJson(envelope.body.telemetry, kind));
-                if (envelope.body.telemetry.has_truth)
-                {
-                    // The plant's exact state rides inside the estimate it is
-                    // compared against; the pages read it as its own message.
-                    m_ws.broadcastText(simRawToJson(envelope.body.telemetry, kind));
-                }
-                return;
-            case mark4_Envelope_tuning_ack_tag:
-                m_ws.broadcastText(tuningAckToJson(envelope.body.tuning_ack, kind));
-                return;
-            case mark4_Envelope_tuning_info_tag:
-                m_ws.broadcastText(tuningInfoToJson(envelope.body.tuning_info, kind));
-                return;
             case mark4_Envelope_log_tag:
-                // A console line of a node without a console: the board
-                // behind its relay, updated over the air with no probe on.
-                static_cast<void>(
-                    std::printf("%s: %s\n", nodeKindName(kind), envelope.body.log.text));
+                // A console line of a node without a console: printed here
+                // too, for a bench with no page open.
+                static_cast<void>(std::printf("node %u: %s\n", src, envelope.body.log.text));
                 static_cast<void>(std::fflush(stdout));
-                m_ws.broadcastText(logToJson(envelope.body.log, kind));
                 return;
             default:
-                // Updater answers are one more body on whatever link the
-                // process being updated is reachable on. Past the updater,
-                // a body this hub does not render (run stats, logs, another
-                // node's commands) is simply not for it.
-                static_cast<void>(m_ota.onEnvelope(envelope, nowUs));
+                static_cast<void>(m_ota.onEnvelope(envelope, monotonicUs()));
                 return;
         }
     }
 
-    bool HubApp::sendToTarget(mark4_NodeKind target,
+    bool HubApp::sendEnvelope(std::uint32_t dst,
                               const mark4_Envelope &envelope,
                               std::string &errorOut)
     {
         std::array<std::uint8_t, MAX_ENVELOPE_SIZE> bytes{};
         std::size_t size = 0U;
-        if (!encodeForLink(envelope, bytes, size))
+        if (!encodeEnvelope(envelope, bytes.data(), bytes.size(), size))
         {
-            errorOut = "the command does not encode";
+            errorOut = "the message does not encode";
             return false;
         }
-        const std::uint32_t nodeId = m_registry.nodeIdOf(target);
-        if (nodeId == 0U)
+        if (!m_transport.send(dst, bytes.data(), size))
         {
-            errorOut = std::string("no process of kind ") + nodeKindName(target);
+            errorOut = "node " + std::to_string(dst) + " is not reachable";
             return false;
         }
-        if (!m_transport.send(nodeId, bytes.data(), size))
-        {
-            errorOut =
-                std::string("transport node of ") + nodeKindName(target) + " is not reachable";
-            return false;
-        }
-        return true;
-    }
-
-    void HubApp::onDiscoveryChange(const DiscoveryChange &change)
-    {
-        const char *kind = nodeKindName(change.process.kind);
-        switch (change.event)
-        {
-            case DiscoveryEvent::APPEARED:
-                static_cast<void>(
-                    std::printf("hub: %s appeared (node %u)\n", kind, change.process.nodeId));
-                break;
-            case DiscoveryEvent::RESTARTED:
-                static_cast<void>(
-                    std::printf("hub: %s restarted (node %u)\n", kind, change.process.nodeId));
-                break;
-            case DiscoveryEvent::DISAPPEARED:
-                static_cast<void>(std::printf("hub: %s disappeared\n", kind));
-                break;
-        }
-        if (change.event != DiscoveryEvent::DISAPPEARED && change.process.wireMismatch)
-        {
-            // The one silent failure of a wire change: a node built on another
-            // schema keeps sending well formed envelopes this hub decodes into
-            // nonsense, or not at all. Named here, once per appearance.
-            static_cast<void>(std::fprintf(
-                stderr,
-                "hub: %s speaks wire %08x, this hub speaks %08x: rebuild and reflash it, "
-                "it cannot be trusted or updated from here (docs/ota-design.md)\n",
-                kind,
-                change.process.wireHash,
-                WIRE_HASH));
-        }
-        if (!m_config.pushProfileName.empty() && change.event != DiscoveryEvent::DISAPPEARED)
-        {
-            // A flight process has no flash: it boots on the defaults every
-            // time. Pushing on the announce is what makes a bench session
-            // survive a restart of the thing being tuned.
-            std::string error;
-            if (pushProfile(m_config.pushProfileName, change.process.kind, error))
-            {
-                static_cast<void>(std::printf(
-                    "hub: pushed profile %s to %s\n", m_config.pushProfileName.c_str(), kind));
-            }
-            else
-            {
-                static_cast<void>(std::fprintf(stderr,
-                                               "hub: cannot push profile %s to %s: %s\n",
-                                               m_config.pushProfileName.c_str(),
-                                               kind,
-                                               error.c_str()));
-            }
-        }
-        static_cast<void>(std::fflush(stdout));
-        broadcastDiscovery();
-    }
-
-    bool HubApp::pushProfile(const std::string &name, mark4_NodeKind target, std::string &errorOut)
-    {
-        TuningValues values;
-        if (!m_profiles.load(name, values, errorOut))
-        {
-            return false;
-        }
-        for (const auto &[id, value] : values)
-        {
-            mark4_Envelope envelope = mark4_Envelope_init_zero;
-            envelope.which_body = mark4_Envelope_tuning_set_tag;
-            envelope.body.tuning_set.id = id;
-            envelope.body.tuning_set.value = value;
-            if (!sendToTarget(target, envelope, errorOut))
-            {
-                return false;
-            }
-        }
+        ++m_framesOut;
         return true;
     }
 
     void HubApp::handleClientMessages()
     {
-        for (const InboundText &inbound : m_ws.drainInbound())
+        for (const InboundMessage &inbound : m_ws.drainInbound())
         {
-            const auto decoded = parseClientMessage(inbound.text);
-            if (const auto *reason = std::get_if<std::string>(&decoded))
+            mark4_GatewayMessage message;
+            std::string error;
+            bool done = false;
+            if (!decodeGatewayMessage(reinterpret_cast<const std::uint8_t *>( // NOLINT
+                                          inbound.bytes.data()),
+                                      inbound.bytes.size(),
+                                      message))
             {
-                answer(clientMessageId(inbound.text), false, *reason);
+                ++m_badFrames;
                 continue;
             }
-            const auto &message = std::get<ClientMessage>(decoded);
-            if (message.type == ClientMessageType::RC)
+            done = applyClientMessage(message, inbound.clientId, error);
+            if (message.id != 0U)
             {
-                // Remember who pilots, so the status can warn about a second
-                // pilot without counting the tabs that only watch.
-                m_rcSeenUs[inbound.clientId] = monotonicUs();
+                mark4_GatewayMessage ack = mark4_GatewayMessage_init_zero;
+                ack.which_body = mark4_GatewayMessage_ack_tag;
+                ack.id = message.id;
+                ack.body.ack.ok = done;
+                copyWireString(error, ack.body.ack.error, sizeof(ack.body.ack.error));
+                broadcast(ack);
             }
-            std::string error;
-            const bool done = applyClientMessage(message, error);
-            answer(message.id, done, error);
         }
     }
 
-    bool HubApp::commandAllowed(mark4_NodeKind target, std::string &errorOut) const
+    bool HubApp::applyClientMessage(const mark4_GatewayMessage &message,
+                                    const std::string &clientId,
+                                    std::string &errorOut)
     {
-        if (m_connection.via.empty())
+        switch (message.which_body)
         {
-            errorOut = "no drone connected";
-            return false;
-        }
-        if (target != m_connection.kind)
-        {
-            errorOut =
-                std::string("connected to ") + m_connection.id + ", not to " + nodeKindName(target);
-            return false;
-        }
-        return true;
-    }
-
-    bool HubApp::applyClientMessage(const ClientMessage &message, std::string &errorOut)
-    {
-        // Only the connected drone is wired to the controls: a drone that
-        // merely announces itself is visible, not commandable. The profiles
-        // on disk are hub business and need no drone at all.
-        switch (message.type)
-        {
-            case ClientMessageType::RC:
-            case ClientMessageType::SIM_SCENARIO:
-            case ClientMessageType::REBOOT:
-            case ClientMessageType::TUNING_SET:
-            case ClientMessageType::TUNING_LIST:
-            case ClientMessageType::PROFILE_PUSH:
-            case ClientMessageType::OTA_STATUS:
-            case ClientMessageType::OTA_START:
-            case ClientMessageType::OTA_REVERT:
-                if (!commandAllowed(message.target, errorOut))
+            case mark4_GatewayMessage_frame_tag: {
+                const mark4_Frame &frame = message.body.frame;
+                if (frame.payload.size == 0U)
                 {
+                    ++m_badFrames;
+                    errorOut = "empty frame";
                     return false;
                 }
-                break;
+                if (frame.payload.bytes[0] == RC_TAG_BYTE)
+                {
+                    // Remember who pilots, so the status can warn about a
+                    // second pilot without counting the tabs that only watch.
+                    m_rcSeenUs[clientId] = monotonicUs();
+                }
+                if (!m_transport.send(frame.dst, frame.payload.bytes, frame.payload.size))
+                {
+                    ++m_badFrames;
+                    errorOut = "node " + std::to_string(frame.dst) + " is not reachable";
+                    return false;
+                }
+                ++m_framesOut;
+                return true;
+            }
+            case mark4_GatewayMessage_ota_command_tag:
+                return applyOtaCommand(
+                    m_ota, message.body.ota_command, m_otaTarget, monotonicUs(), errorOut);
+            case mark4_GatewayMessage_profile_command_tag:
+                return applyProfileCommand(message.body.profile_command, errorOut);
             default:
-                // OTA_ABORT stays reachable: dropping a stuck transfer is hub
-                // business and must work even after the drone is gone.
-                break;
-        }
-        switch (message.type)
-        {
-            case ClientMessageType::RC:
-                // The hub forwards RC one for one and never repeats or
-                // synthesizes it: a silent link means kill downstream, and
-                // that silence is the pilot's, not the hub's to fill in.
-            case ClientMessageType::TUNING_SET:
-            case ClientMessageType::TUNING_LIST:
-                // The ack the client gets back says the request went out, not
-                // that the table arrived: the descriptions come as their own
-                // messages, one per flight frame, as the process unrolls them.
-                return sendToTarget(message.target, message.command, errorOut);
-            case ClientMessageType::SIM_SCENARIO: {
-                mark4_Envelope envelope = message.command;
-                if (envelope.body.sim_scenario.sequence == 0U)
-                {
-                    // 0 means "no scenario" on the wire, so a client that
-                    // sent none gets the hub's own rolling number: two
-                    // scenarios in a row are then two scenarios, not one.
-                    m_scenarioSequence = m_scenarioSequence % MAX_SCENARIO_SEQUENCE + 1U;
-                    envelope.body.sim_scenario.sequence = m_scenarioSequence;
-                }
-                // Routed like every other command, to the node that
-                // announced; the flight process forwards it to its plant.
-                return sendToTarget(message.target, envelope, errorOut);
-            }
-            case ClientMessageType::REBOOT: {
-                if (message.target != mark4_NodeKind_FIRMWARE)
-                {
-                    errorOut = std::string("cannot reboot ") + nodeKindName(message.target);
-                    return false;
-                }
-                return sendToTarget(message.target, message.command, errorOut);
-            }
-            case ClientMessageType::PROFILE_LIST: {
-                m_ws.broadcastText(profileNamesToJson(m_profiles.list()));
-                return true;
-            }
-            case ClientMessageType::PROFILE_SAVE: {
-                if (!m_profiles.save(message.profileName, message.profileValues, errorOut))
-                {
-                    return false;
-                }
-                m_ws.broadcastText(profileNamesToJson(m_profiles.list()));
-                return true;
-            }
-            case ClientMessageType::PROFILE_LOAD: {
-                TuningValues values;
-                if (!m_profiles.load(message.profileName, values, errorOut))
-                {
-                    return false;
-                }
-                m_ws.broadcastText(profileToJson(message.profileName, values));
-                return true;
-            }
-            case ClientMessageType::PROFILE_PUSH: {
-                return pushProfile(message.profileName, message.target, errorOut);
-            }
-            case ClientMessageType::CONNECT: {
-                return applyConnect(message, errorOut);
-            }
-            case ClientMessageType::DISCONNECT: {
-                applyDisconnect();
-                return true;
-            }
-            case ClientMessageType::OTA_STATUS:
-            case ClientMessageType::OTA_START:
-            case ClientMessageType::OTA_ABORT:
-            case ClientMessageType::OTA_REVERT: {
-                return applyOtaMessage(message, errorOut);
-            }
-        }
-        errorOut = "unsupported request";
-        return false;
-    }
-
-    bool HubApp::applyOtaMessage(const ClientMessage &message, std::string &errorOut)
-    {
-        const std::uint64_t nowUs = monotonicUs();
-        // The route is fixed for the whole session: an update that started on
-        // the board must not have half of it delivered to a simulator because
-        // a later message named another target.
-        if (!m_ota.busy())
-        {
-            m_otaTarget = message.target;
-        }
-        switch (message.type)
-        {
-            case ClientMessageType::OTA_STATUS:
-                return m_ota.requestBoardStatus(nowUs, errorOut);
-            case ClientMessageType::OTA_START:
-                return m_ota.start(message.otaBundlePath, nowUs, errorOut);
-            case ClientMessageType::OTA_ABORT:
-                return m_ota.abortSession(nowUs, errorOut);
-            case ClientMessageType::OTA_REVERT:
-                return m_ota.revert(nowUs, errorOut);
-            default:
-                errorOut = "unsupported update request";
+                errorOut = "unsupported message";
                 return false;
         }
     }
 
-    bool HubApp::applyConnect(const ClientMessage &message, std::string &errorOut)
+    bool HubApp::applyProfileCommand(const mark4_ProfileCommand &command, std::string &errorOut)
     {
-        // Every drone is a node of the LAN, the board included (its relay
-        // carries its frames): the identity of a connection is the kind.
-        static_cast<void>(errorOut);
-        Connection next;
-        next.via = message.connectVia;
-        next.id = nodeKindName(message.target);
-        next.kind = message.target;
-        m_connection = next;
-        refreshConnection();
-        broadcastStatus();
-        return true;
-    }
-
-    void HubApp::applyDisconnect()
-    {
-        m_connection = Connection{};
-        broadcastStatus();
-    }
-
-    void HubApp::refreshConnection()
-    {
-        if (m_connection.via.empty())
+        mark4_GatewayMessage answer = mark4_GatewayMessage_init_zero;
+        switch (command.op)
         {
-            return;
-        }
-        // Alive = its Announce is still fresh in the registry; the registry
-        // expires it on the transport's own delay.
-        const auto &processes = m_registry.processes();
-        const bool live = std::any_of(
-            processes.begin(), processes.end(), [this](const DiscoveredProcess &process) {
-                return process.kind == m_connection.kind;
-            });
-        if (live != m_connection.live)
-        {
-            m_connection.live = live;
-            broadcastStatus();
+            case mark4_ProfileCommand_Op_SAVE:
+                if (!m_profiles.save(command.name,
+                                     tuningValuesOf(command.values, command.values_count),
+                                     errorOut))
+                {
+                    return false;
+                }
+                [[fallthrough]];
+            case mark4_ProfileCommand_Op_LIST: {
+                answer.which_body = mark4_GatewayMessage_profiles_tag;
+                for (const std::string &name : m_profiles.list())
+                {
+                    mark4_ProfileList &list = answer.body.profiles;
+                    if (list.names_count >= std::size(list.names))
+                    {
+                        break;
+                    }
+                    copyWireString(name, list.names[list.names_count], sizeof(list.names[0]));
+                    ++list.names_count;
+                }
+                broadcast(answer);
+                return true;
+            }
+            case mark4_ProfileCommand_Op_LOAD: {
+                TuningValues values;
+                if (!m_profiles.load(command.name, values, errorOut))
+                {
+                    return false;
+                }
+                answer.which_body = mark4_GatewayMessage_profile_tag;
+                fillProfile(command.name, values, answer.body.profile);
+                broadcast(answer);
+                return true;
+            }
+            case mark4_ProfileCommand_Op_PUSH:
+                return pushProfile(
+                    m_profiles,
+                    command.name,
+                    command.target_node,
+                    [this](std::uint32_t dst, const mark4_Envelope &envelope, std::string &error) {
+                        return sendEnvelope(dst, envelope, error);
+                    },
+                    errorOut);
+            default:
+                errorOut = "unsupported profile command";
+                return false;
         }
     }
 
-    void HubApp::answer(int id, bool ok, const std::string &error)
+    void HubApp::broadcast(const mark4_GatewayMessage &message)
     {
-        // Streams are never acknowledged, and neither is a request that
-        // carried no correlation id: there would be nothing to match it to.
-        if (id < 0)
+        std::string bytes;
+        if (encodeGatewayMessage(message, bytes))
         {
-            return;
+            m_ws.broadcastBinary(bytes);
         }
-        m_ws.broadcastText(ackToJson(id, ok, error));
     }
 
-    void HubApp::broadcastDiscovery()
+    void HubApp::broadcastNodes()
     {
-        m_ws.broadcastText(discoveryToJson(m_registry.processes(), monotonicUs()));
+        const std::uint64_t nowUs = monotonicUs();
+        mark4_GatewayMessage message = mark4_GatewayMessage_init_zero;
+        message.which_body = mark4_GatewayMessage_nodes_tag;
+        mark4_NodeTable &table = message.body.nodes;
+        // The gateway itself first: the transport's table never holds it.
+        Transport::Node self;
+        self.id = m_transport.nodeId();
+        self.lastSeenUs = nowUs;
+        fillNode(self, nowUs, &m_ownAnnounce, table.nodes[0]);
+        table.nodes_count = 1U;
+        for (std::size_t i = 0U; i < m_transport.nodeCount(); ++i)
+        {
+            const Transport::Node &node = m_transport.node(i);
+            const auto announce = m_announces.find(node.id);
+            fillNode(node,
+                     nowUs,
+                     announce == m_announces.end() ? nullptr : &announce->second,
+                     table.nodes[table.nodes_count]);
+            ++table.nodes_count;
+        }
+        broadcast(message);
+        m_nodesDirty = false;
     }
 
     void HubApp::broadcastStatus()
     {
-        m_ws.broadcastText(statusToJson(status()));
+        const std::uint64_t nowUs = monotonicUs();
+        mark4_GatewayMessage message = mark4_GatewayMessage_init_zero;
+        message.which_body = mark4_GatewayMessage_status_tag;
+        mark4_GatewayStatus &status = message.body.status;
+        status.node_id = m_transport.nodeId();
+        status.wire_hash = WIRE_HASH;
+        status.clients = static_cast<std::uint32_t>(m_ws.clientCount());
+        status.rc_clients = static_cast<std::uint32_t>(
+            std::count_if(m_rcSeenUs.begin(), m_rcSeenUs.end(), [nowUs](const auto &entry) {
+                return nowUs - entry.second <= RC_PILOT_WINDOW_US;
+            }));
+        status.frames_in = m_framesIn;
+        status.frames_out = m_framesOut;
+        status.dropped = m_transport.dropped();
+        status.bad_frames = m_badFrames;
+        broadcast(message);
     }
 
     void HubApp::broadcastOta()
     {
-        m_ws.broadcastText(otaToJson(m_ota));
+        mark4_GatewayMessage message = mark4_GatewayMessage_init_zero;
+        message.which_body = mark4_GatewayMessage_ota_state_tag;
+        message.body.ota_state = otaStateOf(m_ota, m_otaTarget);
+        broadcast(message);
     }
 
     void HubApp::housekeeping(std::uint64_t nowUs)
     {
-        for (const DiscoveryChange &change : m_registry.expire(nowUs, DISCOVERY_EXPIRY_US))
-        {
-            onDiscoveryChange(change);
-        }
-        refreshConnection();
         std::erase_if(m_rcSeenUs, [nowUs](const auto &entry) {
             return nowUs - entry.second > RC_PILOT_WINDOW_US;
         });
         m_ota.tick(nowUs);
 
-        // A client that just connected knows nothing yet: it gets the table
-        // and the counters as they stand, without waiting for a change.
+        // A client that just connected knows nothing yet: it gets the table,
+        // the counters and the update state as they stand.
         if (m_ws.takeConnectedFlag())
         {
-            broadcastDiscovery();
+            m_nodesDirty = true;
             broadcastStatus();
             broadcastOta();
         }
-
         if (nowUs >= m_nextStatusUs)
         {
             m_nextStatusUs = nowUs + STATUS_PERIOD_MS * US_PER_MS;
+            m_nodesDirty = true;
             broadcastStatus();
         }
-    }
-
-    HubStatus HubApp::status() const
-    {
-        HubStatus snapshot;
-        snapshot.connectionVia = m_connection.via;
-        snapshot.connectionId = m_connection.id;
-        snapshot.connectionKind = m_connection.kind;
-        snapshot.connectionLive = m_connection.live;
-        snapshot.badFrames = m_badFrames;
-        snapshot.rejectedAnnounces = m_registry.rejectedAnnounces();
-        snapshot.clients = m_ws.clientCount();
-        const std::uint64_t nowUs = monotonicUs();
-        snapshot.rcClients = static_cast<std::size_t>(
-            std::count_if(m_rcSeenUs.begin(), m_rcSeenUs.end(), [nowUs](const auto &entry) {
-                return nowUs - entry.second <= RC_PILOT_WINDOW_US;
-            }));
-        // One entry per process reached over the transport: the frame
-        // counters of its node, every payload type included.
-        for (const DiscoveredProcess &process : m_registry.processes())
+        if (m_nodesDirty)
         {
-            const Transport::Node *node = m_transport.findNode(process.nodeId);
-            if (node == nullptr)
-            {
-                continue;
-            }
-            LinkHealth link;
-            link.sourceId = static_cast<std::uint8_t>(process.kind);
-            link.sourceName = nodeKindName(process.kind);
-            link.received = node->received;
-            link.lost = node->lost;
-            link.duplicates = node->duplicates;
-            link.lastSequence = node->lastSeq;
-            snapshot.links.push_back(link);
+            broadcastNodes();
         }
-        return snapshot;
     }
 } // namespace mark4

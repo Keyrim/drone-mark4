@@ -25,7 +25,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "hub/json_codec.hpp"
+#include "hub/gateway_codec.hpp"
 #include "hub/ota_bundle.hpp"
 #include "hub/ota_client.hpp"
 #include "protocol/envelope.hpp"
@@ -926,7 +926,7 @@ TEST_CASE("a board that never answers the initial query gives up saying so")
     CHECK(bench.countSent(mark4_Envelope_ota_status_request_tag) == OtaClient::STATUS_TRIES);
 }
 
-TEST_CASE("the ota message carries the phase, the progress and the two identities")
+TEST_CASE("the ota state message carries the phase, the progress and the two identities")
 {
     const ScratchDirectory directory;
     Bench bench;
@@ -934,50 +934,15 @@ TEST_CASE("the ota message carries the phase, the progress and the two identitie
     bench.feed(ackEnvelope(bench.session(), mark4_OtaOp_BEGIN, mark4_OtaResult_OTA_OK));
     bench.feed(chunkAckEnvelope(bench.session(), bench.client().progress().sentBytes));
 
-    const std::string text = otaToJson(bench.client());
-    CHECK(text.find(R"("type":"ota")") != std::string::npos);
-    CHECK(text.find(R"("phase":"transfer")") != std::string::npos);
-    CHECK(text.find(R"("verdict":"none")") != std::string::npos);
-    CHECK(text.find(R"("targetSlot":1)") != std::string::npos);
-    CHECK(text.find(R"("totalBytes":)" + std::to_string(total)) != std::string::npos);
-    CHECK(text.find(R"("gitHash":")" + std::string(NEW_HASH) + R"(")") != std::string::npos);
-    CHECK(text.find(R"("gitHash":")" + std::string(OLD_HASH) + R"(")") != std::string::npos);
-    CHECK(text.find(R"("stateName":"valid")") != std::string::npos);
-    CHECK(text.find(R"("stateName":"empty")") != std::string::npos);
-}
-
-TEST_CASE("the update messages decode into the requests the hub carries out")
-{
-    const auto asMessage = [](std::string_view text) {
-        const auto decoded = parseClientMessage(text);
-        REQUIRE(std::holds_alternative<ClientMessage>(decoded));
-        return std::get<ClientMessage>(decoded);
-    };
-
-    const ClientMessage start =
-        asMessage(R"({"type":"otaStart","id":1,"bundle":"/tmp/drone_firmware.ota"})");
-    CHECK(start.type == ClientMessageType::OTA_START);
-    CHECK(start.otaBundlePath == "/tmp/drone_firmware.ota");
-    CHECK(start.target == mark4_NodeKind_FIRMWARE);
-
-    const ClientMessage bare = asMessage(R"({"type":"otaStart"})");
-    CHECK(bare.otaBundlePath.empty());
-
-    for (const auto &[text, type] : std::vector<std::pair<std::string, ClientMessageType>>{
-             {R"({"type":"otaStatus"})", ClientMessageType::OTA_STATUS},
-             {R"({"type":"otaAbort"})", ClientMessageType::OTA_ABORT},
-             {R"({"type":"otaRevert"})", ClientMessageType::OTA_REVERT}})
-    {
-        CHECK(asMessage(text).type == type);
-    }
-
-    // The board confirms its own trial now: the old ground-side gestures
-    // are gone from the message set.
-    const auto refused = parseClientMessage(R"({"type":"otaConfirm"})");
-    REQUIRE(std::holds_alternative<std::string>(refused));
-    CHECK(std::get<std::string>(refused).find("unknown message type") != std::string::npos);
-
-    const auto empty = parseClientMessage(R"({"type":"otaStart","bundle":""})");
-    REQUIRE(std::holds_alternative<std::string>(empty));
-    CHECK(std::get<std::string>(empty).find("bundle") != std::string::npos);
+    const mark4_OtaState state = otaStateOf(bench.client(), 77U);
+    CHECK(state.phase == mark4_OtaState_Phase_TRANSFER);
+    CHECK(state.verdict == mark4_OtaState_Verdict_VERDICT_NONE);
+    CHECK(state.target_node == 77U);
+    CHECK(state.target_slot == 1);
+    CHECK(state.progress.total_bytes == total);
+    CHECK(std::string(state.bundle.git_hash) == NEW_HASH);
+    REQUIRE(state.board.slots_count == 2U);
+    CHECK(std::string(state.board.slots[0].git_hash) == OLD_HASH);
+    CHECK(state.board.slots[0].state == mark4_OtaSlotState_VALID);
+    CHECK(state.board.slots[1].state == mark4_OtaSlotState_EMPTY);
 }

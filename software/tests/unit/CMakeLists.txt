@@ -12,9 +12,8 @@ add_executable(unit_tests
     test_attitude_estimator.cpp
     test_control.cpp
     test_flight_core.cpp
-    test_hub_discovery.cpp
     test_hub_http.cpp
-    test_hub_json.cpp
+    test_hub_gateway.cpp
     test_hub_ota.cpp
     test_hub_tuning_profiles.cpp
     test_ota_boot_policy.cpp

@@ -1,9 +1,8 @@
 #pragma once
 
 /// @file
-/// @brief The endpoint of the hub: the one place a browser or a script can
-///        watch the decoded streams and send commands back, without ever
-///        touching a UDP socket or a packed struct. One TCP port carries
+/// @brief The endpoint of the gateway: where a browser or a script reads
+///        GatewayMessage binaries and sends them back. One TCP port carries
 ///        both the websocket and the static pages, dispatched on the
 ///        Upgrade header, so a page reaches the hub at the host it was
 ///        loaded from and never learns a port.
@@ -35,10 +34,10 @@ namespace mark4
     /// One inbound websocket message, tagged with the connection it came
     /// from so the poll loop can tell two clients apart (the RC warning
     /// counts pilots, not tabs).
-    struct InboundText
+    struct InboundMessage
     {
         std::string clientId; ///< library id of the connection
-        std::string text;     ///< the message body
+        std::string bytes;    ///< the binary message body
     };
 
     /// Endpoint the hub publishes to, takes commands from, and serves the
@@ -69,14 +68,14 @@ namespace mark4
         /// @brief Stops serving and closes every connection.
         void stop();
 
-        /// @brief Sends one text message to every connected client. Called
+        /// @brief Sends one binary message to every connected client. Called
         ///        from the poll loop only.
-        /// @param text message to send
-        void broadcastText(const std::string &text);
+        /// @param bytes message to send
+        void broadcastBinary(const std::string &bytes);
 
         /// @brief Takes everything clients have sent since the last call.
         /// @return the messages, oldest first
-        std::vector<InboundText> drainInbound();
+        std::vector<InboundMessage> drainInbound();
 
         /// @return number of connected clients
         [[nodiscard]] std::size_t clientCount() const
@@ -97,7 +96,7 @@ namespace mark4
         std::unique_ptr<ix::HttpServer> m_server; ///< the library server, null until start()
         HttpConfig m_http;                        ///< what the HTTP side reads from
         std::mutex m_inboundMutex;                ///< guards the inbound queue
-        std::vector<InboundText> m_inbound;       ///< messages waiting for the poll loop
+        std::vector<InboundMessage> m_inbound;    ///< messages waiting for the poll loop
         std::atomic_size_t m_clients{0U};         ///< connected clients
         std::atomic_bool m_connected{false};      ///< a client connected since last asked
     };

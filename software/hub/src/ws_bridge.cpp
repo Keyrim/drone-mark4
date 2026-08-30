@@ -89,10 +89,16 @@ namespace mark4
                         }
                         break;
                     case ix::WebSocketMessageType::Message: {
+                        if (!message->binary)
+                        {
+                            // The contract is binary GatewayMessage only; a
+                            // text frame is not for this endpoint.
+                            break;
+                        }
                         const std::lock_guard<std::mutex> guard(m_inboundMutex);
                         if (m_inbound.size() < MAX_INBOUND)
                         {
-                            m_inbound.push_back(InboundText{state->getId(), message->str});
+                            m_inbound.push_back(InboundMessage{state->getId(), message->str});
                         }
                         break;
                     }
@@ -125,7 +131,7 @@ namespace mark4
         m_clients.store(0U);
     }
 
-    void WsBridge::broadcastText(const std::string &text)
+    void WsBridge::broadcastBinary(const std::string &bytes)
     {
         if (!m_server)
         {
@@ -133,13 +139,13 @@ namespace mark4
         }
         for (const std::shared_ptr<ix::WebSocket> &client : m_server->getClients())
         {
-            static_cast<void>(client->sendText(text));
+            static_cast<void>(client->sendBinary(bytes));
         }
     }
 
-    std::vector<InboundText> WsBridge::drainInbound()
+    std::vector<InboundMessage> WsBridge::drainInbound()
     {
-        std::vector<InboundText> taken;
+        std::vector<InboundMessage> taken;
         const std::lock_guard<std::mutex> guard(m_inboundMutex);
         taken.swap(m_inbound);
         return taken;

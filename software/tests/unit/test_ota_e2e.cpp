@@ -40,6 +40,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "byte_pipe.hpp"
+#include "hub/gateway_codec.hpp"
 #include "hub/ota_bundle.hpp"
 #include "hub/ota_client.hpp"
 #include "protocol/envelope.hpp"
@@ -765,6 +766,80 @@ TEST_CASE("a hub-driven update crosses the esp32 relay, its filter and the seria
     // ground never broadcast anything but its Announce).
     CHECK(link.wireBytesToBoard() > IMAGE_SIZE);
     CHECK(link.filtered() == 0U);
+
+    sim.stop();
+    std::filesystem::remove_all(runDirectory, error);
+}
+
+TEST_CASE("an OtaCommand from a gateway client drives the update of the node it names",
+          "[ota][e2e]")
+{
+    // The happy path once more, entered the way a page enters it: one
+    // OtaCommand naming the node, applied by the gateway's dispatcher, the
+    // state read back as the OtaState message the page paints.
+    std::error_code error;
+    const std::filesystem::path runDirectory = std::filesystem::temp_directory_path(error) /
+                                               ("mark4_ota_e2e_cmd_" + std::to_string(::getpid()));
+    std::filesystem::remove_all(runDirectory, error);
+    REQUIRE(std::filesystem::create_directories(runDirectory, error));
+
+    const std::string otaDirectory = (runDirectory / "flash").string();
+    const std::uint32_t build = 0x66E00004U;
+    const std::string bundle = writeBundle(runDirectory / "commanded.ota", build, "dddddddd");
+
+    const std::uint16_t discoveryPort = pickFreePort();
+    GroundLink link(discoveryPort);
+    REQUIRE(link.open());
+    SimProcess sim;
+    REQUIRE(sim.start(runDirectory, otaDirectory, discoveryPort, SIM_NODE));
+
+    std::uint32_t target = 0U;
+    mark4::OtaClient client(testConfig());
+    client.setSink([&link, &target](const mark4_Envelope &envelope, std::string &errorOut) {
+        // The gateway routes every updater message to the node the command
+        // named; here the link only knows the sim, so the check is the target.
+        if (target != SIM_NODE || !link.send(envelope))
+        {
+            errorOut = "no route to the target node";
+            return false;
+        }
+        return true;
+    });
+    mark4_OtaCommand poke = mark4_OtaCommand_init_zero;
+    poke.op = mark4_OtaCommand_Op_STATUS_REQUEST;
+    poke.target_node = SIM_NODE;
+    std::string refusal;
+    // The first request may leave before the sim has been heard: the
+    // command still fixes the target, refreshBoard() repeats the request.
+    static_cast<void>(mark4::applyOtaCommand(client, poke, target, nowUs(), refusal));
+    CHECK(target == SIM_NODE);
+    REQUIRE(refreshBoard(client, link));
+
+    mark4_OtaCommand command = mark4_OtaCommand_init_zero;
+    command.op = mark4_OtaCommand_Op_START;
+    command.target_node = SIM_NODE;
+    mark4::copyWireString(bundle, command.bundle_path, sizeof(command.bundle_path));
+    REQUIRE(mark4::applyOtaCommand(client, command, target, nowUs(), refusal));
+    CHECK(target == SIM_NODE);
+
+    // While the session runs, a command aimed elsewhere is refused.
+    mark4_OtaCommand elsewhere = mark4_OtaCommand_init_zero;
+    elsewhere.op = mark4_OtaCommand_Op_STATUS_REQUEST;
+    elsewhere.target_node = SIM_NODE + 1U;
+    CHECK(!mark4::applyOtaCommand(client, elsewhere, target, nowUs(), refusal));
+    CHECK(target == SIM_NODE);
+
+    REQUIRE(driveUntil(
+        client, link, [&client] { return client.verdict() != mark4::OtaVerdict::NONE; }));
+    const mark4_OtaState state = mark4::otaStateOf(client, target);
+    INFO("phase " << state.phase << ", error '" << state.last_error << "'");
+    CHECK(state.phase == mark4_OtaState_Phase_CONFIRMED);
+    CHECK(state.verdict == mark4_OtaState_Verdict_VERDICT_CONFIRMED);
+    CHECK(state.target_node == SIM_NODE);
+    CHECK(state.progress.acked_bytes == IMAGE_SIZE);
+    CHECK(state.progress.total_bytes == IMAGE_SIZE);
+    CHECK(std::string(state.bundle.git_hash) == "dddddddd");
+    CHECK(sim.alive());
 
     sim.stop();
     std::filesystem::remove_all(runDirectory, error);

@@ -27,15 +27,15 @@ FetchContent_MakeAvailable(ixwebsocket)
 # Everything the hub does that a unit test can exercise without a socket, a
 # thread or a child process. This is the target the tests link.
 add_library(hub_core STATIC
-    src/discovery.cpp
+    src/gateway_codec.cpp
     src/http_api.cpp
-    src/json_codec.cpp
     src/ota_bundle.cpp
     src/ota_client.cpp
-    src/stream_health.cpp
     src/tuning_profiles.cpp)
 target_include_directories(hub_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(hub_core PUBLIC protocol transport nlohmann_json::nlohmann_json)
+# nlohmann_json reads the two on-disk formats (the bundle manifest, the
+# profile files); nothing of it reaches the websocket.
+target_link_libraries(hub_core PUBLIC protocol nanopb_gateway transport nlohmann_json::nlohmann_json)
 target_link_libraries(hub_core PRIVATE drone_warnings)
 
 # The hub itself: hub_core plus everything that owns a resource. Desktop only,
