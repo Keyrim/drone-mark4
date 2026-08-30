@@ -111,3 +111,39 @@ export function nodeRows(nodes: readonly Node[], gatewayWireHash: number): NodeR
         };
     });
 }
+
+/** What changed between two node tables, in what the view draws. */
+export interface RowChanges {
+    /** Nodes appeared, disappeared or moved: only a whole redraw fits. */
+    readonly structural: boolean;
+    /** Ids of the lines that read differently. */
+    readonly changed: number[];
+}
+
+/** True when two rows would draw the same. The tooltip is not compared: its
+ * counters and its last-seen move on every table and must not redraw the
+ * view (they are read one refresh late, which is what a tooltip is worth). */
+function sameRow(left: NodeRow, right: NodeRow): boolean {
+    return (
+        left.id === right.id &&
+        left.name === right.name &&
+        left.kind === right.kind &&
+        left.live === right.live &&
+        left.mismatch === right.mismatch
+    );
+}
+
+/**
+ * The redraw a new table needs. The gateway republishes the whole table once
+ * a second and most of it never moves: comparing what is drawn is what stops
+ * the view from blinking every second.
+ */
+export function diffNodeRows(previous: readonly NodeRow[], next: readonly NodeRow[]): RowChanges {
+    if (previous.length !== next.length || previous.some((row, index) => row.id !== next[index]?.id)) {
+        return { structural: true, changed: [] };
+    }
+    return {
+        structural: false,
+        changed: next.filter((row, index) => !sameRow(previous[index] as NodeRow, row)).map((row) => row.id),
+    };
+}

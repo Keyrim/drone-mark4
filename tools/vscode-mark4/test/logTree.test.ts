@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { LogLevel, NodeKind } from "../src/gen/mark4_pb";
-import { buildLevelTree, formatLogLine, type LevelItem, type LevelNode } from "../src/logTree";
+import {
+    buildLevelTree,
+    diffLevelTree,
+    formatLogLine,
+    type LevelItem,
+    type LevelNode,
+    planLevelChange,
+} from "../src/logTree";
 
 const sim: LevelNode = {
     id: 0xd5000001,
@@ -100,4 +107,53 @@ test("a module the nodes disagree on reads as mixed", () => {
 test("a node with no module table is not listed", () => {
     assert.deepEqual(buildLevelTree([{ ...sim, logModules: [] }], "byNode"), []);
     assert.deepEqual(buildLevelTree([{ ...sim, logModules: [] }], "byModule"), []);
+});
+
+test("the same table twice asks for no redraw at all", () => {
+    for (const mode of ["byNode", "byModule"] as const) {
+        const changes = diffLevelTree(buildLevelTree([sim, hub], mode), buildLevelTree([sim, hub], mode));
+        assert.deepEqual(changes, { structural: false, changed: [] }, mode);
+    }
+});
+
+test("a level that moved redraws the root that holds it, in both modes", () => {
+    const moved: LevelNode = {
+        ...sim,
+        logModules: sim.logModules.map((module) => (module.id === 3 ? { ...module, level: LogLevel.WARN } : module)),
+    };
+    const byNode = diffLevelTree(buildLevelTree([sim, hub], "byNode"), buildLevelTree([moved, hub], "byNode"));
+    assert.equal(byNode.structural, false);
+    assert.deepEqual(byNode.changed, ["node:d5000001"], "the node of the module, not the other one");
+
+    const byModule = diffLevelTree(buildLevelTree([sim, hub], "byModule"), buildLevelTree([moved, hub], "byModule"));
+    assert.equal(byModule.structural, false);
+    assert.deepEqual(byModule.changed, ["module:rc"], "the module the node moved, not the other names");
+});
+
+test("a node appearing or leaving is a whole redraw", () => {
+    const before = buildLevelTree([sim], "byNode");
+    assert.deepEqual(diffLevelTree(before, buildLevelTree([sim, hub], "byNode")), {
+        structural: true,
+        changed: [],
+    });
+    assert.deepEqual(diffLevelTree(buildLevelTree([sim, hub], "byNode"), before), {
+        structural: true,
+        changed: [],
+    });
+});
+
+test("a node renamed redraws its root and nothing else", () => {
+    const renamed = { ...sim, name: "sim-b" };
+    const changes = diffLevelTree(buildLevelTree([sim, hub], "byNode"), buildLevelTree([renamed, hub], "byNode"));
+    assert.deepEqual(changes.changed, ["node:d5000001"]);
+});
+
+test("one gesture moves the nodes and the view over the same scope", () => {
+    const node = buildLevelTree([sim], "byNode")[0] as LevelItem;
+    const plan = planLevelChange(node.targets, LogLevel.DEBUG);
+    assert.equal(plan.level, LogLevel.DEBUG);
+    assert.deepEqual(plan.control, node.targets, "one set per module below the item");
+    assert.deepEqual(plan.display, node.targets, "the view follows the same scope");
+    assert.deepEqual(plan.queryNodes, [sim.id], "one query per node, whatever the module count");
+    assert.deepEqual(planLevelChange([], LogLevel.INFO).queryNodes, []);
 });

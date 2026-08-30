@@ -4,7 +4,7 @@ import { test } from "node:test";
 
 import { NodeSchema } from "../src/gen/gateway_pb";
 import { AnnounceSchema, NodeKind } from "../src/gen/mark4_pb";
-import { hexNodeId, LIVE_MS, nodeRows, simInstance, simNodeId, wireMismatch } from "../src/model";
+import { diffNodeRows, hexNodeId, LIVE_MS, nodeRows, simInstance, simNodeId, wireMismatch } from "../src/model";
 
 const announce = (fields: Partial<{ kind: NodeKind; name: string; wireHash: number; buildEpoch: number; gitHash: string }>) =>
     create(AnnounceSchema, fields);
@@ -90,4 +90,44 @@ test("a node fades once its last frame is old, and a mismatch is flagged", () =>
     assert.equal(rows[1]?.live, false);
     assert.equal(rows[1]?.mismatch, true);
     assert.match(rows[1]?.tooltip ?? "", /WIRE MISMATCH/);
+});
+
+const table = (fields: { lastSeenMsAgo?: number; received?: number; name?: string; wireHash?: number } = {}) =>
+    nodeRows(
+        [
+            node({
+                id: 0xd5000001,
+                lastSeenMsAgo: fields.lastSeenMsAgo ?? 100,
+                received: fields.received ?? 10,
+                announce: announce({
+                    kind: NodeKind.DRONE_SIM,
+                    name: fields.name ?? "sim-a",
+                    wireHash: fields.wireHash ?? 7,
+                }),
+            }),
+            node({ id: 0x0000000a, announce: announce({ kind: NodeKind.GATEWAY, wireHash: 7 }) }),
+        ],
+        7,
+    );
+
+test("counters and a last-seen that moves do not redraw a line", () => {
+    const changes = diffNodeRows(table(), table({ received: 4321, lastSeenMsAgo: 900 }));
+    assert.deepEqual(changes, { structural: false, changed: [] });
+});
+
+test("a node crossing the fading threshold redraws that line alone", () => {
+    const changes = diffNodeRows(table(), table({ lastSeenMsAgo: LIVE_MS }));
+    assert.deepEqual(changes, { structural: false, changed: [0xd5000001] });
+});
+
+test("a name and a wire mismatch redraw the line they belong to", () => {
+    assert.deepEqual(diffNodeRows(table(), table({ name: "sim-b" })).changed, [0xd5000001]);
+    assert.deepEqual(diffNodeRows(table(), table({ wireHash: 9 })).changed, [0xd5000001]);
+});
+
+test("a node appearing, leaving or moving is a whole redraw", () => {
+    const one = table().slice(0, 1);
+    assert.equal(diffNodeRows(one, table()).structural, true);
+    assert.equal(diffNodeRows(table(), one).structural, true);
+    assert.equal(diffNodeRows(table(), [...table()].reverse()).structural, true);
 });

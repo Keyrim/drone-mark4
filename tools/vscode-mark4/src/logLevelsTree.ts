@@ -1,25 +1,37 @@
 // The log levels view: every module of every node and its threshold, grouped
 // by node or by module name. A level is set by sending one LogControl per
 // module under the item, then a query so the node republishes its table.
+//
+// The table comes once a second and the levels almost never move: the root
+// items are kept and refreshed in place, and the change event only fires for
+// the subtrees that read differently.
 
 import * as vscode from "vscode";
 
 import { type NodeTable } from "./gen/gateway_pb";
 import { NodeKind } from "./gen/mark4_pb";
-import { buildLevelTree, type LevelItem, type LevelMode, type LevelNode } from "./logTree";
+import { buildLevelTree, diffLevelTree, type LevelItem, type LevelMode, type LevelNode } from "./logTree";
 import { kindName } from "./model";
 
 export class LevelTreeItem extends vscode.TreeItem {
-    constructor(readonly item: LevelItem) {
-        super(
-            item.label,
-            item.children.length > 0
-                ? vscode.TreeItemCollapsibleState.Collapsed
-                : vscode.TreeItemCollapsibleState.None,
-        );
+    constructor(public item: LevelItem) {
+        super(item.label);
+        this.apply(item);
+    }
+
+    /** Takes a new item without becoming another one: the same object is
+     * what the change event, and VS Code's own tree, know. */
+    apply(item: LevelItem): void {
+        this.item = item;
+        this.label = item.label;
         this.description = item.description;
         this.iconPath = new vscode.ThemeIcon(item.icon);
-        this.contextValue = item.targets.length > 0 ? "logTarget" : "";
+        this.collapsibleState =
+            item.children.length > 0
+                ? vscode.TreeItemCollapsibleState.Collapsed
+                : vscode.TreeItemCollapsibleState.None;
+        this.contextValue =
+            item.targets.length === 0 ? "" : item.nodeId === undefined ? "logTarget" : "logTarget:node";
     }
 }
 
@@ -39,20 +51,22 @@ function toLevelNodes(table: NodeTable | undefined): LevelNode[] {
 }
 
 export class LogLevelsProvider implements vscode.TreeDataProvider<LevelTreeItem> {
-    private readonly changed = new vscode.EventEmitter<void>();
+    private readonly changed = new vscode.EventEmitter<LevelTreeItem | undefined>();
     readonly onDidChangeTreeData = this.changed.event;
     private nodes: LevelNode[] = [];
+    private roots: LevelItem[] = [];
+    private items = new Map<string, LevelTreeItem>();
     private mode: LevelMode = "byNode";
 
     setTable(table: NodeTable | undefined): void {
         this.nodes = toLevelNodes(table);
-        this.changed.fire();
+        this.rebuild();
     }
 
     /** Switches the grouping; the title action calls it. */
     toggleMode(): LevelMode {
         this.mode = this.mode === "byNode" ? "byModule" : "byNode";
-        this.changed.fire();
+        this.rebuild();
         return this.mode;
     }
 
@@ -61,7 +75,29 @@ export class LogLevelsProvider implements vscode.TreeDataProvider<LevelTreeItem>
     }
 
     getChildren(element?: LevelTreeItem): LevelTreeItem[] {
-        const items = element ? element.item.children : buildLevelTree(this.nodes, this.mode);
-        return items.map((item) => new LevelTreeItem(item));
+        if (element) {
+            return element.item.children.map((child) => new LevelTreeItem(child));
+        }
+        return this.roots.map((root) => this.items.get(root.key) ?? new LevelTreeItem(root));
+    }
+
+    private rebuild(): void {
+        const next = buildLevelTree(this.nodes, this.mode);
+        const changes = diffLevelTree(this.roots, next);
+        this.roots = next;
+        if (changes.structural) {
+            this.items = new Map(next.map((item) => [item.key, new LevelTreeItem(item)]));
+            this.changed.fire(undefined);
+            return;
+        }
+        for (const item of next) {
+            this.items.get(item.key)?.apply(item);
+        }
+        for (const key of changes.changed) {
+            const item = this.items.get(key);
+            if (item !== undefined) {
+                this.changed.fire(item);
+            }
+        }
     }
 }

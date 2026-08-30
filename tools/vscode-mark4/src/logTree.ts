@@ -44,6 +44,8 @@ export interface LevelItem {
     /** Every module a "Set level..." on this item would move. */
     readonly targets: LevelTarget[];
     readonly children: LevelItem[];
+    /** Set on the items that stand for one node: they can be hidden. */
+    readonly nodeId?: number | undefined;
 }
 
 /** What the view needs of a node: its identity and its module table. */
@@ -129,6 +131,7 @@ export function buildLevelTree(nodes: readonly LevelNode[], mode: LevelMode): Le
                 icon: kindIcon(node.kind),
                 targets: modules.map((module) => ({ nodeId: node.id, moduleId: module.id })),
                 children,
+                nodeId: node.id,
             };
         });
     }
@@ -161,8 +164,65 @@ export function buildLevelTree(nodes: readonly LevelNode[], mode: LevelMode): Le
                     icon: kindIcon(holder.node.kind),
                     targets: [{ nodeId: holder.node.id, moduleId: holder.module.id }],
                     children: [],
+                    nodeId: holder.node.id,
                 })),
             },
         }));
     return foldPrefixes("module:", entries);
+}
+
+/** What changed between two renderings of a tree, in tree items. */
+export interface TreeChanges {
+    /** Roots appeared, disappeared or moved: only a whole redraw fits. */
+    readonly structural: boolean;
+    /** Keys of the roots whose subtree reads differently. */
+    readonly changed: string[];
+}
+
+/** True when two items would draw the same, children included. */
+function sameItem(left: LevelItem, right: LevelItem): boolean {
+    return (
+        left.key === right.key &&
+        left.label === right.label &&
+        left.description === right.description &&
+        left.icon === right.icon &&
+        left.children.length === right.children.length &&
+        left.children.every((child, index) => sameItem(child, right.children[index] as LevelItem))
+    );
+}
+
+/**
+ * The redraw a new tree needs. The nodes republish their table once a
+ * second and nothing of it moves: comparing what is drawn is what keeps the
+ * view still.
+ */
+export function diffLevelTree(previous: readonly LevelItem[], next: readonly LevelItem[]): TreeChanges {
+    if (previous.length !== next.length || previous.some((item, index) => item.key !== next[index]?.key)) {
+        return { structural: true, changed: [] };
+    }
+    return {
+        structural: false,
+        changed: next.filter((item, index) => !sameItem(previous[index] as LevelItem, item)).map((item) => item.key),
+    };
+}
+
+/** What a "Set level..." on one item does, both to the nodes and to the view. */
+export interface LevelPlan {
+    readonly level: LogLevel;
+    /** The LogControl.set to send, one per module of the scope. */
+    readonly control: LevelTarget[];
+    /** The same scope, applied to what the log channel shows. */
+    readonly display: LevelTarget[];
+    /** The nodes to ask for their table again, once each. */
+    readonly queryNodes: number[];
+}
+
+export function planLevelChange(targets: readonly LevelTarget[], level: LogLevel): LevelPlan {
+    const scope = [...targets];
+    return {
+        level,
+        control: scope,
+        display: scope,
+        queryNodes: [...new Set(scope.map((target) => target.nodeId))],
+    };
 }
