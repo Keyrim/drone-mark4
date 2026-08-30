@@ -65,7 +65,12 @@ value by value in `platform_common/telemetry_packer.hpp` and
   answers and the `Announce` beacon: flight process to ground, as transport
   broadcasts (drone_sim, and the board through the ESP32 relay).
   `Telemetry.truth` is the plant's exact state when the sender has one; the
-  pages read it straight out of the frame the hub forwards. The relay
+  pages read it straight out of the frame the hub forwards.
+  `Telemetry.imu_valid` / `baro_valid` repeat the validity flags of the
+  frame that was stepped (a fresh measurement acquired for that frame, see
+  `software/components/platform/README.md`); `PHASE_FAULT` is the flight
+  core's latched motors-off state after the IMU was lost with the motors
+  running. The relay
   beacons its own `Announce` too, kind `RELAY` and mcu `ESP32C3`, on both
   of its links, so the board and the LAN see it as one more node.
 - `Log` (one line, module by id) and `LogModules` (the node's module table,

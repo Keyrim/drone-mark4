@@ -125,7 +125,11 @@ Everything C++ lives under `software/`: the executables at its top level
   single-threaded, paced by data arrival, never by time (the timestamp
   travels inside the SensorFrame, stamped by platform at acquisition; the
   core never reads a clock). The RC kill switch is a frame field handled
-  first in step(). `flight_core_types` is a separate INTERFACE target so
+  first in step(), sensor health right after: `SensorFrame::imuValid` /
+  `baroValid` say whether the fields are fresh measurements for this frame
+  (`software/components/flight-core/README.md`: no integration and no
+  arming without an IMU, `FlightPhase::FAULT` when it is lost with the
+  motors running, a lost baro coasts). `flight_core_types` is a separate INTERFACE target so
   platform headers can use SensorFrame/ActuatorFrame without a cycle.
   flight_core links flight_core_types alone: no platform, no protocol/
   (the telemetry packer is an IO adapter and lives in `platform_common`).
@@ -141,7 +145,13 @@ Everything C++ lives under `software/`: the executables at its top level
   packTelemetry); impl libs (`platform_sim`, `platform_stm32`)
   are declared only in the presets where they make sense (the
   DRONE_PLATFORM switch in `software/components/platform/CMakeLists.txt` and
-  `software/CMakeLists.txt`) and are linked by the apps.
+  `software/CMakeLists.txt`) and are linked by the apps. A source always
+  delivers frames at the nominal cadence and flags what it could not
+  measure (`software/components/platform/README.md`); the sim variant owns
+  the plant entirely: with one, the plant's SimSensor cadence paces the
+  loop, without one the platform clock does and the frames carry no
+  sensors, so `drone_sim` needs no plant to start
+  (`software/components/platform/src/sim/README.md`).
 - `protocol/` - one protobuf schema, `mark4.proto` (+ `mark4.options`
   nanopb bounds), codecs generated at build time and never committed:
   nanopb C for every C/C++ target (the `nanopb` lib, `PB_NO_MALLOC`,
