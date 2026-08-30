@@ -34,7 +34,10 @@ namespace mark4
         m_beaconSent = false;
     }
 
-    bool Transport::send(std::uint32_t dst, const std::uint8_t *payload, std::size_t size)
+    bool Transport::send(std::uint32_t dst,
+                         const std::uint8_t *payload,
+                         std::size_t size,
+                         std::uint32_t linkMask)
     {
         if (payload == nullptr || size > MAX_PAYLOAD || m_linkCount == 0U)
         {
@@ -56,12 +59,15 @@ namespace mark4
             bool all = true;
             for (std::size_t index = 0U; index < m_linkCount; ++index)
             {
-                all = m_links[index]->broadcast(m_txBuffer.data(), frameSize) && all;
+                if ((linkMask & (1U << index)) != 0U)
+                {
+                    all = m_links[index]->broadcast(m_txBuffer.data(), frameSize) && all;
+                }
             }
             return all;
         }
         const Node *target = findNode(dst);
-        if (target == nullptr)
+        if (target == nullptr || (linkMask & (1U << target->link)) == 0U)
         {
             ++m_dropped;
             return false;

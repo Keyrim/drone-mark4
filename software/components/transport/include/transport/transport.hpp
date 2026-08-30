@@ -27,6 +27,9 @@ namespace mark4
         /// Nodes remembered at once; a frame from a further one is dropped.
         static constexpr std::size_t MAX_NODES = 32U;
 
+        /// Every declared link: what a send reaches unless it names fewer.
+        static constexpr std::uint32_t ALL_LINKS = 0xFFFFFFFFU;
+
         /// Largest beacon payload.
         static constexpr std::size_t MAX_BEACON_SIZE = 64U;
 
@@ -129,9 +132,18 @@ namespace mark4
         /// @param dst node to reach, BROADCAST_NODE for every node on every link
         /// @param payload payload bytes
         /// @param size payload size, at most MAX_PAYLOAD
+        /// @param linkMask one bit per link index, the links the frame may
+        ///        leave on; a node keeps a chatty broadcast of its own off a
+        ///        slow link with it (the relay filter never sees a node's own
+        ///        sends). A unicast whose node sits on an excluded link does
+        ///        not go out.
         /// @return true when the frame left on a link (unicast: the node is
-        ///         known and its link took the frame; broadcast: every link did)
-        bool send(std::uint32_t dst, const std::uint8_t *payload, std::size_t size);
+        ///         known and its link took the frame; broadcast: every link
+        ///         of the mask did)
+        bool send(std::uint32_t dst,
+                  const std::uint8_t *payload,
+                  std::size_t size,
+                  std::uint32_t linkMask = ALL_LINKS);
 
         /// @brief Drains every link: learns nodes from every frame, delivers
         ///        what is for this node, relays the rest, expires the silent

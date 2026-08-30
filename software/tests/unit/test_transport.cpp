@@ -342,6 +342,43 @@ TEST_CASE("the beacon goes out once per period and at once to a newcomer")
     CHECK(c.isAlive(NODE_A));
 }
 
+TEST_CASE("a send names the links it may leave on, the beacon takes them all")
+{
+    // The relay's shape: a slow link the node's own chatter must stay off,
+    // and the LAN it belongs on.
+    FakeBus uartBus;
+    FakeBus lanBus;
+    FakeLink uart(uartBus);
+    FakeLink board(uartBus); // the node behind the slow link, endpoint 1 of its bus
+    FakeLink lan(lanBus);
+    constexpr std::uint32_t LAN_ONLY = 1U << 1U;
+    mark4::Transport relay(NODE_A);
+    REQUIRE(relay.addLink(uart));
+    REQUIRE(relay.addLink(lan));
+    Observer seen;
+
+    REQUIRE(relay.send(mark4::BROADCAST_NODE, HELLO.data(), HELLO.size(), LAN_ONLY));
+    CHECK(uart.broadcasts() == 0U);
+    CHECK(lan.broadcasts() == 1U);
+
+    // The beacon names no mask: it goes out on both links, so the node
+    // behind the slow one learns this node too.
+    relay.setBeacon(BEACON_A.data(), BEACON_A.size());
+    seen.poll(relay, T0_US);
+    CHECK(uart.broadcasts() == 1U);
+    CHECK(lan.broadcasts() == 2U);
+
+    // A unicast to a node sitting on an excluded link does not go out.
+    inject(uartBus, 0U, 1U, rawFrame(NODE_B, mark4::BROADCAST_NODE, 1U, HELLO));
+    seen.poll(relay, T0_US + 1000U);
+    REQUIRE(relay.isAlive(NODE_B));
+    const std::uint32_t sentBefore = uart.sent();
+    CHECK(relay.send(NODE_B, HELLO.data(), HELLO.size(), LAN_ONLY) == false);
+    CHECK(uart.sent() == sentBefore);
+    CHECK(relay.send(NODE_B, HELLO.data(), HELLO.size()));
+    CHECK(uart.sent() == sentBefore + 1U);
+}
+
 TEST_CASE("sequence accounting counts losses and duplicates across the wrap")
 {
     FakeBus bus;

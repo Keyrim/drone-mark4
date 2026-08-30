@@ -17,9 +17,10 @@ campaign (`tools/batch/run_batch.py`, through the frame codec of
 the board over its UART (the firmware is a node
 with one `UartLink` on USART1), and the ESP32 riding the drone
 (`esp32-bridge/`), which is a relay: a node with a `UartLink` to the board
-and a `UdpLink` on the WiFi LAN, `setRelay(true)`, no beacon, and a filter
-on what goes down the UART. The hub holds one `UdpLink` and relays nothing:
-the board reaches it as one more node of the LAN, at the relay's address.
+and a `UdpLink` on the WiFi LAN, `setRelay(true)`, a beacon of kind
+`RELAY`, and a filter on what goes down the UART. The hub holds one
+`UdpLink` and relays nothing: the board reaches it as one more node of the
+LAN, at the relay's address.
 
 ## Frame
 
@@ -58,7 +59,7 @@ transport.setBeacon(bytes, size);      // optional, at most MAX_BEACON_SIZE = 64
 transport.setRelay(true);              // off by default
 transport.setRelayFilter(filter, context); // optional, relayed frames only
 transport.setNodeCallbacks(onUp, onDown, context); // function pointer + context
-transport.send(dst, payload, size);    // dst 0 = broadcast on every link
+transport.send(dst, payload, size, linkMask); // dst 0 = broadcast, mask optional
 transport.poll(nowUs, deliver, context); // drain, learn, deliver, relay, expire, beacon
 transport.isAlive(id); transport.findNode(id); transport.nodeCount(); transport.node(i);
 transport.dropped(); transport.relayed(); transport.filtered();
@@ -71,6 +72,13 @@ lastSeenUs, lastSeq, received, lost, duplicates`, `MAX_NODES` = 32); a
 payload addressed to this node or to everyone is handed to `deliver`. A
 frame whose `src` is this node (its own broadcast coming back on a shared
 medium) is ignored.
+
+`send()` takes an optional `linkMask`, one bit per link index, `ALL_LINKS`
+by default: the links the frame may leave on. It is how a node keeps a
+chatty broadcast of its own off a slow link, the relay filter being for
+relayed frames alone; the ESP32 relay sends its log lines and its module
+table with the LAN bit only, while its beacon takes both links. A unicast
+whose node sits on an excluded link does not go out.
 
 Sequence accounting per node: an exact repeat of the last sequence is a
 duplicate and is dropped; a forward gap below `RESYNC_THRESHOLD` (1024) is
@@ -105,11 +113,11 @@ The ESP32 relay is the one user: on its UART link it lets unicasts through
 (routed there, they are for the board) and, of the broadcasts, only those
 whose envelope is an `Announce` (`envelopeIsAnnounce()` in
 `protocol/envelope.hpp`: one byte compared, the body's tag), so the LAN's
-telemetry never costs the 921600 baud line anything. The relay itself
-never beacons: the hub learns the board from the board's own Announce,
-relayed, at the relay's IP and data port, and its unicasts to the board
-land there and are relayed down the UART. `relayed()` counts the frames
-forwarded, one per link for a broadcast.
+telemetry never costs the 921600 baud line anything. The hub learns the
+board from the board's own Announce, relayed, at the relay's IP and data
+port, and its unicasts to the board land there and are relayed down the
+UART; the relay's own Announce travels beside it, from its own node id.
+`relayed()` counts the frames forwarded, one per link for a broadcast.
 
 ## Links
 
@@ -181,7 +189,8 @@ smoke, `test_plant_link.cpp` exchanges frames with it from C++.
 
 The ESP32 relay owns no port of its own: it is one more node on udp/47820
 with an ephemeral data socket, and the board's UART carries transport
-frames in the serial framing.
+frames in the serial framing. It shares the address the board is seen at:
+two node ids, one IP and one data port.
 
 `drone_sim` and the firmware send telemetry, log lines and every answer
 (tuning, OTA, run stats) as broadcast frames, so the hub, a batch campaign
