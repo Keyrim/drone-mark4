@@ -2,10 +2,11 @@
 
 #include <array>
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
 
 #include "flight_core/types.hpp"
+#include "log/module.hpp"
+#include "log_modules.hpp"
 #include "platform_common/envelope_io.hpp"
 #include "platform_common/ota_boot_policy.hpp"
 #include "platform_stm32/rtt.hpp"
@@ -17,6 +18,12 @@
 
 namespace
 {
+    mark4::LogModule BOOT{mark4::LOG_MODULE_APP_BOOT, "app/boot"};
+    mark4::LogModule STATUS{mark4::LOG_MODULE_APP_STATUS, "app/status"};
+    mark4::LogModule RC{mark4::LOG_MODULE_RC, "rc"};
+    mark4::LogModule OTA{mark4::LOG_MODULE_OTA_UPDATER, "ota/updater"};
+    mark4::LogModule UART{mark4::LOG_MODULE_TRANSPORT_UART, "transport/uart"};
+
     constexpr std::uint32_t US_PER_MS = 1000U;
 
     /// The barometer runs on its own free-running grid, so the loop cannot
@@ -41,7 +48,7 @@ namespace
     static_assert(mark4::FRAME_HEADER_SIZE + mark4::MAX_ENVELOPE_SIZE <= mark4::SERIAL_MAX_PAYLOAD,
                   "an Envelope behind the transport header must fit one serial frame");
 
-    /// @brief Millis of a float for integer-only printf: "%d.%03d".
+    /// @brief Millis of a float for the integer-only formatting of newlib-nano.
     /// @param value converted value
     /// @return value scaled by 1000, rounded toward zero
     long milli(float value)
@@ -52,11 +59,19 @@ namespace
 
 namespace mark4
 {
-    void FirmwareApp::log(mark4_LogLevel level, const char *text, std::uint64_t nowUs)
+    bool FirmwareApp::SendLog(void *context, const std::uint8_t *data, std::size_t size)
     {
-        rttWrite(text);
-        rttWrite("\n");
-        m_log.log(level, text, nowUs);
+        return static_cast<FirmwareApp *>(context)->m_transport.send(BROADCAST_NODE, data, size);
+    }
+
+    std::uint64_t FirmwareApp::LogClock(void *context)
+    {
+        return static_cast<FirmwareApp *>(context)->m_clock.nowUs();
+    }
+
+    void FirmwareApp::publishLogModules()
+    {
+        static_cast<void>(logPublishModules(&FirmwareApp::SendLog, this));
     }
 
     bool FirmwareApp::init()
@@ -64,41 +79,49 @@ namespace mark4
         const bool clockOk = initSystemClock();
         initCycleCounter();
         rttInit();
-        rttWrite("\nmark4 firmware\n");
+        // RTT first, the transport sink once the link is up: until then the
+        // lines have one console, the probe's.
+        static_cast<void>(logAddSink(m_rttSink));
         if (!clockOk)
         {
-            rttWrite("clock: HSE or PLL never ready, staying on HSI\n");
+            BOOT.error("clock: HSE or PLL never ready, staying on HSI");
             return false;
         }
-        rttPrintf("clock: %lu Hz\n", static_cast<unsigned long>(coreClockHz()));
+        BOOT.info("clock: %lu Hz", static_cast<unsigned long>(coreClockHz()));
         initLeds();
 
         m_clock.init();
+        logSetClock(&FirmwareApp::LogClock, this);
         // The link first: from here on a failure is told to the bench too,
         // which has no J-Link when the board is updated over the air. The
         // bytes sit in the transmit ring and the interrupt drains them
         // whatever main() does next.
         if (!uart1Init() || !m_transport.addLink(m_uartLink) || !m_transport.init())
         {
-            rttWrite("transport: uart init failed\n");
+            BOOT.error("transport: uart init failed");
             return false;
         }
+        static_cast<void>(logAddSink(m_transportSink));
         if (!setAnnounceBeacon())
         {
-            log(mark4_LogLevel_ERROR, "transport: the announce does not fit a beacon", 0U);
+            BOOT.error("transport: the announce does not fit a beacon");
             return false;
         }
-        rttPrintf("transport: node %08lx, %lu baud\n",
+        BOOT.info("boot: node %08lx slot %c build %lu %s wire %08lx",
                   static_cast<unsigned long>(m_transport.nodeId()),
-                  static_cast<unsigned long>(UART1_BAUD_RATE));
+                  m_firmwareStore.runningSlot() == OTA_SLOT_B ? 'B' : 'A',
+                  static_cast<unsigned long>(m_announce.build_epoch),
+                  m_announce.git_hash,
+                  static_cast<unsigned long>(WIRE_HASH));
+        BOOT.info("transport: uart %lu baud", static_cast<unsigned long>(UART1_BAUD_RATE));
         if (!m_bus.init())
         {
-            log(mark4_LogLevel_ERROR, "i2c1: init failed, bus stuck busy", m_clock.nowUs());
+            BOOT.error("i2c1: init failed, bus stuck busy");
             return false;
         }
         if (!m_imu.init())
         {
-            log(mark4_LogLevel_ERROR, "imu: init failed", m_clock.nowUs()); // RTT has the reason
+            BOOT.error("imu: init failed"); // the driver logged the reason
             return false;
         }
         if (!m_baro.init())
@@ -107,27 +130,22 @@ namespace mark4
             // and a board that refuses to boot over it says nothing at all
             // on the link it would have been diagnosed from. The driver
             // logged the reason, the frames carry baroPa = 0.
-            log(mark4_LogLevel_WARN,
-                "baro: init failed, flying without the pressure channel",
-                m_clock.nowUs());
+            BOOT.warn("baro: init failed, flying without the pressure channel");
         }
         m_sensorSource.init();
-        rttPrintf("loop: %lu Hz, timer paced; telemetry: 1 message / %lu frames; "
-                  "rc uplink armed with %lu ms fail-safe\n",
+        BOOT.info("loop: %lu Hz, timer paced; telemetry: 1 message / %lu frames; "
+                  "rc fail-safe %lu ms",
                   static_cast<unsigned long>(SensorSourceStm32::FRAME_RATE_HZ),
                   static_cast<unsigned long>(TelemetryPublisher::DECIMATION),
                   static_cast<unsigned long>(RcTracker::RC_TIMEOUT_US / US_PER_MS));
 
         refreshArmInterlock();
-        rttPrintf("ota: running slot %c, %lu byte slots%s\n",
-                  m_firmwareStore.runningSlot() == OTA_SLOT_B ? 'B' : 'A',
-                  static_cast<unsigned long>(m_firmwareStore.slotSize()),
-                  m_armInhibited ? ", ON TRIAL: arming refused until confirmed" : "");
+        OTA.info("running slot %c, %lu byte slots",
+                 m_firmwareStore.runningSlot() == OTA_SLOT_B ? 'B' : 'A',
+                 static_cast<unsigned long>(m_firmwareStore.slotSize()));
         if (m_armInhibited)
         {
-            log(mark4_LogLevel_WARN,
-                "ota: running slot on trial, arming refused until confirmed",
-                m_clock.nowUs());
+            OTA.warn("running slot on trial, arming refused until confirmed");
         }
         return true;
     }
@@ -176,12 +194,19 @@ namespace mark4
             return false;
         }
         m_transport.setBeacon(beacon.data(), beaconSize);
+        m_announce = announce;
         return true;
     }
 
     void FirmwareApp::pollTransport(std::uint64_t nowUs)
     {
         m_transport.poll(nowUs, &FirmwareApp::OnPayload, this);
+        if (!m_logModulesPublished)
+        {
+            // The first poll sent the first beacon: the table follows it.
+            m_logModulesPublished = true;
+            publishLogModules();
+        }
     }
 
     void FirmwareApp::OnPayload(void *context,
@@ -247,6 +272,12 @@ namespace mark4
                     break;
                 case mark4_Envelope_reboot_tag:
                     return true;
+                case mark4_Envelope_log_control_tag:
+                    if (logHandleControl(envelope.body.log_control))
+                    {
+                        publishLogModules();
+                    }
+                    break;
                 default:
                     // Answered here, before the step, so a value written from
                     // the bench is in effect for the whole of the next step
@@ -261,9 +292,7 @@ namespace mark4
 
     void FirmwareApp::runUpdateMode()
     {
-        log(mark4_LogLevel_INFO,
-            "ota: session open, flight loop parked, no motor output",
-            m_clock.nowUs());
+        OTA.info("session open, flight loop parked, no motor output");
 
         // Nothing pushes the motor sink for as long as this loop runs, so the
         // ESCs observe silence and disarm: update mode does not modify the
@@ -277,7 +306,7 @@ namespace mark4
             pollTransport(nowUs);
             if (drainCommands(nowUs))
             {
-                log(mark4_LogLevel_WARN, "ota: reboot command during a session, resetting", nowUs);
+                OTA.warn("reboot command during a session, resetting");
                 systemReset();
             }
             m_otaUpdater.tick(m_clock.nowUs());
@@ -287,13 +316,8 @@ namespace mark4
             // core needs a power cycle rather than costing the trial attempt.
         }
 
-        char line[RTT_PRINTF_SIZE];
-        static_cast<void>(std::snprintf(line,
-                                        sizeof(line),
-                                        "ota: session closed, resuming the flight loop "
-                                        "(rx drops %lu)",
-                                        static_cast<unsigned long>(uart1RxDrops())));
-        log(mark4_LogLevel_INFO, line, m_clock.nowUs());
+        OTA.info("session closed, resuming the flight loop (rx drops %lu)",
+                 static_cast<unsigned long>(uart1RxDrops()));
     }
 
     void FirmwareApp::run()
@@ -304,6 +328,8 @@ namespace mark4
         std::uint32_t frames = 0U;
         std::uint64_t lastStatusUs = 0U;
         std::uint32_t lastFailureCount = 0U;
+        std::uint32_t lastRxDrops = 0U;
+        std::uint32_t lastTxDrops = 0U;
         bool degraded = false;
 
         for (;;)
@@ -318,7 +344,7 @@ namespace mark4
             pollTransport(frame.timestampUs);
             if (drainCommands(frame.timestampUs))
             {
-                log(mark4_LogLevel_WARN, "rc: reboot command, resetting", frame.timestampUs);
+                RC.warn("reboot command, resetting");
                 systemReset();
             }
             // An accepted OtaBegin parks everything below until the session
@@ -363,33 +389,45 @@ namespace mark4
                 const auto periodUs =
                     static_cast<std::uint32_t>((nowUs - lastStatusUs) / FRAMES_PER_STATUS);
                 lastStatusUs = nowUs;
-                rttPrintf("t %lu us/frame  gyro %ld %ld %ld mrad/s  acc %ld %ld %ld mm/s2  "
-                          "baro %ld Pa  motors %ld %ld %ld %ld  ovr %lu err %lu/%lu\n",
-                          static_cast<unsigned long>(periodUs),
-                          milli(frame.gyroRadS[0]),
-                          milli(frame.gyroRadS[1]),
-                          milli(frame.gyroRadS[2]),
-                          milli(frame.accelMps2[0]),
-                          milli(frame.accelMps2[1]),
-                          milli(frame.accelMps2[2]),
-                          static_cast<long>(frame.baroPa),
-                          milli(m_motorSink.last().motor[0]),
-                          milli(m_motorSink.last().motor[1]),
-                          milli(m_motorSink.last().motor[2]),
-                          milli(m_motorSink.last().motor[3]),
-                          static_cast<unsigned long>(m_sensorSource.overruns()),
-                          static_cast<unsigned long>(m_sensorSource.readFailures()),
-                          static_cast<unsigned long>(m_baro.failures()));
-                rttPrintf("tx: %lu sent %lu dropped  rx: %lu received, %lu nodes%s  "
-                          "tuning: %lu asked %lu answered  phase %u\n",
-                          static_cast<unsigned long>(m_telemetrySender.packetCount()),
-                          static_cast<unsigned long>(m_telemetrySender.dropCount()),
-                          static_cast<unsigned long>(m_commandReceiver.packetsReceived()),
-                          static_cast<unsigned long>(m_transport.nodeCount()),
-                          m_rcTracker.failsafeActive(frame.timestampUs) ? " (failsafe)" : "",
-                          static_cast<unsigned long>(m_tuningService.requestCount()),
-                          static_cast<unsigned long>(m_tuningService.answerCount()),
-                          static_cast<unsigned>(m_core.flightPhase()));
+                STATUS.debug("t %lu us/frame  gyro %ld %ld %ld mrad/s  acc %ld %ld %ld mm/s2  "
+                             "baro %ld Pa  motors %ld %ld %ld %ld  ovr %lu err %lu/%lu",
+                             static_cast<unsigned long>(periodUs),
+                             milli(frame.gyroRadS[0]),
+                             milli(frame.gyroRadS[1]),
+                             milli(frame.gyroRadS[2]),
+                             milli(frame.accelMps2[0]),
+                             milli(frame.accelMps2[1]),
+                             milli(frame.accelMps2[2]),
+                             static_cast<long>(frame.baroPa),
+                             milli(m_motorSink.last().motor[0]),
+                             milli(m_motorSink.last().motor[1]),
+                             milli(m_motorSink.last().motor[2]),
+                             milli(m_motorSink.last().motor[3]),
+                             static_cast<unsigned long>(m_sensorSource.overruns()),
+                             static_cast<unsigned long>(m_sensorSource.readFailures()),
+                             static_cast<unsigned long>(m_baro.failures()));
+                STATUS.debug("tx: %lu sent %lu dropped  rx: %lu received, %lu nodes%s  "
+                             "tuning: %lu asked %lu answered  phase %u",
+                             static_cast<unsigned long>(m_telemetrySender.packetCount()),
+                             static_cast<unsigned long>(m_telemetrySender.dropCount()),
+                             static_cast<unsigned long>(m_commandReceiver.packetsReceived()),
+                             static_cast<unsigned long>(m_transport.nodeCount()),
+                             m_rcTracker.failsafeActive(frame.timestampUs) ? " (failsafe)" : "",
+                             static_cast<unsigned long>(m_tuningService.requestCount()),
+                             static_cast<unsigned long>(m_tuningService.answerCount()),
+                             static_cast<unsigned>(m_core.flightPhase()));
+                if (uart1RxDrops() != lastRxDrops)
+                {
+                    lastRxDrops = uart1RxDrops();
+                    UART.warn("rx ring overrun, %lu frames dropped so far",
+                              static_cast<unsigned long>(lastRxDrops));
+                }
+                if (m_telemetrySender.dropCount() != lastTxDrops)
+                {
+                    lastTxDrops = m_telemetrySender.dropCount();
+                    UART.warn("tx ring full, %lu frames dropped so far",
+                              static_cast<unsigned long>(lastTxDrops));
+                }
             }
         }
     }

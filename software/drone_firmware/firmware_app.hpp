@@ -8,8 +8,8 @@
 
 #include "flight_core/flight_core.hpp"
 #include "flight_core/types.hpp"
+#include "log/wire.hpp"
 #include "platform_common/command_receiver_transport.hpp"
-#include "platform_common/log_sink_transport.hpp"
 #include "platform_common/ota_updater.hpp"
 #include "platform_common/rc_tracker.hpp"
 #include "platform_common/telemetry_publisher.hpp"
@@ -23,6 +23,7 @@
 #include "platform_stm32/motor_sink_null.hpp"
 #include "platform_stm32/mpu6050.hpp"
 #include "platform_stm32/ota_slots.hpp"
+#include "platform_stm32/rtt_sink.hpp"
 #include "platform_stm32/sensor_source_stm32.hpp"
 #include "platform_stm32/uart1_stream.hpp"
 #include "protocol/envelope.hpp"
@@ -44,15 +45,15 @@ namespace mark4
     class FirmwareApp
     {
       public:
-        /// Frames between two status lines over RTT: one per second.
+        /// Frames between two status lines (app/status, DEBUG): one per second.
         static constexpr std::uint32_t FRAMES_PER_STATUS = SensorSourceStm32::FRAME_RATE_HZ;
 
         FirmwareApp() = default;
 
         /// @brief Initializes the board (clock tree, RTT console, LEDs)
         ///        then the services in declaration order. The first
-        ///        failure is logged over RTT and the transport, and
-        ///        returns false.
+        ///        failure is logged (RTT and the transport) and returns
+        ///        false.
         /// @return true when the loop is ready to run
         bool init();
 
@@ -107,11 +108,15 @@ namespace mark4
         /// @return true when a reboot command was drained
         bool drainCommands(std::uint64_t nowUs);
 
-        /// @brief One line to both consoles: RTT and the transport.
-        /// @param level severity of the transport line
-        /// @param text zero-terminated line, without newline
-        /// @param nowUs current instant [us]
-        void log(mark4_LogLevel level, const char *text, std::uint64_t nowUs);
+        /// @brief Route of every log line and of the module table: a
+        ///        transport broadcast, like everything this board emits.
+        static bool SendLog(void *context, const std::uint8_t *data, std::size_t size);
+
+        /// @brief Clock the log records are stamped with.
+        static std::uint64_t LogClock(void *context);
+
+        /// @brief Broadcasts the module table (LogModules pages).
+        void publishLogModules();
 
         // Declaration order = construction order; dependencies are
         // injected by reference, so a service may only depend on those
@@ -121,8 +126,9 @@ namespace mark4
         mark4::Uart1Stream m_uartStream;
         mark4::UartLink m_uartLink{m_uartStream};
         mark4::Transport m_transport{boardNodeId()};
+        mark4::RttSink m_rttSink;
+        mark4::TransportSink m_transportSink{&FirmwareApp::SendLog, this};
         mark4::TelemetrySenderTransport m_telemetrySender{m_transport};
-        mark4::LogSinkTransport m_log{m_transport};
         mark4::I2cBus m_bus;
         mark4::Mpu6050 m_imu{m_bus};
         mark4::Bmp581 m_baro{m_bus};
@@ -139,8 +145,14 @@ namespace mark4
         mark4::FirmwareStoreStm32 m_firmwareStore{mark4::OTA_RUNNING_SLOT};
         mark4::OtaUpdater m_otaUpdater{m_firmwareStore};
 
+        /// The beacon as registered: the identity the boot line reports.
+        mark4_Announce m_announce = mark4_Announce_init_zero;
+
         /// True while the running slot is on trial: arming is refused until
         /// the image confirms itself (docs/ota-design.md section 3.2).
         bool m_armInhibited = false;
+
+        /// The module table goes out once the first beacon did.
+        bool m_logModulesPublished = false;
     };
 } // namespace mark4

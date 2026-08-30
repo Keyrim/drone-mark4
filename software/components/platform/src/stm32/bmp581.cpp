@@ -2,11 +2,17 @@
 
 #include <cstdint>
 
+#include "log/module.hpp"
+#include "log/module_ids.hpp"
 #include "platform_stm32/board.hpp"
-#include "platform_stm32/rtt.hpp"
 
 namespace mark4
 {
+    namespace
+    {
+        LogModule MODULE{LOG_MODULE_PLATFORM_BARO, "platform/baro"};
+    } // namespace
+
     namespace
     {
         constexpr std::uint8_t REG_CHIP_ID = 0x01U;
@@ -119,9 +125,9 @@ namespace mark4
                     m_address = address;
                     break;
                 }
-                rttPrintf("bmp581: 0x%02X answered with chip id 0x%02X, not a BMP581\n",
-                          static_cast<unsigned>(address),
-                          static_cast<unsigned>(id));
+                MODULE.error("0x%02X answered with chip id 0x%02X, not a BMP581",
+                             static_cast<unsigned>(address),
+                             static_cast<unsigned>(id));
             }
             if (m_address == 0U)
             {
@@ -130,17 +136,17 @@ namespace mark4
         }
         if (m_address == 0U)
         {
-            rttPrintf("bmp581: no chip id at 0x%02X or 0x%02X after %u attempts\n",
-                      static_cast<unsigned>(I2C_ADDRESS_SDO_LOW),
-                      static_cast<unsigned>(I2C_ADDRESS_SDO_HIGH),
-                      static_cast<unsigned>(PROBE_ATTEMPTS));
+            MODULE.error("no chip id at 0x%02X or 0x%02X after %u attempts",
+                         static_cast<unsigned>(I2C_ADDRESS_SDO_LOW),
+                         static_cast<unsigned>(I2C_ADDRESS_SDO_HIGH),
+                         static_cast<unsigned>(PROBE_ATTEMPTS));
             return false;
         }
-        rttPrintf("bmp581: found at 0x%02X\n", static_cast<unsigned>(m_address));
+        MODULE.info("found at 0x%02X", static_cast<unsigned>(m_address));
 
         if (!m_bus.writeRegister(m_address, REG_CMD, CMD_SOFT_RESET))
         {
-            rttWrite("bmp581: soft reset failed\n");
+            MODULE.error("soft reset failed");
             return false;
         }
         delayMs(SOFT_RESET_DELAY_MS);
@@ -153,18 +159,18 @@ namespace mark4
         if (!m_bus.readRegisters(m_address, REG_INT_STATUS, &intStatus, 1U) ||
             !m_bus.readRegisters(m_address, REG_STATUS, &status, 1U))
         {
-            rttWrite("bmp581: status read failed\n");
+            MODULE.error("status read failed");
             return false;
         }
         if ((intStatus & INT_STATUS_POR) == 0U)
         {
-            rttPrintf("bmp581: reset never completed, INT_STATUS 0x%02X\n",
-                      static_cast<unsigned>(intStatus));
+            MODULE.error("reset never completed, INT_STATUS 0x%02X",
+                         static_cast<unsigned>(intStatus));
             return false;
         }
         if ((status & STATUS_NVM_RDY) == 0U || (status & STATUS_NVM_ERR) != 0U)
         {
-            rttPrintf("bmp581: NVM not ready, STATUS 0x%02X\n", static_cast<unsigned>(status));
+            MODULE.error("NVM not ready, STATUS 0x%02X", static_cast<unsigned>(status));
             return false;
         }
 
@@ -172,7 +178,7 @@ namespace mark4
         // registers below are read-only; the first write leaves it.
         if (!m_bus.writeRegister(m_address, REG_ODR_CONFIG, ODR_CONFIG_STANDBY))
         {
-            rttWrite("bmp581: standby entry failed\n");
+            MODULE.error("standby entry failed");
             return false;
         }
         delayMs(STANDBY_DELAY_MS);
@@ -183,7 +189,7 @@ namespace mark4
                                 m_bus.writeRegister(m_address, REG_ODR_CONFIG, ODR_CONFIG_NORMAL);
         if (!configured)
         {
-            rttWrite("bmp581: configuration write failed\n");
+            MODULE.error("configuration write failed");
             return false;
         }
         delayMs(STARTUP_DELAY_MS);
@@ -197,14 +203,14 @@ namespace mark4
         std::uint8_t effective = 0U;
         if (!m_bus.readRegisters(m_address, REG_OSR_EFF, &effective, 1U))
         {
-            rttWrite("bmp581: effective rate read failed\n");
+            MODULE.error("effective rate read failed");
             return false;
         }
         if ((effective & OSR_EFF_ODR_VALID) == 0U)
         {
-            rttPrintf("bmp581: rate/oversampling pair refused, running the chip's fallback "
-                      "oversampling (OSR_EFF 0x%02X)\n",
-                      static_cast<unsigned>(effective));
+            MODULE.warn("rate/oversampling pair refused, running the chip's fallback "
+                        "oversampling (OSR_EFF 0x%02X)",
+                        static_cast<unsigned>(effective));
         }
         m_ready = true;
         return true;
@@ -248,8 +254,8 @@ namespace mark4
         {
             if (m_implausible == 0U)
             {
-                rttPrintf("bmp581: implausible solution %ld Pa, sensor faulty\n",
-                          static_cast<long>(pressurePa));
+                MODULE.warn("implausible solution %ld Pa, sensor faulty",
+                            static_cast<long>(pressurePa));
             }
             ++m_implausible;
             return;

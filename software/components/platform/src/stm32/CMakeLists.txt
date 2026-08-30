@@ -19,7 +19,7 @@ target_include_directories(platform_stm32 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/inc
 # OtaMetaLog over a flash backend, and drone_boot reuses the same log. The
 # transport is public too: the UART byte stream implements its interface.
 target_link_libraries(platform_stm32
-    PUBLIC platform platform_common protocol transport
+    PUBLIC platform platform_common protocol transport log
     PRIVATE drone_warnings drone_strict)
 
 # The flash map of docs/ota-design.md section 4.2, mirrored in C++ by

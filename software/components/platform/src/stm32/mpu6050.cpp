@@ -2,11 +2,17 @@
 
 #include <cstdint>
 
+#include "log/module.hpp"
+#include "log/module_ids.hpp"
 #include "platform_stm32/board.hpp"
-#include "platform_stm32/rtt.hpp"
 
 namespace mark4
 {
+    namespace
+    {
+        LogModule MODULE{LOG_MODULE_PLATFORM_IMU, "platform/imu"};
+    } // namespace
+
     namespace
     {
         constexpr std::uint8_t REG_SMPLRT_DIV = 0x19U;
@@ -75,13 +81,13 @@ namespace mark4
         }
         if (!answered)
         {
-            rttPrintf("mpu6050: WHO_AM_I read failed after %u attempts\n",
-                      static_cast<unsigned>(WHO_AM_I_ATTEMPTS));
+            MODULE.error("WHO_AM_I read failed after %u attempts",
+                         static_cast<unsigned>(WHO_AM_I_ATTEMPTS));
             return false;
         }
         if (who != WHO_AM_I_VALUE)
         {
-            rttPrintf("mpu6050: unexpected WHO_AM_I 0x%02X\n", static_cast<unsigned>(who));
+            MODULE.error("unexpected WHO_AM_I 0x%02X", static_cast<unsigned>(who));
             return false;
         }
 
@@ -95,7 +101,7 @@ namespace mark4
             m_bus.writeRegister(I2C_ADDRESS, REG_INT_PIN_CFG, INT_PIN_BYPASS_EN);
         if (!configured)
         {
-            rttWrite("mpu6050: configuration write failed\n");
+            MODULE.error("configuration write failed");
             return false;
         }
         return true;

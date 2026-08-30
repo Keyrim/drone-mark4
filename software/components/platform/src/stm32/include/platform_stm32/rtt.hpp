@@ -5,8 +5,8 @@
 ///        RAM through the debug port, no UART pin involved. The control
 ///        block is hand-written against the RTT layout; any RTT-aware host
 ///        (JLinkRTTClient, gdb server) finds it by scanning RAM for its id.
-
-#include <cstddef>
+///        Lines reach it through RttSink (rtt_sink.hpp), a sink of the log
+///        library; nothing else writes here.
 
 namespace mark4
 {
@@ -19,13 +19,4 @@ namespace mark4
     ///        write is dropped so the caller keeps its timing.
     /// @param text string to queue, not kept after return
     void rttWrite(const char *text);
-
-    /// @brief printf-style convenience over rttWrite(). Formats into a
-    ///        fixed stack buffer of RTT_PRINTF_SIZE bytes; longer output is
-    ///        truncated. Integer conversions only (newlib-nano, no float).
-    /// @param format printf format string
-    void rttPrintf(const char *format, ...) __attribute__((format(printf, 1, 2)));
-
-    /// Stack formatting buffer of rttPrintf(), truncation threshold.
-    inline constexpr std::size_t RTT_PRINTF_SIZE = 128U;
 } // namespace mark4

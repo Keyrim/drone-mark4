@@ -1,8 +1,6 @@
 #include "platform_stm32/rtt.hpp"
 
-#include <cstdarg>
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
 
 namespace mark4
@@ -115,21 +113,5 @@ namespace mark4
     void rttWrite(const char *text)
     {
         writeBytes(text, static_cast<std::uint32_t>(std::strlen(text)));
-    }
-
-    void rttPrintf(const char *format, ...)
-    {
-        char buffer[RTT_PRINTF_SIZE];
-        va_list args;
-        va_start(args, format);
-        const int length = std::vsnprintf(buffer, sizeof(buffer), format, args);
-        va_end(args);
-        if (length <= 0)
-        {
-            return;
-        }
-        const auto queued = static_cast<std::uint32_t>(length);
-        const auto maxQueued = static_cast<std::uint32_t>(sizeof(buffer) - 1U);
-        writeBytes(buffer, (queued < maxQueued) ? queued : maxQueued);
     }
 } // namespace mark4

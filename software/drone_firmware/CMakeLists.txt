@@ -26,7 +26,8 @@ foreach(variant IN ITEMS A B)
     # drone_strict: the no-exceptions/no-RTTI invariant must not depend on the
     # toolchain file happening to duplicate the flags.
     target_link_libraries(${target}
-        PRIVATE flight_core platform_common platform_stm32 protocol drone_warnings drone_strict)
+        PRIVATE flight_core platform_common platform_stm32 protocol log log_wire drone_warnings
+                drone_strict)
     drone_stm32_image_layout(${target}
         FLASH_ORIGIN ${DRONE_FIRMWARE_${variant}_ORIGIN}
         FLASH_LENGTH ${DRONE_STM32_SLOT_LENGTH}
