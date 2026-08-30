@@ -41,8 +41,9 @@ extension is one more client of `gateway.proto`, like the pages.
   not published its module table yet has no module to set: it is skipped and
   named in the `Mark4` channel. The title bar also searches the logs
   (magnifier, an empty answer clears the search) and clears them (the store,
-  not the filter). Like the nodes view, it only redraws the subtrees that
-  read differently.
+  not the filter), and shows the channel (`Mark4: Show Logs`, `ctrl+alt+l` /
+  `cmd+alt+l`, which keeps the focus where it is). Like the nodes view, it
+  only redraws the subtrees that read differently.
 - **Bench**: what is not a node, the two pages to dock. `Mark4: Bench
   Session` (rocket icon) builds and starts the hub, starts the Godot sim,
   then docks the control and plots pages in two editor groups.
@@ -82,36 +83,24 @@ nothing was received to show. Nothing is persisted: closing the window
 empties the store and resets the filter.
 
 The channel is created with a language of its own (`mark4-log`, the grammar
-`syntaxes/mark4-log.tmLanguage.json`), so the columns are colored by the
-theme in use. One rule matches the whole line and hands each column a
-standard scope; a line that does not hold the layout (a wrapped line, a kind
+`syntaxes/mark4-log.tmLanguage.json`), so the theme in use colors it. Color
+codes the level and nothing else: one rule matches the whole line and gives
+that whole line a single standard scope, picked by the level column. No
+column has a scope of its own, so the kind, the node id and the module read
+like the text. A line that does not hold the layout (a wrapped line, a kind
 wider than its column) matches nothing and stays plain rather than being
 colored wrong.
 
-| Column | Scope | Dark+ | Light+ |
+| Level | Scope | Dark+ | Light+ |
 | --- | --- | --- | --- |
-| time | `comment` | green grey | green |
-| `TRACE` `DEBUG` | `comment` | green grey | green |
-| `INFO` | `keyword.other` | blue | blue |
-| `WARN` | `string` | orange | dark red |
 | `ERROR` | `invalid.illegal` | red | red |
-| kind `firmware` | `entity.name.type` | teal | teal |
-| kind `drone_sim` | `entity.name.function` | yellow | brown |
-| kind `plant` | `variable.parameter` | pale blue | navy |
-| kind `gateway` | `keyword.control` | purple | purple |
-| kind `relay` | `string` | orange | dark red |
-| kind `batch` | `constant.numeric` | pale green | green |
-| kind `unknown` | `comment` | green grey | green |
-| node id | `constant.numeric` | pale green | green |
-| module | `entity.name.tag` | blue | dark red |
-| text | none | default | default |
+| `WARN` | `string` | orange | dark red |
+| `INFO` | none | default | default |
+| `DEBUG` `TRACE` | `comment` | green grey | green |
 
-The `gateway link` pseudo node is a `gateway` line like any other, so it is
-colored by that row. Inside the text only an 8 hex digit word is scoped, as
-a node id; every other number is left alone. The default themes hold fewer
-distinct colors than the table has rows, so a scope is shared across columns
-(`WARN` and the `relay` kind, the node id and the `batch` kind): the columns
-are at fixed offsets, which is what tells them apart.
+INFO is the level a node runs at, so it is the one left plain: what stands
+out is what left the normal course (WARN, ERROR) and what was asked for on
+purpose (DEBUG and TRACE, dimmed).
 
 Several `drone_sim` at once: the `+` action starts each instance with its own
 emulated flash (`software/build/desktop/drone_sim/ota_flash_<n>`) and with a
@@ -161,7 +150,7 @@ plus F5 (Extension Development Host) works for iterating.
 - The nodes view refreshes on the gateway's table (once a second), so the
   live/fading dot is that old at worst.
 - The colors are a grammar over standard scopes, no theme and no semantic
-  tokens: whatever theme is in use colors the columns, and none of them is
-  guaranteed a color of its own.
+  tokens: whatever theme is in use colors the lines, and none of the four
+  scoped levels is guaranteed a color of its own.
 - "Reset levels to INFO" has no title button: the gear already asks for a
   level, and INFO is one of the five it offers.
