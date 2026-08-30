@@ -160,3 +160,8 @@ plus F5 (Extension Development Host) works for iterating.
   what makes it search the kind and the module name too. No regex, no case.
 - The nodes view refreshes on the gateway's table (once a second), so the
   live/fading dot is that old at worst.
+- The colors are a grammar over standard scopes, no theme and no semantic
+  tokens: whatever theme is in use colors the columns, and none of them is
+  guaranteed a color of its own.
+- "Reset levels to INFO" has no title button: the gear already asks for a
+  level, and INFO is one of the five it offers.
