@@ -37,6 +37,7 @@ target_compile_options(drone_strict INTERFACE
 set(DRONE_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 add_subdirectory(components/protocol)
+add_subdirectory(components/log)
 add_subdirectory(components/transport)
 add_subdirectory(components/flight-core)
 add_subdirectory(components/platform)
