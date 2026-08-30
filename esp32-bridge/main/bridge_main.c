@@ -13,15 +13,17 @@
 #include <string.h>
 
 #include "esp_event.h"
-#include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
 
-/// Log tag of the bring-up.
-static const char *TAG = "bridge";
+/// The bring-up speaks through the app/wifi module of the log library, whose
+/// registration is C++ (relay.cpp); these three are the whole C view of it.
+void relayLogInit(void);
+void bridgeLogInfo(const char *format, ...) __attribute__((format(printf, 1, 2)));
+void bridgeLogWarn(const char *format, ...) __attribute__((format(printf, 1, 2)));
 
 #ifdef BRIDGE_STA_SSID
 /// How long the board tries to join the network named at build time before
@@ -92,12 +94,12 @@ static bool joinNetwork(void)
         esp_netif_ip_info_t address;
         if (esp_netif_get_ip_info(netif, &address) == ESP_OK && address.ip.addr != 0U)
         {
-            ESP_LOGI(TAG, "joined " BRIDGE_STA_SSID " as " IPSTR, IP2STR(&address.ip));
+            bridgeLogInfo("joined " BRIDGE_STA_SSID " as " IPSTR, IP2STR(&address.ip));
             return true;
         }
     }
 
-    ESP_LOGW(TAG, BRIDGE_STA_SSID " did not answer, falling back to the access point");
+    bridgeLogWarn(BRIDGE_STA_SSID " did not answer, falling back to the access point");
     ESP_ERROR_CHECK(esp_event_handler_unregister(
         WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &onStationDisconnected));
     ESP_ERROR_CHECK(esp_wifi_stop());
@@ -124,11 +126,12 @@ static void startAccessPoint(void)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &config));
     ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_LOGI(TAG, "access point " BRIDGE_AP_SSID);
+    bridgeLogInfo("access point " BRIDGE_AP_SSID);
 }
 
 void app_main(void)
 {
+    relayLogInit();
     esp_err_t status = nvs_flash_init();
     if (status == ESP_ERR_NVS_NO_FREE_PAGES || status == ESP_ERR_NVS_NEW_VERSION_FOUND)
     {

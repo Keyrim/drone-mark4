@@ -1,6 +1,7 @@
 # log
 
-The one logging library of every node: the board, `drone_sim`, the hub.
+The one logging library of every node: the board, `drone_sim`, the hub, the
+ESP32 relay.
 A source file declares its module once, logs printf-style through it, and
 every line carries the module, a level and a timestamp to up to two sinks:
 a console (stdout on a desktop, RTT on the board) and the transport, where
@@ -79,8 +80,9 @@ level, timestampUs, text}`; the pointers are valid for the call only. At
 most `LOG_MAX_SINKS` = 2 are registered (`logAddSink()` / `logRemoveSink()`).
 A sink filters nothing: the module's level already did.
 
-- `ConsoleSinkPosix` (desktop): `HH:MM:SS.mmm LEVL module: text` on stdout,
-  flushed per line.
+- `ConsoleSinkPosix` (desktop, and the ESP32 relay: its console is plain
+  stdio too, so the same sink serves it): `HH:MM:SS.mmm LEVL module: text`
+  on stdout, flushed per line. On a board the clock is its uptime.
 - `RttSink` (board): `t_ms LEVL module: text` on the RTT up buffer.
 - `TransportSink` (any node, `log_wire`): encodes a `Log` envelope and hands
   the bytes to a `LogSendFn` function pointer the application registers

@@ -3,11 +3,13 @@
 Firmware for the ESP32-C3 SuperMini (IPEX variant) riding the drone, wired
 to the flight controller's UART. It is a transport relay
 (`software/components/transport/`): one transport node with two links, the
-board's UART and the WiFi LAN, forwarding frames between them. It has no
-identity anybody learns: it never beacons, so what the hub sees is the
-board's own `Announce`, at the relay's IP address and data port. From the
-LAN's point of view the board is one more node on udp/47820, exactly like
-`drone_sim`; the hub has no path, port or click specific to it.
+board's UART and the WiFi LAN, forwarding frames between them. It is a node
+of the system like any other: it beacons its own `Announce` (kind `relay`,
+name `relay-<last three bytes of its MAC>`, mcu `ESP32C3`, the build epoch
+and short commit hash of its build, the wire hash), and it logs through the
+project's log library. From the LAN's point of view the board and the relay
+are two nodes on udp/47820 sharing one address, exactly like `drone_sim` is
+one; the hub has no path, port or click specific to either.
 
 ## What crosses, and what does not
 
@@ -20,9 +22,15 @@ filter on the UART link, `uartFilter()` in `main/relay.cpp`:
 - towards the UART: every unicast the transport routes there (the board is
   the only node on that link, so a unicast routed there is for it: RC,
   tuning, updater messages), and the broadcasts whose envelope body is an
-  `Announce` (the board learns the LAN nodes from those). Every other LAN
-  broadcast, `drone_sim`'s telemetry and run stats first, stays on the LAN:
-  a 921600 baud line does not carry the whole LAN.
+  `Announce` (the board learns the LAN nodes from those, this relay
+  included). Every other LAN broadcast, `drone_sim`'s telemetry and run
+  stats first, stays on the LAN: a 921600 baud line does not carry the
+  whole LAN.
+
+The filter judges relayed frames only. What the relay says itself is a
+`send`, and a `send` names the links it leaves on (`Transport::send`'s link
+mask): its log lines and its module table take the LAN bit alone, its
+beacon takes both links.
 
 The announce check reads one byte of the envelope
 (`envelopeIsAnnounce()`, `protocol/envelope.hpp`): the Envelope has a single
@@ -47,7 +55,12 @@ without an address) then hands over to `relayRun()` in `main/relay.cpp`:
   `UdpLink::addLocalHost()` so its broadcasts coming back are dropped as
   echoes;
 - `Transport` with node id `hashNodeId()` of the WiFi MAC, `setRelay(true)`,
-  the filter, no `setBeacon()`.
+  the filter, and the `Announce` beacon;
+- the log library: the shared `ConsoleSinkPosix` (its console is plain
+  stdio) and a `TransportSink` broadcasting every line onto the LAN. The
+  clock is `esp_timer_get_time()`. The bring-up in `bridge_main.c` is C and
+  speaks through two shims, `bridgeLogInfo()` / `bridgeLogWarn()`, rather
+  than being ported to C++: the smaller diff of the two.
 
 The main task polls the transport once per FreeRTOS tick (1 ms,
 `CONFIG_FREERTOS_HZ=1000` in `sdkconfig.defaults`): one frame is one
@@ -59,32 +72,46 @@ lost and the framing resynchronizes) and 1024 on the way out.
 
 The shared sources are compiled by the ESP-IDF build straight from
 `software/components/`: `transport.cpp`, `uart_link.cpp`,
-`posix/udp_link.cpp` in the `main` component, the nanopb runtime plus the
-codec generated from `software/components/protocol/mark4.proto` in
-`components/mark4_proto/` (same generator, same pinned nanopb commit, same
+`posix/udp_link.cpp` and the log library (`module.cpp`, `wire.cpp`,
+`posix/console_sink_posix.cpp`) in the `main` component, the nanopb runtime,
+`envelope.cpp` and the codec generated from
+`software/components/protocol/mark4.proto` in `components/mark4_proto/` (same generator, same pinned nanopb commit, same
 `PB_NO_MALLOC PB_BUFFER_ONLY` as the desktop build; the generator needs a
 python with `protobuf` and `grpcio-tools`, the component uses the first of
 the IDF interpreter and `/usr/bin/python3` that has them). The `main`
 component carries the project's warning set (`-Wall -Wextra -Wconversion
 -Wdouble-promotion -Werror`) and `-fno-exceptions -fno-rtti`.
 
-## Console
+## Logs
 
-USB Serial/JTAG, 115200. What a healthy relay prints:
+Four modules, ids from `main/log_modules.hpp` (256 up, the shared code
+takes its own from `log/module_ids.hpp`): `app/boot`, `app/wifi`,
+`relay/core`, `relay/stats`. Every line goes to the USB Serial/JTAG console
+(115200) and, once the transport is up, onto the LAN as a `Log` envelope
+any client reads. What a healthy relay prints:
 
 ```
-I bridge: joined <ssid> as 192.168.1.31            (or: access point mark4-bridge)
-I relay: relay up: node ff42bd55, uart 921600 baud, lan data port 60278, discovery port 47820
-I relay: node 6c41b2f0 up on the uart              (the board)
-I relay: node 1cd5e199 up on the lan at 192.168.1.13:41283   (the hub)
-I relay: nodes 2, relayed 1063, filtered 250, dropped 0, uart tx full 0   (every 5 s)
-I relay: node 1cd5e199 gone                         (3 s of silence)
+00:00:01.712 INFO app/wifi: joined <ssid> as 192.168.1.31   (or: access point mark4-bridge)
+00:00:01.760 INFO app/boot: boot: node ff42bd55 relay build 1756512000 953448a1 wire 4f2c81de
+00:00:01.760 INFO app/boot: uart 921600 baud, lan data port 60278, discovery port 47820
+00:00:02.140 INFO relay/core: node 6c41b2f0 up on the uart              (the board)
+00:00:02.900 INFO relay/core: node 1cd5e199 up on the lan at 192.168.1.13:41283   (the hub)
+00:00:12.010 INFO relay/core: node 1cd5e199 gone                        (3 s of silence)
+```
+
+`relay/stats` is the five-second counters line, at DEBUG so it is off by
+default; a client turns it on with a `LogControl.set{relay/stats, DEBUG}`
+addressed to the relay's node id (the hub's pages list its modules like any
+node's) and it starts arriving as `Log` frames:
+
+```
+00:00:20.000 DEBG relay/stats: nodes 2, relayed 1063, filtered 250, dropped 0, uart tx full 0
 ```
 
 `relayed` counts frames forwarded (one per link for a broadcast), `filtered`
 the LAN broadcasts the filter kept off the UART, `dropped` the transport's
 drops (unknown destination, hops exhausted), `uart tx full` the frames the
-UART ring could not take whole.
+UART ring could not take whole. The timestamps are the module's uptime.
 
 ## Network
 
@@ -128,6 +155,10 @@ idf.py -C esp32-bridge -p /dev/ttyACM0 flash monitor
 idf.py -C esp32-bridge fullclean                   # wipe build/
 ```
 
+The build identity the `Announce` carries (build epoch, short commit hash)
+is read by CMake at configure time, so a plain rebuild keeps the previous
+pair; `idf.py -C esp32-bridge reconfigure` refreshes it.
+
 `fullclean` keeps `sdkconfig`, so a change to `sdkconfig.defaults` only lands
 after `rm esp32-bridge/sdkconfig` (or `idf.py -C esp32-bridge set-target ...`
 for the target itself).
@@ -141,5 +172,6 @@ with `usbipd` (`/dev/ttyACM*` for the native USB serial of the C3,
 ## Using it from the hub
 
 Nothing to do: the board shows up in the hub's discovery like `drone_sim`
-does, and the Connect button of its row is the same. The relay itself never
-appears anywhere, which is the point.
+does, and the Connect button of its row is the same. The relay sits next to
+it as a `relay` node at the same address: nothing to click, a place to read
+its logs and turn `relay/stats` on.

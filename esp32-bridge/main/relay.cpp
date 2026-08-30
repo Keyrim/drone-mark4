@@ -1,19 +1,21 @@
 /// @file
 /// @brief The relay: one transport node with two links, the flight
-///        controller's UART and the WiFi LAN, relaying between them. It has
-///        no identity anybody learns: it never beacons, so the board's own
-///        Announce is what the hub sees, at this relay's address. Towards
-///        the UART only what the board needs crosses: unicasts for it, and
-///        the Announce broadcasts that tell it who is on the LAN.
+///        controller's UART and the WiFi LAN, relaying between them. It is a
+///        node of its own too: it announces itself as a relay on both links,
+///        logs through the log library over the LAN, and answers the
+///        LogControl addressed to it. Towards the UART only what the board
+///        needs crosses: unicasts for it, the Announce broadcasts that tell
+///        it who is on the LAN, and nothing this relay says itself.
 
 #include <array>
 #include <cinttypes>
+#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 
 #include "driver/uart.h"
-#include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
@@ -21,6 +23,10 @@
 #include "freertos/task.h"
 #include "lwip/inet.h"
 
+#include "log/console_sink_posix.hpp"
+#include "log/module.hpp"
+#include "log/wire.hpp"
+#include "log_modules.hpp"
 #include "protocol/envelope.hpp"
 #include "transport/node_id.hpp"
 #include "transport/transport.hpp"
@@ -31,8 +37,14 @@ namespace mark4
 {
     namespace
     {
-        /// Log tag of the relay.
-        const char *const TAG = "relay";
+        LogModule BOOT{LOG_MODULE_APP_BOOT, "app/boot"};
+        LogModule WIFI{LOG_MODULE_APP_WIFI, "app/wifi"};
+        LogModule CORE{LOG_MODULE_RELAY_CORE, "relay/core"};
+        LogModule STATS{LOG_MODULE_RELAY_STATS, "relay/stats"};
+
+        /// The console of the module, over its USB serial port: the same line
+        /// format as any desktop node of the project, over the same stdio.
+        ConsoleSinkPosix CONSOLE;
 
         /// UART wired to the flight controller.
         constexpr uart_port_t UART_PORT = UART_NUM_1;
@@ -53,6 +65,12 @@ namespace mark4
         /// Index of the UART link in the transport: the one the filter guards.
         constexpr std::size_t UART_LINK = 0U;
 
+        /// Index of the LAN link, and the send mask naming it alone: what
+        /// this node says itself (its log lines, its module table) is for the
+        /// LAN and never for the board's line. Its beacon takes both links.
+        constexpr std::size_t LAN_LINK = 1U;
+        constexpr std::uint32_t LAN_ONLY = 1U << LAN_LINK;
+
         /// Poll cadence: one FreeRTOS tick, 1 ms with CONFIG_FREERTOS_HZ=1000.
         /// A 160-byte frame takes 1.7 ms on the line, so the added latency
         /// is under one frame time and every poll drains what arrived.
@@ -63,6 +81,18 @@ namespace mark4
 
         /// Bytes of a MAC address.
         constexpr std::size_t MAC_SIZE = 6U;
+
+        /// Bytes of the MAC the node name carries, its low half.
+        constexpr std::size_t MAC_NAME_BYTES = 3U;
+
+        /// First byte of an encoded Envelope carrying a LogControl: what a
+        /// payload must open with before this node decodes it at all (every
+        /// broadcast of the LAN and of the board crosses the delivery).
+        constexpr std::uint8_t LOG_CONTROL_TAG_BYTE = static_cast<std::uint8_t>(
+            (mark4_Envelope_log_control_tag << PB_TAG_FIELD_SHIFT) | PB_WT_STRING);
+
+        static_assert(mark4_Envelope_log_control_tag <= PB_SINGLE_BYTE_TAG_MAX,
+                      "the log_control tag must fit one byte for the delivery check");
 
         /// The UART behind the UartLink, over the ESP-IDF driver rings.
         class UartStream final : public AbsByteStream
@@ -95,6 +125,49 @@ namespace mark4
             std::uint32_t m_txFull = 0U; ///< frames refused for lack of room
         };
 
+        /// @brief Route of this node's own log lines and module table, defined
+        ///        below the composition it reads.
+        bool sendLogLine(void *context, const std::uint8_t *data, std::size_t size);
+
+        /// The composition: services as members, declaration order is
+        /// construction order, dependencies by reference.
+        struct Relay
+        {
+            UartStream stream;                         ///< the UART driver rings
+            UartLink uart{stream};                     ///< the board's link, serial framing
+            UdpLink lan;                               ///< the WiFi LAN, discovery port 47820
+            Transport transport;                       ///< the node, relaying between the two
+            TransportSink logSink{&sendLogLine, this}; ///< its lines, onto the LAN
+
+            /// @param nodeId this relay's transport identity
+            explicit Relay(std::uint32_t nodeId)
+                : transport(nodeId)
+            {
+            }
+        };
+
+        bool sendLogLine(void *context, const std::uint8_t *data, std::size_t size)
+        {
+            return static_cast<Relay *>(context)->transport.send(
+                BROADCAST_NODE, data, size, LAN_ONLY);
+        }
+
+        /// @brief Publishes this node's module table, as any node does after
+        ///        its first beacon and on every level change.
+        /// @param context the composition
+        void publishModules(void *context)
+        {
+            static_cast<void>(logPublishModules(&sendLogLine, context));
+        }
+
+        /// @param context unused
+        /// @return the instant the log records are stamped with [us]
+        std::uint64_t logClock(void *context)
+        {
+            static_cast<void>(context);
+            return static_cast<std::uint64_t>(esp_timer_get_time());
+        }
+
         /// The one rule of the relay: a broadcast only goes down the UART
         /// when it is an Announce (the board learns the LAN nodes from
         /// those); a unicast routed there is for the board by construction.
@@ -111,30 +184,59 @@ namespace mark4
                    envelopeIsAnnounce(payload, size);
         }
 
+        /// @brief Takes what the transport delivers to this node: the
+        ///        LogControl a client sends it, nothing else. Every other
+        ///        payload is a broadcast passing by and is dropped on its
+        ///        first byte, before any decoding.
+        /// @param context the composition
+        /// @param src node that sent it
+        /// @param payload encoded Envelope
+        /// @param size its size
+        void onPayload(void *context,
+                       std::uint32_t src,
+                       const std::uint8_t *payload,
+                       std::size_t size)
+        {
+            static_cast<void>(src);
+            if (size == 0U || payload[0] != LOG_CONTROL_TAG_BYTE)
+            {
+                return;
+            }
+            mark4_Envelope envelope = mark4_Envelope_init_zero;
+            if (!decodeEnvelope(payload, size, envelope) ||
+                envelope.which_body != mark4_Envelope_log_control_tag)
+            {
+                return;
+            }
+            if (logHandleControl(envelope.body.log_control))
+            {
+                publishModules(context);
+            }
+        }
+
         /// @brief Logs a node the transport just heard for the first time.
         void onNodeUp(void *context, const Transport::Node &node)
         {
             static_cast<void>(context);
             if (node.link == UART_LINK)
             {
-                ESP_LOGI(TAG, "node %08" PRIx32 " up on the uart", node.id);
+                CORE.info("node %08" PRIx32 " up on the uart", node.id);
                 return;
             }
-            ESP_LOGI(TAG,
-                     "node %08" PRIx32 " up on the lan at %u.%u.%u.%u:%u",
-                     node.id,
-                     static_cast<unsigned>(node.address.host >> 24U),
-                     static_cast<unsigned>((node.address.host >> 16U) & 0xFFU),
-                     static_cast<unsigned>((node.address.host >> 8U) & 0xFFU),
-                     static_cast<unsigned>(node.address.host & 0xFFU),
-                     static_cast<unsigned>(node.address.port));
+            CORE.info("node %08" PRIx32 " up on the lan at %u.%u.%u.%u:%u",
+                      node.id,
+                      static_cast<unsigned>(node.address.host >> 24U),
+                      static_cast<unsigned>((node.address.host >> 16U) & 0xFFU),
+                      static_cast<unsigned>((node.address.host >> 8U) & 0xFFU),
+                      static_cast<unsigned>(node.address.host & 0xFFU),
+                      static_cast<unsigned>(node.address.port));
         }
 
         /// @brief Logs a node the transport just forgot.
         void onNodeDown(void *context, const Transport::Node &node)
         {
             static_cast<void>(context);
-            ESP_LOGI(TAG, "node %08" PRIx32 " gone", node.id);
+            CORE.info("node %08" PRIx32 " gone", node.id);
         }
 
         /// @brief Opens the UART the flight controller is wired to.
@@ -167,23 +269,73 @@ namespace mark4
             return ntohl(info.ip.addr);
         }
 
-        /// The composition: services as members, declaration order is
-        /// construction order, dependencies by reference.
-        struct Relay
+        /// @brief Registers this node's beacon: what it is, what it was built
+        ///        from and the schema it speaks. It goes out on both links,
+        ///        so the board learns this node like the LAN does.
+        /// @param relay the composition
+        /// @param mac the WiFi MAC, the node name's low half
+        /// @return false when the announce does not fit a beacon
+        bool setBeacon(Relay &relay, const std::array<std::uint8_t, MAC_SIZE> &mac)
         {
-            UartStream stream;     ///< the UART driver rings
-            UartLink uart{stream}; ///< the board's link, serial framing
-            UdpLink lan;           ///< the WiFi LAN, discovery port 47820
-            Transport transport;   ///< the node, relaying between the two
+            mark4_Envelope announce = mark4_Envelope_init_zero;
+            announce.which_body = mark4_Envelope_announce_tag;
+            mark4_Announce &body = announce.body.announce;
+            body.kind = mark4_NodeKind_RELAY;
+            static_cast<void>(std::snprintf(body.name,
+                                            sizeof(body.name),
+                                            "relay-%02x%02x%02x",
+                                            mac[MAC_SIZE - MAC_NAME_BYTES],
+                                            mac[MAC_SIZE - 2U],
+                                            mac[MAC_SIZE - 1U]));
+            body.mcu = mark4_Mcu_ESP32C3;
+            body.build_epoch = BRIDGE_BUILD_EPOCH;
+            static_cast<void>(
+                std::snprintf(body.git_hash, sizeof(body.git_hash), "%s", BRIDGE_GIT_HASH));
+            body.wire_hash = WIRE_HASH;
 
-            /// @param nodeId this relay's transport identity
-            explicit Relay(std::uint32_t nodeId)
-                : transport(nodeId)
+            std::array<std::uint8_t, Transport::MAX_BEACON_SIZE> beacon{};
+            std::size_t beaconSize = 0U;
+            if (!encodeEnvelope(announce, beacon.data(), beacon.size(), beaconSize))
             {
+                return false;
             }
-        };
+            relay.transport.setBeacon(beacon.data(), beaconSize);
+            return true;
+        }
     } // namespace
 } // namespace mark4
+
+/// @brief Brings the logging up before anything has a line to say. Called
+///        first thing by app_main(); the wire sink joins in relayRun(), once
+///        the transport exists.
+extern "C" void relayLogInit(void)
+{
+    using namespace mark4;
+    logSetClock(&logClock, nullptr);
+    static_cast<void>(logAddSink(CONSOLE));
+}
+
+/// @brief One line of the network bring-up (bridge_main.c, C), through the
+///        app/wifi module.
+extern "C" void bridgeLogInfo(const char *format, ...)
+{
+    using namespace mark4;
+    va_list args;
+    va_start(args, format);
+    WIFI.vlog(LogLevel::INFO, format, args);
+    va_end(args);
+}
+
+/// @brief Same, for what the bring-up did not get: a network that did not
+///        answer, a station that dropped.
+extern "C" void bridgeLogWarn(const char *format, ...)
+{
+    using namespace mark4;
+    va_list args;
+    va_start(args, format);
+    WIFI.vlog(LogLevel::WARN, format, args);
+    va_end(args);
+}
 
 /// @brief Runs the relay forever, once the network is up. Called from
 ///        app_main() after the WiFi bring-up.
@@ -201,7 +353,7 @@ extern "C" void relayRun(void)
     if (!relay.lan.init() || !relay.transport.addLink(relay.uart) ||
         !relay.transport.addLink(relay.lan) || !relay.transport.init())
     {
-        ESP_LOGE(TAG, "cannot start the transport");
+        BOOT.error("cannot start the transport");
         std::abort();
     }
     // lwIP has no getifaddrs(): the LAN link is told the one address a
@@ -211,32 +363,46 @@ extern "C" void relayRun(void)
     relay.transport.setRelay(true);
     relay.transport.setRelayFilter(&uartFilter, nullptr);
     relay.transport.setNodeCallbacks(&onNodeUp, &onNodeDown, nullptr);
-    // No setBeacon(): the relay announces nothing, the board does.
-    ESP_LOGI(TAG,
-             "relay up: node %08" PRIx32 ", uart %d baud, lan data port %u, discovery port %u",
-             relay.transport.nodeId(),
-             UART_BAUD,
-             static_cast<unsigned>(relay.lan.dataPort()),
-             static_cast<unsigned>(relay.lan.discoveryPort()));
+    if (!setBeacon(relay, mac))
+    {
+        BOOT.error("the announce does not fit a beacon");
+        std::abort();
+    }
+    static_cast<void>(logAddSink(relay.logSink));
+    BOOT.info("boot: node %08" PRIx32 " relay build %lu %s wire %08lx",
+              relay.transport.nodeId(),
+              static_cast<unsigned long>(BRIDGE_BUILD_EPOCH),
+              BRIDGE_GIT_HASH,
+              static_cast<unsigned long>(WIRE_HASH));
+    BOOT.info("uart %d baud, lan data port %u, discovery port %u",
+              UART_BAUD,
+              static_cast<unsigned>(relay.lan.dataPort()),
+              static_cast<unsigned>(relay.lan.discoveryPort()));
 
     std::int64_t nextStatsUs = esp_timer_get_time() + STATS_PERIOD_US;
+    bool modulesPublished = false;
     for (;;)
     {
-        // Nothing is for this node: every payload is relayed or dropped, so
-        // no deliver callback. The poll drains both links whole.
-        relay.transport.poll(static_cast<std::uint64_t>(esp_timer_get_time()), nullptr, nullptr);
+        // The delivery takes the LogControl addressed to this node; every
+        // other payload is relayed or dropped by the transport.
+        relay.transport.poll(static_cast<std::uint64_t>(esp_timer_get_time()), &onPayload, &relay);
+        if (!modulesPublished)
+        {
+            // The first poll sent the first beacon: the table follows it.
+            modulesPublished = true;
+            publishModules(&relay);
+        }
         const std::int64_t nowUs = esp_timer_get_time();
         if (nowUs >= nextStatsUs)
         {
             nextStatsUs = nowUs + STATS_PERIOD_US;
-            ESP_LOGI(TAG,
-                     "nodes %u, relayed %" PRIu32 ", filtered %" PRIu32 ", dropped %" PRIu32
-                     ", uart tx full %" PRIu32,
-                     static_cast<unsigned>(relay.transport.nodeCount()),
-                     relay.transport.relayed(),
-                     relay.transport.filtered(),
-                     relay.transport.dropped(),
-                     relay.stream.txFull());
+            STATS.debug("nodes %u, relayed %" PRIu32 ", filtered %" PRIu32 ", dropped %" PRIu32
+                        ", uart tx full %" PRIu32,
+                        static_cast<unsigned>(relay.transport.nodeCount()),
+                        relay.transport.relayed(),
+                        relay.transport.filtered(),
+                        relay.transport.dropped(),
+                        relay.stream.txFull());
         }
         vTaskDelay(POLL_PERIOD_TICKS);
     }

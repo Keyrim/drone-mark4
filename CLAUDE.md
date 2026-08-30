@@ -185,15 +185,19 @@ Everything C++ lives under `software/`: the executables at its top level
   of its own), and the firmware as a node with one `UartLink` on USART1
   (`Uart1Stream` over the uart1 rings; frames travel in the serial
   framing `A5 5A len_lo len_hi payload crc16`, 512 bytes at most). The
-  ESP32 riding the drone (`esp32-bridge/`) is a transport relay: two
-  links (`UartLink` to the board, the shared `UdpLink` on lwIP),
-  `setRelay(true)`, no beacon, and a `setRelayFilter()` towards the UART
-  that lets unicasts and `Announce` broadcasts through and keeps every
-  other LAN broadcast off the line; it compiles `transport.cpp`,
-  `uart_link.cpp`, `posix/udp_link.cpp` and the nanopb codec straight
-  from `software/components/`. The hub holds one `UdpLink`, relays
-  nothing, and sees the board as one more node (kind `firmware`, its own
-  Announce, at the relay's address). The firmware broadcasts everything
+  ESP32 riding the drone (`esp32-bridge/`) is a transport relay and a
+  node: two links (`UartLink` to the board, the shared `UdpLink` on lwIP),
+  `setRelay(true)`, a beacon of its own (kind `RELAY`, mcu `ESP32C3`) on
+  both links, and a `setRelayFilter()` towards the UART that lets unicasts
+  and `Announce` broadcasts through and keeps every other LAN broadcast
+  off the line; it logs through the log library, its lines and module
+  table going out on the LAN link alone (the optional link mask of
+  `send()`), and answers the `LogControl` addressed to it. It compiles
+  `transport.cpp`, `uart_link.cpp`, `posix/udp_link.cpp`, the log library
+  and the nanopb codec straight from `software/components/`. The hub holds
+  one `UdpLink`, relays nothing, and sees the board and the relay as two
+  more nodes (kinds `firmware` and `relay`, their own Announces, at the
+  relay's address). The firmware broadcasts everything
   it emits (telemetry, answers, `Log` lines through the log library's
   `TransportSink`) and takes commands through `CommandReceiverTransport`
   fed by `Transport::poll()` once per flight frame.
