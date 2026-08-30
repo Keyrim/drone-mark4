@@ -3,15 +3,22 @@
 
 #include "hub/ws_bridge.hpp"
 
-#include <cstdio>
 #include <ixwebsocket/IXHttpServer.h>
 #include <ixwebsocket/IXWebSocket.h>
 #include <ixwebsocket/IXWebSocketServer.h>
 #include <memory>
 #include <utility>
 
+#include "log/module.hpp"
+#include "log_modules.hpp"
+
 namespace mark4
 {
+    namespace
+    {
+        LogModule MODULE{LOG_MODULE_GATEWAY_WS, "gateway/ws"};
+    } // namespace
+
     namespace
     {
         /// @brief Reason phrase of a status code, for the response line.
@@ -102,10 +109,9 @@ namespace mark4
         const std::pair<bool, std::string> listening = m_server->listen();
         if (!listening.first)
         {
-            static_cast<void>(std::fprintf(stderr,
-                                           "hub: cannot serve on tcp/%u: %s\n",
-                                           static_cast<unsigned>(port),
-                                           listening.second.c_str()));
+            MODULE.error("cannot serve on tcp/%u: %s",
+                         static_cast<unsigned>(port),
+                         listening.second.c_str());
             m_server.reset();
             return false;
         }

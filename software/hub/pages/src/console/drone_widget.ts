@@ -25,7 +25,7 @@ import {
     type Telemetry,
 } from "../gen/mark4_pb";
 import { frameMessage, type GatewaySocket } from "../shared/gateway_socket";
-import { type NodeView, nodeColor } from "../shared/nodes";
+import { type NodeView, hexNodeId, nodeColor } from "../shared/nodes";
 import { FLIGHT_PHASE_NAMES } from "../shared/series";
 import { MODE_ALTITUDE_AUTO, MODE_MANUAL, SAFE_RC, TICK_MS, clamp01, rcEnvelope, type RcState } from "./rc";
 import { TuningPanel } from "./tuning";
@@ -116,7 +116,7 @@ export class DroneWidget {
         head.appendChild(name);
         const detail = document.createElement("span");
         detail.className = "panel-note";
-        detail.textContent = `${node.kindName} node ${node.id}`;
+        detail.textContent = `${node.kindName} node ${hexNodeId(node.id)}`;
         head.appendChild(detail);
         const spacer = document.createElement("span");
         spacer.className = "bar-grow";

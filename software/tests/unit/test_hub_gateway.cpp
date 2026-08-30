@@ -114,10 +114,28 @@ TEST_CASE("the node table carries the transport record and the last announce")
     announce.wire_hash = 0xDEADBEEFU;
     mark4::copyWireString("sim", announce.name, sizeof(announce.name));
 
+    // The table as two pages: a page sizes the table to the total it
+    // announces and lands at its own index.
+    mark4::LogModuleTable modules;
+    mark4_LogModules page = mark4_LogModules_init_zero;
+    page.start_index = 0U;
+    page.total = 2U;
+    page.modules_count = 1U;
+    page.modules[0].id = 16U;
+    mark4::copyWireString("platform/imu", page.modules[0].name, sizeof(page.modules[0].name));
+    page.modules[0].level = mark4_LogLevel_INFO;
+    mark4::applyLogModulesPage(page, modules);
+    page.start_index = 1U;
+    page.modules[0].id = 17U;
+    mark4::copyWireString("platform/baro", page.modules[0].name, sizeof(page.modules[0].name));
+    page.modules[0].level = mark4_LogLevel_DEBUG;
+    mark4::applyLogModulesPage(page, modules);
+    REQUIRE(modules.size() == 2U);
+
     mark4_GatewayMessage message = mark4_GatewayMessage_init_zero;
     message.which_body = mark4_GatewayMessage_nodes_tag;
-    mark4::fillNode(node, 1'250'000U, &announce, message.body.nodes.nodes[0]);
-    mark4::fillNode(node, 1'250'000U, nullptr, message.body.nodes.nodes[1]);
+    mark4::fillNode(node, 1'250'000U, &announce, modules, message.body.nodes.nodes[0]);
+    mark4::fillNode(node, 1'250'000U, nullptr, {}, message.body.nodes.nodes[1]);
     message.body.nodes.nodes_count = 2U;
 
     const mark4_GatewayMessage decoded = roundTrip(message);
@@ -134,7 +152,22 @@ TEST_CASE("the node table carries the transport record and the last announce")
     CHECK(first.announce.kind == mark4_NodeKind_DRONE_SIM);
     CHECK(first.announce.wire_hash == 0xDEADBEEFU);
     CHECK(std::string(first.announce.name) == "sim");
+    REQUIRE(first.log_modules_count == 2U);
+    CHECK(first.log_modules[0].id == 16U);
+    CHECK(std::string(first.log_modules[0].name) == "platform/imu");
+    CHECK(first.log_modules[1].id == 17U);
+    CHECK(first.log_modules[1].level == mark4_LogLevel_DEBUG);
     CHECK(!decoded.body.nodes.nodes[1].has_announce);
+    CHECK(decoded.body.nodes.nodes[1].log_modules_count == 0U);
+
+    // A page opening at 0 restarts the table: a rebooted node with fewer
+    // modules does not keep stale entries.
+    page.start_index = 0U;
+    page.total = 1U;
+    mark4::applyLogModulesPage(page, modules);
+    REQUIRE(modules.size() == 1U);
+    CHECK(modules[0].id == 17U);
+    CHECK(mark4::hexNodeId(0xABCDU) == "0000abcd");
 }
 
 TEST_CASE("the update state snapshot reads like the client")

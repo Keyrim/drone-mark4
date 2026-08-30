@@ -10,6 +10,9 @@
 #include <pb_decode.h>
 #include <pb_encode.h>
 
+#include "log/module.hpp"
+#include "log/wire.hpp"
+
 namespace mark4
 {
     namespace
@@ -207,6 +210,7 @@ namespace mark4
     void fillNode(const Transport::Node &node,
                   std::uint64_t nowUs,
                   const mark4_Announce *announce,
+                  const LogModuleTable &logModules,
                   mark4_Node &nodeOut)
     {
         nodeOut = mark4_Node_init_zero;
@@ -232,5 +236,47 @@ namespace mark4
             nodeOut.has_announce = true;
             nodeOut.announce = *announce;
         }
+        const std::size_t count = std::min(logModules.size(), std::size(nodeOut.log_modules));
+        std::copy_n(logModules.begin(), count, nodeOut.log_modules);
+        nodeOut.log_modules_count = static_cast<pb_size_t>(count);
+    }
+
+    void applyLogModulesPage(const mark4_LogModules &page, LogModuleTable &tableInOut)
+    {
+        if (page.start_index == 0U)
+        {
+            tableInOut.clear();
+        }
+        tableInOut.resize(page.total);
+        for (pb_size_t i = 0U; i < page.modules_count; ++i)
+        {
+            const std::size_t index = page.start_index + i;
+            if (index < tableInOut.size())
+            {
+                tableInOut[index] = page.modules[i];
+            }
+        }
+    }
+
+    LogModuleTable ownLogModules()
+    {
+        LogModuleTable table;
+        for (const LogModule *module = logModules(); module != nullptr; module = module->next())
+        {
+            mark4_LogModuleInfo info = mark4_LogModuleInfo_init_zero;
+            info.id = module->id();
+            copyWireString(module->name(), info.name, sizeof(info.name));
+            info.level = logLevelToWire(module->level());
+            table.push_back(info);
+        }
+        return table;
+    }
+
+    std::string hexNodeId(std::uint32_t id)
+    {
+        static constexpr std::size_t HEX_DIGITS = 8U;
+        std::array<char, HEX_DIGITS + 1U> text{};
+        static_cast<void>(std::snprintf(text.data(), text.size(), "%08x", id));
+        return {text.data()};
     }
 } // namespace mark4

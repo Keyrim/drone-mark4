@@ -118,7 +118,7 @@ test("the wire mismatch flag compares the announce with the gateway's hash", () 
 test("diffNodes reports kind changes on both sides and nothing for an identical table", () => {
     const a: NodeView = {
         id: 1, kind: NodeKind.DRONE_SIM, kindName: "drone_sim", name: "a", address: "", ageMs: 0,
-        received: 0, lost: 0, wireMismatch: false, announce: undefined,
+        received: 0, lost: 0, wireMismatch: false, announce: undefined, logModules: [],
     };
     const before = new Map([[1, a]]);
     assert.deepEqual(diffNodes(before, new Map([[1, { ...a, ageMs: 5 }]])), { added: [], removed: [] });

@@ -11,7 +11,7 @@
 import { type GatewayMessage } from "../gen/gateway_pb";
 import { LogLevel } from "../gen/mark4_pb";
 import { type Ack, type GatewaySocket } from "./gateway_socket";
-import { NodeModel, type NodeView, nodeColor } from "./nodes";
+import { NodeModel, type NodeView, hexNodeId, logModuleName, nodeColor } from "./nodes";
 
 /** A node not heard for this long is stale, whatever the gateway still lists. */
 const STALE_MS = 3000;
@@ -94,15 +94,15 @@ export class Shell {
         });
         socket.onEnvelope((src, envelope) => {
             this.nodes.noteFrame(src);
-            // A console line of a node that has no console on this desk: the
-            // board behind its relay. INFO is fine; anything above is bad.
-            if (envelope.body.case === "log") {
+            // A log line of any node, the gateway included: only what needs
+            // an operator is toasted, prefixed with the module that said it.
+            if (envelope.body.case === "log" && envelope.body.value.level >= LogLevel.WARN) {
                 const line = envelope.body.value;
-                const who = this.nodes.get(src)?.name ?? `node ${src}`;
-                this.notify(`${who}: ${line.text}`, line.level === LogLevel.INFO);
+                const node = this.nodes.get(src);
+                const who = node?.name ?? `node ${hexNodeId(src)}`;
+                this.notify(`${who} ${logModuleName(node, line.moduleId)}: ${line.text}`, false);
             }
         });
-        socket.on("log", (line) => this.notify(`gateway: ${line.text}`, line.level === LogLevel.INFO));
     }
 
     /** One line to the operator, shared by the page and the shell itself. */
@@ -146,7 +146,7 @@ export class Shell {
             chip.appendChild(name);
             const detail = document.createElement("span");
             detail.textContent =
-                ` node ${node.id}` +
+                ` node ${hexNodeId(node.id)}` +
                 ` ${(node.ageMs / 1000).toFixed(1)} s ago` +
                 (node.wireMismatch ? " WIRE MISMATCH" : "");
             chip.appendChild(detail);

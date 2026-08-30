@@ -22,7 +22,7 @@ import { create } from "@bufbuild/protobuf";
 
 import { GatewayMessageSchema, type OtaState, OtaCommand_Op } from "../gen/gateway_pb";
 import type { GatewaySocket } from "../shared/gateway_socket";
-import type { NodeModel, NodeView } from "../shared/nodes";
+import { type NodeModel, type NodeView, hexNodeId } from "../shared/nodes";
 import {
     IDLE_OTA,
     TERMINAL,
@@ -188,7 +188,7 @@ export class OtaPanel {
         for (const node of drones) {
             const option = document.createElement("option");
             option.value = String(node.id);
-            option.textContent = `${node.name} (node ${node.id})`;
+            option.textContent = `${node.name} (node ${hexNodeId(node.id)})`;
             this.targetSelect.appendChild(option);
         }
         this.targetSelect.value = String(this.target);

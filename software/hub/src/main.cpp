@@ -10,9 +10,13 @@
 #include <cstdio>
 
 #include "hub/hub_app.hpp"
+#include "log/module.hpp"
+#include "log_modules.hpp"
 
 namespace
 {
+    mark4::LogModule MODULE{mark4::LOG_MODULE_APP_MAIN, "app/main"};
+
     /// App the signal handlers stop. A file-scope pointer is the only thing a
     /// POSIX handler can reach, and requestStop() is the only thing it calls:
     /// one atomic store, nothing else.
@@ -46,16 +50,15 @@ int main(int argc, char **argv)
     mark4::HubApp app{mark4::HubApp::Config{}};
     if (!app.init())
     {
-        static_cast<void>(std::fprintf(stderr, "hub: initialization failed\n"));
+        MODULE.error("initialization failed");
         return 1;
     }
     G_APP.store(&app);
     static_cast<void>(std::signal(SIGINT, onStopSignal));
     static_cast<void>(std::signal(SIGTERM, onStopSignal));
 
-    static_cast<void>(std::printf("hub: pages and websocket on http://127.0.0.1:%u\n",
-                                  static_cast<unsigned>(mark4::HubApp::WS_PORT)));
-    static_cast<void>(std::fflush(stdout));
+    MODULE.info("pages and websocket on http://127.0.0.1:%u",
+                static_cast<unsigned>(mark4::HubApp::WS_PORT));
 
     const int code = app.run(nullptr);
     G_APP.store(nullptr);

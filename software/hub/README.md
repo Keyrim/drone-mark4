@@ -7,15 +7,17 @@ send frames back. It decodes nothing on their behalf: the pages carry
 their own generated codec of `mark4.proto` and read the same `Envelope`
 the drones emit. What the hub owns is what a browser cannot: the `.ota`
 bundle on disk, the tuning profiles on disk, and the node table with its
-frame counters.
+frame counters and every node's log module table.
 
 That same TCP port also serves the static pages: the library dispatches on
 the `Upgrade` header, so a page loaded from the hub reaches it back with
 `new WebSocket("ws://" + location.host)` and never learns a port of its own.
 
-It links the `protocol` (both schemas), `transport` and `hub_core`
+It links the `protocol` (both schemas), `transport`, `log` and `hub_core`
 libraries and nothing else: never `flight-core`, never `platform`. Desktop
-only.
+only. It logs like every node (`gateway/core`, `gateway/ws`, `app/main`
+modules): on its stdout, and as `Log` envelopes on the transport from its
+own node id, mirrored to its clients as frames from itself.
 
 ## Building and running
 
@@ -67,33 +69,34 @@ Gateway to client:
 | body | when | what |
 |------|------|------|
 | `frame` | every payload the transport delivers | `src` node id, `payload` = one encoded `Envelope` (telemetry, tuning answers, log lines, OTA answers, announces: whatever the node sent). `dst` is left 0: the transport does not report it, and a delivered frame was for the gateway or for everyone anyway. |
-| `nodes` | every second, on every table change, on connect | `NodeTable`: the gateway itself first (address empty), then every node the transport hears: id, IPv4 `address`, `port`, `last_seen_ms_ago`, `received` / `lost` / `duplicates` frame counters, and its last `Announce` when it has beaconed. |
+| `nodes` | every second, on every table change, on connect | `NodeTable`: the gateway itself first (address empty), then every node the transport hears: id, IPv4 `address`, `port`, `last_seen_ms_ago`, `received` / `lost` / `duplicates` frame counters, its last `Announce` when it has beaconed, and its `log_modules` (the last `LogModules` table it published, whole; the gateway queries a node the moment it appears, so a client connecting late still knows every module and level). |
 | `status` | every second, on connect | `GatewayStatus`: the gateway's node id, `wire_hash` (of `mark4.proto` as built), `clients`, `rc_clients` (clients that sent an Rc frame within 2 s), `frames_in`, `frames_out`, `dropped`, `bad_frames`. |
 | `ota_state` | on every change of the update client, on connect | phase, verdict and its sentence, `target_node`, `target_slot`, the loaded bundle's identity, what the board last said (slots, running / active slot), transfer progress in bytes. |
 | `profiles` | answering `LIST` and `SAVE` | the profile names on disk. |
 | `profile` | answering `LOAD` | one profile: name and `TuningSet` pairs. |
 | `ack` | answering any client message whose `id` is not 0 | `ok`, `error`; `GatewayMessage.id` echoes the client's. Acks are broadcast to every client: a client correlates on the id it drew and ignores the rest. |
-| `log` | reserved for the gateway's own lines | not emitted today; the nodes' `Log` envelopes arrive as frames. |
 
 Client to gateway:
 
 | body | what the gateway does |
 |------|-----------------------|
-| `frame` | `Transport::send(dst, payload)`: a unicast to that node id, or a broadcast when `dst` is 0. The payload is not decoded (its first byte is compared with the `Rc` tag to count pilots). Refused when the node is unknown. This is how RC, tuning, scenarios and reboots travel. |
+| `frame` | `Transport::send(dst, payload)`: a unicast to that node id, or a broadcast when `dst` is 0. The payload is not decoded (its first byte is compared with the `Rc` tag to count pilots). Refused when the node is unknown. This is how RC, tuning, scenarios, reboots and `LogControl` travel; a `LogControl` addressed to the gateway's own node id is handled by the gateway (it does not forward to itself). |
 | `ota_command` | `START` (bundle path, empty = the build output), `ABORT`, `REVERT`, `STATUS_REQUEST`, each naming `target_node`. The target is fixed for the whole session: while a session runs, a command naming another node is refused; `ABORT` always works. |
 | `profile_command` | `LIST`, `SAVE` (name + values), `LOAD` (name), `PUSH` (name + `target_node`: one `TuningSet` frame per value). Names are letters, digits, `_` and `-`. |
 
 A client that connects gets `nodes`, `status` and `ota_state` immediately.
 The wire mismatch of a node is not a field: a page compares
 `Node.announce.wire_hash` with `GatewayStatus.wire_hash`; the hub also
-prints the mismatch once on stderr when the announce arrives.
+logs the mismatch once (a `gateway/core` WARN) when the announce arrives.
 
 Simplifications, deliberate: the gateway's own beacon is not replayed as a
 `frame` (the gateway is the first entry of `nodes`, with its Announce);
 `Frame.dst` is 0 on delivered frames; the Ack carries its id on the
-enclosing message only; `Log` exists in the schema for the day the gateway
-has something to say. `gateway.proto` is not part of `WIRE_HASH`: the
-pages are built from the same tree as the hub that serves them.
+enclosing message only; there is no gateway-level log message (field 31 of
+`GatewayMessage` was one and stays reserved): the gateway's lines are
+`Log` envelopes in frames from its own node id, like everyone else's.
+`gateway.proto` is not part of `WIRE_HASH`: the pages are built from the
+same tree as the hub that serves them.
 
 ## Firmware update
 

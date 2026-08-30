@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <poll.h>
@@ -19,12 +18,16 @@
 #include <vector>
 
 #include "hub/gateway_codec.hpp"
+#include "log/module.hpp"
+#include "log_modules.hpp"
 #include "transport/node_id.hpp"
 
 namespace mark4
 {
     namespace
     {
+        LogModule MODULE{LOG_MODULE_GATEWAY_CORE, "gateway/core"};
+
         constexpr std::uint64_t US_PER_MS = 1000U;
 
         /// Size of the buffer the path of the running executable is read into.
@@ -102,16 +105,51 @@ namespace mark4
     {
     }
 
+    bool HubApp::SendLog(void *context, const std::uint8_t *data, std::size_t size)
+    {
+        auto *self = static_cast<HubApp *>(context);
+        const bool sent = self->m_transport.send(BROADCAST_NODE, data, size);
+        if (size <= sizeof(mark4_Frame::payload.bytes))
+        {
+            mark4_GatewayMessage message = mark4_GatewayMessage_init_zero;
+            message.which_body = mark4_GatewayMessage_frame_tag;
+            message.body.frame.src = self->m_transport.nodeId();
+            message.body.frame.payload.size = static_cast<pb_size_t>(size);
+            std::memcpy(message.body.frame.payload.bytes, data, size);
+            self->broadcast(message);
+        }
+        return sent;
+    }
+
+    std::uint64_t HubApp::LogClock(void *context)
+    {
+        static_cast<void>(context);
+        return monotonicUs();
+    }
+
+    void HubApp::publishLogModules()
+    {
+        static_cast<void>(logPublishModules(&HubApp::SendLog, this));
+        m_nodesDirty = true; // the gateway's own entry carries its table
+    }
+
     bool HubApp::init()
     {
+        logSetClock(&HubApp::LogClock, this);
+        static_cast<void>(logAddSink(m_consoleSink));
         // One link, the LAN: every drone is a node on it, the board through
         // the relay riding it (esp32-bridge/), so there is nothing to relay
         // here and no second path to open.
         if (!m_udpLink.init() || !m_transport.addLink(m_udpLink) || !m_transport.init())
         {
-            static_cast<void>(std::fprintf(stderr, "hub: cannot start the transport\n"));
+            MODULE.error("cannot start the transport");
             return false;
         }
+        static_cast<void>(logAddSink(m_logSink));
+        MODULE.info("boot: node %s on discovery udp/%u, wire %08x",
+                    hexNodeId(m_transport.nodeId()).c_str(),
+                    static_cast<unsigned>(m_udpLink.discoveryPort()),
+                    WIRE_HASH);
         m_transport.setNodeCallbacks(&HubApp::OnNodeUp, &HubApp::OnNodeDown, this);
         // The gateway's own beacon: every node learns the gateway and the
         // schema it speaks, and the flight processes learn where to unicast.
@@ -127,7 +165,7 @@ namespace mark4
         if (!encodeEnvelope(announce, beacon.data(), beacon.size(), beaconSize) ||
             beaconSize > Transport::MAX_BEACON_SIZE)
         {
-            static_cast<void>(std::fprintf(stderr, "hub: the announce does not fit a beacon\n"));
+            MODULE.error("the announce does not fit a beacon");
             return false;
         }
         m_transport.setBeacon(beacon.data(), beaconSize);
@@ -140,8 +178,7 @@ namespace mark4
         {
             // A hub without pages still forwards and serves the websocket:
             // the pages are a client, not a dependency.
-            static_cast<void>(
-                std::printf("hub: no pages in %s, serving none\n", m_config.pagesDir.c_str()));
+            MODULE.warn("no pages in %s, serving none", m_config.pagesDir.c_str());
         }
         HttpConfig http;
         http.pagesDir = m_config.pagesDir;
@@ -192,6 +229,12 @@ namespace mark4
                 fds.data(), fds.size(), m_ota.busy() ? OTA_POLL_TIMEOUT_MS : POLL_TIMEOUT_MS));
 
             m_transport.poll(monotonicUs(), &HubApp::OnFrame, this);
+            if (!m_logModulesPublished)
+            {
+                // The first poll sent the first beacon: the table follows it.
+                m_logModulesPublished = true;
+                publishLogModules();
+            }
             handleClientMessages();
             housekeeping(monotonicUs());
         }
@@ -208,15 +251,25 @@ namespace mark4
 
     void HubApp::OnNodeUp(void *context, const Transport::Node &node)
     {
-        static_cast<void>(std::printf("hub: node %u appeared\n", node.id));
-        static_cast<HubApp *>(context)->m_nodesDirty = true;
+        auto *self = static_cast<HubApp *>(context);
+        MODULE.info("node %s appeared", hexNodeId(node.id).c_str());
+        self->m_nodesDirty = true;
+        // A node that booted before this gateway published its table into
+        // the void: ask for it, so the clients know its modules either way.
+        mark4_Envelope query = mark4_Envelope_init_zero;
+        query.which_body = mark4_Envelope_log_control_tag;
+        query.body.log_control.which_request = mark4_LogControl_query_tag;
+        query.body.log_control.request.query = true;
+        std::string ignored;
+        static_cast<void>(self->sendEnvelope(node.id, query, ignored));
     }
 
     void HubApp::OnNodeDown(void *context, const Transport::Node &node)
     {
-        static_cast<void>(std::printf("hub: node %u disappeared\n", node.id));
         auto *self = static_cast<HubApp *>(context);
+        MODULE.info("node %s disappeared", hexNodeId(node.id).c_str());
         self->m_announces.erase(node.id);
+        self->m_logModules.erase(node.id);
         self->m_nodesDirty = true;
     }
 
@@ -234,8 +287,9 @@ namespace mark4
         std::memcpy(message.body.frame.payload.bytes, data, size);
         broadcast(message);
 
-        // The two things the gateway reads: who is who, and the updater's
-        // answers. Everything else is the clients' business.
+        // The things the gateway reads: who is who, which modules a node
+        // logs with, the levels a client sets on the gateway itself, and the
+        // updater's answers. Everything else is the clients' business.
         mark4_Envelope envelope;
         if (!decodeEnvelope(data, size, envelope))
         {
@@ -251,22 +305,26 @@ namespace mark4
                     m_nodesDirty = true;
                     if (envelope.body.announce.wire_hash != WIRE_HASH)
                     {
-                        static_cast<void>(std::fprintf(
-                            stderr,
-                            "hub: node %u speaks wire %08x, this hub speaks %08x: rebuild and "
-                            "reflash it (docs/ota-design.md)\n",
-                            src,
-                            envelope.body.announce.wire_hash,
-                            WIRE_HASH));
+                        MODULE.warn("node %s speaks wire %08x, this gateway speaks %08x: "
+                                    "rebuild and reflash it",
+                                    hexNodeId(src).c_str(),
+                                    envelope.body.announce.wire_hash,
+                                    WIRE_HASH);
                     }
                 }
                 return;
             }
-            case mark4_Envelope_log_tag:
-                // A console line of a node without a console: printed here
-                // too, for a bench with no page open.
-                static_cast<void>(std::printf("node %u: %s\n", src, envelope.body.log.text));
-                static_cast<void>(std::fflush(stdout));
+            case mark4_Envelope_log_modules_tag:
+                applyLogModulesPage(envelope.body.log_modules, m_logModules[src]);
+                m_nodesDirty = true;
+                return;
+            case mark4_Envelope_log_control_tag:
+                // Addressed to this node: a client drives the gateway's own
+                // levels like any other node's.
+                if (logHandleControl(envelope.body.log_control))
+                {
+                    publishLogModules();
+                }
                 return;
             default:
                 static_cast<void>(m_ota.onEnvelope(envelope, monotonicUs()));
@@ -287,7 +345,7 @@ namespace mark4
         }
         if (!m_transport.send(dst, bytes.data(), size))
         {
-            errorOut = "node " + std::to_string(dst) + " is not reachable";
+            errorOut = "node " + hexNodeId(dst) + " is not reachable";
             return false;
         }
         ++m_framesOut;
@@ -345,7 +403,7 @@ namespace mark4
                 if (!m_transport.send(frame.dst, frame.payload.bytes, frame.payload.size))
                 {
                     ++m_badFrames;
-                    errorOut = "node " + std::to_string(frame.dst) + " is not reachable";
+                    errorOut = "node " + hexNodeId(frame.dst) + " is not reachable";
                     return false;
                 }
                 ++m_framesOut;
@@ -435,15 +493,18 @@ namespace mark4
         Transport::Node self;
         self.id = m_transport.nodeId();
         self.lastSeenUs = nowUs;
-        fillNode(self, nowUs, &m_ownAnnounce, table.nodes[0]);
+        fillNode(self, nowUs, &m_ownAnnounce, ownLogModules(), table.nodes[0]);
         table.nodes_count = 1U;
+        static const LogModuleTable NO_MODULES;
         for (std::size_t i = 0U; i < m_transport.nodeCount(); ++i)
         {
             const Transport::Node &node = m_transport.node(i);
             const auto announce = m_announces.find(node.id);
+            const auto modules = m_logModules.find(node.id);
             fillNode(node,
                      nowUs,
                      announce == m_announces.end() ? nullptr : &announce->second,
+                     modules == m_logModules.end() ? NO_MODULES : modules->second,
                      table.nodes[table.nodes_count]);
             ++table.nodes_count;
         }
@@ -485,6 +546,11 @@ namespace mark4
             return nowUs - entry.second > RC_PILOT_WINDOW_US;
         });
         m_ota.tick(nowUs);
+        if (m_udpLink.loopbackFallback() && !m_loopbackWarned)
+        {
+            m_loopbackWarned = true;
+            MODULE.warn("no route for 255.255.255.255: broadcasting on the loopback");
+        }
 
         // A client that just connected knows nothing yet: it gets the table,
         // the counters and the update state as they stand.

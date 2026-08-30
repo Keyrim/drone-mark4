@@ -12,9 +12,12 @@
 #include <string>
 
 #include "gateway.pb.h"
+#include "hub/gateway_codec.hpp"
 #include "hub/ota_client.hpp"
 #include "hub/tuning_profiles.hpp"
 #include "hub/ws_bridge.hpp"
+#include "log/console_sink_posix.hpp"
+#include "log/wire.hpp"
 #include "protocol/envelope.hpp"
 #include "transport/transport.hpp"
 #include "transport/udp_link.hpp"
@@ -29,8 +32,10 @@ namespace mark4
     /// The gateway forwards and does not interpret: every payload the
     /// transport delivers goes to the clients as a Frame, every Frame a
     /// client sends goes out on the transport. It decodes envelopes for two
-    /// things only: to remember each node's last Announce (the node table)
-    /// and to feed the update client its answers.
+    /// things only: to remember each node's last Announce and LogModules
+    /// table (the node table) and to feed the update client its answers.
+    /// It is a node too: its own log lines leave as Log envelopes on the
+    /// transport and are mirrored to the clients as frames from itself.
     class HubApp
     {
       public:
@@ -120,6 +125,18 @@ namespace mark4
         static void OnNodeUp(void *context, const Transport::Node &node);
         static void OnNodeDown(void *context, const Transport::Node &node);
 
+        /// @brief Route of the gateway's own log lines and module table: a
+        ///        transport broadcast, mirrored to the clients as a frame
+        ///        from this node (the transport never hands a node its own
+        ///        broadcasts back).
+        static bool SendLog(void *context, const std::uint8_t *data, std::size_t size);
+
+        /// @brief Clock the log records are stamped with.
+        static std::uint64_t LogClock(void *context);
+
+        /// @brief Publishes this node's module table (LogModules pages).
+        void publishLogModules();
+
         /// @brief Sends one envelope to one node as a transport unicast.
         /// @param dst node to reach
         /// @param envelope message to send
@@ -162,17 +179,22 @@ namespace mark4
         TuningProfiles m_profiles;                               ///< stored tuning profiles
         UdpLink m_udpLink;                                       ///< the LAN link, the only one
         Transport m_transport;                                   ///< this hub as a transport node
+        ConsoleSinkPosix m_consoleSink;                          ///< log lines on stdout
+        TransportSink m_logSink{&HubApp::SendLog, this};         ///< log lines on the wire
         WsBridge m_ws;                                           ///< websocket endpoint
         OtaClient m_ota;                                         ///< firmware update session
         std::uint32_t m_otaTarget = 0U;                          ///< node the updater talks to
         mark4_Announce m_ownAnnounce = mark4_Announce_init_zero; ///< this gateway's beacon
         std::map<std::uint32_t, mark4_Announce> m_announces;     ///< last beacon per node
+        std::map<std::uint32_t, LogModuleTable> m_logModules;    ///< last module table per node
         std::map<std::string, std::uint64_t> m_rcSeenUs;         ///< last RC instant per client
         std::atomic_bool m_stopRequested{false};                 ///< set by a signal handler
         std::uint64_t m_nextStatusUs = 0U;                       ///< next periodic publish [us]
         bool m_nodesDirty = false;                               ///< table changed since published
-        std::uint32_t m_framesIn = 0U;  ///< payloads delivered by the transport
-        std::uint32_t m_framesOut = 0U; ///< frames sent for clients
-        std::uint32_t m_badFrames = 0U; ///< client frames refused
+        bool m_logModulesPublished = false; ///< own table sent after the first beacon
+        bool m_loopbackWarned = false;      ///< the link's fallback was logged
+        std::uint32_t m_framesIn = 0U;      ///< payloads delivered by the transport
+        std::uint32_t m_framesOut = 0U;     ///< frames sent for clients
+        std::uint32_t m_badFrames = 0U;     ///< client frames refused
     };
 } // namespace mark4

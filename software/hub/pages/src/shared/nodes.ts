@@ -10,7 +10,7 @@
  */
 
 import { type Node, type NodeTable } from "../gen/gateway_pb";
-import { type Announce, NodeKind } from "../gen/mark4_pb";
+import { type Announce, type LogModuleInfo, NodeKind } from "../gen/mark4_pb";
 
 /** How a page reads one node. */
 export interface NodeView {
@@ -27,6 +27,18 @@ export interface NodeView {
     /** The node was built on another mark4.proto than the gateway: listed, and mute. */
     readonly wireMismatch: boolean;
     readonly announce: Announce | undefined;
+    /** The node's log modules and levels, as last published; empty until then. */
+    readonly logModules: readonly LogModuleInfo[];
+}
+
+/** A node id as every log line prints it: 8 hex digits. */
+export function hexNodeId(id: number): string {
+    return (id >>> 0).toString(16).padStart(8, "0");
+}
+
+/** The name of a node's log module, or "#id" when its table does not list it. */
+export function logModuleName(node: NodeView | undefined, moduleId: number): string {
+    return node?.logModules.find((module) => module.id === moduleId)?.name ?? `#${moduleId}`;
 }
 
 export const KIND_NAMES: Record<number, string> = {
@@ -96,6 +108,7 @@ function toView(node: Node, gatewayWireHash: number): NodeView {
         lost: node.lost,
         wireMismatch: wireMismatch(node.announce, gatewayWireHash),
         announce: node.announce,
+        logModules: node.logModules,
     };
 }
 
@@ -160,13 +173,14 @@ export class NodeModel {
             id: src,
             kind: NodeKind.NODE_KIND_UNSPECIFIED,
             kindName: kindName(NodeKind.NODE_KIND_UNSPECIFIED),
-            name: `node ${src}`,
+            name: `node ${hexNodeId(src)}`,
             address: "",
             ageMs: 0,
             received: 0,
             lost: 0,
             wireMismatch: false,
             announce: undefined,
+            logModules: [],
         });
         this.replace(next);
     }

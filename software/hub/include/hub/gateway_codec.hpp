@@ -11,6 +11,7 @@
 #include <functional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "gateway.pb.h"
 #include "hub/ota_client.hpp"
@@ -85,15 +86,35 @@ namespace mark4
     /// @param[out] profileOut receives them, truncated to the wire bound
     void fillProfile(std::string_view name, const TuningValues &values, mark4_Profile &profileOut);
 
+    /// A node's log module table, as the gateway remembers it.
+    using LogModuleTable = std::vector<mark4_LogModuleInfo>;
+
     /// @brief Fills one Node entry of the table from the transport's record.
     /// @param node transport record
     /// @param nowUs current time [us], turned into an age
     /// @param announce last beacon of that node, nullptr when none
+    /// @param logModules the node's last module table, truncated to the
+    ///        wire bound; empty when it never published one
     /// @param[out] nodeOut receives the entry
     void fillNode(const Transport::Node &node,
                   std::uint64_t nowUs,
                   const mark4_Announce *announce,
+                  const LogModuleTable &logModules,
                   mark4_Node &nodeOut);
+
+    /// @brief Merges one LogModules page into a node's table: a page opening
+    ///        at index 0 restarts the table, every page sizes it to the total
+    ///        it announces.
+    /// @param page the page received
+    /// @param[in,out] tableInOut the node's table
+    void applyLogModulesPage(const mark4_LogModules &page, LogModuleTable &tableInOut);
+
+    /// @brief The gateway's own module table, read from the log registry.
+    /// @return the table
+    LogModuleTable ownLogModules();
+
+    /// @return a node id as the 8 hex digits every log line prints it with
+    std::string hexNodeId(std::uint32_t id);
 
     /// @brief Copies a string into a fixed wire field, truncating.
     /// @param text source

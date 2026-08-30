@@ -32,10 +32,12 @@ add_library(hub_core STATIC
     src/ota_bundle.cpp
     src/ota_client.cpp
     src/tuning_profiles.cpp)
-target_include_directories(hub_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(hub_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+                                            ${CMAKE_CURRENT_SOURCE_DIR})
 # nlohmann_json reads the two on-disk formats (the bundle manifest, the
 # profile files); nothing of it reaches the websocket.
-target_link_libraries(hub_core PUBLIC protocol nanopb_gateway transport nlohmann_json::nlohmann_json)
+target_link_libraries(hub_core
+    PUBLIC protocol nanopb_gateway transport log log_wire nlohmann_json::nlohmann_json)
 target_link_libraries(hub_core PRIVATE drone_warnings)
 
 # The hub itself: hub_core plus everything that owns a resource. Desktop only,
