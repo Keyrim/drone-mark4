@@ -15,7 +15,7 @@ import { SeriesBuffer, type LaneConfig } from "../lanes/model";
 import { Ruler, RULER_H } from "../lanes/ruler";
 import { clampToData, pan, ticks, zoom, type Viewport } from "../lanes/timebase";
 import { GatewaySocket } from "../shared/gateway_socket";
-import { isDrone } from "../shared/nodes";
+import { nodeLabel } from "../shared/nodes";
 import { DEFAULT_LANES, LIVE_SERIES, sampleTelemetry } from "../shared/series";
 import { Shell } from "../shared/shell";
 
@@ -86,13 +86,12 @@ function toolbarButton(label: string, onClick: (button: HTMLButtonElement) => vo
 }
 
 // Several drones may stream at once; the lanes draw exactly one, by node
-// id. The first drone seen locks the selector, switching it starts the
-// buffers over.
+// id. The selector lists the drones of the table, the first one is the
+// default, and switching it starts the buffers over.
 let sourceNode: number | null = null;
-const seenSources = new Set<number>();
 const sourceSelect = document.createElement("select");
 sourceSelect.className = "config-select";
-sourceSelect.title = "node whose telemetry the lanes draw";
+sourceSelect.title = "drone whose telemetry the lanes draw";
 sourceSelect.addEventListener("change", () => {
     sourceNode = Number(sourceSelect.value);
     clearBuffers();
@@ -107,40 +106,24 @@ function clearBuffers(): void {
     dirty = true;
 }
 
-function paintSources(): void {
+shell.nodes.onChange(() => {
+    // Only a drone has telemetry to draw, and the source follows the table:
+    // when the drawn one leaves, the first remaining drone takes over and
+    // the buffers start again on it.
+    const drones = shell.nodes.drones();
+    const next = drones.some((node) => node.id === sourceNode) ? sourceNode : (drones[0]?.id ?? null);
+    if (next !== sourceNode) {
+        sourceNode = next;
+        clearBuffers();
+    }
     sourceSelect.replaceChildren();
-    for (const id of [...seenSources].sort((a, b) => a - b)) {
+    for (const node of drones) {
         const option = document.createElement("option");
-        option.value = String(id);
-        const node = shell.nodes.get(id);
-        option.textContent = node === undefined ? `node ${id}` : `${node.name} (node ${id})`;
+        option.value = String(node.id);
+        option.textContent = nodeLabel(node);
         sourceSelect.appendChild(option);
     }
-    sourceSelect.value = String(sourceNode);
-}
-
-function noteSource(id: number): void {
-    if (seenSources.has(id)) {
-        return;
-    }
-    seenSources.add(id);
-    if (sourceNode === null) {
-        sourceNode = id;
-    }
-    paintSources();
-}
-
-shell.nodes.onChange((nodes) => {
-    // A source that streams is a source, named or not; the names come from
-    // the table, and a first drone listed before it streams is the default.
-    if (sourceNode === null) {
-        const drone = nodes.filter(isDrone).sort((a, b) => a.id - b.id)[0];
-        if (drone !== undefined) {
-            sourceNode = drone.id;
-            seenSources.add(drone.id);
-        }
-    }
-    paintSources();
+    sourceSelect.value = sourceNode === null ? "" : String(sourceNode);
 });
 
 const windowButtons = WINDOWS_S.map((seconds) =>
@@ -196,7 +179,6 @@ socket.onEnvelope((src, envelope) => {
     if (paused || envelope.body.case !== "telemetry") {
         return;
     }
-    noteSource(src);
     if (src !== sourceNode) {
         return;
     }
