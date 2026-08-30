@@ -2,7 +2,10 @@
 
 The web front end the hub serves: two windows meant for two screens,
 `index.html` (control: one widget per drone node and the 3D attitude, the
-default view) and `plots.html` (the lanes). Plain TypeScript bundled by
+default view) and `plots.html` (the lanes). They show the drones, not the
+system: the inventory of transport nodes and the log stream belong to the
+editor extension (`tools/vscode-mark4`), so the pages never list a node
+that is not a drone. Plain TypeScript bundled by
 esbuild into `dist/`, one ESM bundle per page plus a single `style.css`: no
 framework, no runtime template engine, nothing for the hub to do beyond
 handing out static files.
@@ -32,8 +35,8 @@ the same schema as the hub that serves them. `uint64` fields come out as
 - `src/shared/` - modules every page uses: the binary websocket link
   (`gateway_socket.ts`: `GatewayMessage` both ways, per-case handlers,
   `onEnvelope` for decoded frames, ack correlation), the node model
-  (`nodes.ts`), the page shell (`shell.ts`, top bar with one chip per node +
-  toasts), the quaternion helpers (`quat.ts`) and the series catalog
+  (`nodes.ts`), the page shell (`shell.ts`, a thin top bar with the page's
+  own controls, the connection state and the toasts), the quaternion helpers (`quat.ts`) and the series catalog
   (`series.ts`).
 - `src/lanes/` - the lane viewer: time-axis math, sample buffers, the uPlot
   charts, the ruler and the lane configuration panel.
@@ -44,6 +47,10 @@ the same schema as the hub that serves them. `uint64` fields come out as
   (phase, throw detector, altitude, motors); the controls are the
   kill/arm/mode switches and a throttle slider, the folded scenario block
   (drone_sim only) and the tuning table with the gateway's profiles.
+  Its header is the node name as title, the kind as a badge, the node id in
+  8 hex digits, muted, and a WIRE MISMATCH badge when the node was built on
+  another schema than the gateway; a node the gateway has not heard from for
+  1.5 s dims until it comes back or leaves. No age is ever written out.
   `rc.ts` is the piloting state, pure and unit tested. `ota_panel.ts` is
   the firmware update panel, over the pure `ota.ts`; its target is a node
   picked in the panel.
@@ -78,14 +85,18 @@ whose id is not in the map belongs to another tab and is dropped.
 node id the transport hears, its last Announce, its age and counters),
 refreshed by the frames that arrive between two tables, and the gateway's
 own wire hash from `GatewayStatus`. Everything on screen is keyed by node
-id: a chip in the top bar for every node (kind, name, id, age, and a red
-WIRE MISMATCH flag when `Announce.wire_hash` differs from the gateway's),
-a widget for every drone, a source entry for every node that streams
-telemetry. Colors are a stable hash of the node id, so a drone wears the
+id: a widget for every drone, a source entry for every drone in the plots
+and update selectors (`nodeLabel`, the name then the 8 hex digits of the
+id). Colors are a stable hash of the node id, so a drone wears the
 same color in every tab. `onChange` reports the diff (nodes added, ids
 removed, a kind change counting as both), which is exactly the widget
-lifecycle; `test/nodes.test.ts` covers it, two `drone_sim` staying two
-entries included.
+lifecycle, and carries the fresh views the widgets repaint from;
+`test/nodes.test.ts` covers it, two `drone_sim` staying two entries, the
+header fields and the drones-only selector list included.
+
+The top bar shows nothing of that table. The one thing it keeps besides the
+connection state is the multi-pilot warning: it is a safety matter, not
+inventory.
 
 ## Exact state
 
