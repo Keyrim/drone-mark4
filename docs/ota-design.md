@@ -330,12 +330,14 @@ nothing; platform speaks protocol; humans speak to the hub):
   wire (packaging script writes it, bootloader and hub read it); the
   packaging tool carries a Python-side encoder checked against the C++
   constants.
-- **`platform/AbsFirmwareStore`** - a seventh abstract platform service:
-  slot geometry, erase slot, program in order, read back, compute CRC,
-  read and append metadata records. Implementations: `stm32` (internal
-  flash driver plus the hardware CRC unit) and `sim` (file-backed slots
-  in the run directory). flight-core never sees it.
-- **`OtaUpdater`** (platform_common) - the board-side session state
+- **`AbsFirmwareStore`** (components/ota; formerly a platform header,
+  moved per section 8.1) - slot geometry, erase slot, program in order,
+  read back, compute CRC, read and append metadata records.
+  Implementations stay with their targets: `stm32` (internal flash
+  driver plus the hardware CRC unit), `sim` (file-backed slots in the
+  run directory), and `esp32` (section 8.3). flight-core never sees it.
+- **`OtaUpdater`** (components/ota; formerly platform_common, moved
+  per section 8.1) - the board-side session state
   machine: consumes OTA packets, drives an AbsFirmwareStore, emits
   replies. Pure logic against an abstract store, so it unit-tests on
   desktop with fault injection: lost chunks, duplicates, stale sessions,
@@ -397,8 +399,135 @@ roll back.
 - **Bootloader recovery over UART.** It would double the bootloader to
   cover a state (both slots dead) the update path cannot produce. SWD is
   the recovery of last resort, exactly as it is today.
-- **Bootloader self-update and ESP32 relay OTA.** Both are SWD/USB
-  flashes on the bench today and neither blocks the drone loop. The
-  relay has ESP-IDF's own OTA machinery the day it matters.
+- **Bootloader self-update.** An SWD flash on the bench today, and it
+  never blocks the drone loop. (ESP32 relay OTA sat in this list in v1;
+  it is designed in section 8 now.)
 - **Delta updates and compression.** At 128 KB over a 92 KB/s link, the
   problem they solve does not exist here.
+
+## 8. The relay updates over the same wire (ESP32 OTA)
+
+The v1 flow above updates the F405 from the pages with no probe. The
+relay riding the drone is the last node still asking for a USB cable,
+and everything the flow needs already exists for it: the `Ota*`
+messages name no chip (`OtaStatus.mcu` says which one is answering,
+`Mcu.ESP32C3` exists, and the hub already refuses a bundle whose mcu
+does not match the board), the transfer is transport unicasts and the
+relay is a transport node, and ESP-IDF ships a dual-slot bootloader
+with rollback - the same shape as sections 4.4 and 4.5, implemented by
+someone else. The relay updates over UDP directly, so the 92 KB/s UART
+budget of section 2 does not even apply to it.
+
+### 8.1 One OTA brick: components/ota
+
+The device-side OTA code currently lives in the platform library
+(`platform/firmware_store.hpp`, `platform_common/ota_updater.hpp`,
+`ota_boot_policy.hpp`, `ota_meta_log.hpp`, `crc32_mpeg2.hpp`). That
+placement was convenience, not design: the platform layer is defined as
+the abstract services of the flight loop, and OTA is not one - it is a
+node brick, like `log` and `transport`, wanted by the firmware, the
+desktop flight process, the hub (which keeps its `OtaClient` outside
+platform already, having no platform at all) and now the relay, which
+links `components/` sources only and has no reason to start including
+platform headers for a non-flight concern.
+
+So the brick moves to **`software/components/ota/`**: `AbsFirmwareStore`
+and the `OtaMetaState`/`OtaMetaRecord` types, `OtaUpdater`, the boot
+policy, the metadata log, and the CRC-32/MPEG-2 helper. Header-only
+INTERFACE target `ota`, depending on `protocol` alone; include paths
+keep the module prefix (`#include "ota/updater.hpp"`). The store
+implementations do not move: they are genuinely target-specific and
+stay with their targets (`platform_stm32`, `platform_sim`, and the new
+one inside `esp32-bridge/main/`). A mechanical move for the existing
+code paths - same headers, new address - plus the interface growth of
+section 8.2.
+
+### 8.2 What the generic updater must stop assuming
+
+`OtaUpdater` reads the flashed image twice today, and both reads assume
+the F405 image format of section 4.3:
+
+- **finish validation**: after the CRC pass, it reads the
+  `OtaImageHeader` prefix at the slot base and checks magic, header
+  version, mcu, slot id and image size;
+- **status identity**: `OtaStatus` reports each slot's `buildEpoch` and
+  `gitHash` out of that same header.
+
+An ESP32 slot holds a raw ESP-IDF image (the IDF bootloader parses
+that format and no other), so there is no `OtaImageHeader` to read.
+Both reads become `AbsFirmwareStore` virtuals - an image-validity check
+(slot, expected size) and a slot-identity read (build epoch, git hash).
+The stm32 and sim stores implement them with the exact header-prefix
+logic the updater holds today, so F405 wire behavior does not change by
+a byte; the esp32 store implements them against the IDF image format
+(magic byte, `esp_app_desc_t`). `protocol/ota_image.hpp` is untouched.
+
+### 8.3 The esp32 store over ESP-IDF
+
+The bridge moves from the single-app partition table to the standard
+two-OTA layout: `ota_0`/`ota_1` (slots A/B) plus the `otadata` entry
+the IDF bootloader reads, and `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`
+so a new image boots exactly once as pending-verify - IDF's name for
+the one-shot trial of section 4.5. `drone_boot` and the metadata log
+are NOT compiled on the ESP32: the trial/rollback equivalence lives in
+each chip's bootloader, and `FirmwareStoreEsp32` translates between
+`OtaMetaState` and what IDF exposes:
+
+| Store call | ESP-IDF |
+|---|---|
+| `runningSlot()` | `esp_ota_get_running_partition()` subtype |
+| `slotSize()` | the partition's size |
+| `mcuId()` | `ESP32C3` |
+| `eraseSlot()` | `esp_partition_erase_range()` (whole slot) |
+| `program()` | `esp_partition_write()` |
+| `read()` | `esp_partition_read()` |
+| `crc32()` | `esp_partition_read()` + the shared software CRC |
+| `readMeta()` | synthesized: `activeSlot` from `esp_ota_get_boot_partition()`; per-slot states from `esp_ota_get_state_partition()` (VALID from img-valid, TESTING from pending-verify, BAD from invalid/aborted, EMPTY otherwise); `trialAttempted` is true while the running image is pending-verify |
+| `writeMeta()` | by diff against `readMeta()`: target newly STAGED -> `esp_ota_set_boot_partition(target)`; running slot newly VALID (the self-confirm of section 3.1) -> `esp_ota_mark_app_valid_cancel_rollback()`; `activeSlot` moved to the other valid slot (revert) -> `esp_ota_set_boot_partition(other)`; marking a slot EMPTY before its erase -> a no-op, IDF has no such state and needs none |
+
+Slot identity (section 8.2) comes from `esp_app_desc_t`: the build
+stamps `PROJECT_VER` as `<buildEpoch>-<gitHash>` at configure time (the
+two values `main/CMakeLists.txt` already computes for the Announce),
+and the store parses it back. 32 bytes of version field fit it with
+room to spare.
+
+One behavior to accept, not fix: `eraseSlot()` blocks the relay's main
+task for the seconds a partition erase takes, so the relay stops
+relaying and UART bytes fall on the floor for that window. That is the
+section 3 philosophy verbatim - an accepted update session parks normal
+operation - and the hub's begin timeout already allows for it. Updating
+the relay mid-flight is refused by nobody but common sense; the drone
+is on the ground when its radio gets reflashed.
+
+### 8.4 Bundle and ground side
+
+`scripts/make_ota.py` grows an esp32 mode: the manifest names
+`mcuId: ESP32C3` and carries **one image instead of two** - an IDF app
+image is position-independent across OTA partitions, so the same bytes
+program either slot, where the F405 links one binary per slot. The
+bundle container is unchanged (magic, JSON manifest, length-prefixed
+images); the manifest says how many images follow, and the hub's bundle
+reader picks the image for the target slot as
+`min(slot, imageCount - 1)`. No header stamping: the image is the raw
+`.bin` the IDF build produced, and the bundle CRC is computed over it
+as-is.
+
+The hub `OtaClient` and the pages change for nothing else: the OTA
+panel targets a node id, the relay is a node, and the mcu match
+refusal already exists.
+
+### 8.5 Relay composition
+
+`relay.cpp` already decodes the unicasts addressed to the relay (the
+`LogControl` path); the updater rides the same spot: decode, offer to
+`OtaUpdater::handle()` first (exactly like the firmware's command
+drain), send whatever reply comes back, plus the `Reboot` envelope
+answered with `esp_restart()`. `Inputs` are simple on a radio: never
+armed, no battery floor, `esp_timer` as the clock. The updater keeps
+its defaults - self-confirm on first ground contact included, which
+the store maps onto IDF's rollback cancel.
+
+Verification keeps the section 6 spirit: the updater's unit tests move
+with it unchanged (they run against a fake store); the new esp32 store
+is a thin translation exercised on the hardware unit; the desktop
+end-to-end CI test is untouched.
