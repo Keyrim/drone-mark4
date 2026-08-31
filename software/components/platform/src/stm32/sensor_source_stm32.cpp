@@ -62,16 +62,16 @@ namespace mark4
             ++m_readFailures;
             sample = Mpu6050Sample{};
         }
-        // Chip axes taken as body axes for now: the breakout sits flat, z
-        // up; the mapping gets a proper calibration once the mounting is
-        // final. TODO(tmagne): axis map from the mechanical mounting.
-        for (std::uint32_t axis = 0U; axis < 3U; ++axis)
-        {
-            frameOut.gyroRadS[axis] =
-                static_cast<float>(sample.gyro[axis]) * Mpu6050::GYRO_RADS_PER_LSB;
-            frameOut.accelMps2[axis] =
-                static_cast<float>(sample.accel[axis]) * Mpu6050::ACCEL_MPS2_PER_LSB;
-        }
+        // Axis map from the mechanical mounting: the chip sits flat, z up,
+        // yawed +90 deg on the frame (chip x points to body left, chip y to
+        // body rear). Body frame is x forward, y left, z up, so
+        // body = (-chip y, +chip x, +chip z) for both sensors.
+        frameOut.gyroRadS[0] = -static_cast<float>(sample.gyro[1]) * Mpu6050::GYRO_RADS_PER_LSB;
+        frameOut.gyroRadS[1] = static_cast<float>(sample.gyro[0]) * Mpu6050::GYRO_RADS_PER_LSB;
+        frameOut.gyroRadS[2] = static_cast<float>(sample.gyro[2]) * Mpu6050::GYRO_RADS_PER_LSB;
+        frameOut.accelMps2[0] = -static_cast<float>(sample.accel[1]) * Mpu6050::ACCEL_MPS2_PER_LSB;
+        frameOut.accelMps2[1] = static_cast<float>(sample.accel[0]) * Mpu6050::ACCEL_MPS2_PER_LSB;
+        frameOut.accelMps2[2] = static_cast<float>(sample.accel[2]) * Mpu6050::ACCEL_MPS2_PER_LSB;
         // The barometer publishes at its own rate (80 Hz) and is read every
         // few ticks, so most frames carry a held solution: it counts as
         // valid while it is younger than the driver's freshness window,
