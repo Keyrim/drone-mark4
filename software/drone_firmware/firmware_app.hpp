@@ -20,7 +20,7 @@
 #include "platform_stm32/clock_stm32.hpp"
 #include "platform_stm32/firmware_store_stm32.hpp"
 #include "platform_stm32/i2c_bus.hpp"
-#include "platform_stm32/motor_sink_null.hpp"
+#include "platform_stm32/motor_sink_dshot.hpp"
 #include "platform_stm32/mpu6050.hpp"
 #include "platform_stm32/ota_slots.hpp"
 #include "platform_stm32/rtt_sink.hpp"
@@ -133,7 +133,7 @@ namespace mark4
         mark4::Mpu6050 m_imu{m_bus};
         mark4::Bmp581 m_baro{m_bus};
         mark4::SensorSourceStm32 m_sensorSource{m_imu, m_baro, m_clock};
-        mark4::MotorSinkNull m_motorSink;
+        mark4::MotorSinkDshot m_motorSink;
         mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender};
         mark4::CommandReceiverTransport m_commandReceiver;
         mark4::RcTracker m_rcTracker;

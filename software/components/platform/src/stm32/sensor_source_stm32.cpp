@@ -8,8 +8,12 @@ namespace mark4
 {
     namespace
     {
-        constexpr std::uint32_t RCC_APB1ENR_TIM3EN = 1U << 1U;
-        constexpr std::uint32_t TIM3_IRQ_NUMBER = 29U;
+        // TIM6, a basic timer with no output pins: TIM3's four channels
+        // drive the motors, so the pacer cannot share it. TIM6 sits on the
+        // same APB1 clock and takes the same prescaler/reload; its interrupt
+        // (position 54) is shared with the DAC, which this board never uses.
+        constexpr std::uint32_t RCC_APB1ENR_TIM6EN = 1U << 4U;
+        constexpr std::uint32_t TIM6_IRQ_NUMBER = 54U;
 
         /// APB1 timer clock (2 x the 42 MHz bus clock) down to 1 MHz.
         constexpr std::uint32_t TIM_PSC_84MHZ_TO_1MHZ = 84U - 1U;
@@ -26,14 +30,14 @@ namespace mark4
 
     void SensorSourceStm32::init()
     {
-        RCC->APB1ENR = RCC->APB1ENR | RCC_APB1ENR_TIM3EN;
-        TIM3->PSC = TIM_PSC_84MHZ_TO_1MHZ;
-        TIM3->ARR = (US_PER_S / FRAME_RATE_HZ) - 1U;
-        TIM3->EGR = TIM_EGR_UG; // latch the prescaler now
-        TIM3->SR = 0U;          // the UG above set UIF, do not fire early
-        TIM3->DIER = TIM_DIER_UIE;
-        NVIC_ISER[TIM3_IRQ_NUMBER / 32U] = 1U << (TIM3_IRQ_NUMBER % 32U);
-        TIM3->CR1 = TIM_CR1_CEN;
+        RCC->APB1ENR = RCC->APB1ENR | RCC_APB1ENR_TIM6EN;
+        TIM6->PSC = TIM_PSC_84MHZ_TO_1MHZ;
+        TIM6->ARR = (US_PER_S / FRAME_RATE_HZ) - 1U;
+        TIM6->EGR = TIM_EGR_UG; // latch the prescaler now
+        TIM6->SR = 0U;          // the UG above set UIF, do not fire early
+        TIM6->DIER = TIM_DIER_UIE;
+        NVIC_ISER[TIM6_IRQ_NUMBER / 32U] = 1U << (TIM6_IRQ_NUMBER % 32U);
+        TIM6->CR1 = TIM_CR1_CEN;
     }
 
     FrameWait SensorSourceStm32::waitFrame(mark4::SensorFrame &frameOut)
@@ -85,9 +89,9 @@ namespace mark4
     }
 } // namespace mark4
 
-/// TIM3 update interrupt: acknowledge and hand one tick to waitFrame().
-extern "C" void TIM3_IRQHandler(void)
+/// TIM6 update interrupt: acknowledge and hand one tick to waitFrame().
+extern "C" void TIM6_DAC_IRQHandler(void)
 {
-    mark4::TIM3->SR = 0U;
+    mark4::TIM6->SR = 0U;
     mark4::g_ticks = mark4::g_ticks + 1U;
 }

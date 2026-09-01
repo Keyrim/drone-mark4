@@ -134,6 +134,7 @@ namespace mark4
             BOOT.warn("baro: init failed, flying without the pressure channel");
         }
         m_sensorSource.init();
+        m_motorSink.init();
         BOOT.info("loop: %lu Hz, timer paced; telemetry: 1 message / %lu frames; "
                   "rc fail-safe %lu ms",
                   static_cast<unsigned long>(SensorSourceStm32::FRAME_RATE_HZ),

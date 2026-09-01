@@ -90,6 +90,14 @@ namespace mark4
         volatile std::uint32_t CNT;   ///< counter
         volatile std::uint32_t PSC;   ///< prescaler
         volatile std::uint32_t ARR;   ///< auto-reload
+        volatile std::uint32_t RCR;   ///< repetition counter
+        volatile std::uint32_t CCR1;  ///< capture/compare 1
+        volatile std::uint32_t CCR2;  ///< capture/compare 2
+        volatile std::uint32_t CCR3;  ///< capture/compare 3
+        volatile std::uint32_t CCR4;  ///< capture/compare 4
+        volatile std::uint32_t BDTR;  ///< break and dead-time
+        volatile std::uint32_t DCR;   ///< DMA control (DBA, DBL)
+        volatile std::uint32_t DMAR;  ///< DMA address for full transfer
     };
 
     /// Universal synchronous/asynchronous receiver transmitter (RM0090
@@ -134,13 +142,21 @@ namespace mark4
 
     inline RccRegisters *const RCC = reinterpret_cast<RccRegisters *>(0x40023800U);
     inline FlashRegisters *const FLASH = reinterpret_cast<FlashRegisters *>(0x40023C00U);
+    inline GpioRegisters *const GPIOA = reinterpret_cast<GpioRegisters *>(0x40020000U);
     inline GpioRegisters *const GPIOB = reinterpret_cast<GpioRegisters *>(0x40020400U);
     inline GpioRegisters *const GPIOC = reinterpret_cast<GpioRegisters *>(0x40020800U);
     inline I2cRegisters *const I2C1 = reinterpret_cast<I2cRegisters *>(0x40005400U);
     inline TimRegisters *const TIM2 = reinterpret_cast<TimRegisters *>(0x40000000U);
     inline TimRegisters *const TIM3 = reinterpret_cast<TimRegisters *>(0x40000400U);
+    inline TimRegisters *const TIM6 = reinterpret_cast<TimRegisters *>(0x40001000U);
     inline UsartRegisters *const USART1 = reinterpret_cast<UsartRegisters *>(0x40011000U);
+    inline DmaRegisters *const DMA1 = reinterpret_cast<DmaRegisters *>(0x40026000U);
     inline DmaRegisters *const DMA2 = reinterpret_cast<DmaRegisters *>(0x40026400U);
+
+    /// TIM3_UP drives DMA1 stream 2, channel 5 (RM0090 table 42): one update
+    /// event bursts the four CCRs through TIM3's DMAR window.
+    inline DmaStreamRegisters *const DMA1_STREAM2 =
+        reinterpret_cast<DmaStreamRegisters *>(0x40026000U + 0x10U + (2U * 0x18U));
 
     /// USART1_RX lives on DMA2 stream 2, channel 4 (RM0090 table 43).
     inline DmaStreamRegisters *const DMA2_STREAM2 =

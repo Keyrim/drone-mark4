@@ -17,6 +17,7 @@ add_executable(unit_tests
     test_hub_ota.cpp
     test_hub_tuning_profiles.cpp
     test_log.cpp
+    test_motor_sink_dshot.cpp
     test_ota_boot_policy.cpp
     test_ota_e2e.cpp
     test_ota_meta_log.cpp
@@ -44,6 +45,12 @@ target_link_libraries(unit_tests
 # libs are not instrumented by that check in the first place. RTTI and
 # exceptions stay enabled in the tests, Catch2 needs them.
 target_compile_options(unit_tests PRIVATE -fno-sanitize=vptr)
+
+# The DShot frame encoding is a pure header in the stm32 variant (register-
+# free), tested here without a board; reach its include dir directly since
+# platform_stm32 itself only builds for the target.
+target_include_directories(unit_tests
+    PRIVATE ${CMAKE_SOURCE_DIR}/components/platform/src/stm32/include)
 
 # Recorded sessions the tests read: too large to spell out in a source file,
 # and their exact values are the point.

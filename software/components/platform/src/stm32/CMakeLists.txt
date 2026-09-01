@@ -11,6 +11,7 @@ add_library(platform_stm32 STATIC
     uart1.cpp
     clock_stm32.cpp
     sensor_source_stm32.cpp
+    motor_sink_dshot.cpp
     internal_flash.cpp
     ota_meta_flash.cpp
     firmware_store_stm32.cpp)
