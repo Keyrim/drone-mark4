@@ -52,7 +52,7 @@ const MOTOR_OFFSETS: Array[Vector3] = [
 ]
 
 ## Sign of the yaw reaction torque of each motor, about the body y axis.
-const MOTOR_YAW_SIGNS: Array[float] = [1.0, -1.0, -1.0, 1.0]
+const MOTOR_YAW_SIGNS: Array[float] = [-1.0, 1.0, 1.0, -1.0]
 
 ## Time constant of the first order motor lag, command to effective speed [s].
 const MOTOR_TAU_S := 0.025

@@ -40,10 +40,10 @@ TEST_CASE("a positive pitch demand raises the rear motors")
 TEST_CASE("a positive yaw demand raises one diagonal and lowers the other")
 {
     const std::array<float, 4> motors = mark4::mixMotors(0.5f, {0.0f, 0.0f, 0.1f});
-    REQUIRE(motors[0] > 0.5f); // (0, 3) diagonal produces positive yaw torque
-    REQUIRE(motors[3] > 0.5f);
-    REQUIRE(motors[1] < 0.5f);
-    REQUIRE(motors[2] < 0.5f);
+    REQUIRE(motors[1] > 0.5f); // (1, 2) diagonal produces positive yaw torque
+    REQUIRE(motors[2] > 0.5f);
+    REQUIRE(motors[0] < 0.5f);
+    REQUIRE(motors[3] < 0.5f);
 }
 
 TEST_CASE("the mixer clamps every command to the motor range")

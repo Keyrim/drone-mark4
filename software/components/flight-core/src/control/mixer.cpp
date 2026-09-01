@@ -19,13 +19,13 @@ namespace mark4
     {
         const float roll = torqueCmd[0];  // + = more thrust on the left motors
         const float pitch = torqueCmd[1]; // + = more thrust on the rear motors
-        const float yaw = torqueCmd[2];   // + = more thrust on the (0, 3) pair
+        const float yaw = torqueCmd[2];   // + = more thrust on the (1, 2) pair
 
         return {
-            clampCommand(collective - roll + pitch + yaw), // 0: rear right
-            clampCommand(collective - roll - pitch - yaw), // 1: front right
-            clampCommand(collective + roll + pitch - yaw), // 2: rear left
-            clampCommand(collective + roll - pitch + yaw), // 3: front left
+            clampCommand(collective - roll + pitch - yaw), // 0: rear right
+            clampCommand(collective - roll - pitch + yaw), // 1: front right
+            clampCommand(collective + roll + pitch + yaw), // 2: rear left
+            clampCommand(collective + roll - pitch - yaw), // 3: front left
         };
     }
 } // namespace mark4
