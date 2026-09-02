@@ -14,7 +14,7 @@
 #include "platform_common/command_receiver_transport.hpp"
 #include "platform_common/ota_updater.hpp"
 #include "platform_common/rc_tracker.hpp"
-#include "platform_common/telemetry_publisher.hpp"
+#include "platform_common/status_publisher.hpp"
 #include "platform_common/tuning_service.hpp"
 #include "platform_sim/clock_sim.hpp"
 #include "platform_sim/firmware_store_sim.hpp"
@@ -183,7 +183,7 @@ namespace mark4
         mark4::PlantLink m_plantLink{m_transport, m_udpLink, m_clock, m_commandReceiver};
         mark4::SensorSourceSim m_sensorSource{m_plantLink, m_clock};
         mark4::MotorSinkSim m_motorSink{m_plantLink};
-        mark4::TelemetryPublisher m_telemetryPublisher{m_transport};
+        mark4::StatusPublisher m_statusPublisher{m_transport};
         mark4::RcTracker m_rcTracker;
         mark4::FlightCore m_core;
         mark4::TuningService m_tuningService{m_core, m_transport};

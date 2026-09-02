@@ -12,7 +12,7 @@
 #include "platform_common/command_receiver_transport.hpp"
 #include "platform_common/ota_updater.hpp"
 #include "platform_common/rc_tracker.hpp"
-#include "platform_common/telemetry_publisher.hpp"
+#include "platform_common/status_publisher.hpp"
 #include "platform_common/tuning_service.hpp"
 #include "platform_stm32/bmp581.hpp"
 #include "platform_stm32/board.hpp"
@@ -132,7 +132,7 @@ namespace mark4
         mark4::Bmp581 m_baro{m_bus};
         mark4::SensorSourceStm32 m_sensorSource{m_imu, m_baro, m_clock};
         mark4::MotorSinkDshot m_motorSink;
-        mark4::TelemetryPublisher m_telemetryPublisher{m_transport};
+        mark4::StatusPublisher m_statusPublisher{m_transport};
         mark4::CommandReceiverTransport m_commandReceiver;
         mark4::RcTracker m_rcTracker;
         mark4::FlightCore m_core;

@@ -3,7 +3,8 @@
 `run_batch.py` measures the recovery rate of the flight core over randomized
 throws, using the real Godot physics as the single reference: it starts N
 simulator pairs (headless Godot plus `drone_sim`) itself, sends one
-`SimScenario` message per run and judges the outcome from the telemetry.
+`SimScenario` message per run and judges the outcome from the drone's
+`Status` stream.
 
 One run is one message. It opens with a reset and carries everything the
 run needs - the seed, the delay before the throw, the throw itself - so the
@@ -138,7 +139,8 @@ campaign that produced those measured nothing.
 
 The flight process hashes the trajectory of every run - relative timestamp,
 gyro, accelerometer, barometer and motors of every stepped frame - and
-broadcasts the sealed hash with its telemetry. It lands in the `traj_hash`
+broadcasts the sealed hash next to its Status stream. It lands in the
+`traj_hash`
 CSV column and on every result line.
 
 The promise: **the same scenario played twice in the same plant produces the

@@ -4,14 +4,16 @@ The wire of the project: two schemas and the codecs the build generates
 from them. `mark4.proto` is THE wire: every datagram and every serial frame
 between the flight processes, the board, the plant and the ground tools
 carries exactly one `Envelope`, a `oneof` over every message of the system
-(telemetry, the lockstep sensor and actuator frames, RC, announce, the log
-line, the log module table and its control, scenario and run stats,
-tuning, updater). `gateway.proto` (imports it) is
+(the status report, the telemetry registry family, the lockstep sensor and
+actuator frames, RC, announce, the log line, the log module table and its
+control, scenario and run stats, tuning, updater). `gateway.proto` (imports it) is
 the contract between the hub and its websocket clients: `GatewayMessage`,
 a `oneof` over a transport `Frame` (src, dst, one encoded `Envelope`), the
-`NodeTable`, the `GatewayStatus`, the update client's `OtaCommand` /
-`OtaState`, the `ProfileCommand` / `ProfileList` / `Profile` of the tuning
-profiles, and `Ack`; it never crosses the LAN. Nothing generated is
+`NodeTable`, the `NodeTelemetry` table of one node, the `GatewayStatus`,
+the update client's `OtaCommand` / `OtaState`, the `ProfileCommand` /
+`ProfileList` / `Profile` of the tuning profiles, and `Ack`; it never
+crosses the LAN. Its bodies share one nanopb struct, so anything per-node
+and unbounded gets a message of its own rather than a field in `Node`. Nothing generated is
 committed.
 
 | Consumer | Generator | Output | When |
@@ -56,23 +58,36 @@ Enum values are C-scoped inside the package, so two enums never share a
 value name: `PHASE_*`, `THROW_*`, `RC_*`, `OTA_OK`, `OTA_OP_*` carry the
 prefix the clash forced, the rest stay short. The flight core's own enums
 (FlightPhase, ThrowState, PilotMode, TuningStatus) are pinned to the wire
-value by value in `platform_common/telemetry_packer.hpp` and
-`tuning_service.hpp`; flight-core never includes this library.
+value by value in `platform_common/status_packer.hpp` and
+`tuning_service.hpp`, and `TelemetryUnit` is pinned to the leaf library's
+own enum in `platform_common/telemetry_service.hpp`; flight-core never
+includes this library.
 
 ## Where the messages travel
 
-- `Telemetry`, `SimRunStats`, `TuningAck`, `TuningInfo`, the `Ota*`
+- `Status`, `SimRunStats`, `TuningAck`, `TuningInfo`, the `Ota*`
   answers and the `Announce` beacon: flight process to ground, as transport
-  broadcasts (drone_sim, and the board through the ESP32 relay).
-  `Telemetry.truth` is the plant's exact state when the sender has one; the
-  pages read it straight out of the frame the hub forwards.
-  `Telemetry.imu_valid` / `baro_valid` repeat the validity flags of the
-  frame that was stepped (a fresh measurement acquired for that frame, see
-  `software/components/platform/README.md`); `PHASE_FAULT` is the flight
-  core's latched motors-off state after the IMU was lost with the motors
-  running. The relay
-  beacons its own `Announce` too, kind `RELAY` and mcu `ESP32C3`, on both
-  of its links, so the board and the LAN see it as one more node.
+  broadcasts (drone_sim, and the board through the ESP32 relay). `Status`
+  is the small fixed report of what the drone is doing, decimated to 50 Hz
+  and always on: attitude, motors, phase, throw state and count, the two
+  validity flags, and the plant's exact state in `Status.truth` when the
+  sender has one. `Status.imu_valid` / `baro_valid` repeat the validity
+  flags of the frame that was stepped (a fresh measurement acquired for
+  that frame, see `software/components/platform/README.md`);
+  `PHASE_FAULT` is the flight core's latched motors-off state after the IMU
+  was lost with the motors running. The relay beacons its own `Announce`
+  too, kind `RELAY` and mcu `ESP32C3`, on both of its links, so the board
+  and the LAN see it as one more node.
+- The telemetry family, all unicast, one active stream per drone:
+  `TelemetryListRequest` (ground to node, from a cursor) is answered by one
+  `TelemetryDescriptors` page back to the requester; `TelemetryEnable`
+  (subscriber to node) replaces the enabled set wholesale, arms the stream
+  and doubles as its keepalive, and is answered by one `TelemetryAck`
+  saying what was applied; `TelemetryData` carries one sampling instant of
+  up to 32 values, split into several messages of the same timestamp when
+  more are enabled. A measure is named by a stable path and routed by the
+  id of the node's frozen table: see
+  `software/components/telemetry/README.md`.
 - `Log` (one line, module by id) and `LogModules` (the node's module table,
   paged): any node to everyone, as broadcasts, the hub included (its own
   lines leave from its node id). `LogControl` (query the table, set one

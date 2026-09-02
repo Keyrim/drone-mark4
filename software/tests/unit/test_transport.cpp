@@ -535,7 +535,7 @@ TEST_CASE("a relay forwards a board broadcast to the lan exactly once and ignore
     Observer seenByHub;
     Observer seenBySim;
 
-    // Board telemetry: delivered to the hub once, on the LAN once, to the sim
+    // Board status: delivered to the hub once, on the LAN once, to the sim
     // once. The hub then hears its own forwarding come back on the LAN.
     REQUIRE(board.send(mark4::BROADCAST_NODE, HELLO.data(), HELLO.size()));
     seenByHub.poll(hub, T0_US);
@@ -615,7 +615,7 @@ TEST_CASE("the announce check reads one byte of the envelope")
 {
     CHECK(mark4::envelopeIsAnnounce(envelopeBytes(mark4_Envelope_announce_tag).data(),
                                     envelopeBytes(mark4_Envelope_announce_tag).size()));
-    for (const pb_size_t other : {mark4_Envelope_telemetry_tag,
+    for (const pb_size_t other : {mark4_Envelope_status_tag,
                                   mark4_Envelope_rc_tag,
                                   mark4_Envelope_log_tag,
                                   mark4_Envelope_ota_chunk_tag,
@@ -656,7 +656,7 @@ TEST_CASE(
     Observer seenBySim;
 
     const std::vector<std::uint8_t> announce = envelopeBytes(mark4_Envelope_announce_tag);
-    const std::vector<std::uint8_t> telemetry = envelopeBytes(mark4_Envelope_telemetry_tag);
+    const std::vector<std::uint8_t> status = envelopeBytes(mark4_Envelope_status_tag);
     const std::vector<std::uint8_t> command = envelopeBytes(mark4_Envelope_rc_tag);
     board.setBeacon(announce.data(), announce.size());
     hub.setBeacon(announce.data(), announce.size());
@@ -700,15 +700,15 @@ TEST_CASE(
     REQUIRE(relay.findNode(NODE_A) != nullptr);
     const std::uint32_t duplicatesBefore = relay.findNode(NODE_A)->duplicates;
 
-    // The sim's telemetry broadcast reaches the hub and stops at the relay:
+    // The sim's status broadcast reaches the hub and stops at the relay:
     // the board's UART never sees it.
     const std::uint32_t uartBefore = linkRelayUart.broadcasts();
     const std::size_t boardBefore = seenByBoard.delivered.size();
-    REQUIRE(sim.send(mark4::BROADCAST_NODE, telemetry.data(), telemetry.size()));
+    REQUIRE(sim.send(mark4::BROADCAST_NODE, status.data(), status.size()));
     seenByRelay.poll(relay, T0_US);
     seenByHub.poll(hub, T0_US);
     seenByBoard.poll(board, T0_US);
-    CHECK(seenByHub.delivered.back().second == telemetry);
+    CHECK(seenByHub.delivered.back().second == status);
     CHECK(linkRelayUart.broadcasts() == uartBefore);
     CHECK(seenByBoard.delivered.size() == boardBefore);
     CHECK(relay.filtered() == 1U);
@@ -723,12 +723,12 @@ TEST_CASE(
     CHECK(seenByBoard.delivered.back().second == command);
     CHECK(relay.filtered() == 1U);
 
-    // The board's telemetry broadcast reaches the LAN exactly once, with
+    // The board's status broadcast reaches the LAN exactly once, with
     // one hop less, and both LAN nodes get it once.
     const std::uint32_t lanBefore = linkRelayLan.broadcasts();
     const std::size_t hubBefore = seenByHub.delivered.size();
     const std::size_t simBefore = seenBySim.delivered.size();
-    REQUIRE(board.send(mark4::BROADCAST_NODE, telemetry.data(), telemetry.size()));
+    REQUIRE(board.send(mark4::BROADCAST_NODE, status.data(), status.size()));
     seenByRelay.poll(relay, T0_US);
     CHECK(linkRelayLan.broadcasts() == lanBefore + 1U);
     // The copy waiting in the hub's inbox (LAN endpoint 1) has one hop less.
@@ -741,7 +741,7 @@ TEST_CASE(
     seenBySim.poll(sim, T0_US);
     CHECK(seenByHub.delivered.size() == hubBefore + 1U);
     CHECK(seenBySim.delivered.size() == simBefore + 1U);
-    CHECK(seenByHub.delivered.back().second == telemetry);
+    CHECK(seenByHub.delivered.back().second == status);
     // The echo of its own forwarding is one more duplicate for the relay,
     // and it is not forwarded back onto the UART.
     seenByRelay.poll(relay, T0_US);

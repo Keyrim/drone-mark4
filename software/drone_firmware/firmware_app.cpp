@@ -135,10 +135,10 @@ namespace mark4
         }
         m_sensorSource.init();
         m_motorSink.init();
-        BOOT.info("loop: %lu Hz, timer paced; telemetry: 1 message / %lu frames; "
+        BOOT.info("loop: %lu Hz, timer paced; status: 1 message / %lu frames; "
                   "rc fail-safe %lu ms",
                   static_cast<unsigned long>(SensorSourceStm32::FRAME_RATE_HZ),
-                  static_cast<unsigned long>(TelemetryPublisher::DECIMATION),
+                  static_cast<unsigned long>(StatusPublisher::DECIMATION),
                   static_cast<unsigned long>(RcTracker::RC_TIMEOUT_US / US_PER_MS));
 
         refreshArmInterlock();
@@ -378,7 +378,7 @@ namespace mark4
             updateStatusLeds(m_core.flightPhase(), frame.rc.killSwitch, degraded, frames);
 
             ++frames;
-            m_telemetryPublisher.publish(frame, actuators, m_core);
+            m_statusPublisher.publish(frame, actuators, m_core);
             // Paced answers to a list request: one description per frame, so
             // a table dump never bursts ahead of the telemetry sharing the
             // same UART.

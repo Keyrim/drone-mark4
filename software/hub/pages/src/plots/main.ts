@@ -16,7 +16,7 @@ import { Ruler, RULER_H } from "../lanes/ruler";
 import { clampToData, pan, ticks, zoom, type Viewport } from "../lanes/timebase";
 import { GatewaySocket } from "../shared/gateway_socket";
 import { nodeLabel } from "../shared/nodes";
-import { DEFAULT_LANES, LIVE_SERIES, sampleTelemetry } from "../shared/series";
+import { DEFAULT_LANES, LIVE_SERIES, sampleStatus } from "../shared/series";
 import { Shell } from "../shared/shell";
 
 const WINDOWS_S = [5, 10, 20, 60];
@@ -176,7 +176,7 @@ function relativeS(timestampUs: number): number {
 }
 
 socket.onEnvelope((src, envelope) => {
-    if (paused || envelope.body.case !== "telemetry") {
+    if (paused || envelope.body.case !== "status") {
         return;
     }
     if (src !== sourceNode) {
@@ -184,7 +184,7 @@ socket.onEnvelope((src, envelope) => {
     }
     // The exact state, when the sender has a plant, rides inside the same
     // message: one row carries both the estimate and the truth.
-    const row = sampleTelemetry(envelope.body.value);
+    const row = sampleStatus(envelope.body.value);
     const t = relativeS(row.timestampUs);
     for (const [key, value] of row.values) {
         buffers.get(key)?.push(t, value);

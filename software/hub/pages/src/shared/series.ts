@@ -1,13 +1,17 @@
 /**
- * Catalog of the series a page can plot, and how one Telemetry envelope is
+ * Catalog of the series a page can plot, and how one Status envelope is
  * turned into their values.
  *
- * The estimated state is the telemetry itself; the exact state, when the
- * sender has a plant, rides inside it as `truth`, sampled at the same
- * instant. One message, one row: the two never need aligning.
+ * The estimated attitude is Status itself; the exact state, when the sender
+ * has a plant, rides inside it as `truth`, sampled at the same instant. One
+ * message, one row: the two never need aligning.
+ *
+ * Everything Status stopped carrying (the gyro, the altitudes, the vertical
+ * velocity, the release and the apex) is a telemetry measure now, streamed
+ * on demand rather than pushed at 50 Hz, and is not in this catalog.
  */
 
-import { type Telemetry } from "../gen/mark4_pb";
+import { type Status } from "../gen/mark4_pb";
 import { PALETTE } from "./nodes";
 import { asQuat, errorAngleDeg, eulerDeg, type Quat } from "./quat";
 
@@ -24,10 +28,10 @@ export interface SeriesDef {
     /** Dash pattern, set on the exact-state twins so a lane stays readable */
     readonly dash?: number[];
     /** Value for one row, null when the source is absent */
-    readonly value: (row: Telemetry, exact: ExactState | null) => number | null;
+    readonly value: (row: Status, exact: ExactState | null) => number | null;
 }
 
-/** The plant's exact state, read out of Telemetry.truth. */
+/** The plant's exact state, read out of Status.truth. */
 export interface ExactState {
     attitudeQuat: Quat;
     positionM: number[];
@@ -46,30 +50,22 @@ export const FLIGHT_PHASE_NAMES = [
     "fault",
 ];
 
-const AXES = ["x", "y", "z"];
 const EULER = ["roll", "pitch", "yaw"];
 const DASH = [6, 4];
 
-function estimatedEuler(row: Telemetry): number[] | null {
+function estimatedEuler(row: Status): number[] | null {
     const q = asQuat(row.attitudeQuat);
     return q === null ? null : eulerDeg(q);
 }
 
-/** Every series a live telemetry stream can feed. */
+/** Every series a live Status stream can feed. */
 export const LIVE_SERIES: SeriesDef[] = [
-    ...AXES.map((axis, i) => ({
-        key: `gyro.${axis}`,
-        label: `gyro ${axis}`,
-        unit: "rad/s",
-        color: PALETTE[i] as string,
-        value: (row: Telemetry) => row.gyroRadS[i] ?? null,
-    })),
     ...EULER.map((name, i) => ({
         key: `euler.est.${name}`,
         label: `${name} est`,
         unit: "deg",
         color: PALETTE[i] as string,
-        value: (row: Telemetry) => estimatedEuler(row)?.[i] ?? null,
+        value: (row: Status) => estimatedEuler(row)?.[i] ?? null,
     })),
     ...EULER.map((name, i) => ({
         key: `euler.exact.${name}`,
@@ -77,7 +73,7 @@ export const LIVE_SERIES: SeriesDef[] = [
         unit: "deg",
         color: PALETTE[i] as string,
         dash: DASH,
-        value: (_row: Telemetry, exact: ExactState | null) =>
+        value: (_row: Status, exact: ExactState | null) =>
             exact === null ? null : (eulerDeg(exact.attitudeQuat)[i] ?? null),
     })),
     {
@@ -91,36 +87,12 @@ export const LIVE_SERIES: SeriesDef[] = [
         },
     },
     {
-        key: "alt.est",
-        label: "altitude est",
-        unit: "m",
-        color: PALETTE[0] as string,
-        value: (row) => row.altitudeM,
-    },
-    {
-        // The raw pressure channel the estimate is corrected toward, on the
-        // same lane and the same unit as alt.est: the gap between the two
-        // curves IS what the baro contributes.
-        key: "alt.baro",
-        label: "altitude baro",
-        unit: "m",
-        color: PALETTE[2] as string,
-        value: (row) => row.baroAltitudeM,
-    },
-    {
         key: "alt.exact",
         label: "altitude exact",
         unit: "m",
         color: PALETTE[0] as string,
         dash: DASH,
         value: (_row, exact) => exact?.positionM[2] ?? null,
-    },
-    {
-        key: "vz.est",
-        label: "vz est",
-        unit: "m/s",
-        color: PALETTE[1] as string,
-        value: (row) => row.verticalVelocityMps,
     },
     {
         key: "vz.exact",
@@ -135,7 +107,7 @@ export const LIVE_SERIES: SeriesDef[] = [
         label: `motor ${i}`,
         unit: "",
         color: PALETTE[i] as string,
-        value: (row: Telemetry) => row.motor[i] ?? null,
+        value: (row: Status) => row.motor[i] ?? null,
     })),
     {
         key: "flightPhase",
@@ -157,9 +129,8 @@ export function seriesByKey(key: string): SeriesDef | undefined {
     return LIVE_SERIES.find((def) => def.key === key);
 }
 
-/** The four plots the ground station has always drawn, in that order. */
+/** The lanes the page opens on, in that order. */
 export const DEFAULT_LANES: { title: string; keys: string[] }[] = [
-    { title: "gyro", keys: ["gyro.x", "gyro.y", "gyro.z"] },
     {
         title: "attitude",
         keys: [
@@ -172,7 +143,7 @@ export const DEFAULT_LANES: { title: string; keys: string[] }[] = [
         ],
     },
     { title: "attitude error", keys: ["attitude.error"] },
-    { title: "vertical", keys: ["alt.est", "alt.baro", "alt.exact", "vz.est", "vz.exact"] },
+    { title: "vertical", keys: ["alt.exact", "vz.exact"] },
 ];
 
 /** One sample: a timestamp and the value of every catalog series. */
@@ -181,8 +152,8 @@ export interface SampledRow {
     values: Map<string, number | null>;
 }
 
-/** The exact state a telemetry message carries, null when it has none. */
-export function exactStateOf(row: Telemetry): ExactState | null {
+/** The exact state a Status message carries, null when it has none. */
+export function exactStateOf(row: Status): ExactState | null {
     const truth = row.truth;
     if (truth === undefined) {
         return null;
@@ -193,8 +164,8 @@ export function exactStateOf(row: Telemetry): ExactState | null {
         : { attitudeQuat: quat, positionM: truth.positionM, velocityMps: truth.velocityMps };
 }
 
-/** Turns one telemetry message into the row of every catalog series. */
-export function sampleTelemetry(row: Telemetry): SampledRow {
+/** Turns one Status message into the row of every catalog series. */
+export function sampleStatus(row: Status): SampledRow {
     const exact = exactStateOf(row);
     const values = new Map<string, number | null>();
     for (const def of LIVE_SERIES) {

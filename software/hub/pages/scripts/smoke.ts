@@ -1,12 +1,12 @@
 /**
  * Bench smoke of the gateway contract, from a script instead of a browser:
  * connects to a running hub over `ws`, and with a plant and flight processes
- * on the LAN checks that the node table lists them by id, that telemetry
+ * on the LAN checks that the node table lists them by id, that status
  * frames arrive from every drone (truth included), that an Rc frame to one
  * drone shows up in its telemetry, that the profile service answers, and
  * optionally that an OTA start against a drone_sim reaches a verdict.
  *
- *   pnpm smoke                    # nodes, telemetry, rc, profiles
+ *   pnpm smoke                    # nodes, status, rc, profiles
  *   OTA_BUNDLE=/path/x.ota pnpm smoke   # plus an update of the first drone_sim
  *
  * Exits non-zero on the first failed expectation. Timings are printed.
@@ -110,35 +110,35 @@ if (tables.some((drones) => drones.join() !== tables[0]!.join())) fail(`drone id
 const droneIds = tables[0]!;
 log(`two stable drone_sim nodes: ${droneIds.join(", ")}`);
 
-// Telemetry from both, with truth.
+// Status from both, with truth.
 for (const id of droneIds) {
-    const telemetry = await waitFor(`telemetry from ${id}`, (m) => {
+    const status = await waitFor(`status from ${id}`, (m) => {
         const frame = envelopeOf(m);
-        return frame?.src === id && frame.envelope.body.case === "telemetry" ? frame.envelope.body.value : undefined;
+        return frame?.src === id && frame.envelope.body.case === "status" ? frame.envelope.body.value : undefined;
     });
-    log(`telemetry from ${id}: phase ${telemetry.flightPhase}, truth ${telemetry.truth ? "present" : "ABSENT"}`);
-    if (telemetry.truth === undefined) fail(`no truth in the telemetry of ${id}`);
+    log(`status from ${id}: phase ${status.flightPhase}, truth ${status.truth ? "present" : "ABSENT"}`);
+    if (status.truth === undefined) fail(`no truth in the status of ${id}`);
 }
 
 // Rc to the first drone: kill off + arm on, then watch its phase leave idle
 // (armed = 2) while the other drone stays where it was.
 const [pilot, bystander] = droneIds as [number, number];
-const before = await waitFor(`telemetry from ${bystander}`, (m) => {
+const before = await waitFor(`status from ${bystander}`, (m) => {
     const frame = envelopeOf(m);
-    return frame?.src === bystander && frame.envelope.body.case === "telemetry" ? frame.envelope.body.value.flightPhase : undefined;
+    return frame?.src === bystander && frame.envelope.body.case === "status" ? frame.envelope.body.value.flightPhase : undefined;
 });
 const rcTimer = setInterval(() => ws.send(encodeGatewayMessage(frameMessage(pilot, rcEnvelope({ ...SAFE_RC, kill: false, arm: true })))), 100);
 const armedAt = Date.now();
 const armedPhase = await waitFor(`armed phase from ${pilot}`, (m) => {
     const frame = envelopeOf(m);
-    if (frame?.src !== pilot || frame.envelope.body.case !== "telemetry") return undefined;
+    if (frame?.src !== pilot || frame.envelope.body.case !== "status") return undefined;
     const phase = frame.envelope.body.value.flightPhase;
     return phase !== 0 ? phase : undefined;
 });
 log(`drone ${pilot} left idle (phase ${armedPhase}) ${Date.now() - armedAt} ms after the first Rc frame`);
-const after = await waitFor(`telemetry from ${bystander}`, (m) => {
+const after = await waitFor(`status from ${bystander}`, (m) => {
     const frame = envelopeOf(m);
-    return frame?.src === bystander && frame.envelope.body.case === "telemetry" ? frame.envelope.body.value.flightPhase : undefined;
+    return frame?.src === bystander && frame.envelope.body.case === "status" ? frame.envelope.body.value.flightPhase : undefined;
 });
 if (after !== before) fail(`the other drone changed phase too: ${before} -> ${after}`);
 log(`drone ${bystander} untouched (phase ${after})`);

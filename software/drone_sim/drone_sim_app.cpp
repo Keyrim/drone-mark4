@@ -548,7 +548,7 @@ namespace mark4
             // The plant's exact state rides next to the estimate, so a ground
             // tool compares the two sample by sample; a frame without sensors
             // has no plant behind it and no truth.
-            m_telemetryPublisher.publish(
+            m_statusPublisher.publish(
                 frame, actuators, m_core, frame.imuValid ? &m_sensorSource.truth() : nullptr);
             // Paced answers to a list request: one description per frame, so
             // a table dump never bursts ahead of the telemetry it shares the
