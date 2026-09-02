@@ -103,6 +103,9 @@ namespace mark4
         /// must not see the ids of its curves shift under it because the
         /// drone was reset.
         /// @return this entry, untouched
+        // A no-op handles self-assignment by construction; the check cannot
+        // see that an empty body is the whole intent.
+        // NOLINTNEXTLINE(bugprone-unhandled-self-assignment)
         TelemetryEntry &operator=(const TelemetryEntry &)
         {
             return *this;

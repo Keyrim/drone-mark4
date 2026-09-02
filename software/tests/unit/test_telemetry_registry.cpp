@@ -67,6 +67,9 @@ namespace
       public:
         /// @param name name of the measure
         explicit Measured(const char *name)
+            // The entry's own fields are initialized in another translation
+            // unit, which the analyzer cannot follow from here.
+            // NOLINTNEXTLINE(clang-analyzer-optin.cplusplus.UninitializedObject)
             : m_entry(name, mark4::TelemetryUnit::M_PER_S, m_value)
         {
         }

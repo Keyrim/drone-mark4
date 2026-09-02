@@ -233,8 +233,8 @@ namespace mark4
         ///         process, however many compositions include it.
         static LogModule &Module()
         {
-            static LogModule module{LOG_MODULE_PLATFORM_TELEMETRY, "platform/telemetry"};
-            return module;
+            static LogModule MODULE{LOG_MODULE_PLATFORM_TELEMETRY, "platform/telemetry"};
+            return MODULE;
         }
 
         /// @brief Sends one page of the table.

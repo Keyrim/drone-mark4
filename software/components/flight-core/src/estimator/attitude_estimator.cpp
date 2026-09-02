@@ -89,14 +89,15 @@ namespace mark4
         // Same three expressions as the ground tools' eulerDeg(), in radians:
         // roll and yaw from atan2, pitch from an asin clamped to its domain
         // so a quaternion a hair past unit length cannot produce a NaN.
-        float sinPitch = 2.0f * (q.w * q.y - q.z * q.x);
-        sinPitch = sinPitch > 1.0f ? 1.0f : sinPitch;
-        sinPitch = sinPitch < -1.0f ? -1.0f : sinPitch;
-        m_eulerRad[0] =
-            std::atan2(2.0f * (q.w * q.x + q.y * q.z), 1.0f - 2.0f * (q.x * q.x + q.y * q.y));
-        m_eulerRad[1] = std::asin(sinPitch);
-        m_eulerRad[2] =
-            std::atan2(2.0f * (q.w * q.z + q.x * q.y), 1.0f - 2.0f * (q.y * q.y + q.z * q.z));
+        const float rollY = 2.0f * (q.w * q.x + q.y * q.z);
+        const float rollX = 1.0f - 2.0f * (q.x * q.x + q.y * q.y);
+        const float sinPitch = 2.0f * (q.w * q.y - q.z * q.x);
+        const float yawY = 2.0f * (q.w * q.z + q.x * q.y);
+        const float yawX = 1.0f - 2.0f * (q.y * q.y + q.z * q.z);
+        const float clamped = sinPitch > 1.0f ? 1.0f : (sinPitch < -1.0f ? -1.0f : sinPitch);
+        m_eulerRad[0] = std::atan2(rollY, rollX);
+        m_eulerRad[1] = std::asin(clamped);
+        m_eulerRad[2] = std::atan2(yawY, yawX);
         for (std::size_t axis = 0U; axis < m_gyroBiasRadS.size(); ++axis)
         {
             m_gyroBiasRadS[axis] = -m_integralFb[axis];
