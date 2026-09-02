@@ -5,10 +5,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Vendored files (software/third_party) are verbatim upstream copies, exempt.
 mapfile -t files < <(git ls-files \
     '*.cpp' '*.hpp' '*.c' '*.h' '*.ld' '*.ld.in' '*.cmake' '*CMakeLists.txt' '*CMakePresets.json' \
     '*.md' '*.py' '*.gd' '*.sh' '*.yml' '*.yaml' '*.json' '*.clang-format' '*.clang-tidy' \
-    '*.ts' '*.js' '*.html' '*.css')
+    '*.ts' '*.js' '*.html' '*.css' \
+    ':!software/third_party')
 
 # Everything outside tab/newline/printable ASCII, except the accented Latin
 # letters of Latin-1 (multiplication and division signs excluded).

@@ -3,53 +3,25 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "registers.hpp"
+#include <stm32f405xx.h>
+
 #include "transport/node_id.hpp"
 
 namespace mark4
 {
     namespace
     {
-        constexpr std::uint32_t RCC_CR_HSEON = 1U << 16U;
-        constexpr std::uint32_t RCC_CR_HSERDY = 1U << 17U;
-        constexpr std::uint32_t RCC_CR_PLLON = 1U << 24U;
-        constexpr std::uint32_t RCC_CR_PLLRDY = 1U << 25U;
-
         // Main PLL: 8 MHz HSE / M=4 -> 2 MHz comparison frequency, * N=168
         // -> 336 MHz VCO, / P=2 (PLLP bits left at 00) -> 168 MHz SYSCLK,
         // / Q=7 -> 48 MHz for the USB/SDIO domain (unused but kept in spec).
         constexpr std::uint32_t PLL_M = 4U;
         constexpr std::uint32_t PLL_N = 168U;
         constexpr std::uint32_t PLL_Q = 7U;
-        constexpr std::uint32_t PLL_N_SHIFT = 6U;
-        constexpr std::uint32_t PLL_Q_SHIFT = 24U;
-        constexpr std::uint32_t RCC_PLLCFGR_SRC_HSE = 1U << 22U;
-
-        // Bus prescalers: AHB /1 (168 MHz), APB1 /4 (42 MHz, its 45 MHz
-        // max), APB2 /2 (84 MHz, its 90 MHz max).
-        constexpr std::uint32_t RCC_CFGR_PPRE1_DIV4 = 5U << 10U;
-        constexpr std::uint32_t RCC_CFGR_PPRE2_DIV2 = 4U << 13U;
-        constexpr std::uint32_t RCC_CFGR_SW_MASK = 3U;
-        constexpr std::uint32_t RCC_CFGR_SW_PLL = 2U;
-        constexpr std::uint32_t RCC_CFGR_SWS_MASK = 3U << 2U;
-        constexpr std::uint32_t RCC_CFGR_SWS_PLL = 2U << 2U;
-
-        // 5 wait states (168 MHz at 3.3 V), prefetch and both caches on.
-        // The voltage regulator stays on its reset scale 1, which allows
-        // 168 MHz without touching PWR.
-        constexpr std::uint32_t FLASH_ACR_LATENCY_5WS = 5U;
-        constexpr std::uint32_t FLASH_ACR_PRFTEN = 1U << 8U;
-        constexpr std::uint32_t FLASH_ACR_ICEN = 1U << 9U;
-        constexpr std::uint32_t FLASH_ACR_DCEN = 1U << 10U;
 
         /// Poll budget for HSE/PLL ready flags: worst-case crystal startup
         /// is a few ms, this is well above 100 ms on the 16 MHz boot clock.
         constexpr std::uint32_t READY_TIMEOUT_LOOPS = 500000U;
 
-        constexpr std::uint32_t DEMCR_TRCENA = 1U << 24U;
-        constexpr std::uint32_t DWT_CTRL_CYCCNTENA = 1U << 0U;
-
-        constexpr std::uint32_t RCC_AHB1ENR_GPIOCEN = 1U << 2U;
         constexpr std::uint32_t LED1_PIN = 13U;
         constexpr std::uint32_t LED2_PIN = 14U;
         constexpr std::uint32_t GPIO_MODER_OUTPUT = 1U;
@@ -83,19 +55,25 @@ namespace mark4
             return false;
         }
 
+        // 5 wait states (168 MHz at 3.3 V), prefetch and both caches on.
+        // The voltage regulator stays on its reset scale 1, which allows
+        // 168 MHz without touching PWR.
         FLASH->ACR = FLASH_ACR_LATENCY_5WS | FLASH_ACR_PRFTEN | FLASH_ACR_ICEN | FLASH_ACR_DCEN;
+
+        // Bus prescalers: AHB /1 (168 MHz), APB1 /4 (42 MHz, its 45 MHz
+        // max), APB2 /2 (84 MHz, its 90 MHz max).
         RCC->CFGR = RCC_CFGR_PPRE1_DIV4 | RCC_CFGR_PPRE2_DIV2;
 
-        RCC->PLLCFGR =
-            PLL_M | (PLL_N << PLL_N_SHIFT) | RCC_PLLCFGR_SRC_HSE | (PLL_Q << PLL_Q_SHIFT);
+        RCC->PLLCFGR = (PLL_M << RCC_PLLCFGR_PLLM_Pos) | (PLL_N << RCC_PLLCFGR_PLLN_Pos) |
+                       RCC_PLLCFGR_PLLSRC_HSE | (PLL_Q << RCC_PLLCFGR_PLLQ_Pos);
         RCC->CR = RCC->CR | RCC_CR_PLLON;
         if (!waitMasked(RCC->CR, RCC_CR_PLLRDY, RCC_CR_PLLRDY))
         {
             return false;
         }
 
-        RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW_MASK) | RCC_CFGR_SW_PLL;
-        if (!waitMasked(RCC->CFGR, RCC_CFGR_SWS_MASK, RCC_CFGR_SWS_PLL))
+        RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW_Msk) | RCC_CFGR_SW_PLL;
+        if (!waitMasked(RCC->CFGR, RCC_CFGR_SWS_Msk, RCC_CFGR_SWS_PLL))
         {
             return false;
         }
@@ -111,9 +89,9 @@ namespace mark4
 
     void initCycleCounter()
     {
-        *DEMCR = *DEMCR | DEMCR_TRCENA;
+        CoreDebug->DEMCR = CoreDebug->DEMCR | CoreDebug_DEMCR_TRCENA_Msk;
         DWT->CYCCNT = 0U;
-        DWT->CTRL = DWT->CTRL | DWT_CTRL_CYCCNTENA;
+        DWT->CTRL = DWT->CTRL | DWT_CTRL_CYCCNTENA_Msk;
     }
 
     void delayMs(std::uint32_t milliseconds)
@@ -158,33 +136,24 @@ namespace mark4
 
     void setVectorTable(std::uint32_t address)
     {
-        *SCB_VTOR = address;
+        SCB->VTOR = address;
         // The core may already have prefetched past this point; the barriers
         // make the new table current before any exception can be taken.
-        __asm volatile("dsb" ::: "memory");
-        __asm volatile("isb" ::: "memory");
+        __DSB();
+        __ISB();
     }
 
     void systemReset()
     {
-        constexpr std::uint32_t AIRCR_VECTKEY = 0x05FAU << 16U;
-        constexpr std::uint32_t AIRCR_SYSRESETREQ = 1U << 2U;
-
-        // The barrier makes sure every outstanding write landed before the
-        // reset request; the reset itself is asynchronous, so wait for it.
-        __asm volatile("dsb" ::: "memory");
-        *SCB_AIRCR = AIRCR_VECTKEY | AIRCR_SYSRESETREQ;
-        for (;;)
-        {
-            __asm volatile("wfi");
-        }
+        // Barrier, VECTKEY + SYSRESETREQ into AIRCR, then spin: the reset
+        // itself is asynchronous, so wait for it.
+        NVIC_SystemReset();
     }
 
     std::uint32_t boardNodeId()
     {
         // The 96-bit unique device id of the F405 (RM0090 39.1), read as
         // bytes so the hash does not depend on the word order.
-        constexpr std::uint32_t UID_BASE = 0x1FFF7A10U;
         constexpr std::size_t UID_SIZE = 12U;
         return hashNodeId(reinterpret_cast<const std::uint8_t *>(UID_BASE), UID_SIZE);
     }

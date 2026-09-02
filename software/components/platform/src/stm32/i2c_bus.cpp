@@ -2,16 +2,14 @@
 
 #include <cstdint>
 
+#include <stm32f405xx.h>
+
 #include "platform_stm32/board.hpp"
-#include "registers.hpp"
 
 namespace mark4
 {
     namespace
     {
-        constexpr std::uint32_t RCC_AHB1ENR_GPIOBEN = 1U << 1U;
-        constexpr std::uint32_t RCC_APB1ENR_I2C1EN = 1U << 21U;
-
         constexpr std::uint32_t SCL_PIN = 8U;
         constexpr std::uint32_t SDA_PIN = 9U;
         constexpr std::uint32_t GPIO_AF4 = 4U;
@@ -25,27 +23,11 @@ namespace mark4
         /// Half-period of the recovery clocking; leisurely on purpose.
         constexpr std::uint32_t RECOVERY_HALF_PERIOD_MS = 1U;
 
-        constexpr std::uint32_t I2C_CR1_PE = 1U << 0U;
-        constexpr std::uint32_t I2C_CR1_START = 1U << 8U;
-        constexpr std::uint32_t I2C_CR1_STOP = 1U << 9U;
-        constexpr std::uint32_t I2C_CR1_ACK = 1U << 10U;
-        constexpr std::uint32_t I2C_CR1_POS = 1U << 11U;
-        constexpr std::uint32_t I2C_CR1_SWRST = 1U << 15U;
-        constexpr std::uint32_t I2C_SR1_SB = 1U << 0U;
-        constexpr std::uint32_t I2C_SR1_ADDR = 1U << 1U;
-        constexpr std::uint32_t I2C_SR1_BTF = 1U << 2U;
-        constexpr std::uint32_t I2C_SR1_RXNE = 1U << 6U;
-        constexpr std::uint32_t I2C_SR1_TXE = 1U << 7U;
-        constexpr std::uint32_t I2C_SR1_AF = 1U << 10U;
-        constexpr std::uint32_t I2C_SR2_BUSY = 1U << 1U;
-
         // Fast mode timing on the 42 MHz APB1 clock (all three breakout
         // chips are fast-mode capable, and a 14-byte IMU burst at 100 kHz
         // would eat 1.5 ms of a 2 ms loop budget). F/S=1, DUTY=0: SCL
         // period is 3 * CCR ticks, so 42 MHz / (3 * 35) = 400 kHz. TRISE
         // is the 300 ns fast-mode maximum rise time in ticks, plus one.
-        constexpr std::uint32_t APB1_CLOCK_MHZ = 42U;
-        constexpr std::uint32_t I2C_CCR_FS = 1U << 15U;
         constexpr std::uint32_t I2C_CCR_400KHZ = 35U;
         constexpr std::uint32_t I2C_TRISE_400KHZ = 13U;
 
@@ -278,7 +260,7 @@ namespace mark4
         // glitches during power-up, a known F4 I2C trap.
         I2C1->CR1 = I2C_CR1_SWRST;
         I2C1->CR1 = 0U;
-        I2C1->CR2 = APB1_CLOCK_MHZ;
+        I2C1->CR2 = APB1_CLOCK_HZ / 1000000U; // FREQ field, the bus clock in MHz
         I2C1->CCR = I2C_CCR_FS | I2C_CCR_400KHZ;
         I2C1->TRISE = I2C_TRISE_400KHZ;
         I2C1->CR1 = I2C_CR1_PE;

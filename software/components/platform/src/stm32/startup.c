@@ -4,6 +4,8 @@
 
 #include <stdint.h>
 
+#include <stm32f405xx.h>
+
 extern uint32_t _sidata; /* start of the .data image in FLASH */
 extern uint32_t _sdata;  /* start of .data in RAM */
 extern uint32_t _edata;
@@ -52,10 +54,9 @@ void Reset_Handler(void)
      * points the core at its own vectors and none of them depends on being
      * the image the reset vector fetched. The bootloader sets VTOR again
      * before it jumps; belt and suspenders, and either one alone is enough. */
-    volatile uint32_t *const vtor = (volatile uint32_t *)0xE000ED08u;
-    *vtor = (uint32_t)&g_vector_table[0];
-    __asm volatile("dsb" ::: "memory");
-    __asm volatile("isb" ::: "memory");
+    SCB->VTOR = (uint32_t)&g_vector_table[0];
+    __DSB();
+    __ISB();
 
     /* PRIMASK next: a cold reset arrives with interrupts enabled, but the
      * bootloader masks them (cpsid i) for its own jump sequence and a
@@ -63,12 +64,11 @@ void Reset_Handler(void)
      * interrupt pends forever, WFI wakes and nothing runs the handlers -
      * the flight loop spins on a tick counter no one increments. Safe this
      * early: the NVIC has nothing enabled until the services init. */
-    __asm volatile("cpsie i" ::: "memory");
+    __enable_irq();
 
     /* FPU: enable CP10/CP11 before the first float instruction
      * (-mfloat-abi=hard). */
-    volatile uint32_t *const cpacr = (volatile uint32_t *)0xE000ED88u;
-    *cpacr |= (0xFu << 20u);
+    SCB->CPACR |= (0xFu << 20u);
 
     const uint32_t *src = &_sidata;
     uint32_t *dst = &_sdata;
