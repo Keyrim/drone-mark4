@@ -379,6 +379,40 @@ TEST_CASE("a send names the links it may leave on, the beacon takes them all")
     CHECK(uart.sent() == sentBefore + 1U);
 }
 
+TEST_CASE("the send-side counters follow what actually left on a link")
+{
+    FakeBus bus;
+    FakeLink link(bus);
+    mark4::Transport transport(NODE_A);
+    REQUIRE(transport.addLink(link));
+
+    const std::array<std::uint8_t, 4> payload{1U, 2U, 3U, 4U};
+
+    // A broadcast always reaches the medium.
+    REQUIRE(transport.send(mark4::BROADCAST_NODE, payload.data(), payload.size()));
+    REQUIRE(transport.sent() == 1U);
+    REQUIRE(transport.sentBytes() == payload.size());
+    REQUIRE(transport.refused() == 0U);
+
+    // A unicast to a node never heard of reaches nothing.
+    REQUIRE(!transport.send(NODE_B, payload.data(), payload.size()));
+    REQUIRE(transport.sent() == 1U);
+    REQUIRE(transport.sentBytes() == payload.size());
+    REQUIRE(transport.refused() == 1U);
+
+    // A payload longer than a frame can carry never even reaches the codec.
+    const std::vector<std::uint8_t> oversized(mark4::MAX_PAYLOAD + 1U, 0xEEU);
+    REQUIRE(!transport.send(mark4::BROADCAST_NODE, oversized.data(), oversized.size()));
+    REQUIRE(transport.refused() == 2U);
+
+    // The beacon is one more send of this node's own and counts as one.
+    transport.setBeacon(payload.data(), payload.size());
+    Observer observer;
+    transport.poll(T0_US, &Observer::Deliver, &observer);
+    REQUIRE(transport.sent() == 2U);
+    REQUIRE(transport.sentBytes() == 2U * payload.size());
+}
+
 TEST_CASE("sequence accounting counts losses and duplicates across the wrap")
 {
     FakeBus bus;

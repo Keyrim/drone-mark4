@@ -41,6 +41,7 @@ namespace mark4
     {
         if (payload == nullptr || size > MAX_PAYLOAD || m_linkCount == 0U)
         {
+            ++m_refused;
             return false;
         }
         FrameHeader header;
@@ -64,15 +65,29 @@ namespace mark4
                     all = m_links[index]->broadcast(m_txBuffer.data(), frameSize) && all;
                 }
             }
-            return all;
+            return countSend(all, size);
         }
         const Node *target = findNode(dst);
         if (target == nullptr || (linkMask & (1U << target->link)) == 0U)
         {
             ++m_dropped;
+            ++m_refused;
             return false;
         }
-        return m_links[target->link]->send(m_txBuffer.data(), frameSize, target->address);
+        return countSend(m_links[target->link]->send(m_txBuffer.data(), frameSize, target->address),
+                         size);
+    }
+
+    bool Transport::countSend(bool ok, std::size_t size)
+    {
+        if (!ok)
+        {
+            ++m_refused;
+            return false;
+        }
+        ++m_sent;
+        m_sentBytes += size;
+        return true;
     }
 
     void Transport::poll(std::uint64_t nowUs, DeliverFn deliver, void *context)
