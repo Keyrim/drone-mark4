@@ -29,9 +29,10 @@ flowchart LR
 
 - **A single output bus**: the transport (`software/components/transport/`)
   carries every packet between the flight processes and the ground tools as
-  a frame with a source and destination node; telemetry is a broadcast
-  frame any number of nodes read simultaneously, commands are unicasts to
-  the node that beaconed. The board is a node too: the ESP32 riding it
+  a frame with a source and destination node; the periodic `Status` report
+  is a broadcast frame any number of nodes read simultaneously, commands
+  and the on-demand telemetry stream are unicasts to the node that
+  beaconed. The board is a node too: the ESP32 riding it
   relays its frames between the UART and the WiFi LAN.
 - **Godot and the hub never link flight-core**: they only know the wire of
   `protocol/mark4.proto`, through codecs generated at build time (nanopb,
@@ -73,7 +74,10 @@ Structuring principles:
 
 - **flight-core is pure**: no dynamic allocation, no exceptions/RTTI, no
   clock access - the timestamp travels inside the `SensorFrame`, stamped by
-  platform at acquisition time.
+  platform at acquisition time. The one library it links is `telemetry`,
+  and that is names and pointers rather than wire: a module declares the
+  measures it computes next to the variables, and the adapter that turns
+  them into messages stays in platform.
 - **The RC kill switch** is a field of the frame, handled at the very top of
   `step()`.
 - **Quaternions everywhere** (arbitrary attitude), `float` everywhere,
