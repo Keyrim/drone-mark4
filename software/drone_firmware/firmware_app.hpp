@@ -13,7 +13,6 @@
 #include "platform_common/ota_updater.hpp"
 #include "platform_common/rc_tracker.hpp"
 #include "platform_common/telemetry_publisher.hpp"
-#include "platform_common/telemetry_sender_transport.hpp"
 #include "platform_common/tuning_service.hpp"
 #include "platform_stm32/bmp581.hpp"
 #include "platform_stm32/board.hpp"
@@ -128,17 +127,16 @@ namespace mark4
         mark4::Transport m_transport{boardNodeId()};
         mark4::RttSink m_rttSink;
         mark4::TransportSink m_transportSink{&FirmwareApp::SendLog, this};
-        mark4::TelemetrySenderTransport m_telemetrySender{m_transport};
         mark4::I2cBus m_bus;
         mark4::Mpu6050 m_imu{m_bus};
         mark4::Bmp581 m_baro{m_bus};
         mark4::SensorSourceStm32 m_sensorSource{m_imu, m_baro, m_clock};
         mark4::MotorSinkDshot m_motorSink;
-        mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender};
+        mark4::TelemetryPublisher m_telemetryPublisher{m_transport};
         mark4::CommandReceiverTransport m_commandReceiver;
         mark4::RcTracker m_rcTracker;
         mark4::FlightCore m_core;
-        mark4::TuningService m_tuningService{m_core, m_telemetrySender};
+        mark4::TuningService m_tuningService{m_core, m_transport};
         /// The slot this image was linked for is a compile-time fact
         /// (ota_slots.hpp, one -DDRONE_OTA_SLOT_ID per variant); the store
         /// refuses to erase or program it, whatever arrives on the wire.

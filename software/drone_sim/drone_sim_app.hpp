@@ -15,7 +15,6 @@
 #include "platform_common/ota_updater.hpp"
 #include "platform_common/rc_tracker.hpp"
 #include "platform_common/telemetry_publisher.hpp"
-#include "platform_common/telemetry_sender_transport.hpp"
 #include "platform_common/tuning_service.hpp"
 #include "platform_sim/clock_sim.hpp"
 #include "platform_sim/firmware_store_sim.hpp"
@@ -71,12 +70,6 @@ namespace mark4
         ///        the frames come without sensors and the core stays idle.
         /// @return number of steps executed
         std::uint32_t run();
-
-        /// @return telemetry service, for post-run reporting
-        [[nodiscard]] const mark4::TelemetrySenderTransport &accessTelemetrySender() const
-        {
-            return m_telemetrySender;
-        }
 
         /// @return transport, for post-run reporting
         [[nodiscard]] const mark4::Transport &accessTransport() const
@@ -190,12 +183,11 @@ namespace mark4
         mark4::PlantLink m_plantLink{m_transport, m_udpLink, m_clock, m_commandReceiver};
         mark4::SensorSourceSim m_sensorSource{m_plantLink, m_clock};
         mark4::MotorSinkSim m_motorSink{m_plantLink};
-        mark4::TelemetrySenderTransport m_telemetrySender{m_transport};
-        mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender};
+        mark4::TelemetryPublisher m_telemetryPublisher{m_transport};
         mark4::RcTracker m_rcTracker;
         mark4::FlightCore m_core;
-        mark4::TuningService m_tuningService{m_core, m_telemetrySender};
-        mark4::SimRunTracker m_runTracker{m_telemetrySender};
+        mark4::TuningService m_tuningService{m_core, m_transport};
+        mark4::SimRunTracker m_runTracker{m_transport};
 
         /// Emulated flash directory, declared before the store because the
         /// store keeps the pointer rather than a copy of the path.

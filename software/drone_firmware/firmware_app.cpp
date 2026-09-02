@@ -237,7 +237,7 @@ namespace mark4
         {
             // The same path telemetry and the tuning answers go out by: the
             // updater is one more message type on the one link this board has.
-            static_cast<void>(sendEnvelope(m_telemetrySender, reply));
+            static_cast<void>(sendEnvelope(m_transport, BROADCAST_NODE, reply));
         }
         if (consumed)
         {
@@ -389,7 +389,7 @@ namespace mark4
                 // LED1 on the degraded pattern for the next one.
                 const std::uint32_t failureCount =
                     m_sensorSource.overruns() + m_sensorSource.readFailures() + m_baro.failures() +
-                    m_baro.implausibleSolutions() + m_telemetrySender.dropCount();
+                    m_baro.implausibleSolutions() + m_transport.refused();
                 degraded = failureCount != lastFailureCount;
                 lastFailureCount = failureCount;
                 const std::uint64_t nowUs = frame.timestampUs;
@@ -415,8 +415,8 @@ namespace mark4
                              static_cast<unsigned long>(m_baro.failures()));
                 STATUS.debug("tx: %lu sent %lu dropped  rx: %lu received, %lu nodes%s  "
                              "tuning: %lu asked %lu answered  phase %u",
-                             static_cast<unsigned long>(m_telemetrySender.packetCount()),
-                             static_cast<unsigned long>(m_telemetrySender.dropCount()),
+                             static_cast<unsigned long>(m_transport.sent()),
+                             static_cast<unsigned long>(m_transport.refused()),
                              static_cast<unsigned long>(m_commandReceiver.packetsReceived()),
                              static_cast<unsigned long>(m_transport.nodeCount()),
                              m_rcTracker.failsafeActive(frame.timestampUs) ? " (failsafe)" : "",
@@ -429,9 +429,9 @@ namespace mark4
                     UART.warn("rx ring overrun, %lu frames dropped so far",
                               static_cast<unsigned long>(lastRxDrops));
                 }
-                if (m_telemetrySender.dropCount() != lastTxDrops)
+                if (m_transport.refused() != lastTxDrops)
                 {
-                    lastTxDrops = m_telemetrySender.dropCount();
+                    lastTxDrops = m_transport.refused();
                     UART.warn("tx ring full, %lu frames dropped so far",
                               static_cast<unsigned long>(lastTxDrops));
                 }

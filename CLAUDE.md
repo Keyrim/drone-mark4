@@ -133,9 +133,11 @@ Everything C++ lives under `software/`: the executables at its top level
   platform headers can use SensorFrame/ActuatorFrame without a cycle.
   flight_core links flight_core_types alone: no platform, no protocol/
   (the telemetry packer is an IO adapter and lives in `platform_common`).
-- `platform/` - 5 abstract services in `software/components/platform/include/platform/`
-  (AbsSensorSource, AbsMotorSink, AbsCommandReceiver, AbsTelemetrySender,
-  AbsClock). `AbsSensorSource::waitFrame()` is the single wait
+- `platform/` - 4 abstract services in `software/components/platform/include/platform/`
+  (AbsSensorSource, AbsMotorSink, AbsCommandReceiver, AbsClock). There is
+  no output service: everything a composition emits leaves through its
+  `Transport` (`sendEnvelope(transport, dst, envelope)`).
+  `AbsSensorSource::waitFrame()` is the single wait
   point of the whole system; AbsClock is internal to platform and never
   passed to FlightCore. Implementations live in `software/components/platform/src/<variant>/`
   (sim, stm32); each variant's headers stay under its own

@@ -56,16 +56,17 @@ flowchart TB
     subgraph platform["platform - pure virtual interfaces"]
         SRC["AbsSensorSource<br/>(blocking, the single wait point)"]
         SINK["AbsMotorSink"]
-        TEL["AbsTelemetrySender"]
         CMD["AbsCommandReceiver"]
         CLK["AbsClock<br/>(internal to platform)"]
     end
+
+    TR["Transport<br/>(everything the node emits)"]
 
     MAIN -->|"builds and injects"| CORE
     MAIN -->|"instantiates one variant:<br/>stm32 / sim"| platform
     SRC -->|"waitFrame()"| CORE
     CORE -->|"push()"| SINK
-    CORE -.-> TEL
+    MAIN -.->|"sendEnvelope(dst, ...)"| TR
 ```
 
 Structuring principles:

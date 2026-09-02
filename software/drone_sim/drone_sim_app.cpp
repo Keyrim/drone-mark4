@@ -314,10 +314,9 @@ namespace mark4
         const bool consumed = m_otaUpdater->handle(envelope, inputs, reply);
         if (reply.which_body != 0U)
         {
-            // Broadcast on the telemetry route, the same one the tuning
-            // answers take: the ground side reads every board-to-hub message
-            // off that one stream.
-            static_cast<void>(sendEnvelope(m_telemetrySender, reply));
+            // Broadcast, the same route the tuning answers take: the ground
+            // side reads every board-to-hub message off that one stream.
+            static_cast<void>(sendEnvelope(m_transport, BROADCAST_NODE, reply));
         }
         if (consumed)
         {
