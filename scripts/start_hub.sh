@@ -18,6 +18,9 @@ if curl -s --max-time 2 -o /dev/null "$HUB_URL"; then
     exit 0
 fi
 
-[ -d software/build/desktop ] || (cd software && cmake --preset desktop)
+# A configured build tree is one with a cache: the directory alone can
+# exist with nothing in it (an interrupted configure, a wiped cache) and
+# `cmake --build` would then fail with "could not load cache".
+[ -f software/build/desktop/CMakeCache.txt ] || (cd software && cmake --preset desktop)
 (cd software && cmake --build --preset desktop --target hub)
 exec ./software/build/desktop/hub/hub
