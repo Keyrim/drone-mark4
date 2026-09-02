@@ -89,9 +89,24 @@ namespace mark4
         TelemetryEntry(const char *name, TelemetryUnit unit, const void *context, ReadFn read);
 
         TelemetryEntry(const TelemetryEntry &) = delete;
-        TelemetryEntry &operator=(const TelemetryEntry &) = delete;
         TelemetryEntry(TelemetryEntry &&) = delete;
         TelemetryEntry &operator=(TelemetryEntry &&) = delete;
+
+        /// @brief Does nothing, on purpose, and that is the whole point.
+        ///
+        /// An entry's identity is its address, its name, its unit and where
+        /// it reads from, and all four are fixed at construction. Assigning
+        /// over the object that owns it (`FlightCore::reset()` restores every
+        /// module by assigning a fresh instance over itself) must therefore
+        /// leave the entry exactly as it is: the value it points at lives at
+        /// the same address afterwards, and a ground tool streaming this node
+        /// must not see the ids of its curves shift under it because the
+        /// drone was reset.
+        /// @return this entry, untouched
+        TelemetryEntry &operator=(const TelemetryEntry &)
+        {
+            return *this;
+        }
 
         /// @brief Unlinks the entry from the registry.
         ~TelemetryEntry();

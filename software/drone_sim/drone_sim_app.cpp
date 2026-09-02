@@ -139,7 +139,21 @@ namespace mark4
                   m_transport.nodeId(),
                   static_cast<unsigned>(m_udpLink.discoveryPort()),
                   WIRE_HASH);
-        return bootFirmware();
+        if (!bootFirmware())
+        {
+            return false;
+        }
+        // Last: freezing the registry means every object holding a measure
+        // must already exist, and the fake bootloader above builds some.
+        if (!m_telemetryService.init())
+        {
+            BOOT.error("telemetry: the registry is empty");
+            return false;
+        }
+        BOOT.info("status: 1 message / %u frames; telemetry: %zu measures on demand",
+                  static_cast<unsigned>(StatusPublisher::DECIMATION),
+                  m_telemetryService.entryCount());
+        return true;
     }
 
     bool DroneSimApp::bootFirmware()
@@ -234,7 +248,7 @@ namespace mark4
         }
         // A reset is a power cycle: the flight core starts over, tuned values
         // included, exactly like flash-less hardware.
-        m_core = mark4::FlightCore{};
+        m_core.reset();
     }
 
     bool DroneSimApp::imageValidates(std::uint8_t slot) const
@@ -408,6 +422,10 @@ namespace mark4
             {
                 continue;
             }
+            if (m_telemetryService.handle(envelope, src, nowUs))
+            {
+                continue; // a discovery or enable request, answered to src
+            }
             switch (envelope.which_body)
             {
                 case mark4_Envelope_rc_tag:
@@ -480,7 +498,7 @@ namespace mark4
             if (m_sensorSource.sessionCount() != lastSession)
             {
                 lastSession = m_sensorSource.sessionCount();
-                m_core = mark4::FlightCore{};
+                m_core.reset();
                 announcedThrows = 0U;
                 previousPhase = mark4::FlightPhase::IDLE;
                 resetCountSeen = false;
@@ -498,7 +516,7 @@ namespace mark4
                     resetCountSeen && m_sensorSource.resetCount() != lastResetCount;
                 if (worldReset)
                 {
-                    m_core = mark4::FlightCore{};
+                    m_core.reset();
                     announcedThrows = 0U;
                     previousPhase = mark4::FlightPhase::IDLE;
                     LINK.info("simulator reset at t=%.3f s: flight core restarted",
@@ -543,13 +561,27 @@ namespace mark4
             }
 
             ++steps;
+            // The frame as the core is about to see it, RC graft included:
+            // the platform measures publish exactly what was stepped.
+            m_frameTelemetry.update(frame);
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);
+            if (frame.imuValid)
+            {
+                // The estimate and the truth of the same instant are only
+                // both at hand here, which is what makes the attitude error
+                // measurable at all.
+                m_truthTelemetry.update(m_sensorSource.truth(), m_core.attitude());
+            }
             // The plant's exact state rides next to the estimate, so a ground
             // tool compares the two sample by sample; a frame without sensors
             // has no plant behind it and no truth.
             m_statusPublisher.publish(
                 frame, actuators, m_core, frame.imuValid ? &m_sensorSource.truth() : nullptr);
+            // Whatever a subscriber enabled, at the period it asked for; the
+            // frame's own timestamp stamps the samples, so the service never
+            // reads a clock either.
+            m_telemetryService.sample(frame.timestampUs);
             // Paced answers to a list request: one description per frame, so
             // a table dump never bursts ahead of the telemetry it shares the
             // link with.

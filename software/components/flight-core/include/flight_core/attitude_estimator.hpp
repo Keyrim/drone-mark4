@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "flight_core/types.hpp"
+#include "telemetry/registry.hpp"
 
 namespace mark4
 {
@@ -104,10 +105,44 @@ namespace mark4
             return {-m_integralFb[0], -m_integralFb[1], -m_integralFb[2]};
         }
 
+        /// @return estimated attitude as roll, pitch, yaw [rad], refreshed
+        ///         once per update: the same convention as the ground tools
+        ///         (quat.ts, telemetry_wire.py)
+        [[nodiscard]] const std::array<float, 3> &eulerRad() const
+        {
+            return m_eulerRad;
+        }
+
       private:
+        /// @brief Refreshes the plain-float mirrors the telemetry entries
+        ///        read: the Euler angles and the bias, each derived once per
+        ///        update rather than on every sample, so a plotted curve is
+        ///        exactly the state the step produced.
+        void refreshTelemetry();
+
         float m_kp;                          ///< proportional gain [1/s]
         float m_ki;                          ///< integral gain [1/s^2]
         Quaternion m_attitude;               ///< body-to-world estimate
         std::array<float, 3> m_integralFb{}; ///< PI integral term = -gyro bias [rad/s]
+
+        std::array<float, 3> m_eulerRad{};     ///< m_attitude as roll, pitch, yaw [rad]
+        std::array<float, 3> m_gyroBiasRadS{}; ///< -m_integralFb, for the entries [rad/s]
+
+        // Measures, declared after the values they read. The quaternion
+        // components are read straight out of the estimate; the Euler angles
+        // and the bias out of the mirrors above.
+        TelemetryEntry m_quatW{"estimator/attitude/w", TelemetryUnit::UNITLESS, m_attitude.w};
+        TelemetryEntry m_quatX{"estimator/attitude/x", TelemetryUnit::UNITLESS, m_attitude.x};
+        TelemetryEntry m_quatY{"estimator/attitude/y", TelemetryUnit::UNITLESS, m_attitude.y};
+        TelemetryEntry m_quatZ{"estimator/attitude/z", TelemetryUnit::UNITLESS, m_attitude.z};
+        TelemetryEntry m_rollEntry{"estimator/attitude/roll", TelemetryUnit::RAD, m_eulerRad[0]};
+        TelemetryEntry m_pitchEntry{"estimator/attitude/pitch", TelemetryUnit::RAD, m_eulerRad[1]};
+        TelemetryEntry m_yawEntry{"estimator/attitude/yaw", TelemetryUnit::RAD, m_eulerRad[2]};
+        TelemetryEntry m_biasX{
+            "estimator/gyro_bias_x", TelemetryUnit::RAD_PER_S, m_gyroBiasRadS[0]};
+        TelemetryEntry m_biasY{
+            "estimator/gyro_bias_y", TelemetryUnit::RAD_PER_S, m_gyroBiasRadS[1]};
+        TelemetryEntry m_biasZ{
+            "estimator/gyro_bias_z", TelemetryUnit::RAD_PER_S, m_gyroBiasRadS[2]};
     };
 } // namespace mark4

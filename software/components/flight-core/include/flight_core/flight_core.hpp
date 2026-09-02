@@ -15,6 +15,7 @@
 #include "flight_core/types.hpp"
 #include "flight_core/vertical_controller.hpp"
 #include "flight_core/vertical_estimator.hpp"
+#include "telemetry/registry.hpp"
 
 namespace mark4
 {
@@ -94,6 +95,17 @@ namespace mark4
         /// @param sensors latest sensor frame
         /// @param[out] actuators motor commands computed for this step
         void step(const SensorFrame &sensors, ActuatorFrame &actuators);
+
+        /// @brief Restores every module to its constructed state, the tuned
+        ///        values and the counters included: a reset is a power cycle,
+        ///        exactly what flash-less hardware does. A composition calls
+        ///        it when the time base of its frames changed, when the
+        ///        simulated world teleported, or on a reboot command.
+        ///
+        ///        What deliberately survives is the telemetry registration of
+        ///        every module: names, units and addresses do not change, so
+        ///        a ground tool streaming this node keeps the ids it pulled.
+        void reset();
 
         /// @return number of steps executed since construction
         [[nodiscard]] std::uint32_t stepCount() const
@@ -386,5 +398,25 @@ namespace mark4
         std::uint64_t m_prevTimestampUs = 0U; ///< timestamp of the last accepted frame [us]
         bool m_hasPrevTimestamp = false;      ///< false until the first accepted frame
         TuningTable m_tuning;                 ///< registry of the tunable gains
+
+        /// @param context the core the entry was built with
+        /// @return the phase of the state machine as its numeric code
+        static float ReadFlightPhase(const void *context);
+
+        /// @param context the core the entry was built with
+        /// @return the piloting mode as its numeric code
+        static float ReadPilotMode(const void *context);
+
+        // Measures. The four motor commands are the mixer's output as it
+        // really left the core (m_lastMotor is what step() published); the
+        // phase and the mode are enums and go through readers.
+        TelemetryEntry m_motor0{"mixer/motor_0", TelemetryUnit::UNITLESS, m_lastMotor[0]};
+        TelemetryEntry m_motor1{"mixer/motor_1", TelemetryUnit::UNITLESS, m_lastMotor[1]};
+        TelemetryEntry m_motor2{"mixer/motor_2", TelemetryUnit::UNITLESS, m_lastMotor[2]};
+        TelemetryEntry m_motor3{"mixer/motor_3", TelemetryUnit::UNITLESS, m_lastMotor[3]};
+        TelemetryEntry m_phaseEntry{
+            "core/flight_phase", TelemetryUnit::UNITLESS, this, &ReadFlightPhase};
+        TelemetryEntry m_modeEntry{
+            "core/pilot_mode", TelemetryUnit::UNITLESS, this, &ReadPilotMode};
     };
 } // namespace mark4

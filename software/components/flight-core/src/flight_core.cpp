@@ -90,6 +90,26 @@ namespace mark4
         m_lastMotor = actuators.motor;
     }
 
+    float FlightCore::ReadFlightPhase(const void *context)
+    {
+        return static_cast<float>(static_cast<const FlightCore *>(context)->m_phase);
+    }
+
+    float FlightCore::ReadPilotMode(const void *context)
+    {
+        return static_cast<float>(static_cast<const FlightCore *>(context)->m_lockedMode);
+    }
+
+    void FlightCore::reset()
+    {
+        // A fresh instance assigned over this one: one expression, and it
+        // cannot fall out of step with the constructors the way a hand
+        // written field-by-field reset would. The telemetry entries the
+        // modules hold assign to nothing (telemetry/registry.hpp), which is
+        // what keeps this a reset of the state and not of the registry.
+        *this = FlightCore{};
+    }
+
     void FlightCore::stepWithoutImu(const SensorFrame &sensors, ActuatorFrame &actuators)
     {
         // No measurement, so nothing integrates and no phase advances: the

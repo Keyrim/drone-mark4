@@ -12,9 +12,11 @@
 #include "log/console_sink_posix.hpp"
 #include "log/wire.hpp"
 #include "platform_common/command_receiver_transport.hpp"
+#include "platform_common/frame_telemetry.hpp"
 #include "platform_common/ota_updater.hpp"
 #include "platform_common/rc_tracker.hpp"
 #include "platform_common/status_publisher.hpp"
+#include "platform_common/telemetry_service.hpp"
 #include "platform_common/tuning_service.hpp"
 #include "platform_sim/clock_sim.hpp"
 #include "platform_sim/firmware_store_sim.hpp"
@@ -22,6 +24,7 @@
 #include "platform_sim/plant_link.hpp"
 #include "platform_sim/sensor_source_sim.hpp"
 #include "platform_sim/sim_run_tracker.hpp"
+#include "platform_sim/truth_telemetry.hpp"
 #include "protocol/envelope.hpp"
 #include "transport/transport.hpp"
 #include "transport/udp_link.hpp"
@@ -44,6 +47,12 @@ namespace mark4
         /// sender's chunk pacing is never the thing waiting, long enough that
         /// a transfer does not spin a core flat out.
         static constexpr std::uint32_t UPDATE_POLL_US = 500U;
+
+        /// Fastest telemetry period this process serves [ms]: the frame
+        /// period itself, since the plant paces the loop at 500 Hz and a
+        /// loopback datagram costs nothing. There is nothing faster to ask
+        /// for - a shorter period would only repeat a frame's values.
+        static constexpr std::uint32_t MIN_TELEMETRY_PERIOD_MS = 2U;
 
         /// @param maxFrames number of frames to process before stopping,
         ///        0 = no limit (the run ends with the operator or the link)
@@ -99,6 +108,12 @@ namespace mark4
         [[nodiscard]] const mark4::SimRunTracker &accessRunTracker() const
         {
             return m_runTracker;
+        }
+
+        /// @return telemetry service, for post-run reporting
+        [[nodiscard]] const mark4::TelemetryService &accessTelemetryService() const
+        {
+            return m_telemetryService;
         }
 
       private:
@@ -185,9 +200,17 @@ namespace mark4
         mark4::MotorSinkSim m_motorSink{m_plantLink};
         mark4::StatusPublisher m_statusPublisher{m_transport};
         mark4::RcTracker m_rcTracker;
+        /// Declared before the core so the ids of the platform measures come
+        /// first in the frozen table: the order of construction IS the order
+        /// of the ids (see components/telemetry/README.md).
+        mark4::FrameTelemetry m_frameTelemetry;
         mark4::FlightCore m_core;
+        mark4::TruthTelemetry m_truthTelemetry;
         mark4::TuningService m_tuningService{m_core, m_transport};
         mark4::SimRunTracker m_runTracker{m_transport};
+        /// Last of the services: init() freezes the registry, so every
+        /// object holding a measure must exist before it runs.
+        mark4::TelemetryService m_telemetryService{m_transport, MIN_TELEMETRY_PERIOD_MS};
 
         /// Emulated flash directory, declared before the store because the
         /// store keeps the pointer rather than a copy of the path.

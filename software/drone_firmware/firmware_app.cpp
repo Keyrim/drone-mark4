@@ -140,6 +140,16 @@ namespace mark4
                   static_cast<unsigned long>(SensorSourceStm32::FRAME_RATE_HZ),
                   static_cast<unsigned long>(StatusPublisher::DECIMATION),
                   static_cast<unsigned long>(RcTracker::RC_TIMEOUT_US / US_PER_MS));
+        // Last: freezing the registry means every object holding a measure
+        // must already exist.
+        if (!m_telemetryService.init())
+        {
+            BOOT.error("telemetry: the registry is empty");
+            return false;
+        }
+        BOOT.info("telemetry: %lu measures on demand, %lu ms floor",
+                  static_cast<unsigned long>(m_telemetryService.entryCount()),
+                  static_cast<unsigned long>(MIN_TELEMETRY_PERIOD_MS));
 
         refreshArmInterlock();
         OTA.info("running slot %c, %lu byte slots",
@@ -267,6 +277,10 @@ namespace mark4
             {
                 continue; // the updater claimed it, whatever it answered
             }
+            if (m_telemetryService.handle(envelope, src, nowUs))
+            {
+                continue; // a discovery or enable request, answered to src
+            }
             switch (envelope.which_body)
             {
                 case mark4_Envelope_rc_tag:
@@ -369,8 +383,13 @@ namespace mark4
             }
 
             const FlightPhase phaseBefore = m_core.flightPhase();
+            // The frame as the core is about to see it, RC graft and arming
+            // interlock included: the platform measures publish exactly
+            // what was stepped.
+            m_frameTelemetry.update(frame);
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);
+            m_stepDurationUs = static_cast<float>(m_clock.nowUs() - frame.timestampUs);
             if (m_core.flightPhase() == FlightPhase::FAULT && phaseBefore != FlightPhase::FAULT)
             {
                 FLIGHT.error("FAULT: imu lost in flight, motors cut");
@@ -379,6 +398,10 @@ namespace mark4
 
             ++frames;
             m_statusPublisher.publish(frame, actuators, m_core);
+            // Whatever a subscriber enabled, at the period it asked for; the
+            // frame's own timestamp stamps the samples, so the service never
+            // reads a clock either.
+            m_telemetryService.sample(frame.timestampUs);
             // Paced answers to a list request: one description per frame, so
             // a table dump never bursts ahead of the telemetry sharing the
             // same UART.
@@ -413,6 +436,11 @@ namespace mark4
                              static_cast<unsigned long>(m_sensorSource.overruns()),
                              static_cast<unsigned long>(m_sensorSource.readFailures()),
                              static_cast<unsigned long>(m_baro.failures()));
+                STATUS.debug("telemetry: %lu measures, %lu enabled every %lu ms, %lu sent",
+                             static_cast<unsigned long>(m_telemetryService.entryCount()),
+                             static_cast<unsigned long>(m_telemetryService.enabledCount()),
+                             static_cast<unsigned long>(m_telemetryService.periodMs()),
+                             static_cast<unsigned long>(m_telemetryService.messageCount()));
                 STATUS.debug("tx: %lu sent %lu dropped  rx: %lu received, %lu nodes%s  "
                              "tuning: %lu asked %lu answered  phase %u",
                              static_cast<unsigned long>(m_transport.sent()),

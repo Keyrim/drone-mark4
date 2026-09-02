@@ -106,7 +106,7 @@ TEST_CASE("the injected default gains behave exactly like the implicit ones")
 
 TEST_CASE("the attitude controller commands rates that reduce the tilt")
 {
-    const mark4::AttitudeController controller;
+    mark4::AttitudeController controller;
 
     // Rolled left by 0.2 rad (positive about body x): the corrective rate
     // setpoint must be negative about x, and zero yaw always.
@@ -147,7 +147,7 @@ TEST_CASE("the vertical controller climbs on a positive setpoint around the feed
 
 TEST_CASE("a tilted desired up leans the drone against a forward drift")
 {
-    const mark4::AttitudeController controller;
+    mark4::AttitudeController controller;
 
     // Drifting toward world +x, the braking target tilts the thrust toward
     // -x: at a level attitude the commanded pitch rate must raise the nose

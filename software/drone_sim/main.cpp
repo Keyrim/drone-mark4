@@ -170,6 +170,11 @@ int main(int argc, char **argv)
                 static_cast<double>(motor[2]),
                 static_cast<double>(motor[3]));
 
+    const auto &telemetry = app.accessTelemetryService();
+    MODULE.info("telemetry: %zu measures, %u sample messages sent",
+                telemetry.entryCount(),
+                telemetry.messageCount());
+
     const auto &tracker = app.accessRunTracker();
     MODULE.info("run %u hash %016llx (%s), %u resent frames rejected%s",
                 static_cast<unsigned>(tracker.runId()),

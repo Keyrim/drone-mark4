@@ -6,6 +6,7 @@
 #include <array>
 
 #include "flight_core/types.hpp"
+#include "telemetry/registry.hpp"
 
 namespace mark4
 {
@@ -99,5 +100,40 @@ namespace mark4
         std::array<float, 3> m_kp;         ///< proportional gain per axis
         std::array<float, 3> m_ki;         ///< integral gain per axis
         std::array<float, 3> m_integral{}; ///< integrator state per axis
+
+        // What the last update() computed, per axis, kept for the telemetry
+        // registry alone: the inner loop is where a tuning session is won or
+        // lost, and reading its terms off the wire beats guessing them from
+        // the motor commands.
+        std::array<float, 3> m_setpointRadS{}; ///< setpoint of the last update [rad/s]
+        std::array<float, 3> m_measuredRadS{}; ///< gyro of the last update [rad/s]
+        std::array<float, 3> m_errorRadS{};    ///< setpoint - measurement [rad/s]
+        std::array<float, 3> m_pTerm{};        ///< proportional contribution
+        std::array<float, 3> m_output{};       ///< normalized torque demand
+
+        TelemetryEntry m_setpointRoll{
+            "rate/roll/setpoint", TelemetryUnit::RAD_PER_S, m_setpointRadS[0]};
+        TelemetryEntry m_setpointPitch{
+            "rate/pitch/setpoint", TelemetryUnit::RAD_PER_S, m_setpointRadS[1]};
+        TelemetryEntry m_setpointYaw{
+            "rate/yaw/setpoint", TelemetryUnit::RAD_PER_S, m_setpointRadS[2]};
+        TelemetryEntry m_measuredRoll{
+            "rate/roll/measurement", TelemetryUnit::RAD_PER_S, m_measuredRadS[0]};
+        TelemetryEntry m_measuredPitch{
+            "rate/pitch/measurement", TelemetryUnit::RAD_PER_S, m_measuredRadS[1]};
+        TelemetryEntry m_measuredYaw{
+            "rate/yaw/measurement", TelemetryUnit::RAD_PER_S, m_measuredRadS[2]};
+        TelemetryEntry m_errorRoll{"rate/roll/error", TelemetryUnit::RAD_PER_S, m_errorRadS[0]};
+        TelemetryEntry m_errorPitch{"rate/pitch/error", TelemetryUnit::RAD_PER_S, m_errorRadS[1]};
+        TelemetryEntry m_errorYaw{"rate/yaw/error", TelemetryUnit::RAD_PER_S, m_errorRadS[2]};
+        TelemetryEntry m_pRoll{"rate/roll/p_term", TelemetryUnit::UNITLESS, m_pTerm[0]};
+        TelemetryEntry m_pPitch{"rate/pitch/p_term", TelemetryUnit::UNITLESS, m_pTerm[1]};
+        TelemetryEntry m_pYaw{"rate/yaw/p_term", TelemetryUnit::UNITLESS, m_pTerm[2]};
+        TelemetryEntry m_iRoll{"rate/roll/i_term", TelemetryUnit::UNITLESS, m_integral[0]};
+        TelemetryEntry m_iPitch{"rate/pitch/i_term", TelemetryUnit::UNITLESS, m_integral[1]};
+        TelemetryEntry m_iYaw{"rate/yaw/i_term", TelemetryUnit::UNITLESS, m_integral[2]};
+        TelemetryEntry m_outputRoll{"rate/roll/output", TelemetryUnit::UNITLESS, m_output[0]};
+        TelemetryEntry m_outputPitch{"rate/pitch/output", TelemetryUnit::UNITLESS, m_output[1]};
+        TelemetryEntry m_outputYaw{"rate/yaw/output", TelemetryUnit::UNITLESS, m_output[2]};
     };
 } // namespace mark4
