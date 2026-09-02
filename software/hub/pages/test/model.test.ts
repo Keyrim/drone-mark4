@@ -1,16 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { groupByLane, moveLane, SeriesBuffer } from "../src/lanes/model";
-import { create } from "@bufbuild/protobuf";
-
-import { StatusSchema } from "../src/gen/mark4_pb";
-import { sampleStatus, seriesByKey, type SeriesDef } from "../src/shared/series";
+import { groupByLane, moveLane, SeriesBuffer, type SeriesDef } from "../src/lanes/model";
 
 function def(key: string): SeriesDef {
-    const found = seriesByKey(key);
-    assert.ok(found, `unknown series ${key}`);
-    return found;
+    return { key, label: key, unit: "", color: "#3987e5" };
 }
 
 test("SeriesBuffer keeps samples in arrival order", () => {
@@ -74,45 +68,6 @@ test("groupByLane keeps the config order and drops what it cannot feed", () => {
         grouped[0]?.buffers.map((b) => b.def.key),
         ["motor.1", "motor.0"]
     );
-});
-
-const STATUS_INIT = {
-    timestampUs: 2000n,
-    attitudeQuat: [1, 0, 0, 0],
-    motor: [0.1, 0.2, 0.3, 0.4],
-    flightPhase: 5,
-    throwState: 2,
-};
-const STATUS = create(StatusSchema, STATUS_INIT);
-
-const TRUTH = {
-    attitudeQuat: [Math.SQRT1_2, 0, 0, Math.SQRT1_2],
-    positionM: [1, 2, 7],
-    velocityMps: [0, 0, -2],
-};
-
-test("sampleStatus leaves the exact series empty without a truth", () => {
-    const row = sampleStatus(STATUS);
-    assert.equal(row.timestampUs, 2000);
-    assert.equal(row.values.get("motor.1"), 0.2);
-    assert.equal(row.values.get("alt.exact"), null);
-    assert.equal(row.values.get("attitude.error"), null);
-});
-
-test("sampleStatus reads the exact state out of the truth the message carries", () => {
-    const row = sampleStatus(create(StatusSchema, { ...STATUS_INIT, truth: TRUTH }));
-    assert.equal(row.timestampUs, 2000);
-    assert.equal(row.values.get("alt.exact"), 7);
-    assert.equal(row.values.get("vz.exact"), -2);
-    assert.ok(Math.abs((row.values.get("euler.exact.yaw") as number) - 90) < 1e-9);
-    assert.ok(Math.abs((row.values.get("attitude.error") as number) - 90) < 1e-9);
-});
-
-test("sampleStatus ignores a truth without an attitude", () => {
-    const row = sampleStatus(
-        create(StatusSchema, { ...STATUS_INIT, truth: { positionM: [0, 0, 9] } })
-    );
-    assert.equal(row.values.get("alt.exact"), null);
 });
 
 test("moveLane moves a lane to the drop index", () => {

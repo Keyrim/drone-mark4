@@ -26,11 +26,9 @@ import {
 } from "../gen/mark4_pb";
 import { frameMessage, type GatewaySocket } from "../shared/gateway_socket";
 import { FADING_MS, type NodeView, hexNodeId, nodeColor } from "../shared/nodes";
-import { FLIGHT_PHASE_NAMES } from "../shared/series";
+import { FLIGHT_PHASE_NAMES, THROW_STATE_NAMES } from "../shared/phases";
 import { MODE_ALTITUDE_AUTO, MODE_MANUAL, SAFE_RC, TICK_MS, clamp01, rcEnvelope, type RcState } from "./rc";
 import { TuningPanel } from "./tuning";
-
-const THROW_STATE_NAMES = ["idle", "thrust", "ballistic"];
 
 /** How often the readout repaints: Status lands far faster than eyes read. */
 const READOUT_MS = 100;

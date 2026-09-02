@@ -215,9 +215,12 @@ namespace mark4
                 const std::uintmax_t bytes = std::filesystem::file_size(entry.path(), sizeFailure);
                 std::error_code timeFailure;
                 const auto written = std::filesystem::last_write_time(entry.path(), timeFailure);
-                const auto epoch =
-                    std::chrono::duration_cast<std::chrono::seconds>(written.time_since_epoch())
-                        .count();
+                // The epoch of a file clock is whatever the implementation
+                // chose, so it has to be converted before it means anything
+                // to a client: unix seconds is what a page formats.
+                const auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
+                                       std::chrono::file_clock::to_sys(written).time_since_epoch())
+                                       .count();
                 entries.push_back({{"name", name},
                                    {"bytes", sizeFailure ? 0U : bytes},
                                    {"modified", timeFailure ? 0 : epoch}});

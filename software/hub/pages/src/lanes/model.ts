@@ -1,9 +1,19 @@
 /**
- * Lane viewer state: per-series sample buffers and the named view configs
- * that decide which series share a lane. No DOM access.
+ * Lane viewer state: what one plotted series looks like and the bounded
+ * buffer of its samples. No DOM access.
  */
 
-import type { SeriesDef } from "../shared/series";
+/** One plotted series: stable identity, how it looks, how its axis reads. */
+export interface SeriesDef {
+    /** Stable identity. For a telemetry measure this is its name. */
+    readonly key: string;
+    readonly label: string;
+    /** Axis unit, empty when unitless */
+    readonly unit: string;
+    readonly color: string;
+    /** Dash pattern, set on the twins so a shared lane stays readable */
+    readonly dash?: number[];
+}
 
 /** Points kept per series before the oldest ones are dropped. */
 export const RING_CAPACITY = 12000;
@@ -23,7 +33,8 @@ export class SeriesBuffer {
 
     constructor(
         readonly def: SeriesDef,
-        readonly capacity: number = RING_CAPACITY
+        readonly capacity: number = RING_CAPACITY,
+        private readonly trimFraction: number = TRIM_FRACTION
     ) {}
 
     /**
@@ -42,7 +53,7 @@ export class SeriesBuffer {
             // ponytail: amortized trim rather than a true circular buffer;
             // uPlot wants contiguous ascending arrays, and one splice every
             // 1200 samples is far cheaper than a copy on every frame.
-            const drop = Math.ceil(this.capacity * TRIM_FRACTION);
+            const drop = Math.ceil(this.capacity * this.trimFraction);
             this.t.splice(0, drop);
             this.v.splice(0, drop);
         }
@@ -69,12 +80,6 @@ export class SeriesBuffer {
 export interface LaneConfig {
     title: string;
     keys: string[];
-}
-
-/** A named set of lanes. */
-export interface ViewConfig {
-    name: string;
-    lanes: LaneConfig[];
 }
 
 /**
@@ -112,25 +117,4 @@ export function moveLane(lanes: LaneConfig[], from: number, to: number): void {
     }
     const [moved] = lanes.splice(from, 1);
     lanes.splice(to, 0, moved!);
-}
-
-const STORE_KEY = "mark4.pages.viewConfigs";
-
-/** Named view configs saved in this browser. */
-export function loadViewConfigs(): ViewConfig[] {
-    try {
-        const raw = localStorage.getItem(STORE_KEY);
-        const parsed: unknown = raw === null ? [] : JSON.parse(raw);
-        return Array.isArray(parsed) ? (parsed as ViewConfig[]) : [];
-    } catch {
-        return [];
-    }
-}
-
-export function saveViewConfigs(configs: ViewConfig[]): void {
-    try {
-        localStorage.setItem(STORE_KEY, JSON.stringify(configs));
-    } catch {
-        // A browser refusing storage costs the saved views, nothing else
-    }
 }

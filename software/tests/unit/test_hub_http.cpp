@@ -146,7 +146,9 @@ TEST_CASE("a telemetry session round trips through the store")
     REQUIRE(entries.size() == 1U);
     CHECK(entries[0]["name"] == "throw_12");
     CHECK(entries[0]["bytes"] == session.size());
-    CHECK(entries[0]["modified"] != 0);
+    // Unix seconds, not whatever epoch the file clock happens to use: a
+    // page formats this as a date.
+    CHECK(entries[0]["modified"] > 1700000000);
 
     const mark4::HttpResult read =
         mark4::routeHttp(config, "GET", "/api/telemetry/sessions/throw_12");
