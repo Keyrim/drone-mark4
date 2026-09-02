@@ -57,6 +57,32 @@ stream), and every response carries `Cache-Control: no-store`. A URI holding
 a `..` component is refused: nothing outside the pages directory is
 reachable.
 
+## HTTP API: the telemetry store
+
+The HTTP side stays filesystem-only, which is the invariant that keeps the
+hub lock-free: these handlers run on the websocket library's connection
+threads and touch no registry and no counter. They read and write files
+under the telemetry directory, `logs/telemetry` resolved from the hub's own
+location (the repository ignores `logs/`, so a recording is bench output
+and never source). The directory need not exist: the first save creates it.
+
+| route | method | what |
+|-------|--------|------|
+| `/api/telemetry/sessions` | GET | JSON array of `{name, bytes, modified}`, one per stored session, by name. |
+| `/api/telemetry/sessions/<name>` | GET | the stored session document. |
+| `/api/telemetry/sessions/<name>` | PUT | stores it as `sessions/<name>.telemetry.json`. The body must parse as JSON; it is never interpreted, the shape is the page's business. Answers `{name, bytes}`. |
+| `/api/telemetry/sessions/<name>` | DELETE | removes it. |
+| `/api/telemetry/exports/<name>.csv` | GET | serves `exports/<name>.csv` as a download (`Content-Disposition`), so a browser saves it under that name. |
+| `/api/telemetry/exports/<name>.csv` | PUT | stores the CSV the page built, as it comes: the hub never parses it. |
+| `/api/telemetry/configs[/<name>]` | GET, PUT, DELETE | the named view configs, small JSON files under `configs/`. Same rules as the sessions. |
+
+A name becomes a file name, so it obeys one rule: 1 to 64 characters of
+letters, digits, `_` and `-`. No separator, no dot, no leading dot, nothing
+that could name a file outside its own directory; anything else is a 400.
+Every body is capped at 64 MiB. A wrong method on an existing route is a
+405, an unknown route a 404, and so is every telemetry route when the hub
+was given no telemetry directory.
+
 ## Websocket contract: gateway.proto
 
 Every websocket message, both directions, is one binary

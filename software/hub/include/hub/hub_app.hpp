@@ -78,6 +78,10 @@ namespace mark4
             std::uint16_t discoveryPort = DISCOVERY_PORT; ///< shared transport port
             std::uint32_t nodeId = 0U;                    ///< transport identity, 0 = random
             std::string profilesDir = "profiles";         ///< directory the profiles live in
+            std::string telemetryDir;                     ///< directory the recorded sessions,
+                                                          ///< their exports and the named view
+                                                          ///< configs live in, empty = the
+                                                          ///< built-in default resolved at init
             std::string pagesDir;                         ///< directory the static pages are
                                                           ///< read from, empty = the built-in
                                                           ///< default resolved at init
@@ -90,6 +94,12 @@ namespace mark4
         /// Directory the pages are read from when nothing else is asked for,
         /// relative to the source tree root.
         static constexpr const char *DEFAULT_PAGES_DIR = "software/hub/pages/dist";
+
+        /// Directory the telemetry sessions, exports and view configs are
+        /// stored in when nothing else is asked for, relative to the source
+        /// tree root. Under logs/, which the repository ignores: a recording
+        /// is bench output, not source.
+        static constexpr const char *DEFAULT_TELEMETRY_DIR = "logs/telemetry";
 
         /// Bundle an update starts from when the client names none: the
         /// standard output of the firmware build, relative to the source tree

@@ -187,8 +187,16 @@ namespace mark4
             // the pages are a client, not a dependency.
             MODULE.warn("no pages in %s, serving none", m_config.pagesDir.c_str());
         }
+        if (m_config.telemetryDir.empty())
+        {
+            // Nothing has been recorded yet on a fresh checkout, so the
+            // directory need not exist: the first save creates it.
+            m_config.telemetryDir = defaultProjectPath(DEFAULT_TELEMETRY_DIR, false);
+        }
         HttpConfig http;
         http.pagesDir = m_config.pagesDir;
+        http.telemetryDir = m_config.telemetryDir;
+        MODULE.info("telemetry sessions in %s", m_config.telemetryDir.c_str());
         if (!m_ws.start(m_config.wsPort, m_config.bindAddress, std::move(http)))
         {
             return false;
