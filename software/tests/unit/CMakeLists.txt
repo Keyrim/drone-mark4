@@ -10,6 +10,7 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(unit_tests
     test_attitude_estimator.cpp
+    test_command_receiver.cpp
     test_control.cpp
     test_flight_core.cpp
     test_hub_http.cpp

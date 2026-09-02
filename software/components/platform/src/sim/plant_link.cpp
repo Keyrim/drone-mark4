@@ -31,7 +31,7 @@ namespace mark4
         // Whatever is not a sensor message is a command, a beacon or a
         // message this build does not know: the composition root sorts
         // them out of the ring, exactly as on the board.
-        self.m_commands.push(payload, size);
+        self.m_commands.push(src, payload, size);
     }
 
     void PlantLink::poll()

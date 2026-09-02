@@ -7,6 +7,10 @@ single wait point of the whole system; `AbsClock` serves the platform
 services between themselves and is never handed to the flight core, which
 reads the time off the frame.
 
+`AbsCommandReceiver::poll()` reports the node every payload came from
+next to the payload itself: an answer addressed to the one requester (the
+telemetry stream) needs it, and a broadcast answer simply ignores it.
+
 There is no output service: everything a composition emits leaves through
 the `Transport` it already holds (`sendEnvelope()` in
 `src/common/include/platform_common/envelope_io.hpp`), addressed to a node

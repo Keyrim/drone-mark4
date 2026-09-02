@@ -344,7 +344,9 @@ namespace mark4
             m_plantLink.poll();
             for (;;)
             {
-                const std::size_t size = m_commandReceiver.poll(command.data(), command.size());
+                std::uint32_t src = BROADCAST_NODE;
+                const std::size_t size =
+                    m_commandReceiver.poll(command.data(), command.size(), src);
                 if (size == 0U)
                 {
                     break;
@@ -388,7 +390,8 @@ namespace mark4
         bool reboot = false;
         for (;;)
         {
-            const std::size_t size = m_commandReceiver.poll(command.data(), command.size());
+            std::uint32_t src = BROADCAST_NODE;
+            const std::size_t size = m_commandReceiver.poll(command.data(), command.size(), src);
             if (size == 0U)
             {
                 break;
