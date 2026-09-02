@@ -118,7 +118,7 @@ config and only relaxes magic numbers.
 
 Everything C++ lives under `software/`: the executables at its top level
 (`drone_sim`, `drone_firmware`, `hub`), the libraries in
-`software/components/`. Five libraries, one rule of dependency flow:
+`software/components/`. Six libraries, one rule of dependency flow:
 
 - `flight-core/` - pure static lib. Single entry point
   `FlightCore::step(const SensorFrame&, ActuatorFrame&)`: synchronous,
@@ -131,8 +131,11 @@ Everything C++ lives under `software/`: the executables at its top level
   arming without an IMU, `FlightPhase::FAULT` when it is lost with the
   motors running, a lost baro coasts). `flight_core_types` is a separate INTERFACE target so
   platform headers can use SensorFrame/ActuatorFrame without a cycle.
-  flight_core links flight_core_types alone: no platform, no protocol/
-  (the telemetry packer is an IO adapter and lives in `platform_common`).
+  flight_core links flight_core_types and `telemetry`: no platform, no
+  protocol/ (the status packer is an IO adapter and lives in
+  `platform_common`). The telemetry link is names, units and pointers, not
+  wire: a module declares what it computes as a `TelemetryEntry` next to
+  the variable.
 - `platform/` - 4 abstract services in `software/components/platform/include/platform/`
   (AbsSensorSource, AbsMotorSink, AbsCommandReceiver, AbsClock). There is
   no output service: everything a composition emits leaves through its
