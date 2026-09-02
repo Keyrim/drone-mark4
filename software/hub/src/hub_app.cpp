@@ -84,6 +84,13 @@ namespace mark4
                    std::strcmp(a.git_hash, b.git_hash) == 0;
         }
 
+        /// @param kind kind a node announced
+        /// @return true for the kinds that expose a telemetry registry
+        bool isDroneKind(mark4_NodeKind kind)
+        {
+            return kind == mark4_NodeKind_DRONE_SIM || kind == mark4_NodeKind_FIRMWARE;
+        }
+
         /// @return "hub-<hostname>", cut to what an Announce name holds
         std::string gatewayName()
         {
@@ -270,6 +277,14 @@ namespace mark4
         MODULE.info("node %s disappeared", hexNodeId(node.id).c_str());
         self->m_announces.erase(node.id);
         self->m_logModules.erase(node.id);
+        // The ids of a telemetry table are only stable while the node runs,
+        // so a node that went down takes its table with it: the clients are
+        // told at once, with an empty table, rather than keeping curves
+        // bound to ids the next boot will hand to other measures.
+        if (self->m_telemetry.erase(node.id) > 0U)
+        {
+            self->broadcastNodeTelemetry(node.id);
+        }
         self->m_nodesDirty = true;
     }
 
@@ -312,8 +327,19 @@ namespace mark4
                                     WIRE_HASH);
                     }
                 }
+                // The kind and the schema are only known from the beacon, so
+                // this is where a drone's telemetry table starts being
+                // pulled rather than at node-up: a node speaking another
+                // schema is not asked at all, its answers would not decode.
+                if (isDroneKind(entry->second.kind) && entry->second.wire_hash == WIRE_HASH)
+                {
+                    beginTelemetryPull(src, monotonicUs());
+                }
                 return;
             }
+            case mark4_Envelope_telemetry_descriptors_tag:
+                onTelemetryPage(src, envelope.body.telemetry_descriptors, monotonicUs());
+                return;
             case mark4_Envelope_log_modules_tag:
                 applyLogModulesPage(envelope.body.log_modules, m_logModules[src]);
                 m_nodesDirty = true;
@@ -512,6 +538,84 @@ namespace mark4
         m_nodesDirty = false;
     }
 
+    void HubApp::broadcastNodeTelemetry(std::uint32_t node)
+    {
+        mark4_GatewayMessage message = mark4_GatewayMessage_init_zero;
+        message.which_body = mark4_GatewayMessage_node_telemetry_tag;
+        const auto pull = m_telemetry.find(node);
+        static const TelemetryTable NO_MEASURES;
+        fillNodeTelemetry(node,
+                          pull == m_telemetry.end() ? NO_MEASURES : pull->second.table,
+                          message.body.node_telemetry);
+        broadcast(message);
+    }
+
+    void HubApp::beginTelemetryPull(std::uint32_t node, std::uint64_t nowUs)
+    {
+        if (m_telemetry.find(node) != m_telemetry.end())
+        {
+            return; // already pulled, being pulled, or given up on
+        }
+        m_telemetry[node] = TelemetryPull{};
+        requestTelemetryPage(node, nowUs);
+    }
+
+    void HubApp::requestTelemetryPage(std::uint32_t node, std::uint64_t nowUs)
+    {
+        TelemetryPull &pull = m_telemetry[node];
+        mark4_Envelope request = mark4_Envelope_init_zero;
+        request.which_body = mark4_Envelope_telemetry_list_request_tag;
+        request.body.telemetry_list_request.cursor = pull.cursor;
+        std::string ignored;
+        static_cast<void>(sendEnvelope(node, request, ignored));
+        pull.lastRequestUs = nowUs;
+        ++pull.attempts;
+    }
+
+    void HubApp::onTelemetryPage(std::uint32_t node,
+                                 const mark4_TelemetryDescriptors &page,
+                                 std::uint64_t nowUs)
+    {
+        const auto found = m_telemetry.find(node);
+        if (found == m_telemetry.end() || found->second.complete)
+        {
+            // Nobody asked, or the table is already whole: a duplicate page
+            // must not restart the walk.
+            return;
+        }
+        TelemetryPull &pull = found->second;
+        pull.cursor = applyTelemetryPage(page, pull.table);
+        pull.attempts = 0U;
+        if (pull.cursor < page.total)
+        {
+            requestTelemetryPage(node, nowUs);
+            return;
+        }
+        pull.complete = true;
+        MODULE.info("node %s exposes %zu measures", hexNodeId(node).c_str(), pull.table.size());
+        broadcastNodeTelemetry(node);
+    }
+
+    void HubApp::pumpTelemetryPulls(std::uint64_t nowUs)
+    {
+        for (auto &[node, pull] : m_telemetry)
+        {
+            if (pull.complete || pull.abandoned ||
+                nowUs - std::min(nowUs, pull.lastRequestUs) < TELEMETRY_RETRY_US)
+            {
+                continue;
+            }
+            if (pull.attempts >= TELEMETRY_MAX_ATTEMPTS)
+            {
+                pull.abandoned = true;
+                MODULE.warn("node %s never answered for its telemetry table, giving up",
+                            hexNodeId(node).c_str());
+                continue;
+            }
+            requestTelemetryPage(node, nowUs);
+        }
+    }
+
     void HubApp::broadcastStatus()
     {
         const std::uint64_t nowUs = monotonicUs();
@@ -546,6 +650,7 @@ namespace mark4
             return nowUs - entry.second > RC_PILOT_WINDOW_US;
         });
         m_ota.tick(nowUs);
+        pumpTelemetryPulls(nowUs);
         if (m_udpLink.loopbackFallback() && !m_loopbackWarned)
         {
             m_loopbackWarned = true;
@@ -559,6 +664,13 @@ namespace mark4
             m_nodesDirty = true;
             broadcastStatus();
             broadcastOta();
+            for (const auto &[node, pull] : m_telemetry)
+            {
+                if (pull.complete)
+                {
+                    broadcastNodeTelemetry(node);
+                }
+            }
         }
         if (nowUs >= m_nextStatusUs)
         {

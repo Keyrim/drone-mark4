@@ -60,6 +60,17 @@ namespace mark4
         /// as a pilot (the stream runs at 10 Hz while engaged).
         static constexpr std::uint64_t RC_PILOT_WINDOW_US = 2'000'000U;
 
+        /// How long a telemetry page request goes unanswered before it is
+        /// sent again [us]. A flight process answers from its command drain,
+        /// so a lost page costs one frame; this is a lost datagram, not a
+        /// slow node.
+        static constexpr std::uint64_t TELEMETRY_RETRY_US = 500'000U;
+
+        /// Requests for the same page before the node is given up on. Six
+        /// tries at half a second is three seconds, the transport's own node
+        /// expiry: past that the node is not answering, not merely slow.
+        static constexpr std::uint32_t TELEMETRY_MAX_ATTEMPTS = 6U;
+
         /// Everything main() decides before the hub starts.
         struct Config
         {
@@ -165,6 +176,36 @@ namespace mark4
         /// @brief Sends the node table, the gateway itself first.
         void broadcastNodes();
 
+        /// @brief Sends one node's telemetry table to every client.
+        /// @param node node the table belongs to
+        void broadcastNodeTelemetry(std::uint32_t node);
+
+        /// @brief Starts pulling a node's telemetry table, page by page. A
+        ///        node already being pulled, or already pulled, is left
+        ///        alone.
+        /// @param node node to ask
+        /// @param nowUs current time [us]
+        void beginTelemetryPull(std::uint32_t node, std::uint64_t nowUs);
+
+        /// @brief Asks one node for the page its pull is waiting on.
+        /// @param node node to ask
+        /// @param nowUs current time [us]
+        void requestTelemetryPage(std::uint32_t node, std::uint64_t nowUs);
+
+        /// @brief Merges one page into a node's table and asks for the next,
+        ///        or publishes the table when it is whole.
+        /// @param node node the page came from
+        /// @param page the page
+        /// @param nowUs current time [us]
+        void onTelemetryPage(std::uint32_t node,
+                             const mark4_TelemetryDescriptors &page,
+                             std::uint64_t nowUs);
+
+        /// @brief Re-sends the page requests that went unanswered, and gives
+        ///        up on the nodes that never answer.
+        /// @param nowUs current time [us]
+        void pumpTelemetryPulls(std::uint64_t nowUs);
+
         /// @brief Sends the gateway counters.
         void broadcastStatus();
 
@@ -187,10 +228,23 @@ namespace mark4
         mark4_Announce m_ownAnnounce = mark4_Announce_init_zero; ///< this gateway's beacon
         std::map<std::uint32_t, mark4_Announce> m_announces;     ///< last beacon per node
         std::map<std::uint32_t, LogModuleTable> m_logModules;    ///< last module table per node
-        std::map<std::string, std::uint64_t> m_rcSeenUs;         ///< last RC instant per client
-        std::atomic_bool m_stopRequested{false};                 ///< set by a signal handler
-        std::uint64_t m_nextStatusUs = 0U;                       ///< next periodic publish [us]
-        bool m_nodesDirty = false;                               ///< table changed since published
+
+        /// Where one node's telemetry table stands: the descriptors pulled
+        /// so far and what the walk is still waiting on.
+        struct TelemetryPull
+        {
+            TelemetryTable table;             ///< descriptors merged so far
+            std::uint32_t cursor = 0U;        ///< page the pull is waiting on
+            std::uint64_t lastRequestUs = 0U; ///< instant the request went out [us]
+            std::uint32_t attempts = 0U;      ///< requests sent for this page
+            bool complete = false;            ///< the whole table arrived
+            bool abandoned = false;           ///< the node never answered
+        };
+        std::map<std::uint32_t, TelemetryPull> m_telemetry; ///< one pull per drone node
+        std::map<std::string, std::uint64_t> m_rcSeenUs;    ///< last RC instant per client
+        std::atomic_bool m_stopRequested{false};            ///< set by a signal handler
+        std::uint64_t m_nextStatusUs = 0U;                  ///< next periodic publish [us]
+        bool m_nodesDirty = false;                          ///< table changed since published
         bool m_logModulesPublished = false; ///< own table sent after the first beacon
         bool m_loopbackWarned = false;      ///< the link's fallback was logged
         std::uint32_t m_framesIn = 0U;      ///< payloads delivered by the transport
