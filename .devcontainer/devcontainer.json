@@ -17,6 +17,11 @@
 		"onAutoForward": "ignore"
 	},
 
+	// Runs on the HOST before the container is created or started: exports
+	// the session X11 cookie to the stable path compose bind-mounts as the
+	// container's ~/.Xauthority (native X servers require it, WSLg does not).
+	"initializeCommand": "bash .devcontainer/host-xauth.sh",
+
 	// The named volumes (Claude/gh config) are created by the Docker daemon
 	// (root): hand them back to the container user on first start.
 	"postCreateCommand": "sudo chown -R dev:dev /home/dev/.claude /home/dev/.config/gh",

@@ -27,6 +27,7 @@ services:
       DISPLAY: ${DISPLAY:-:0}
       WAYLAND_DISPLAY: ${WAYLAND_DISPLAY:-}
       XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-}
+      XAUTHORITY: /home/dev/.Xauthority
 
     volumes:
       # The repo, mounted where the devcontainer expects it.
@@ -38,6 +39,9 @@ services:
       - gh-config:/home/dev/.config/gh
       # X11 socket (WSLg or native X) for windowed Godot.
       - /tmp/.X11-unix:/tmp/.X11-unix
+      # X11 cookie exported by host-xauth.sh (initializeCommand). Empty on
+      # WSLg, which accepts unauthenticated local connections.
+      - ${HOME}/.drone-mark4-xauth:/home/dev/.Xauthority:ro
       # Host /dev, so USB devices hot-plugged after the container started
       # (usbipd attach / detach cycles) appear without a restart.
       - /dev:/dev
