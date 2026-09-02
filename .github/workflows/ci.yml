@@ -129,6 +129,28 @@ jobs:
       - run: pnpm build
       - run: pnpm test
 
+  mobile:
+    name: mobile (flutter analyze + debug apk)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:72c155a55fdcc058990f854a684274fa26d6cf861e3470523bcf2bfdc72314d9
+      options: --user root
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        working-directory: software/mobile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: flutter pub get
+      - run: flutter analyze
+      # arm64 only: the one ABI of the phones this app targets, and a third
+      # of the Gradle time of the default three-ABI debug build.
+      - run: flutter build apk --debug --target-platform android-arm64
+
   format:
     name: clang-format + ascii
     runs-on: ubuntu-latest

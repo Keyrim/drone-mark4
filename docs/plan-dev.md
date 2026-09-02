@@ -236,6 +236,9 @@ and are linked by the apps.
   that the user must accept the Segger license; provide the build argument or
   documented step if the automated download is a problem).
 - Python 3 (stdlib-only scripts); node + pnpm (web pages).
+- Flutter (pinned stable tarball) + Android SDK / NDK / adb for the mobile
+  app (`docs/mobile-app.md`); the phone is reached over Wi-Fi through the
+  host network.
 - **Non-root user with NOPASSWD sudo**, UID/GID mapped for the devcontainer.
 
 ## 6. Build

@@ -3,7 +3,8 @@
 #
 # Ships the three toolchains (native gcc, arm-none-eabi, ESP-IDF), the code quality tools
 # (clang-format/clang-tidy pinned via apt.llvm.org), the debug tools
-# (gdb-multiarch, J-Link), plus gh and Claude Code.
+# (gdb-multiarch, J-Link), Flutter + the Android SDK for the mobile app,
+# plus gh and Claude Code.
 # Also serves as the CI image (pushed to GHCR): a single source of truth.
 # =============================================================================
 
@@ -19,6 +20,17 @@ ARG GODOT_VERSION=4.7.1-stable
 ARG NODE_VERSION=22.21.1
 ARG PNPM_VERSION=11.21.0
 ARG IDF_VERSION=v6.0.2
+ARG FLUTTER_VERSION=3.44.8
+ARG ANDROID_CMDLINE_TOOLS=11076708
+# Flutter 3.44.8 builds against compileSdk 36 and its AGP 9 resolves the NDK
+# at Gradle configuration time even without native code, so the NDK is part
+# of the image. android-34 is the compileSdk of the usual plugins. The SDK
+# cmake is the one Gradle drives for externalNativeBuild (the C++ transport
+# compiled into the app).
+ARG ANDROID_PLATFORM=android-36
+ARG ANDROID_BUILD_TOOLS=36.0.0
+ARG ANDROID_NDK=28.2.13676358
+ARG ANDROID_CMAKE=3.22.1
 # Chips the ESP-IDF toolchains are installed for (comma separated); the board
 # is an ESP32-C3 SuperMini. Adding a chip later is this line and nothing else.
 ARG IDF_TARGETS=esp32c3
@@ -216,6 +228,36 @@ RUN printf '%s\n' \
     && chmod 0755 /usr/local/bin/idf.py
 
 # -----------------------------------------------------------------------------
+# Layer 6c - Android SDK for the mobile app (software/mobile)
+#   Command line tools + platform-tools (adb) + platforms + build-tools + NDK
+#   + cmake under /opt/android-sdk. The tree is handed to the dev user in
+#   layer 7 so Gradle can install a component a plugin asks for instead of
+#   failing on a read-only SDK; CI runs as root and can write anyway.
+# -----------------------------------------------------------------------------
+ENV ANDROID_HOME=/opt/android-sdk
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openjdk-17-jdk-headless \
+        zip \
+    && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p "${ANDROID_HOME}/cmdline-tools" \
+    && cd "${ANDROID_HOME}/cmdline-tools" \
+    && curl -sSLo tools.zip "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CMDLINE_TOOLS}_latest.zip" \
+    && unzip -q tools.zip && mv cmdline-tools latest && rm tools.zip \
+    && yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null \
+    && "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+        "platform-tools" \
+        "platforms;${ANDROID_PLATFORM}" \
+        "platforms;android-34" \
+        "build-tools;${ANDROID_BUILD_TOOLS}" \
+        "ndk;${ANDROID_NDK}" \
+        "cmake;${ANDROID_CMAKE}"
+ENV PATH="${ANDROID_HOME}/platform-tools:${PATH}"
+# adb discovers phones in wireless debugging through its built-in mDNS
+# backend (no avahi in the container); host networking carries the
+# announcements in. See scripts/adb_wifi.sh.
+ENV ADB_MDNS_OPENSCREEN=1
+
+# -----------------------------------------------------------------------------
 # Layer 7 - non-root user with NOPASSWD sudo
 #   Ubuntu 24.04 ships an "ubuntu" user (UID 1000): replace it. The
 #   devcontainer extension remaps the UID/GID onto the host's at first start
@@ -230,7 +272,8 @@ RUN userdel -r ubuntu || true \
     && useradd --uid ${USER_UID} --gid ${USER_GID} -m -s /bin/bash ${USERNAME} \
     && usermod -aG dialout,plugdev ${USERNAME} \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME} \
-    && chmod 0440 /etc/sudoers.d/${USERNAME}
+    && chmod 0440 /etc/sudoers.d/${USERNAME} \
+    && chown -R ${USERNAME}:${USERNAME} "${ANDROID_HOME}"
 
 # -----------------------------------------------------------------------------
 # Layer 8 - persisted gh and Claude Code configuration
@@ -245,6 +288,27 @@ USER ${USERNAME}
 WORKDIR /home/${USERNAME}
 
 RUN mkdir -p "${GH_CONFIG_DIR}" "${CLAUDE_CONFIG_DIR}"
+
+# -----------------------------------------------------------------------------
+# Layer 8b - Flutter SDK (official stable tarball, pinned), owned by dev
+#   Flutter is installed by the user who runs it: it writes into its own tree
+#   (artifact cache, version stamp) and refuses to be told otherwise. The
+#   Android artifacts are fetched now so the first build is offline-safe.
+#   CI runs as root inside the same image: root writes anywhere, and the
+#   safe.directory entry keeps git from rejecting the dev-owned checkout
+#   (flutter shells out to git in its own tree to know its version).
+#   Gradle, pub and adb keys live in the named volumes of docker-compose.yml
+#   (the directories exist here so the volumes inherit the dev ownership).
+# -----------------------------------------------------------------------------
+RUN curl -sSL "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz" \
+        | tar -xJ -C "/home/${USERNAME}" \
+    && sudo git config --system --add safe.directory "/home/${USERNAME}/flutter" \
+    && mkdir -p "/home/${USERNAME}/.gradle" "/home/${USERNAME}/.pub-cache" "/home/${USERNAME}/.android"
+ENV PATH="/home/${USERNAME}/flutter/bin:${PATH}"
+RUN flutter --disable-analytics > /dev/null \
+    && flutter config --no-cli-animations > /dev/null \
+    && flutter precache --android \
+    && flutter --version
 
 # gdb: debuginfod symbol downloads stall behind restricted networks and
 # freeze every debug session at startup (the inferior never gets resumed).

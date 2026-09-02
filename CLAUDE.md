@@ -91,6 +91,11 @@ cd software/hub/pages && pnpm install --frozen-lockfile && pnpm build
 # Install from VSIX".
 cd tools/vscode-mark4 && pnpm install --frozen-lockfile && pnpm build && pnpm package
 
+# Mobile app (Flutter, Android; software/mobile is the Flutter project root).
+# The phone is reached over Wi-Fi: ./scripts/adb_wifi.sh discovers, pairs and
+# connects it (wireless debugging on, same Wi-Fi). Never run flutter on the host.
+cd software/mobile && flutter analyze && flutter build apk --debug --target-platform android-arm64
+
 # Monte Carlo throw campaign through headless Godot (see tools/batch/README.md;
 # needs the desktop build for drone_sim and the generated python codec)
 python3 tools/batch/run_batch.py --runs 100 --parallel 4 [--godot /path/to/godot4]
@@ -259,9 +264,10 @@ every project target, not by FetchContent deps such as Catch2).
 
 `.github/workflows/devcontainer-image.yml` rebuilds the dev image and pushes
 it to GHCR (`ghcr.io/keyrim/drone-mark4-devcontainer`) when `.devcontainer/`
-changes; `ci.yml` runs 7 jobs (desktop+tests+batch through headless Godot, stm32,
-esp32, desktop-san, pages pnpm typecheck+build+test, format+ascii, tidy
-desktop+stm32) inside that image, pinned by digest.
+changes; `ci.yml` runs 8 jobs (desktop+tests+batch through headless Godot, stm32,
+esp32, desktop-san, pages pnpm typecheck+build+test, mobile flutter
+analyze+apk, format+ascii, tidy desktop+stm32) inside that image, pinned by
+digest.
 After a `.devcontainer/` change, bump the digest in `ci.yml` to the one the
 image workflow pushed (`docker manifest inspect ...:latest`). Container jobs need `options: --user root` (the
 image defaults to user `dev`, the runner mounts workdirs for another UID).
