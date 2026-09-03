@@ -69,7 +69,10 @@ RUN pip install --no-cache-dir --break-system-packages protobuf grpcio-tools
 
 # -----------------------------------------------------------------------------
 # Layer 2 - clang-format / clang-tidy / clangd from apt.llvm.org (pinned)
-#   Exposed without a version suffix via update-alternatives.
+#   Exposed without a version suffix via update-alternatives. libclang-dev
+#   is for ffigen (the dart:ffi binding of the C++ transport in the mobile
+#   app is generated, never written by hand); ffigen finds it under
+#   /usr/lib/llvm-${LLVM_VERSION}.
 # -----------------------------------------------------------------------------
 RUN curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
         | gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg \
@@ -79,6 +82,7 @@ RUN curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
         clang-format-${LLVM_VERSION} \
         clang-tidy-${LLVM_VERSION} \
         clangd-${LLVM_VERSION} \
+        libclang-${LLVM_VERSION}-dev \
     && rm -rf /var/lib/apt/lists/* \
     && update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-${LLVM_VERSION} 100 \
     && update-alternatives --install /usr/bin/clang-tidy   clang-tidy   /usr/bin/clang-tidy-${LLVM_VERSION}   100 \
