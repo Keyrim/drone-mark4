@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:72c155a55fdcc058990f854a684274fa26d6cf861e3470523bcf2bfdc72314d9
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:08b0c0d5733119d0cd64f2417686c6ad98e535c6ca69281c7249a94c6259e71d
       # The image runs as user "dev"; the runner's mounted workdirs belong to
       # another UID, so container jobs must run as root.
       options: --user root
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:72c155a55fdcc058990f854a684274fa26d6cf861e3470523bcf2bfdc72314d9
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:08b0c0d5733119d0cd64f2417686c6ad98e535c6ca69281c7249a94c6259e71d
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -78,7 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:72c155a55fdcc058990f854a684274fa26d6cf861e3470523bcf2bfdc72314d9
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:08b0c0d5733119d0cd64f2417686c6ad98e535c6ca69281c7249a94c6259e71d
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -93,7 +93,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:72c155a55fdcc058990f854a684274fa26d6cf861e3470523bcf2bfdc72314d9
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:08b0c0d5733119d0cd64f2417686c6ad98e535c6ca69281c7249a94c6259e71d
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -114,7 +114,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:72c155a55fdcc058990f854a684274fa26d6cf861e3470523bcf2bfdc72314d9
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:08b0c0d5733119d0cd64f2417686c6ad98e535c6ca69281c7249a94c6259e71d
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -129,12 +129,34 @@ jobs:
       - run: pnpm build
       - run: pnpm test
 
+  mobile:
+    name: mobile (flutter analyze + debug apk)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:08b0c0d5733119d0cd64f2417686c6ad98e535c6ca69281c7249a94c6259e71d
+      options: --user root
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        working-directory: software/mobile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: flutter pub get
+      - run: flutter analyze
+      # arm64 only: the one ABI of the phones this app targets, and a third
+      # of the Gradle time of the default three-ABI debug build.
+      - run: flutter build apk --debug --target-platform android-arm64
+
   format:
     name: clang-format + ascii
     runs-on: ubuntu-latest
     timeout-minutes: 10
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:72c155a55fdcc058990f854a684274fa26d6cf861e3470523bcf2bfdc72314d9
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:08b0c0d5733119d0cd64f2417686c6ad98e535c6ca69281c7249a94c6259e71d
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -150,7 +172,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:72c155a55fdcc058990f854a684274fa26d6cf861e3470523bcf2bfdc72314d9
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:08b0c0d5733119d0cd64f2417686c6ad98e535c6ca69281c7249a94c6259e71d
       options: --user root
       credentials:
         username: ${{ github.actor }}

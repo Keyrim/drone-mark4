@@ -37,6 +37,12 @@ services:
       # logins survive image rebuilds.
       - claude-config:/home/dev/.claude
       - gh-config:/home/dev/.config/gh
+      # Mobile app caches (Gradle, pub) and the adb pairing keys of the
+      # phone: a rebuild of the image neither re-downloads Gradle nor asks
+      # to pair the phone again.
+      - gradle-cache:/home/dev/.gradle
+      - pub-cache:/home/dev/.pub-cache
+      - android-config:/home/dev/.android
       # X11 socket (WSLg or native X) for windowed Godot.
       - /tmp/.X11-unix:/tmp/.X11-unix
       # X11 cookie exported by host-xauth.sh (initializeCommand). Empty on
@@ -51,3 +57,9 @@ volumes:
     name: drone-mark4-claude-config
   gh-config:
     name: drone-mark4-gh-config
+  gradle-cache:
+    name: drone-mark4-gradle-cache
+  pub-cache:
+    name: drone-mark4-pub-cache
+  android-config:
+    name: drone-mark4-android-config

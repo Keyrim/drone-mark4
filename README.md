@@ -16,6 +16,7 @@ Documentation:
 - [docs/architecture.md](docs/architecture.md) - system architecture (diagrams)
 - [docs/plan-dev.md](docs/plan-dev.md) - development plan and reference document
 - [docs/contributing/cpp-guidelines.md](docs/contributing/cpp-guidelines.md) - C++ coding guidelines
+- [docs/mobile-app.md](docs/mobile-app.md) - phone as gateway: what the two mobile PoCs established, and the roadmap of `software/mobile`
 
 ## Modules
 
@@ -58,6 +59,17 @@ cmake --preset stm32 && cmake --build --preset stm32
 
 # Sign of life (waits for UDP sensor packets, exits after 2 s of silence)
 ./software/build/desktop/drone_sim/drone_sim        # 500 frames max by default
+```
+
+### Mobile app (Flutter, Android)
+
+`software/mobile/` is the Flutter project; the image carries Flutter, the
+Android SDK, the NDK and adb. The phone is reached over Wi-Fi (developer
+options -> wireless debugging), the container being on the host network:
+
+```sh
+./scripts/adb_wifi.sh                     # discovers the phone over mDNS, pairs once, connects
+cd software/mobile && flutter run          # or: flutter build apk --debug --target-platform android-arm64
 ```
 
 ### Manual build (outside the container)
@@ -110,8 +122,9 @@ preset.
 
 - `devcontainer-image.yml` - rebuilds the image and pushes it to GHCR
   (`ghcr.io/keyrim/drone-mark4-devcontainer`) whenever `.devcontainer/` changes.
-- `ci.yml` - 5 parallel jobs inside that image: desktop+tests, stm32,
-  desktop-san, clang-format, clang-tidy.
+- `ci.yml` - 8 parallel jobs inside that image: desktop+tests+batch, stm32,
+  esp32, desktop-san, pages, mobile (flutter analyze + debug apk),
+  clang-format+ascii, clang-tidy.
 
 First-push bootstrap: the `ci.yml` jobs pull the GHCR image - on the very
 first push, wait for `devcontainer-image` to finish, then re-run `ci` if

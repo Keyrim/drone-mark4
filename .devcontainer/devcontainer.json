@@ -24,7 +24,7 @@
 
 	// The named volumes (Claude/gh config) are created by the Docker daemon
 	// (root): hand them back to the container user on first start.
-	"postCreateCommand": "sudo chown -R dev:dev /home/dev/.claude /home/dev/.config/gh",
+	"postCreateCommand": "sudo chown -R dev:dev /home/dev/.claude /home/dev/.config/gh /home/dev/.gradle /home/dev/.pub-cache /home/dev/.android",
 
 	// XDG_RUNTIME_DIR (forwarded by compose for WSLg) must exist in the
 	// container: the VS Code server puts the `code` CLI IPC sockets there,
@@ -40,6 +40,8 @@
 				"marus25.cortex-debug",
 				"ms-python.python",
 				"geequlim.godot-tools",
+				"Dart-Code.dart-code",
+				"Dart-Code.flutter",
 				"anthropic.claude-code",
 				"mhutchie.git-graph"
 			],
