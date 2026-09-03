@@ -119,13 +119,16 @@ standard page, and model parameters are data, not code.
 
 One rule generates most of the structure, stated from the inside out:
 
-- **flight-core depends on nothing.** Not on platform implementations,
-  not on protocol/. The telemetry packer is an IO adapter and lives in
-  platform; flight-core exposes state through
-  accessors and never sees a wire layout. It rebuilds only when the
-  algorithms change.
-- **platform speaks protocol/** to move frames, telemetry and commands
-  across process and transport boundaries.
+- **flight-core depends on nothing but its own vocabulary.** Not on
+  platform implementations, not on protocol/. The status packer is an IO
+  adapter and lives in platform; flight-core exposes state through
+  accessors and never sees a wire layout. The one library it does link is
+  `telemetry`, which is names, units and pointers rather than wire: a
+  module declares what it computes next to the variable, and the adapter
+  that turns that into messages stays in platform. It rebuilds only when
+  the algorithms change.
+- **platform speaks protocol/** to move frames, status, telemetry samples
+  and commands across process and transport boundaries.
 - **External processes speak only protocol/** (simulator, bridges), over
   UDP or UART, and never link flight code.
 - **Humans speak to the hub.** The hub is the single process that decodes
@@ -241,7 +244,7 @@ endpoint serving any number of simultaneous clients.
 
 Thin web pages over the hub endpoint: plots (live, real vs sim),
 command console with tuning profiles, 3D attitude
-(rendered from the telemetry quaternion; the physics engine is not a
+(rendered from the Status quaternion; the physics engine is not a
 renderer for the ground station). Pages know no ports and no wire
 messages, and are individually replaceable. The editor is packaging, not
 architecture: the same pages render in a browser tab, an editor webview,
@@ -252,7 +255,7 @@ or a field laptop.
 Godot is the plant: rigid-body physics, sensor models (noise, bias,
 latency), throw scenarios, and the one latency-critical binary link -
 the lockstep sensor/actuator exchange with the flight process. It parses
-no telemetry, renders no dashboards and captures no pilot input; those
+no status, renders no dashboards and captures no pilot input; those
 are hub and pages concerns. Plant parameters (mass, inertia, sensor
 noise) are data, so fidelity work (2.4) edits a model, not a script.
 
@@ -266,9 +269,9 @@ source selected" failure mode.
 
 | Executable | Sensor source | Sink / links | Purpose |
 | --- | --- | --- | --- |
-| `firmware` | SPI/I2C sensors | motors, UART telemetry | real flight |
-| `firmware_hil` | frames over UART | motors optional, UART telemetry | on-target timing with simulated data |
-| `drone_sim` | UDP sim link (lockstep) | UDP telemetry | development flights against the plant |
+| `firmware` | SPI/I2C sensors | motors, UART transport | real flight |
+| `firmware_hil` | frames over UART | motors optional, UART transport | on-target timing with simulated data |
+| `drone_sim` | UDP sim link (lockstep) | UDP transport | development flights against the plant |
 
 ### 3.9 Verification woven into the architecture
 

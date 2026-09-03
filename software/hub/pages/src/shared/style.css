@@ -23,6 +23,12 @@
     box-sizing: border-box;
 }
 
+/* The hidden attribute wins over any display a class sets: a page switches
+   its views with it. */
+[hidden] {
+    display: none !important;
+}
+
 html,
 body {
     margin: 0;
@@ -55,8 +61,30 @@ body {
 .nav-tools {
     flex: 1;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 6px;
+}
+
+/* One group of toolbar controls per page mode; only one is shown at a time */
+.tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.tool-note {
+    font-size: 11px;
+    color: var(--fg-dim);
+    padding-left: 6px;
+}
+
+.live-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+    padding-right: 6px;
 }
 
 .nav-state {
@@ -799,26 +827,139 @@ input.config-title {
     color: var(--bad);
 }
 
-/* ===== Config panel ===== */
+/* ===== Telemetry setup: catalog tree and lanes ===== */
 
-.config-panel {
-    border-top: 1px solid var(--border);
+/* Two columns filling the page: the source node's measures as a tree on the
+   left, the lanes they are laid out in on the right. */
+.setup {
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(280px, 2fr) minmax(0, 3fr);
+    min-height: 0;
+    overflow: hidden;
+}
+
+@media (width <= 760px) {
+    .setup {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: 1fr 1fr;
+    }
+}
+
+.setup-col {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    border-right: 1px solid var(--border);
+}
+
+.setup-col:last-child {
+    border-right: none;
+}
+
+.setup-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
     background: var(--bg-panel);
-    max-height: 40%;
-    overflow-y: auto;
     flex-shrink: 0;
 }
 
-.config-bar,
+.setup-title {
+    font-weight: 600;
+    font-size: 12px;
+}
+
+.tree {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+}
+
+.tree-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px;
+    font-size: 11px;
+    line-height: 18px;
+}
+
+.tree-row:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.tree-row.folder .tree-label {
+    font-weight: 600;
+}
+
+.tree-row input[type="checkbox"] {
+    margin: 0;
+    accent-color: var(--accent);
+}
+
+.tree-label {
+    font-family: var(--mono);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+/* The fold arrow of a folder: a rotated chevron, no glyph to encode */
+.tree-twisty {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    position: relative;
+    cursor: pointer;
+}
+
+.tree-twisty.closed::after,
+.tree-twisty.open::after {
+    content: "";
+    position: absolute;
+    left: 3px;
+    top: 2px;
+    width: 5px;
+    height: 5px;
+    border-right: 1.5px solid var(--fg-dim);
+    border-bottom: 1.5px solid var(--fg-dim);
+    transform: rotate(-45deg);
+}
+
+.tree-twisty.open::after {
+    transform: rotate(45deg);
+    top: 0;
+}
+
+.lanes-rows {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+}
+
+.lanes-empty {
+    padding: 12px;
+}
+
 .config-lane {
     display: flex;
     align-items: center;
     gap: 6px;
     padding: 5px 10px;
+    border-bottom: 1px solid var(--border);
 }
 
-.config-lane {
-    border-top: 1px solid var(--border);
+.config-lane-title {
+    width: 64px;
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--fg-dim);
 }
 
 .config-chips {
@@ -836,6 +977,7 @@ input.config-title {
     border: 1px solid var(--border);
     border-radius: 10px;
     font-size: 11px;
+    cursor: grab;
 }
 
 .config-chip-remove {
@@ -862,4 +1004,42 @@ input.config-title {
 .config-title {
     width: 140px;
     flex-shrink: 0;
+}
+
+.config-period {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--fg-dim);
+}
+
+.config-period input {
+    width: 70px;
+    background: var(--bg-raised);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 3px 6px;
+    font-size: 12px;
+    font-family: inherit;
+}
+
+.config-note {
+    font-size: 11px;
+    color: var(--fg-dim);
+}
+
+/* A lane whose unit does not match the chip in the air: a shared y axis is
+   only honest between measures that read in the same unit. */
+.config-lane.incompatible {
+    opacity: 0.35;
+}
+
+.config-lane.new-lane {
+    margin: 6px 10px;
+    border: 1px dashed var(--border);
+    color: var(--fg-dim);
+    font-size: 11px;
+    justify-content: center;
 }

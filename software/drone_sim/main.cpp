@@ -155,19 +155,25 @@ int main(int argc, char **argv)
     }
     const std::uint64_t elapsedMs = app.accessClock().nowUs() / US_PER_MS;
 
-    const auto &telemetry = app.accessTelemetrySender();
+    const auto &transport = app.accessTransport();
     const auto &motor = app.accessMotorSink().last().motor;
-    MODULE.info("%u steps in %llu ms, %u telemetry packets (%zu bytes), %zu nodes seen",
+    MODULE.info("%u steps in %llu ms, %u frames sent (%zu bytes, %u refused), %zu nodes seen",
                 steps,
                 static_cast<unsigned long long>(elapsedMs),
-                telemetry.packetCount(),
-                telemetry.byteCount(),
-                app.accessTransport().nodeCount());
+                transport.sent(),
+                transport.sentBytes(),
+                transport.refused(),
+                transport.nodeCount());
     MODULE.info("last motors [%.2f %.2f %.2f %.2f]",
                 static_cast<double>(motor[0]),
                 static_cast<double>(motor[1]),
                 static_cast<double>(motor[2]),
                 static_cast<double>(motor[3]));
+
+    const auto &telemetry = app.accessTelemetryService();
+    MODULE.info("telemetry: %zu measures, %u sample messages sent",
+                telemetry.entryCount(),
+                telemetry.messageCount());
 
     const auto &tracker = app.accessRunTracker();
     MODULE.info("run %u hash %016llx (%s), %u resent frames rejected%s",

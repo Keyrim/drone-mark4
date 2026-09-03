@@ -2,7 +2,9 @@
 
 The web front end the hub serves: two windows meant for two screens,
 `index.html` (control: one widget per drone node and the 3D attitude, the
-default view) and `plots.html` (the lanes). They show the drones, not the
+default view) and `plots.html` (telemetry: a config of measures, and the
+lanes it is recorded into). The entry keeps the `plots` name because the editor
+extension embeds it as a webview; the page itself is the telemetry page. They show the drones, not the
 system: the inventory of transport nodes and the log stream belong to the
 editor extension (`tools/vscode-mark4`), so the pages never list a node
 that is not a drone. Plain TypeScript bundled by
@@ -36,10 +38,17 @@ the same schema as the hub that serves them. `uint64` fields come out as
   (`gateway_socket.ts`: `GatewayMessage` both ways, per-case handlers,
   `onEnvelope` for decoded frames, ack correlation), the node model
   (`nodes.ts`), the page shell (`shell.ts`, a thin top bar with the page's
-  own controls, the connection state and the toasts), the quaternion helpers (`quat.ts`) and the series catalog
-  (`series.ts`).
+  own controls, the connection state and the toasts), the quaternion helpers
+  (`quat.ts`) and the flight-core state words (`phases.ts`).
 - `src/lanes/` - the lane viewer: time-axis math, sample buffers, the uPlot
-  charts, the ruler and the lane configuration panel.
+  charts and the ruler. It knows what a plotted series looks like
+  (`SeriesDef`) and nothing about where the values come from.
+- `src/telemetry/` - the telemetry page's own model: the selection and its
+  buffers (`model.ts`), the catalog folded into a tree (`tree.ts`), the
+  view config and CSV shapes (`config.ts`), the hub's HTTP store
+  (`store.ts`) and the setup view (`config_panel.ts`: the tree of measures
+  in `catalog.ts`, the lanes in `lanes_panel.ts`). Everything but the
+  views is DOM-free and unit tested.
 - `src/console/` - the control window: one `DroneWidget` per live drone
   node (`drone_widget.ts`), created when the node table lists a
   `firmware` or `drone_sim` node and destroyed when it leaves, transmitter
@@ -100,12 +109,13 @@ inventory.
 
 ## Exact state
 
-The estimated state is the `Telemetry` envelope; the exact plant state,
-when the sender has a plant, is its `truth` field, sampled at the same
-instant. One message is one row of every series (`sampleTelemetry`), the
-error angle a page shows is computed page-side from the two quaternions of
-that row: a readout, not a score. The 3D ghost is the truth of whichever
-live drone streams one.
+The estimated attitude is the `Status` envelope; the exact plant state, when
+the sender has a plant, is its `truth` field, sampled at the same instant.
+The error angle a page shows is computed page-side from the two quaternions
+of that one message: a readout, not a score. The 3D ghost is the truth of
+whichever live drone streams one. The same comparison exists as a telemetry
+measure (`sim/attitude_error`), computed drone-side, which is the one to
+plot: it is sampled at the loop rate rather than at the 50 Hz of Status.
 
 ## Piloting
 
@@ -139,8 +149,72 @@ machine and publishes it as one `OtaState` on every change, so the panel
 derives nothing: it paints the last message. While nothing is running it
 asks for a fresh board status every three seconds.
 
-## View configs
+## The telemetry page
 
-The lane layout is a *view*: a name, and which series each lane draws. Views
-live in `localStorage` under `mark4.pages.viewConfigs`. They record nothing
-and own no data.
+There is no catalog of series in the pages. A drone publishes its own table
+of measures (`software/components/telemetry/README.md`), the gateway pulls
+it and republishes it as `NodeTelemetry`, and the page offers exactly that:
+adding a measure to the firmware is one line there and nothing at all here.
+
+**Source node**: the existing drones-only selector, exactly one selected.
+While its table is empty the catalog says the gateway is still asking.
+
+**Two modes**, each taking the whole window, because a user works on a
+config OR looks at its lanes, never both at once:
+
+- `setup`: pick a config or make one. The toolbar holds the named configs
+  stored on the hub (load one, New, Save under the typed name, Delete), the
+  period in ms clamped to [1, 5000] (default 50), and Start. The window is
+  two columns. Left, the node's measures as a tree folded on the `/` of
+  their names (`estimator/attitude/pitch` is `pitch` under `attitude` under
+  `estimator`; a folder that would hold one row is merged into its parent,
+  so `rc/throttle` stays a leaf). Every folder has a tri-state box and a
+  `ticked/total` count: ticking it selects everything under it, laid out one
+  lane per unit (a group is ticked to be compared, and a shared y axis is
+  only honest between measures that read alike), a member already selected
+  lending its lane to the newcomers of its unit. A leaf ticked alone opens
+  in a lane of its own, in the first unused hue. The filter box keeps the
+  matching measures with their folders open; the folders left open are
+  remembered per browser. Right, the lanes in order with one draggable chip
+  per series: drop a chip on another lane to group them - only among
+  measures of the same unit, the lanes that cannot take it grey out while
+  the chip is in the air - drop it on the "new lane" target to split it out
+  again, drag a lane by its grip to reorder. Nothing is rebuilt while a
+  chip is in the air: removing the dragged element during its own dragstart
+  cancels the drag.
+- `live`: the lanes of that config, full height, with what is recorded in
+  them. Record sends `TelemetryEnable` to the node at the start and again
+  every second, because the enable IS the keepalive: the drone stops three
+  seconds after the last one, so a tab that crashes never leaves a board
+  streaming to nobody. Stop sends `period_ms = 0` once and leaves the
+  curves on screen; so does a node switch, Edit config (back to setup) and
+  `pagehide` / `beforeunload`. Follow and pause behave as they always did.
+  The toolbar names the config, its series count and the period the node
+  acknowledged.
+
+**Identity is the name.** A descriptor id is an index into the node's frozen
+table and a reboot hands the same number to another measure, so a series is
+bound by name and only ever routed by id. When the node's table changes the
+routes are rebuilt from it: a measure that is gone is flagged absent and fed
+nothing, and one whose name is back is rebound to whatever id it now has -
+with the enable re-sent when a recording is running. A node that leaves the
+table, or goes silent for three seconds while recording, pushes an explicit
+`null` gap marker so the lanes break instead of drawing a chord across the
+hole.
+
+**View configs** are what is ticked and how it is laid out, with the
+period and no data in them. Named ones live on the hub
+(`/api/telemetry/configs`, see `software/hub/README.md`), so a config
+outlives the browser that made it. The working config - what is ticked
+right now - and the name it was loaded from are auto-saved to
+`localStorage` (`mark4.pages.telemetry.v1`, `.name.v1`), debounced, and
+restored on load. A config names measures, so it is applied against the
+source node's table when that table is there: one loaded before the
+gateway published the table waits for it, and a measure the node does not
+expose is dropped rather than kept as a curve nothing can fill.
+
+**CSV export** is long format (`series,unit,t_s,value`, gap markers
+skipped), built here and stored under `/api/telemetry/exports` as
+`<config>-<yyyymmdd>-<hhmmss>.csv`; the page then offers the link the hub
+serves it from. There is no stored recording beyond that: what a recording
+leaves behind is its export.

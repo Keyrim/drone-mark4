@@ -9,11 +9,25 @@ arguments, builds `DroneSimApp`, runs it.
 ./software/build/desktop/drone_sim/drone_sim [--discovery-port N] [--node-id N] [--ota-dir DIR]
 ```
 
+## Telemetry
+
+The process exposes its measures on demand rather than pushing them: 76 of
+them (the sensor frame, both estimators, the throw detector, the three
+control loops, the mixer, the plant truth and the attitude error), listed in
+`software/components/telemetry/README.md` and logged at boot by
+`platform/telemetry`. `MIN_TELEMETRY_PERIOD_MS` is 2 ms here, the frame
+period: the plant paces the loop at 500 Hz and a loopback datagram costs
+nothing, so there is nothing faster to ask for.
+
+What it broadcasts unasked is the `Status` report, one message every 10
+frames: attitude, motors, phase, throw state and count, the two validity
+flags and the plant's exact state.
+
 ## No plant needed to start
 
 The process runs its loop at 500 Hz from the moment it starts, plant or
 not. Without a plant the frames come from the platform clock with no
-sensors (`imu_valid` and `baro_valid` false in the telemetry): the flight
+sensors (`imu_valid` and `baro_valid` false in the Status report): the flight
 core stays idle, arming is refused, motors are zero, and everything on the
 command path works (RC tracked, tuning answered, OTA against the emulated
 flash, log levels). When a Godot plant appears the platform adopts it

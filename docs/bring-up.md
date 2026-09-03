@@ -165,6 +165,7 @@ Incremental, one observable win per step:
    and apex prediction on real sensor data, compared against the
    simulator campaign metrics.
 
-No vendor HAL: registers are defined by hand (RM0090), only the ones
-actually used. The old mark1 firmware (`Flight_Controller/Software/`)
+No vendor HAL: the register map comes from the vendored CMSIS device
+header (`software/third_party/cmsis`), and only the peripherals actually
+in use are touched. The old mark1 firmware (`Flight_Controller/Software/`)
 is a register-map reference, not a dependency.

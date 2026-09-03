@@ -14,6 +14,16 @@ namespace mark4
     /// Core clock at reset, and after a failed initSystemClock() [Hz].
     inline constexpr std::uint32_t HSI_CLOCK_HZ = 16000000U;
 
+    /// APB1 bus clock after a successful initSystemClock() [Hz] (AHB / 4).
+    inline constexpr std::uint32_t APB1_CLOCK_HZ = CORE_CLOCK_HZ / 4U;
+
+    /// APB2 bus clock after a successful initSystemClock() [Hz] (AHB / 2).
+    inline constexpr std::uint32_t APB2_CLOCK_HZ = CORE_CLOCK_HZ / 2U;
+
+    /// APB1 timer kernel clock [Hz]: twice the bus clock, because the APB1
+    /// prescaler is not 1 (RM0090 figure 21).
+    inline constexpr std::uint32_t APB1_TIMER_CLOCK_HZ = 2U * APB1_CLOCK_HZ;
+
     /// @brief Switches the core to 168 MHz: 8 MHz external crystal through
     ///        the main PLL, 5 flash wait states, AHB 168 / APB1 42 /
     ///        APB2 84 MHz. On failure (crystal or PLL never ready) the chip

@@ -16,7 +16,7 @@ the transport; resending it is free, since the plant plays a scenario once
 per change of its sequence.
 
 The flight process hashes the trajectory of every run and broadcasts the hash
-with its telemetry. Two runs given the same scenario must produce the same
+with its Status stream. Two runs given the same scenario must produce the same
 hash, which is what --verify-repro checks.
 
 Every message between this campaign and a drone_sim is an Envelope of
@@ -83,7 +83,7 @@ except ImportError as error:
         "sure the protobuf python package is installed"
     )
 
-# mark4.FlightPhase values, carried in the telemetry.
+# mark4.FlightPhase values, carried in Status.
 PHASE_IDLE = pb.PHASE_IDLE
 PHASE_ARMED = pb.PHASE_ARMED
 PHASE_HOVER = pb.PHASE_HOVER
@@ -123,7 +123,7 @@ HASH_WINDOW_SIM_S = THROW_DELAY_SIM_S + FLIGHT_BUDGET_SIM_S + 2.0
 
 
 def _seconds(sample) -> float:
-    """Simulated time of a telemetry sample [s]."""
+    """Simulated time of a Status report [s]."""
     return sample.timestamp_us / 1e6
 
 
@@ -141,8 +141,6 @@ class RunResult:
     wz: float
     outcome: str = "unknown"
     detail: str = ""
-    release_vz: float = 0.0
-    apex_alt: float = 0.0
     run_id: int = -1
     traj_hash: str = ""
     degraded: bool = False
@@ -342,7 +340,7 @@ class Instance:
         """Resend a scenario unchanged; the plant dedups on sequence."""
         self._send(envelope)
 
-    def drain_telemetry(self) -> None:
+    def drain_status(self) -> None:
         """Discard buffered samples so judgments only see fresh ones."""
         self.discovery.setblocking(False)
         try:
@@ -354,14 +352,14 @@ class Instance:
             self.discovery.settimeout(1.0)
 
     def next_sample(self):
-        """Block for the next telemetry sample, None on anything else.
+        """Block for the next Status report, None on anything else.
 
         Every stream of the flight process arrives as a broadcast frame on
         the discovery socket. Run stats are absorbed into last_stats and
         tuning acks are queued for whoever is waiting on one; neither is
-        ever returned, so a caller judging a flight only ever sees
-        telemetry. Whatever the drone unicasts to this node (its beacon on
-        first contact) lands on the data socket and is discarded.
+        ever returned, so a caller judging a flight only ever sees Status.
+        Whatever the drone unicasts to this node (its beacon on first
+        contact) lands on the data socket and is discarded.
         """
         try:
             while True:
@@ -394,9 +392,9 @@ class Instance:
                 f"batch: drone_sim speaks wire {envelope.announce.wire_hash:08x}, this tool "
                 f"{WIRE_HASH:08x}: rebuild the desktop preset"
             )
-        if body != "telemetry":
+        if body != "status":
             return None
-        return envelope.telemetry
+        return envelope.status
 
     def apply_tuning(self, settings, run_start_s: float) -> Optional[str]:
         """Write every --set value and wait for one ok ack each.
@@ -433,14 +431,14 @@ class Instance:
         return "wall clock guard hit while tuning"
 
     def wait_first_sample(self, wall_budget_s: float) -> bool:
-        """Wait for the pair to boot, the telemetry to flow and stats to say
-        which run is current."""
+        """Wait for the pair to boot, Status to flow and stats to say which
+        run is current."""
         deadline = time.monotonic() + wall_budget_s
-        telemetry_seen = False
+        status_seen = False
         while time.monotonic() < deadline:
             if self.next_sample() is not None:
-                telemetry_seen = True
-            if telemetry_seen and self.last_stats is not None:
+                status_seen = True
+            if status_seen and self.last_stats is not None:
                 return True
             # Either member exiting means the pair is gone, whatever took
             # it down.
@@ -608,8 +606,6 @@ class Instance:
             # stick and never enters it, so the ranking stays honest here; a
             # scenario that flew manually would need a real ordering.
             highest_phase = max(highest_phase, sample.flight_phase)
-            result.release_vz = sample.release_velocity_mps
-            result.apex_alt = sample.apex_altitude_m
             if sample.flight_phase == PHASE_CUTOFF:
                 result.outcome = "cutoff"
                 result.detail = "safety cutoff"
@@ -768,7 +764,7 @@ def main() -> int:
         print(f"batch: waiting for {parallel} simulator pair(s) to boot...", flush=True)
         for instance in instances:
             if not instance.wait_first_sample(60.0):
-                sys.exit(f"batch: instance {instance.index} never produced telemetry")
+                sys.exit(f"batch: instance {instance.index} never produced a status report")
 
         threads = []
         for i, instance in enumerate(instances):
@@ -812,14 +808,13 @@ def main() -> int:
         with open(args.csv, "w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
             writer.writerow(
-                "run seed vx vy vz wx wy wz outcome detail release_vz apex_alt "
+                "run seed vx vy vz wx wy wz outcome detail "
                 "traj_hash degraded".split()
             )
             for r in results:
                 writer.writerow(
                     [r.run, r.seed, r.vx, r.vy, r.vz, r.wx, r.wy, r.wz,
-                     r.outcome, r.detail, r.release_vz, r.apex_alt,
-                     r.traj_hash, int(r.degraded)]
+                     r.outcome, r.detail, r.traj_hash, int(r.degraded)]
                 )
         print(f"batch: results written to {args.csv}")
 

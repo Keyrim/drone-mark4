@@ -15,8 +15,10 @@ add_library(flight_core STATIC
     src/flight_core.cpp
     src/throw_launch/throw_detector.cpp
     src/tuning_table.cpp)
-# Pure algorithms: no platform, no protocol, no wire. The library rebuilds
-# only when the algorithms change.
+# Pure algorithms: no platform, no protocol, no wire. `telemetry` is not
+# the wire: it is names, units and pointers, so a module can expose what it
+# computes without knowing a message exists. The library rebuilds only when
+# the algorithms change.
 target_link_libraries(flight_core
-    PUBLIC flight_core_types
+    PUBLIC flight_core_types telemetry
     PRIVATE drone_warnings drone_strict)

@@ -1,11 +1,21 @@
 # platform
 
-The five abstract services the flight loop is composed from
+The four abstract services the flight loop is composed from
 (`include/platform/`): `AbsSensorSource`, `AbsMotorSink`,
-`AbsCommandReceiver`, `AbsTelemetrySender`, `AbsClock`.
-`AbsSensorSource::waitFrame()` is the single wait point of the whole
-system; `AbsClock` serves the platform services between themselves and is
-never handed to the flight core, which reads the time off the frame.
+`AbsCommandReceiver`, `AbsClock`. `AbsSensorSource::waitFrame()` is the
+single wait point of the whole system; `AbsClock` serves the platform
+services between themselves and is never handed to the flight core, which
+reads the time off the frame.
+
+`AbsCommandReceiver::poll()` reports the node every payload came from
+next to the payload itself: an answer addressed to the one requester (the
+telemetry stream) needs it, and a broadcast answer simply ignores it.
+
+There is no output service: everything a composition emits leaves through
+the `Transport` it already holds (`sendEnvelope()` in
+`src/common/include/platform_common/envelope_io.hpp`), addressed to a node
+id. Broadcast is the default route, and only the telemetry stream is
+unicast to the one node that asked for it.
 
 Implementations live under `src/<variant>/` (`sim`, `stm32`, each with its
 own README) and the helpers shared by every variant under `src/common/`.

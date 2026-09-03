@@ -1,20 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { groupByLane, moveLane, SeriesBuffer } from "../src/lanes/model";
-import { create } from "@bufbuild/protobuf";
-
-import { TelemetrySchema } from "../src/gen/mark4_pb";
-import { sampleTelemetry, seriesByKey, type SeriesDef } from "../src/shared/series";
+import { groupByLane, moveLane, SeriesBuffer, type SeriesDef } from "../src/lanes/model";
 
 function def(key: string): SeriesDef {
-    const found = seriesByKey(key);
-    assert.ok(found, `unknown series ${key}`);
-    return found;
+    return { key, label: key, unit: "", color: "#3987e5" };
 }
 
 test("SeriesBuffer keeps samples in arrival order", () => {
-    const buffer = new SeriesBuffer(def("gyro.x"), 10);
+    const buffer = new SeriesBuffer(def("motor.0"), 10);
     assert.ok(buffer.push(0, 1));
     assert.ok(buffer.push(1, 2));
     assert.deepEqual(buffer.t, [0, 1]);
@@ -24,7 +18,7 @@ test("SeriesBuffer keeps samples in arrival order", () => {
 });
 
 test("SeriesBuffer drops samples that do not move forward in time", () => {
-    const buffer = new SeriesBuffer(def("gyro.x"), 10);
+    const buffer = new SeriesBuffer(def("motor.0"), 10);
     buffer.push(1, 10);
     assert.equal(buffer.push(1, 11), false);
     assert.equal(buffer.push(0.5, 12), false);
@@ -33,7 +27,7 @@ test("SeriesBuffer drops samples that do not move forward in time", () => {
 
 test("SeriesBuffer drops the oldest samples past its capacity", () => {
     const capacity = 100;
-    const buffer = new SeriesBuffer(def("gyro.x"), capacity);
+    const buffer = new SeriesBuffer(def("motor.0"), capacity);
     for (let i = 0; i < 300; i++) {
         buffer.push(i, i);
     }
@@ -58,65 +52,22 @@ test("SeriesBuffer stores null as a hole and clears", () => {
 
 test("groupByLane keeps the config order and drops what it cannot feed", () => {
     const buffers = new Map([
-        ["gyro.x", new SeriesBuffer(def("gyro.x"))],
-        ["gyro.y", new SeriesBuffer(def("gyro.y"))],
+        ["motor.0", new SeriesBuffer(def("motor.0"))],
+        ["motor.1", new SeriesBuffer(def("motor.1"))],
     ]);
     const grouped = groupByLane(
         [
-            { title: "gyro", keys: ["gyro.y", "gyro.x"] },
+            { title: "motors", keys: ["motor.1", "motor.0"] },
             { title: "nothing here", keys: ["alt.exact"] },
         ],
         buffers
     );
     assert.equal(grouped.length, 1);
-    assert.equal(grouped[0]?.config.title, "gyro");
+    assert.equal(grouped[0]?.config.title, "motors");
     assert.deepEqual(
         grouped[0]?.buffers.map((b) => b.def.key),
-        ["gyro.y", "gyro.x"]
+        ["motor.1", "motor.0"]
     );
-});
-
-const TELEMETRY_INIT = {
-    timestampUs: 2000n,
-    gyroRadS: [1, 2, 3],
-    attitudeQuat: [1, 0, 0, 0],
-    motor: [0.1, 0.2, 0.3, 0.4],
-    altitudeM: 5,
-    verticalVelocityMps: -1,
-    flightPhase: 5,
-    throwState: 2,
-};
-const TELEMETRY = create(TelemetrySchema, TELEMETRY_INIT);
-
-const TRUTH = {
-    attitudeQuat: [Math.SQRT1_2, 0, 0, Math.SQRT1_2],
-    positionM: [1, 2, 7],
-    velocityMps: [0, 0, -2],
-};
-
-test("sampleTelemetry leaves the exact series empty without a truth", () => {
-    const row = sampleTelemetry(TELEMETRY);
-    assert.equal(row.timestampUs, 2000);
-    assert.equal(row.values.get("gyro.y"), 2);
-    assert.equal(row.values.get("alt.est"), 5);
-    assert.equal(row.values.get("alt.exact"), null);
-    assert.equal(row.values.get("attitude.error"), null);
-});
-
-test("sampleTelemetry reads the exact state out of the truth the message carries", () => {
-    const row = sampleTelemetry(create(TelemetrySchema, { ...TELEMETRY_INIT, truth: TRUTH }));
-    assert.equal(row.timestampUs, 2000);
-    assert.equal(row.values.get("alt.exact"), 7);
-    assert.equal(row.values.get("vz.exact"), -2);
-    assert.ok(Math.abs((row.values.get("euler.exact.yaw") as number) - 90) < 1e-9);
-    assert.ok(Math.abs((row.values.get("attitude.error") as number) - 90) < 1e-9);
-});
-
-test("sampleTelemetry ignores a truth without an attitude", () => {
-    const row = sampleTelemetry(
-        create(TelemetrySchema, { ...TELEMETRY_INIT, truth: { positionM: [0, 0, 9] } })
-    );
-    assert.equal(row.values.get("alt.exact"), null);
 });
 
 test("moveLane moves a lane to the drop index", () => {

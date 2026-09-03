@@ -83,56 +83,116 @@ TEST_CASE("every envelope fits the links it travels on")
     STATIC_REQUIRE(mark4::WIRE_HASH != 0U);
 }
 
-TEST_CASE("telemetry round trips, truth included")
+TEST_CASE("status round trips, truth included")
 {
-    mark4_Envelope envelope = withBody(mark4_Envelope_telemetry_tag);
-    mark4_Telemetry &telemetry = envelope.body.telemetry;
-    telemetry.timestamp_us = 9'876'543'210U;
-    fill(telemetry.gyro_rad_s, 1.0f);
-    fill(telemetry.attitude_quat, 2.0f);
-    fill(telemetry.gyro_bias_rad_s, 3.0f);
-    fill(telemetry.motor, 4.0f);
-    telemetry.altitude_m = 12.5f;
-    telemetry.baro_altitude_m = 11.75f;
-    telemetry.vertical_velocity_mps = -3.25f;
-    telemetry.flight_phase = mark4_FlightPhase_PHASE_RECOVERY;
-    telemetry.throw_state = mark4_ThrowState_THROW_BALLISTIC;
-    telemetry.throw_count = 5U;
-    telemetry.release_velocity_mps = 6.75f;
-    telemetry.apex_timestamp_us = 1'234'567'890U;
-    telemetry.apex_altitude_m = 8.5f;
-    telemetry.has_truth = true;
-    fill(telemetry.truth.attitude_quat, 5.0f);
-    fill(telemetry.truth.position_m, 6.0f);
-    fill(telemetry.truth.velocity_mps, 7.0f);
+    mark4_Envelope envelope = withBody(mark4_Envelope_status_tag);
+    mark4_Status &status = envelope.body.status;
+    status.timestamp_us = 9'876'543'210U;
+    fill(status.attitude_quat, 2.0f);
+    fill(status.motor, 4.0f);
+    status.flight_phase = mark4_FlightPhase_PHASE_RECOVERY;
+    status.throw_state = mark4_ThrowState_THROW_BALLISTIC;
+    status.throw_count = 5U;
+    status.imu_valid = true;
+    status.baro_valid = true;
+    status.has_truth = true;
+    fill(status.truth.attitude_quat, 5.0f);
+    fill(status.truth.position_m, 6.0f);
+    fill(status.truth.velocity_mps, 7.0f);
 
     std::size_t size = 0U;
     const mark4_Envelope decoded = roundTrip(envelope, size);
-    const mark4_Telemetry &back = decoded.body.telemetry;
+    const mark4_Status &back = decoded.body.status;
     CHECK(back.timestamp_us == 9'876'543'210U);
-    CHECK(same(back.gyro_rad_s, telemetry.gyro_rad_s));
-    CHECK(same(back.attitude_quat, telemetry.attitude_quat));
-    CHECK(same(back.gyro_bias_rad_s, telemetry.gyro_bias_rad_s));
-    CHECK(same(back.motor, telemetry.motor));
-    CHECK(back.altitude_m == 12.5f);
-    CHECK(back.baro_altitude_m == 11.75f);
-    CHECK(back.vertical_velocity_mps == -3.25f);
+    CHECK(same(back.attitude_quat, status.attitude_quat));
+    CHECK(same(back.motor, status.motor));
     CHECK(back.flight_phase == mark4_FlightPhase_PHASE_RECOVERY);
     CHECK(back.throw_state == mark4_ThrowState_THROW_BALLISTIC);
     CHECK(back.throw_count == 5U);
-    CHECK(back.release_velocity_mps == 6.75f);
-    CHECK(back.apex_timestamp_us == 1'234'567'890U);
-    CHECK(back.apex_altitude_m == 8.5f);
+    CHECK(back.imu_valid);
+    CHECK(back.baro_valid);
     REQUIRE(back.has_truth);
-    CHECK(same(back.truth.attitude_quat, telemetry.truth.attitude_quat));
-    CHECK(same(back.truth.position_m, telemetry.truth.position_m));
-    CHECK(same(back.truth.velocity_mps, telemetry.truth.velocity_mps));
+    CHECK(same(back.truth.attitude_quat, status.truth.attitude_quat));
+    CHECK(same(back.truth.position_m, status.truth.position_m));
+    CHECK(same(back.truth.velocity_mps, status.truth.velocity_mps));
 
     // Without the truth the message is shorter, and says so.
-    telemetry.has_truth = false;
+    status.has_truth = false;
     std::size_t bare = 0U;
-    CHECK(!roundTrip(envelope, bare).body.telemetry.has_truth);
+    CHECK(!roundTrip(envelope, bare).body.status.has_truth);
     CHECK(bare < size);
+
+    // Status is the small report it was split down to: a real board's one,
+    // truth aside, stays well under a tenth of a transport frame.
+    CHECK(bare < mark4::MAX_PAYLOAD / 8U);
+}
+
+TEST_CASE("the telemetry family round trips at its bounds")
+{
+    mark4_Envelope list = withBody(mark4_Envelope_telemetry_list_request_tag);
+    list.body.telemetry_list_request.cursor = 12U;
+    std::size_t size = 0U;
+    CHECK(roundTrip(list, size).body.telemetry_list_request.cursor == 12U);
+
+    // A full page of descriptors, every name at its maximum.
+    mark4_Envelope page = withBody(mark4_Envelope_telemetry_descriptors_tag);
+    mark4_TelemetryDescriptors &descriptors = page.body.telemetry_descriptors;
+    descriptors.total = 128U;
+    descriptors.cursor = 6U;
+    descriptors.descriptors_count = static_cast<pb_size_t>(sizeof(descriptors.descriptors) /
+                                                           sizeof(descriptors.descriptors[0]));
+    for (pb_size_t index = 0U; index < descriptors.descriptors_count; ++index)
+    {
+        mark4_TelemetryDescriptor &descriptor = descriptors.descriptors[index];
+        descriptor.id = descriptors.cursor + index;
+        std::memset(descriptor.name, 'a', sizeof(descriptor.name) - 1U);
+        descriptor.name[sizeof(descriptor.name) - 1U] = '\0';
+        descriptor.unit = mark4_TelemetryUnit_TELEMETRY_UNIT_RAD_PER_S;
+    }
+    const mark4_Envelope backPage = roundTrip(page, size);
+    REQUIRE(backPage.body.telemetry_descriptors.descriptors_count == descriptors.descriptors_count);
+    CHECK(backPage.body.telemetry_descriptors.total == 128U);
+    CHECK(backPage.body.telemetry_descriptors.descriptors[5].id == 11U);
+    CHECK(std::strlen(backPage.body.telemetry_descriptors.descriptors[0].name) ==
+          sizeof(descriptors.descriptors[0].name) - 1U);
+
+    // A full enable, then a full batch of samples: the two widest bodies of
+    // the family, which is what the frame budget was sized on.
+    mark4_Envelope enable = withBody(mark4_Envelope_telemetry_enable_tag);
+    enable.body.telemetry_enable.period_ms = 20U;
+    enable.body.telemetry_enable.ids_count = static_cast<pb_size_t>(
+        sizeof(enable.body.telemetry_enable.ids) / sizeof(enable.body.telemetry_enable.ids[0]));
+    for (pb_size_t index = 0U; index < enable.body.telemetry_enable.ids_count; ++index)
+    {
+        enable.body.telemetry_enable.ids[index] = index;
+    }
+    const mark4_Envelope backEnable = roundTrip(enable, size);
+    REQUIRE(backEnable.body.telemetry_enable.ids_count == enable.body.telemetry_enable.ids_count);
+    CHECK(backEnable.body.telemetry_enable.period_ms == 20U);
+
+    mark4_Envelope data = withBody(mark4_Envelope_telemetry_data_tag);
+    data.body.telemetry_data.timestamp_us = 42'000'000U;
+    data.body.telemetry_data.values_count = static_cast<pb_size_t>(
+        sizeof(data.body.telemetry_data.values) / sizeof(data.body.telemetry_data.values[0]));
+    for (pb_size_t index = 0U; index < data.body.telemetry_data.values_count; ++index)
+    {
+        data.body.telemetry_data.values[index].id = index;
+        data.body.telemetry_data.values[index].value = static_cast<float>(index) * -1.5f;
+    }
+    const mark4_Envelope backData = roundTrip(data, size);
+    REQUIRE(backData.body.telemetry_data.values_count == data.body.telemetry_data.values_count);
+    CHECK(backData.body.telemetry_data.values[31].value == -46.5f);
+    CHECK(backData.body.telemetry_data.timestamp_us == 42'000'000U);
+    // The widest body of the schema still fits one transport frame with the
+    // frame header in front of it.
+    CHECK(mark4::FRAME_HEADER_SIZE + size <= mark4::MAX_PAYLOAD);
+
+    mark4_Envelope ack = withBody(mark4_Envelope_telemetry_ack_tag);
+    ack.body.telemetry_ack.period_ms = 20U;
+    ack.body.telemetry_ack.enabled = 32U;
+    const mark4_Envelope backAck = roundTrip(ack, size);
+    CHECK(backAck.body.telemetry_ack.period_ms == 20U);
+    CHECK(backAck.body.telemetry_ack.enabled == 32U);
 }
 
 TEST_CASE("the sim link messages round trip")

@@ -22,21 +22,19 @@ import {
     FlightPhase,
     NodeKind,
     SimScenarioKind,
-    type Telemetry,
+    type Status,
 } from "../gen/mark4_pb";
 import { frameMessage, type GatewaySocket } from "../shared/gateway_socket";
 import { FADING_MS, type NodeView, hexNodeId, nodeColor } from "../shared/nodes";
-import { FLIGHT_PHASE_NAMES } from "../shared/series";
+import { FLIGHT_PHASE_NAMES, THROW_STATE_NAMES } from "../shared/phases";
 import { MODE_ALTITUDE_AUTO, MODE_MANUAL, SAFE_RC, TICK_MS, clamp01, rcEnvelope, type RcState } from "./rc";
 import { TuningPanel } from "./tuning";
 
-const THROW_STATE_NAMES = ["idle", "thrust", "ballistic"];
-
-/** How often the readout repaints: telemetry lands far faster than eyes read. */
+/** How often the readout repaints: Status lands far faster than eyes read. */
 const READOUT_MS = 100;
 
 /**
- * Telemetry silence after which the platform is shown as not ready [ms].
+ * Status silence after which the platform is shown as not ready [ms].
  * An announced drone that streams nothing has no working sensor pipeline:
  * the sim without its plant, a board with a dead IMU.
  */
@@ -67,7 +65,7 @@ export class DroneWidget {
     readonly nodeId: number;
     private state: RcState = SAFE_RC;
     private timer: ReturnType<typeof setInterval> | null = null;
-    private latest: Telemetry | null = null;
+    private latest: Status | null = null;
     private latestAtMs = 0;
     private readonly repaint: ReturnType<typeof setInterval>;
     private readonly phaseChip: HTMLElement;
@@ -155,7 +153,7 @@ export class DroneWidget {
             observe.appendChild(badge);
             this.sensorBadges.set(sensor, badge);
         }
-        for (const label of ["throw", "throws", "alt", "vz", "apex"]) {
+        for (const label of ["throw", "throws"]) {
             const cell = document.createElement("span");
             cell.className = "dw-reading";
             const title = document.createElement("span");
@@ -213,9 +211,9 @@ export class DroneWidget {
         this.mismatch.hidden = !node.wireMismatch;
     }
 
-    /** Telemetry of THIS node, routed by the page. */
-    onTelemetry(telemetry: Telemetry): void {
-        this.latest = telemetry;
+    /** Status of THIS node, routed by the page. */
+    onStatus(status: Status): void {
+        this.latest = status;
         this.latestAtMs = Date.now();
     }
 
@@ -448,7 +446,7 @@ export class DroneWidget {
     /* -------------------- readout -------------------- */
 
     private paint(): void {
-        // Announced but silent on telemetry = no working sensor pipeline
+        // Announced but silent on Status = no working sensor pipeline
         const silent = this.latest === null || Date.now() - this.latestAtMs > NOT_READY_MS;
         this.root.classList.toggle("silent", silent);
         if (silent) {
@@ -456,7 +454,7 @@ export class DroneWidget {
             this.phaseChip.className = "dw-phase warn";
             return;
         }
-        const m = this.latest as Telemetry;
+        const m = this.latest as Status;
         const phase = m.flightPhase;
         this.phaseChip.textContent = FLIGHT_PHASE_NAMES[phase] ?? String(phase);
         this.phaseChip.className =
@@ -473,9 +471,9 @@ export class DroneWidget {
         };
         set("throw", THROW_STATE_NAMES[m.throwState] ?? String(m.throwState));
         set("throws", String(m.throwCount));
-        set("alt", `${m.altitudeM.toFixed(2)} m`);
-        set("vz", `${m.verticalVelocityMps.toFixed(2)} m/s`);
-        set("apex", `${m.apexAltitudeM.toFixed(2)} m`);
+        // The altitude, the vertical velocity and the apex are telemetry
+        // measures now: the telemetry page plots them, this readout is the
+        // state of the drone alone.
         this.motorFills.forEach((fill, i) => {
             const value = m.motor[i];
             fill.style.width = `${clamp01(value ?? 0) * 100}%`;

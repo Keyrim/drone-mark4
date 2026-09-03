@@ -25,7 +25,7 @@ namespace mark4
       public:
         /// @brief Base address of one sector of the 1 MB part.
         /// @param sector 0 to FLASH_SECTOR_COUNT - 1
-        /// @return absolute address, or FLASH_BASE for an out-of-range index
+        /// @return absolute address, or INTERNAL_FLASH_BASE for an out-of-range index
         static std::uint32_t SectorBase(std::uint8_t sector);
 
         /// @brief Size of one sector of the 1 MB part.

@@ -258,6 +258,39 @@ namespace mark4
         }
     }
 
+    std::uint32_t applyTelemetryPage(const mark4_TelemetryDescriptors &page,
+                                     TelemetryTable &tableInOut)
+    {
+        if (page.cursor == 0U)
+        {
+            tableInOut.clear();
+        }
+        tableInOut.resize(page.total);
+        for (pb_size_t i = 0U; i < page.descriptors_count; ++i)
+        {
+            const std::size_t index = page.cursor + i;
+            if (index < tableInOut.size())
+            {
+                tableInOut[index] = page.descriptors[i];
+            }
+        }
+        // A page that carried nothing while the table is not full would loop
+        // forever on the same cursor: the total is what closes the walk.
+        const std::uint32_t next = page.cursor + page.descriptors_count;
+        return page.descriptors_count == 0U ? page.total : next;
+    }
+
+    void fillNodeTelemetry(std::uint32_t node,
+                           const TelemetryTable &table,
+                           mark4_NodeTelemetry &out)
+    {
+        out = mark4_NodeTelemetry_init_zero;
+        out.node = node;
+        const std::size_t count = std::min(table.size(), std::size(out.descriptors));
+        std::copy_n(table.begin(), count, out.descriptors);
+        out.descriptors_count = static_cast<pb_size_t>(count);
+    }
+
     LogModuleTable ownLogModules()
     {
         LogModuleTable table;

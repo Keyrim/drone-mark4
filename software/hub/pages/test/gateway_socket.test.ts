@@ -80,11 +80,11 @@ test("frames are decoded into envelopes with their source, other bodies dispatch
     const tables: number[] = [];
     socket.on("nodes", (table) => tables.push(table.nodes.length));
 
-    const telemetry = create(EnvelopeSchema, { body: { case: "telemetry", value: { altitudeM: 1 } } });
+    const status = create(EnvelopeSchema, { body: { case: "status", value: { throwCount: 1 } } });
     fake.receive(
         encodeGatewayMessage(
             create(GatewayMessageSchema, {
-                body: { case: "frame", value: { src: 42, dst: 0, payload: toBinary(EnvelopeSchema, telemetry) } },
+                body: { case: "frame", value: { src: 42, dst: 0, payload: toBinary(EnvelopeSchema, status) } },
             })
         )
     );
@@ -97,7 +97,7 @@ test("frames are decoded into envelopes with their source, other bodies dispatch
     );
     // Garbage is ignored, not thrown
     fake.receive(new Uint8Array([1, 2, 3, 4, 5]));
-    assert.deepEqual(envelopes, [[42, "telemetry"]]);
+    assert.deepEqual(envelopes, [[42, "status"]]);
     assert.deepEqual(tables, [1]);
 });
 

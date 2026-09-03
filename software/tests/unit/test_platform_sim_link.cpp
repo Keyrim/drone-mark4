@@ -257,13 +257,17 @@ TEST_CASE("payloads that are not sensor frames go to the command ring")
     REQUIRE(frame.timestampUs == TEST_TIMESTAMP_US);
 
     std::array<std::uint8_t, mark4::MAX_PAYLOAD> payload{};
-    const std::size_t size = drone.commands.poll(payload.data(), payload.size());
+    std::uint32_t commandSrc = 0U;
+    const std::size_t size = drone.commands.poll(payload.data(), payload.size(), commandSrc);
     REQUIRE(size > 0U);
     mark4_Envelope queued;
     REQUIRE(mark4::decodeEnvelope(payload.data(), size, queued));
     REQUIRE(queued.which_body == mark4_Envelope_rc_tag);
     REQUIRE(queued.body.rc.throttle == 0.5f);
-    REQUIRE(drone.commands.poll(payload.data(), payload.size()) == 0U);
+    // The origin travels with the payload: a service answering one requester
+    // reads it off the ring rather than broadcasting to the whole bench.
+    REQUIRE(commandSrc == PLANT_NODE);
+    REQUIRE(drone.commands.poll(payload.data(), payload.size(), commandSrc) == 0U);
 }
 
 TEST_CASE("a second plant cannot take over the sim link while the first is alive")

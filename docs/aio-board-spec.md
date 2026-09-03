@@ -50,9 +50,9 @@ append, never renumber.
 - MCU-4 HSE MUST be a crystal; 8 MHz is chosen (PLL: /4, x216, /2 gives
   216 MHz sysclk and /9 gives the exact 48 MHz USB clock, so 8 MHz does
   not preclude USB).
-- MCU-5 Firmware discipline is unchanged: registers by hand from RM0431,
-  no HAL, float-only with -Wdouble-promotion as an error (single
-  precision FPU).
+- MCU-5 Firmware discipline is unchanged: registers from the vendored
+  CMSIS device header, no HAL, float-only with -Wdouble-promotion as an
+  error (single precision FPU).
 - MCU-6 DMA buffers MUST live in SRAM1 with explicit D-cache maintenance
   (or an MPU non-cacheable region); DTCM is the fast-scratch option.
   This replaces the mark1 "no DMA in CCM" rule.

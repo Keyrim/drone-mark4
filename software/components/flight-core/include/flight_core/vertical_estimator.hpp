@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "flight_core/types.hpp"
+#include "telemetry/registry.hpp"
 
 namespace mark4
 {
@@ -177,5 +178,17 @@ namespace mark4
         float m_referenceSumM = 0.0f;           ///< accumulator for the reference [m]
         std::uint32_t m_referenceCount = 0U;    ///< frames accumulated so far
         bool m_ready = false;                   ///< reference captured
+
+        // Measures: the three vertical channels a ground tool compares, the
+        // fused estimate against the raw pressure one it is corrected toward.
+        TelemetryEntry m_altitudeEntry{"estimator/altitude", TelemetryUnit::M, m_altitudeM};
+        TelemetryEntry m_baroAltitudeEntry{
+            "estimator/baro_altitude", TelemetryUnit::M, m_baroAltitudeM};
+        TelemetryEntry m_velocityEntry{
+            "estimator/vertical_velocity", TelemetryUnit::M_PER_S, m_velocityMps};
+        TelemetryEntry m_horizontalXEntry{
+            "estimator/horizontal_velocity_x", TelemetryUnit::M_PER_S, m_horizontalMps[0]};
+        TelemetryEntry m_horizontalYEntry{
+            "estimator/horizontal_velocity_y", TelemetryUnit::M_PER_S, m_horizontalMps[1]};
     };
 } // namespace mark4

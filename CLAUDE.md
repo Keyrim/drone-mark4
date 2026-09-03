@@ -123,7 +123,7 @@ config and only relaxes magic numbers.
 
 Everything C++ lives under `software/`: the executables at its top level
 (`drone_sim`, `drone_firmware`, `hub`), the libraries in
-`software/components/`. Five libraries, one rule of dependency flow:
+`software/components/`. Six libraries, one rule of dependency flow:
 
 - `flight-core/` - pure static lib. Single entry point
   `FlightCore::step(const SensorFrame&, ActuatorFrame&)`: synchronous,
@@ -136,11 +136,16 @@ Everything C++ lives under `software/`: the executables at its top level
   arming without an IMU, `FlightPhase::FAULT` when it is lost with the
   motors running, a lost baro coasts). `flight_core_types` is a separate INTERFACE target so
   platform headers can use SensorFrame/ActuatorFrame without a cycle.
-  flight_core links flight_core_types alone: no platform, no protocol/
-  (the telemetry packer is an IO adapter and lives in `platform_common`).
-- `platform/` - 5 abstract services in `software/components/platform/include/platform/`
-  (AbsSensorSource, AbsMotorSink, AbsCommandReceiver, AbsTelemetrySender,
-  AbsClock). `AbsSensorSource::waitFrame()` is the single wait
+  flight_core links flight_core_types and `telemetry`: no platform, no
+  protocol/ (the status packer is an IO adapter and lives in
+  `platform_common`). The telemetry link is names, units and pointers, not
+  wire: a module declares what it computes as a `TelemetryEntry` next to
+  the variable.
+- `platform/` - 4 abstract services in `software/components/platform/include/platform/`
+  (AbsSensorSource, AbsMotorSink, AbsCommandReceiver, AbsClock). There is
+  no output service: everything a composition emits leaves through its
+  `Transport` (`sendEnvelope(transport, dst, envelope)`).
+  `AbsSensorSource::waitFrame()` is the single wait
   point of the whole system; AbsClock is internal to platform and never
   passed to FlightCore. Implementations live in `software/components/platform/src/<variant>/`
   (sim, stm32); each variant's headers stay under its own
@@ -163,7 +168,14 @@ Everything C++ lives under `software/`: the executables at its top level
   `PB_BUFFER_ONLY`; the `protocol` lib adds `encodeEnvelope()` /
   `decodeEnvelope()` in `protocol/envelope.hpp`), godobuf GDScript for
   Godot (`sim-godot/scripts/gen/`, target `proto_gd`), `protoc
-  --python_out` for the batch tool (target `proto_py`). Every message on
+  --python_out` for the batch tool (target `proto_py`). Two different
+  things travel on it: `Status`, the small fixed report of what the drone
+  is doing (attitude, motors, phase, throw state and count, the validity
+  flags, the plant truth when there is one), broadcast every 10 frames and
+  always on; and the telemetry family (`TelemetryListRequest`/`Descriptors`,
+  `TelemetryEnable`/`Ack`, `TelemetryData`), unicast on demand, one active
+  stream per drone, which is how any registered measure is plotted without
+  touching the schema. Every message on
   every link is one `Envelope` (a oneof over all messages); there is no
   version byte, a 32-bit hash of the schema (`WIRE_HASH`, computed by
   CMake) travels in every `Announce` and the hub flags `wireMismatch`.
@@ -173,8 +185,15 @@ Everything C++ lives under `software/`: the executables at its top level
   is a GATEWAY: its websocket carries binary `GatewayMessage`s of the
   second schema, `gateway.proto` (a transport `Frame` = src, dst, one
   encoded Envelope, forwarded both ways without interpretation; the
-  `NodeTable`; the gateway-local services: `OtaCommand`/`OtaState`,
-  `ProfileCommand`; `Ack`), never JSON. The web pages
+  `NodeTable`; `NodeTelemetry`, one node's whole measure table as the
+  gateway pulled it; the gateway-local services: `OtaCommand`/`OtaState`,
+  `ProfileCommand`; `Ack`), never JSON. Every body of that oneof shares one
+  nanopb struct, so anything per-node and unbounded gets a message of its
+  own rather than a field in `Node`. The hub also has an HTTP side, which
+  is filesystem-only by invariant:
+  `/api/telemetry/{configs,exports}` reads and writes files under
+  `HttpConfig::telemetryDir` (`logs/telemetry`), and touches no registry
+  and no counter. The web pages
   (`software/hub/pages/`) generate their own TypeScript codec of both
   schemas at build time (`pnpm gen`, protoc-gen-es) and model the system
   as nodes by node id, never by kind or "connection". protocol/ is payload
@@ -216,6 +235,20 @@ Everything C++ lives under `software/`: the executables at its top level
   it emits (telemetry, answers, `Log` lines through the log library's
   `TransportSink`) and takes commands through `CommandReceiverTransport`
   fed by `Transport::poll()` once per flight frame.
+- `telemetry/` - the registry of named float measures every node exposes
+  (`software/components/telemetry/README.md`). A leaf like `log` (static
+  lib, `drone_warnings` alone, no heap, no iostream, builds for stm32): it
+  knows names, units and where values live, and nothing of the wire. A
+  measure is a `TelemetryEntry` declared as a member next to the variable
+  it reads (a pointer to a float, or a context plus a reader for an enum,
+  a boolean or a u64); entries link in construction order, because a wire
+  id is an index into that order, and unlink in their destructor. Names are
+  hierarchical lowercase paths (`estimator/altitude`, `rate/roll/p_term`),
+  at most `MAX_TELEMETRY_NAME` = 40 characters, and the name is the stable
+  identity across reboots. `MAX_TELEMETRY_ENTRIES` = 128 is the size of the
+  table the wire adapter (`platform_common/telemetry_service.hpp`) freezes
+  in `init()`. Adding a measure is one line where the value is computed:
+  nothing in the schema, the packer or any codec changes.
 - `log/` - the logging library of every node
   (`software/components/log/README.md`). `log` is a leaf (static lib,
   `drone_warnings` alone, no heap, no iostream): `LogModule` declared once

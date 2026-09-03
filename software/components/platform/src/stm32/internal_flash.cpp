@@ -2,51 +2,34 @@
 
 #include <cstring>
 
+#include <stm32f405xx.h>
+
 #include "platform_stm32/ota_slots.hpp"
-#include "registers.hpp"
 
 namespace mark4
 {
     namespace
     {
         // RM0090 section 3.6: the two keys that release the program/erase
-        // controller, written in this order to FLASH_KEYR.
+        // controller, written in this order to FLASH_KEYR. The device header
+        // maps the registers but does not carry the keys.
         constexpr std::uint32_t FLASH_KEY1 = 0x45670123U;
         constexpr std::uint32_t FLASH_KEY2 = 0xCDEF89ABU;
-
-        constexpr std::uint32_t FLASH_CR_PG = 1U << 0U;
-        constexpr std::uint32_t FLASH_CR_SER = 1U << 1U;
-        constexpr std::uint32_t FLASH_CR_SNB_SHIFT = 3U;
-        constexpr std::uint32_t FLASH_CR_SNB_MASK = 0x1FU << FLASH_CR_SNB_SHIFT;
-        constexpr std::uint32_t FLASH_CR_STRT = 1U << 16U;
-        constexpr std::uint32_t FLASH_CR_LOCK = 1U << 31U;
 
         /// PSIZE = x32. The 32-bit parallelism needs a supply at or above
         /// 2.7 V (RM0090 table 7); the board runs the F405 at 3.3 V, so this
         /// is the fastest legal setting and the one word programming wants.
-        constexpr std::uint32_t FLASH_CR_PSIZE_X32 = 2U << 8U;
-
-        constexpr std::uint32_t FLASH_SR_EOP = 1U << 0U;
-        constexpr std::uint32_t FLASH_SR_OPERR = 1U << 1U;
-        constexpr std::uint32_t FLASH_SR_WRPERR = 1U << 4U;
-        constexpr std::uint32_t FLASH_SR_PGAERR = 1U << 5U;
-        constexpr std::uint32_t FLASH_SR_PGPERR = 1U << 6U;
-        constexpr std::uint32_t FLASH_SR_PGSERR = 1U << 7U;
-        constexpr std::uint32_t FLASH_SR_BSY = 1U << 16U;
+        constexpr std::uint32_t FLASH_CR_PSIZE_X32 = FLASH_CR_PSIZE_1;
 
         constexpr std::uint32_t FLASH_SR_ERRORS =
             FLASH_SR_OPERR | FLASH_SR_WRPERR | FLASH_SR_PGAERR | FLASH_SR_PGPERR | FLASH_SR_PGSERR;
         constexpr std::uint32_t FLASH_SR_FLAGS = FLASH_SR_ERRORS | FLASH_SR_EOP;
 
-        constexpr std::uint32_t FLASH_ACR_ICEN = 1U << 9U;
-        constexpr std::uint32_t FLASH_ACR_DCEN = 1U << 10U;
-        constexpr std::uint32_t FLASH_ACR_ICRST = 1U << 11U;
-        constexpr std::uint32_t FLASH_ACR_DCRST = 1U << 12U;
-
         /// Sector sizes of the 1 MB part: 4 x 16 KB, 1 x 64 KB, 7 x 128 KB
         /// (RM0090 table 5). The F405RG is single bank, so the SNB field is
-        /// simply the sector index; only the 2 MB parts add the bank-2
-        /// offset that the field's fifth bit exists for.
+        /// simply the sector index, and FLASH_CR_SNB_Msk covers it; the 2 MB
+        /// parts use a wider SNB encoding with a bank-2 offset, which is why
+        /// the old hand-written map carried a 5-bit mask.
         constexpr std::uint32_t SECTOR_SMALL_SIZE = 16U * 1024U;
         constexpr std::uint32_t SECTOR_MEDIUM_SIZE = 64U * 1024U;
         constexpr std::uint32_t SECTOR_LARGE_SIZE = 128U * 1024U;
@@ -120,18 +103,18 @@ namespace mark4
     {
         if (sector < SECTOR_SMALL_COUNT)
         {
-            return FLASH_BASE + (static_cast<std::uint32_t>(sector) * SECTOR_SMALL_SIZE);
+            return INTERNAL_FLASH_BASE + (static_cast<std::uint32_t>(sector) * SECTOR_SMALL_SIZE);
         }
         if (sector == SECTOR_MEDIUM_INDEX)
         {
-            return FLASH_BASE + (SECTOR_SMALL_COUNT * SECTOR_SMALL_SIZE);
+            return INTERNAL_FLASH_BASE + (SECTOR_SMALL_COUNT * SECTOR_SMALL_SIZE);
         }
         if (sector < FLASH_SECTOR_COUNT)
         {
             return SECTOR_LARGE_FIRST_BASE +
                    (static_cast<std::uint32_t>(sector - SECTOR_LARGE_FIRST) * SECTOR_LARGE_SIZE);
         }
-        return FLASH_BASE;
+        return INTERNAL_FLASH_BASE;
     }
 
     std::uint32_t InternalFlash::SectorSize(std::uint8_t sector)
@@ -198,12 +181,12 @@ namespace mark4
 
         const std::uint32_t caches = suspendCaches();
         clearStatusFlags();
-        FLASH->CR = (FLASH->CR & ~(FLASH_CR_SNB_MASK | FLASH_CR_PG)) | FLASH_CR_PSIZE_X32 |
-                    FLASH_CR_SER | (static_cast<std::uint32_t>(sector) << FLASH_CR_SNB_SHIFT);
+        FLASH->CR = (FLASH->CR & ~(FLASH_CR_SNB_Msk | FLASH_CR_PG)) | FLASH_CR_PSIZE_X32 |
+                    FLASH_CR_SER | (static_cast<std::uint32_t>(sector) << FLASH_CR_SNB_Pos);
         FLASH->CR = FLASH->CR | FLASH_CR_STRT;
 
         const bool idle = waitNotBusy();
-        FLASH->CR = FLASH->CR & ~(FLASH_CR_SER | FLASH_CR_SNB_MASK);
+        FLASH->CR = FLASH->CR & ~(FLASH_CR_SER | FLASH_CR_SNB_Msk);
         const bool ok = idle && operationSucceeded();
         resumeCaches(caches);
         lock();
@@ -232,7 +215,7 @@ namespace mark4
         const std::uint32_t caches = suspendCaches();
         clearStatusFlags();
         FLASH->CR =
-            (FLASH->CR & ~(FLASH_CR_SER | FLASH_CR_SNB_MASK)) | FLASH_CR_PSIZE_X32 | FLASH_CR_PG;
+            (FLASH->CR & ~(FLASH_CR_SER | FLASH_CR_SNB_Msk)) | FLASH_CR_PSIZE_X32 | FLASH_CR_PG;
 
         bool ok = true;
         for (std::uint32_t done = 0U; done < size && ok; done += WORD_SIZE)

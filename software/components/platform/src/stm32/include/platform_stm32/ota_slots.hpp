@@ -25,8 +25,9 @@
 
 namespace mark4
 {
-    /// Base of the memory-mapped internal flash.
-    inline constexpr std::uint32_t FLASH_BASE = 0x08000000U;
+    /// Base of the memory-mapped internal flash. Named after the driver on
+    /// purpose: FLASH_BASE is a macro of the CMSIS device header.
+    inline constexpr std::uint32_t INTERNAL_FLASH_BASE = 0x08000000U;
 
     /// Sectors of the STM32F405RG (1 MB, single bank, no bank offset in the
     /// SNB encoding).
@@ -102,7 +103,7 @@ namespace mark4
     static_assert(OTA_SLOT_A_BASE + OTA_SLOT_SIZE <= OTA_SLOT_B_BASE,
                   "slot A must not reach into B");
     static_assert(OTA_IMAGE_HEADER_SIZE < OTA_SLOT_SIZE, "the header must leave room for code");
-    static_assert(OTA_META_AREA_0_BASE >= FLASH_BASE + BOOTLOADER_SIZE,
+    static_assert(OTA_META_AREA_0_BASE >= INTERNAL_FLASH_BASE + BOOTLOADER_SIZE,
                   "the metadata must sit above the bootloader");
 
 #ifdef DRONE_OTA_SLOT_ID

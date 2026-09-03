@@ -189,6 +189,27 @@ namespace mark4
             return m_dropped;
         }
 
+        /// @return frames this node's own send() handed to a link, the
+        ///         periodic beacon included
+        [[nodiscard]] std::uint32_t sent() const
+        {
+            return m_sent;
+        }
+
+        /// @return payload bytes of the frames counted by sent()
+        [[nodiscard]] std::size_t sentBytes() const
+        {
+            return m_sentBytes;
+        }
+
+        /// @return send() calls that reached no link: a payload too long, no
+        ///         link declared, an unknown or masked-out destination, or a
+        ///         medium that refused the frame (a full UART ring)
+        [[nodiscard]] std::uint32_t refused() const
+        {
+            return m_refused;
+        }
+
         /// @return frames forwarded onto another link (one per link for a
         ///         broadcast)
         [[nodiscard]] std::uint32_t relayed() const
@@ -251,6 +272,12 @@ namespace mark4
         /// @return mutable node, nullptr when unknown
         Node *lookup(std::uint32_t nodeId);
 
+        /// @brief Folds the outcome of one send into the send-side counters.
+        /// @param ok true when every link the frame was meant for took it
+        /// @param size payload size of the frame [bytes]
+        /// @return ok, so a caller returns it straight away
+        bool countSend(bool ok, std::size_t size);
+
         std::uint32_t m_nodeId;                                ///< this node
         std::array<AbsLink *, MAX_LINKS> m_links{};            ///< declared links
         std::size_t m_linkCount = 0U;                          ///< links declared
@@ -268,6 +295,9 @@ namespace mark4
         FilterFn m_filter = nullptr;                           ///< outbound relay filter
         void *m_filterContext = nullptr;                       ///< handed to the filter
         std::uint32_t m_dropped = 0U;                          ///< frames dropped
+        std::uint32_t m_sent = 0U;                             ///< frames handed to a link
+        std::size_t m_sentBytes = 0U;                          ///< payload bytes of those frames
+        std::uint32_t m_refused = 0U;                          ///< sends that reached no link
         std::uint32_t m_relayed = 0U;                          ///< frames forwarded
         std::uint32_t m_filtered = 0U;                         ///< forwards the filter refused
         std::array<std::uint8_t, MAX_FRAME_SIZE> m_rxBuffer{}; ///< frame being handled

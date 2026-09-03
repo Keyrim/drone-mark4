@@ -2,25 +2,22 @@
 
 #include <cstdint>
 
-#include "registers.hpp"
+#include <stm32f405xx.h>
+
+#include "platform_stm32/board.hpp"
 
 namespace mark4
 {
     namespace
     {
-        constexpr std::uint32_t RCC_APB1ENR_TIM2EN = 1U << 0U;
-
-        /// APB1 timer clock (2 x the 42 MHz bus clock) down to 1 MHz.
-        constexpr std::uint32_t TIM_PSC_84MHZ_TO_1MHZ = 84U - 1U;
-
-        constexpr std::uint32_t TIM_CR1_CEN = 1U << 0U;
-        constexpr std::uint32_t TIM_EGR_UG = 1U << 0U;
+        /// APB1 timer clock down to 1 MHz.
+        constexpr std::uint32_t TIM_PSC_TO_1MHZ = (APB1_TIMER_CLOCK_HZ / 1000000U) - 1U;
     } // namespace
 
     void ClockStm32::init()
     {
         RCC->APB1ENR = RCC->APB1ENR | RCC_APB1ENR_TIM2EN;
-        TIM2->PSC = TIM_PSC_84MHZ_TO_1MHZ;
+        TIM2->PSC = TIM_PSC_TO_1MHZ;
         TIM2->ARR = 0xFFFFFFFFU;
         TIM2->EGR = TIM_EGR_UG; // latch the prescaler now
         TIM2->CR1 = TIM_CR1_CEN;

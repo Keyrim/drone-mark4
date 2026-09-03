@@ -10,10 +10,11 @@
 #include "flight_core/types.hpp"
 #include "log/wire.hpp"
 #include "platform_common/command_receiver_transport.hpp"
+#include "platform_common/frame_telemetry.hpp"
 #include "platform_common/ota_updater.hpp"
 #include "platform_common/rc_tracker.hpp"
-#include "platform_common/telemetry_publisher.hpp"
-#include "platform_common/telemetry_sender_transport.hpp"
+#include "platform_common/status_publisher.hpp"
+#include "platform_common/telemetry_service.hpp"
 #include "platform_common/tuning_service.hpp"
 #include "platform_stm32/bmp581.hpp"
 #include "platform_stm32/board.hpp"
@@ -27,6 +28,7 @@
 #include "platform_stm32/sensor_source_stm32.hpp"
 #include "platform_stm32/uart1_stream.hpp"
 #include "protocol/envelope.hpp"
+#include "telemetry/registry.hpp"
 #include "transport/transport.hpp"
 #include "transport/uart_link.hpp"
 
@@ -47,6 +49,14 @@ namespace mark4
       public:
         /// Frames between two status lines (app/status, DEBUG): one per second.
         static constexpr std::uint32_t FRAMES_PER_STATUS = SensorSourceStm32::FRAME_RATE_HZ;
+
+        /// Fastest telemetry period this board serves [ms]. The line is the
+        /// limit, not the loop: at 921600 baud with the serial framing it
+        /// carries about 92 kB/s, and 64 enabled measures are two messages
+        /// of roughly 300 bytes each, so 100 Hz is about 60 kB/s. That
+        /// leaves room for the status stream, the log lines and the tuning
+        /// answers sharing the same UART; asking for 1 ms would not.
+        static constexpr std::uint32_t MIN_TELEMETRY_PERIOD_MS = 10U;
 
         FirmwareApp() = default;
 
@@ -128,22 +138,35 @@ namespace mark4
         mark4::Transport m_transport{boardNodeId()};
         mark4::RttSink m_rttSink;
         mark4::TransportSink m_transportSink{&FirmwareApp::SendLog, this};
-        mark4::TelemetrySenderTransport m_telemetrySender{m_transport};
         mark4::I2cBus m_bus;
         mark4::Mpu6050 m_imu{m_bus};
         mark4::Bmp581 m_baro{m_bus};
         mark4::SensorSourceStm32 m_sensorSource{m_imu, m_baro, m_clock};
         mark4::MotorSinkDshot m_motorSink;
-        mark4::TelemetryPublisher m_telemetryPublisher{m_telemetrySender};
+        mark4::StatusPublisher m_statusPublisher{m_transport};
         mark4::CommandReceiverTransport m_commandReceiver;
         mark4::RcTracker m_rcTracker;
+        /// Declared before the core so the ids of the platform measures come
+        /// first in the frozen table: the order of construction IS the order
+        /// of the ids (see components/telemetry/README.md).
+        mark4::FrameTelemetry m_frameTelemetry;
         mark4::FlightCore m_core;
-        mark4::TuningService m_tuningService{m_core, m_telemetrySender};
+        mark4::TuningService m_tuningService{m_core, m_transport};
         /// The slot this image was linked for is a compile-time fact
         /// (ota_slots.hpp, one -DDRONE_OTA_SLOT_ID per variant); the store
         /// refuses to erase or program it, whatever arrives on the wire.
         mark4::FirmwareStoreStm32 m_firmwareStore{mark4::OTA_RUNNING_SLOT};
         mark4::OtaUpdater m_otaUpdater{m_firmwareStore};
+        /// Last of the services: init() freezes the registry, so every
+        /// object holding a measure must exist before it runs.
+        mark4::TelemetryService m_telemetryService{m_transport, MIN_TELEMETRY_PERIOD_MS};
+
+        /// Wall time one waitFrame -> step -> push cycle took, refreshed
+        /// every frame [us]: the one number that says whether the loop still
+        /// fits its 2 ms budget.
+        float m_stepDurationUs = 0.0f;
+        mark4::TelemetryEntry m_stepDurationEntry{
+            "loop/step_duration", mark4::TelemetryUnit::US, m_stepDurationUs};
 
         /// The beacon as registered: the identity the boot line reports.
         mark4_Announce m_announce = mark4_Announce_init_zero;

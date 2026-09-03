@@ -1,5 +1,14 @@
 // The wire between the gateway (the hub) and its websocket clients (the
-// pages, a script). One GatewayMessage per websocket binary message, both
+// pages, a script). Two schemas rather than one because the two links have
+// nothing in common: mark4.proto crosses a 921600 baud UART to a board with
+// 128 kB of RAM and is bounded to the byte, while everything here travels
+// over a loopback websocket between two desktop processes and can afford to
+// be generous. The one rule the generosity still obeys is the union: every
+// body of the oneof below shares one nanopb struct, so a body sized for
+// comfort is paid by every message, and anything per-node and unbounded
+// gets a message of its own instead of a field in Node.
+//
+// One GatewayMessage per websocket binary message, both
 // directions. Nothing here crosses the LAN: the gateway forwards transport
 // frames as-is inside Frame and owns the few services a browser cannot
 // (the OTA bundle on disk, the tuning profiles, the node table counters).
@@ -23,6 +32,7 @@ message GatewayMessage {
     ProfileList profiles = 21;
     Profile profile = 22;
     Ack ack = 30;
+    NodeTelemetry node_telemetry = 40;
     // 31 was the gateway's own Log: the gateway is a node and its lines
     // travel as Log envelopes in Frame like everyone else's. Never reuse.
   }
@@ -53,7 +63,23 @@ message Node {
   Announce announce = 8;       // absent until the node beaconed
   // The node's last LogModules table, whole, so a client connecting late
   // knows every module and level; empty until the node published it.
+  // TODO(tmagne): move this out of Node the way NodeTelemetry below is out
+  // of it. Every body of the oneof is a union member, so one node's fixed
+  // 32-module array costs 50 kB on every GatewayMessage variable, the ones
+  // that only carry a 40 byte Frame included.
   repeated LogModuleInfo log_modules = 9;
+}
+
+// Gateway to client: one node's whole telemetry table, as the gateway
+// pulled it page by page. Published on every change and to every client
+// that connects; a table the gateway dropped (the node went down) is
+// published empty. Its own message rather than a Node field on purpose:
+// a nanopb struct is its worst case, so 128 descriptors inside Node would
+// make every GatewayMessage variable a few hundred kB, including the one
+// the gateway fills per forwarded frame at 100 Hz.
+message NodeTelemetry {
+  uint32 node = 1;
+  repeated TelemetryDescriptor descriptors = 2;  // the node's whole table
 }
 
 // The whole table, the gateway itself included as its first entry.

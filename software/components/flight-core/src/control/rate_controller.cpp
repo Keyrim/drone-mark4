@@ -24,7 +24,15 @@ namespace mark4
         {
             const float error = setpointRadS[axis] - gyroRadS[axis];
             m_integral[axis] = clampAbs(m_integral[axis] + m_ki[axis] * error * dt, INTEGRAL_LIMIT);
-            torque[axis] = m_kp[axis] * error + m_integral[axis];
+            const float pTerm = m_kp[axis] * error;
+            torque[axis] = pTerm + m_integral[axis];
+
+            // The loop's own view of this step, for the telemetry registry.
+            m_setpointRadS[axis] = setpointRadS[axis];
+            m_measuredRadS[axis] = gyroRadS[axis];
+            m_errorRadS[axis] = error;
+            m_pTerm[axis] = pTerm;
+            m_output[axis] = torque[axis];
         }
         return torque;
     }
@@ -32,5 +40,12 @@ namespace mark4
     void RateController::reset()
     {
         m_integral = {};
+        // The loop stops driving anything, so what it last computed is no
+        // longer a measurement of it: a held curve would read as a live one.
+        m_setpointRadS = {};
+        m_measuredRadS = {};
+        m_errorRadS = {};
+        m_pTerm = {};
+        m_output = {};
     }
 } // namespace mark4

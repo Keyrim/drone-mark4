@@ -2,7 +2,9 @@
 
 #include <cstdint>
 
-#include "registers.hpp"
+#include <stm32f405xx.h>
+
+#include "platform_stm32/board.hpp"
 
 namespace mark4
 {
@@ -11,16 +13,10 @@ namespace mark4
         // TIM6, a basic timer with no output pins: TIM3's four channels
         // drive the motors, so the pacer cannot share it. TIM6 sits on the
         // same APB1 clock and takes the same prescaler/reload; its interrupt
-        // (position 54) is shared with the DAC, which this board never uses.
-        constexpr std::uint32_t RCC_APB1ENR_TIM6EN = 1U << 4U;
-        constexpr std::uint32_t TIM6_IRQ_NUMBER = 54U;
+        // is shared with the DAC, which this board never uses.
 
-        /// APB1 timer clock (2 x the 42 MHz bus clock) down to 1 MHz.
-        constexpr std::uint32_t TIM_PSC_84MHZ_TO_1MHZ = 84U - 1U;
-
-        constexpr std::uint32_t TIM_CR1_CEN = 1U << 0U;
-        constexpr std::uint32_t TIM_DIER_UIE = 1U << 0U;
-        constexpr std::uint32_t TIM_EGR_UG = 1U << 0U;
+        /// APB1 timer clock down to 1 MHz.
+        constexpr std::uint32_t TIM_PSC_TO_1MHZ = (APB1_TIMER_CLOCK_HZ / 1000000U) - 1U;
 
         constexpr std::uint32_t US_PER_S = 1000000U;
 
@@ -31,12 +27,12 @@ namespace mark4
     void SensorSourceStm32::init()
     {
         RCC->APB1ENR = RCC->APB1ENR | RCC_APB1ENR_TIM6EN;
-        TIM6->PSC = TIM_PSC_84MHZ_TO_1MHZ;
+        TIM6->PSC = TIM_PSC_TO_1MHZ;
         TIM6->ARR = (US_PER_S / FRAME_RATE_HZ) - 1U;
         TIM6->EGR = TIM_EGR_UG; // latch the prescaler now
         TIM6->SR = 0U;          // the UG above set UIF, do not fire early
         TIM6->DIER = TIM_DIER_UIE;
-        NVIC_ISER[TIM6_IRQ_NUMBER / 32U] = 1U << (TIM6_IRQ_NUMBER % 32U);
+        NVIC_EnableIRQ(TIM6_DAC_IRQn);
         TIM6->CR1 = TIM_CR1_CEN;
     }
 
@@ -92,6 +88,6 @@ namespace mark4
 /// TIM6 update interrupt: acknowledge and hand one tick to waitFrame().
 extern "C" void TIM6_DAC_IRQHandler(void)
 {
-    mark4::TIM6->SR = 0U;
+    TIM6->SR = 0U;
     mark4::g_ticks = mark4::g_ticks + 1U;
 }
