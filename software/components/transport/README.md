@@ -20,7 +20,10 @@ with one `UartLink` on USART1), and the ESP32 riding the drone
 and a `UdpLink` on the WiFi LAN, `setRelay(true)`, a beacon of kind
 `RELAY`, and a filter on what goes down the UART. The hub holds one
 `UdpLink` and relays nothing: the board reaches it as one more node of the
-LAN, at the relay's address.
+LAN, at the relay's address. The mobile app (`software/mobile`, kind
+`PHONE`) compiles this directory as it is with the Android NDK (bionic has
+the BSD sockets; `DRONE_PLATFORM` `android` selects the POSIX sources) and
+drives it from Dart through the C ABI of its `native/` shim.
 
 ## Frame
 
