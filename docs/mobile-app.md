@@ -1,7 +1,8 @@
 # Mobile app - phone as gateway
 
-Status: two proofs of concept done (2026-09-02), scaffold in `software/mobile`,
-no feature yet. Companion to `docs/tooling-architecture.md` (the hub and the
+Status: two proofs of concept done (2026-09-02); first iteration of the app
+in `software/mobile` (2026-09-03): the transport through ffigen, the drone
+list and the drone page, the foundations below. Companion to `docs/tooling-architecture.md` (the hub and the
 pages) and `docs/architecture.md` (the flight system).
 
 ## Why a phone
@@ -127,37 +128,89 @@ Numbers from the first phone session are to be pasted here from the app's
 CSV dump (`adb logcat -s flutter`, lines `POCXBOX,data,...`), with and
 without unbuffered dispatch.
 
+## The app
+
+`software/mobile` is one Flutter project (`docs/contributing/dart-guidelines.md`
+for the conventions). What the first iteration put in place:
+
+- **The transport, unmodified, behind a C ABI.** `native/CMakeLists.txt` is
+  the CMake project Gradle drives (`externalNativeBuild`), once per ABI. It
+  includes `software/cmake/drone_targets.cmake` for the warning targets, sets
+  `DRONE_PLATFORM` to `android` and adds `software/components/transport` as
+  it is: the component's own CMakeLists.txt selects its POSIX sources for
+  that value, and a file added to the component is built into the app with
+  nothing to touch on this side. The only C++ of the app is
+  `native/transport_shim.cpp`: one opaque handle holding a `UdpLink`, a
+  `Transport` and a fixed ring of received payloads, and the flat functions
+  of `native/include/mark4/transport_shim.h` (create, destroy, set beacon,
+  send, poll, next payload, node table, counters). No callback crosses the
+  boundary: the C++ side accumulates, Dart drains after each poll. The
+  instant handed to `poll()` comes from a Dart `Stopwatch`; the C++ reads
+  no clock, as everywhere.
+- **Generated code only.** `tool/gen.sh` writes `lib/gen/` (gitignored): the
+  Dart codec of `mark4.proto` (protoc from `grpcio-tools`, `protoc_plugin`
+  from the pubspec, run with `dart run` like the pages run `protoc-gen-es`
+  from node_modules), `wire_hash.dart` from the SHA-256 of the schema, and
+  the `dart:ffi` binding of the shim header by ffigen (libclang from the
+  LLVM of the image). No hand-written binding, no constant copied from C++.
+- **The phone is a node.** `NodeKind.PHONE` in `mark4.proto`; the Announce
+  is named after the phone (`Settings.Global.DEVICE_NAME`, the model as a
+  fallback, cut to 16 ASCII characters), the node id is random at every
+  launch like a desktop process. The hub and the pages show it as one more
+  node of kind `phone`.
+- **Back end / front end split.** `lib/back/` is the managers: `Backend`
+  composes them and boots them in order (the C++ App pattern);
+  `TransportManager` owns the node, its beacon, the poll timer (10 ms, UI
+  isolate for now) and exposes the node table as snapshots; `DroneManager`
+  derives the drones from the announced kinds and follows the one the user
+  connected to (connected while it is in the table, lost while it is not,
+  back on its own: the transport is connectionless, connecting is choosing
+  an id); `SettingsManager` persists the theme mode. `lib/pages/` is one
+  BLoC per page over those managers; `lib/widgets/` what pages share;
+  `lib/theme/` every size and color, scaled by `flutter_screenutil` from a
+  portrait design. The Android activity answers one method channel
+  (`mark4/platform`: the Wi-Fi multicast lock, the device name), wrapped in
+  `lib/back/platform/`.
+- **Tests without a phone.** The managers run in `flutter test` over a fake
+  transport node and a fake platform (`test/fakes/`): the test is the
+  network, it puts nodes in the table and Envelopes in the queue and polls.
+  The blocs are tested with `bloc_test` over the real managers.
+
+Screens: the home page lists the drones (kind `FIRMWARE` or `DRONE_SIM`,
+the same `isDrone` as the pages) with their name and id and counts the
+other nodes; tapping one opens its page, which connects and shows a banner
+(connected / disconnected / waiting) above what the drone announced and the
+link counters. Portrait, few things per screen, large: the phone is set
+down and the hands are on the controller.
+
 ## Roadmap of software/mobile
 
-The scaffold is a `flutter create` and nothing else: it exists so the CI
-builds an APK from the image on every push and the toolchain never drifts
-silently. The steps, each its own pull request:
+Done: the transport through ffigen with `NodeKind.PHONE`, the generated Dart
+codec and wire hash, the drone list and the drone page (the first two steps
+of the original roadmap, plus the foundations above). Next, each its own
+pull request:
 
-1. **Transport as a Flutter FFI plugin.** `software/mobile` gets a
-   `CMakeLists.txt` that compiles `software/components/transport` from its
-   real location (no copy; the Gradle externalNativeBuild path points at
-   `../../components/transport`) plus the shim, and a hand-written
-   `dart:ffi` binding. Beacon with a real `NodeKind`: add `PHONE` to
-   `mark4.proto`. Hub and pages show the phone as one more node.
-2. **Dart codec of mark4.proto** generated at build time (`protoc` +
-   `protoc_plugin`, gitignored output like `software/hub/pages/src/gen`),
-   the wire hash computed from the same source as CMake computes it, never
-   a constant.
-3. **Gamepad input module**: the Kotlin hooks of PoC 2 (consume, unbuffered
+1. **Gamepad input module**: the Kotlin hooks of PoC 2 (consume, unbuffered
    dispatch on, history drained), one stream of stick / trigger / button
    samples towards Dart, plus a device list.
-4. **Command path**: sticks -> `RcCommand` envelopes at the report rate,
+2. **Command path**: sticks -> `RcCommand` envelopes at the report rate,
    unicast to the drone node id; kill switch on a button, arming gesture,
    link-loss behaviour identical to what the firmware does when the
    transport goes silent. The transport `poll()` moves off the UI isolate
    before this step if PoC 1's numbers say so.
-5. **Lifecycle**: foreground service while a drone is armed, sockets and
+3. **Lifecycle**: foreground service while a drone is armed, sockets and
    the multicast lock survive the screen turning off, link status on
    screen.
-6. **Latency budget in the repository**: the PoC 2 metrics as a debug
+4. **Latency budget in the repository**: the PoC 2 metrics as a debug
    screen of the real app, so every change to the input path is measured
    with the same numbers; the press -> buzz film test documented in
    `docs/bring-up.md` alongside the board procedures.
-7. Later, not planned: iOS (the transport compiles, the input path and
+5. **Poll off the UI isolate** when the measured cost of the 10 ms timer
+   says so: a native thread in the shim with a queue towards Dart, or a
+   Dart isolate; the C ABI already accumulates and never calls back.
+6. Later, not planned: iOS (the transport compiles, the input path and
    the BLE HID rules differ), telemetry views (the pages already do it;
-   a phone screen is a different design).
+   a phone screen is a different design), a network page or filters on the
+   home page listing every node and not only the drones, a stable node id
+   for the phone (a hash of `ANDROID_ID`) if the drone ever needs to
+   recognise its pilot.

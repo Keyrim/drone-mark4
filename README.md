@@ -69,7 +69,8 @@ options -> wireless debugging), the container being on the host network:
 
 ```sh
 ./scripts/adb_wifi.sh                     # discovers the phone over mDNS, pairs once, connects
-cd software/mobile && flutter run          # or: flutter build apk --debug --target-platform android-arm64
+cd software/mobile && flutter pub get && ./tool/gen.sh   # generated codec, wire hash, ffi binding
+flutter run                               # or: flutter build apk --debug --target-platform android-arm64
 ```
 
 ### Manual build (outside the container)
@@ -123,7 +124,7 @@ preset.
 - `devcontainer-image.yml` - rebuilds the image and pushes it to GHCR
   (`ghcr.io/keyrim/drone-mark4-devcontainer`) whenever `.devcontainer/` changes.
 - `ci.yml` - 8 parallel jobs inside that image: desktop+tests+batch, stm32,
-  esp32, desktop-san, pages, mobile (flutter analyze + debug apk),
+  esp32, desktop-san, pages, mobile (gen, flutter analyze, format, test, debug apk),
   clang-format+ascii, clang-tidy.
 
 First-push bootstrap: the `ci.yml` jobs pull the GHCR image - on the very

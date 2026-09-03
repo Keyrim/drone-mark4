@@ -130,7 +130,7 @@ jobs:
       - run: pnpm test
 
   mobile:
-    name: mobile (flutter analyze + debug apk)
+    name: mobile (gen + analyze + test + debug apk)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
@@ -146,7 +146,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: flutter pub get
+      # lib/gen/: protobuf codec, wire hash, ffigen binding (libclang of the image)
+      - run: ./tool/gen.sh
       - run: flutter analyze
+      - run: dart format --set-exit-if-changed lib test
+      - run: flutter test
       # arm64 only: the one ABI of the phones this app targets, and a third
       # of the Gradle time of the default three-ABI debug build.
       - run: flutter build apk --debug --target-platform android-arm64
