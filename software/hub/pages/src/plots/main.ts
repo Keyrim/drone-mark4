@@ -1,14 +1,15 @@
 /**
- * Telemetry page: one drone's measures, configured, recorded, viewed, saved.
+ * Telemetry page: one drone's measures, configured, then recorded and viewed.
  *
  * There is no catalog of series here. The source node publishes its own
  * table of measures (the gateway pulls it, `NodeTelemetry`), the page offers
- * exactly that, and enables the subset it is asked to record. A session goes
- * through three phases:
+ * exactly that, and enables the subset it is asked to record. The page has
+ * two modes, each taking the whole window:
  *
- *   configuring  tick measures, set the period, group them into lanes
- *   recording    the config is frozen; the node streams what was enabled
- *   viewing      no traffic at all; browse, save, export
+ *   setup   pick a config or make one: tick measures, group them into
+ *           lanes, set the period; nothing is streamed
+ *   live    the lanes of that config; Record streams into them, Stop leaves
+ *           what was recorded on screen, Export writes it as CSV
  *
  * The enable is also the keepalive: the node stops streaming 3 s after the
  * last one, so a tab that crashes never leaves a board talking to nobody.
@@ -26,17 +27,17 @@ import { clampToData, pan, ticks, zoom, type Viewport } from "../lanes/timebase"
 import { frameMessage, GatewaySocket } from "../shared/gateway_socket";
 import { nodeLabel } from "../shared/nodes";
 import { Shell } from "../shared/shell";
-import { clampPeriod, ConfigPanel } from "../telemetry/config_panel";
-import { type Descriptor, TelemetryModel, unitLabel } from "../telemetry/model";
 import {
     buildConfig,
-    buildSession,
+    exportName,
     parseConfig,
-    parseSession,
     toCsv,
     type SeriesData,
-} from "../telemetry/session";
-import { loadWorkingConfig, saveWorkingConfig, store } from "../telemetry/store";
+    type ViewConfig,
+} from "../telemetry/config";
+import { ConfigPanel, DEFAULT_PERIOD_MS } from "../telemetry/config_panel";
+import { type Descriptor, TelemetryModel, unitLabel } from "../telemetry/model";
+import { loadLocal, saveLocal, store, WORKING_CONFIG_KEY, WORKING_NAME_KEY } from "../telemetry/store";
 
 const WINDOWS_S = [5, 10, 20, 60];
 const DEFAULT_WINDOW_S = 20;
@@ -52,7 +53,7 @@ const SILENCE_MS = 3000;
 /** How long the working config waits after an edit before being stored [ms]. */
 const AUTOSAVE_MS = 500;
 
-type Phase = "configuring" | "recording" | "viewing";
+type Mode = "setup" | "live";
 
 const socket = new GatewaySocket();
 const shell = new Shell(socket);
@@ -61,10 +62,18 @@ const model = new TelemetryModel();
 /** Every node's table, by node id, as the gateway published it. */
 const tables = new Map<number, Descriptor[]>();
 
-let phase: Phase = "configuring";
+let mode: Mode = "setup";
+let recording = false;
 let sourceNode: number | null = null;
-let sessionName = "";
-let unsaved = false;
+/** The named config the selection was loaded from or saved under, "" for none. */
+let configName = "";
+/**
+ * A config waiting for a table to be applied against: the working config at
+ * load, or a named one opened before the gateway published the node's
+ * measures. Applied by the first bind that has a table.
+ */
+let pendingConfig: ViewConfig | null = null;
+let effectivePeriodMs: number | null = null;
 let lastDataMs = 0;
 let brokenBySilence = false;
 
@@ -104,21 +113,11 @@ const lanesView = new LanesView(lanesScroll, {
 lanesView.decimate = (t, v) => decimateMinMax(t, v) as unknown as uPlot.AlignedData;
 
 const configPanel = new ConfigPanel(model, () => {
-    unsaved = true;
     scheduleAutosave();
     rebuildLanes();
     refreshToolbar();
 });
 
-const status = document.createElement("div");
-status.className = "config-note";
-
-/** The session name and its unsaved mark, in the toolbar. */
-const sessionLabel = document.createElement("span");
-sessionLabel.className = "session-label";
-shell.toolbar.appendChild(sessionLabel);
-
-shell.content.appendChild(status);
 shell.content.appendChild(configPanel.root);
 shell.content.appendChild(viewer);
 
@@ -141,58 +140,70 @@ function rebuildLanes(): void {
 
 /* -------------------- toolbar -------------------- */
 
-function toolbarButton(label: string, onClick: () => void): HTMLButtonElement {
+// The toolbar has one set of controls per mode; the source selector and
+// the feedback line are shared. Only the current mode's set is shown.
+const setupTools = document.createElement("div");
+setupTools.className = "tools";
+const liveTools = document.createElement("div");
+liveTools.className = "tools";
+
+/** One line of feedback in the toolbar: the last thing that happened. */
+const status = document.createElement("span");
+status.className = "tool-note";
+
+function toolbarButton(into: HTMLElement, label: string, onClick: () => void): HTMLButtonElement {
     const button = document.createElement("button");
     button.className = "btn";
     button.textContent = label;
     button.addEventListener("click", onClick);
-    shell.toolbar.appendChild(button);
+    into.appendChild(button);
     return button;
+}
+
+function toolbarSelect(into: HTMLElement, title: string): HTMLSelectElement {
+    const select = document.createElement("select");
+    select.className = "config-select";
+    select.title = title;
+    into.appendChild(select);
+    return select;
 }
 
 // Exactly one drone is drawn, by node id. The selector lists the drones of
 // the table; switching it stops whatever was streaming and starts over.
-const sourceSelect = document.createElement("select");
-sourceSelect.className = "config-select";
-sourceSelect.title = "drone whose measures this page records";
+const sourceSelect = toolbarSelect(shell.toolbar, "drone whose measures this page records");
 sourceSelect.addEventListener("change", () => {
     const next = Number(sourceSelect.value);
     if (next === sourceNode) {
         return;
     }
-    stopStream();
+    stopRecording();
     sourceNode = next;
     model.clearData();
     bindSource();
-    setPhase("configuring");
-});
-shell.toolbar.appendChild(sourceSelect);
-
-const recordButton = toolbarButton("Record", () => {
-    if (phase === "recording") {
-        stopStream();
-        setPhase("viewing");
-        return;
-    }
-    if (sourceNode === null || model.enabledIds().length === 0) {
-        say("tick at least one measure of a live drone first");
-        return;
-    }
-    model.clearData();
-    unsaved = true;
-    setPhase("recording");
-    startStream();
 });
 
-const newButton = toolbarButton("New session", () => {
-    if (unsaved && !confirmed(newButton, "Discard?")) {
-        return;
+shell.toolbar.appendChild(setupTools);
+shell.toolbar.appendChild(liveTools);
+shell.toolbar.appendChild(status);
+
+// Setup: the config this selection is, or becomes.
+const configSelect = toolbarSelect(setupTools, "view configs stored on the hub");
+configSelect.addEventListener("change", () => {
+    if (configSelect.value !== "") {
+        void loadNamedConfig(configSelect.value);
     }
-    stopStream();
-    sessionName = "";
-    unsaved = false;
-    model.clearData();
-    setPhase("configuring");
+});
+
+toolbarButton(setupTools, "New", () => {
+    stopRecording();
+    pendingConfig = null;
+    model.reset();
+    configName = "";
+    nameInput.value = "";
+    saveLocal(WORKING_NAME_KEY, "");
+    configPanel.setPeriod(DEFAULT_PERIOD_MS);
+    bindSource();
+    scheduleAutosave();
     say("");
 });
 
@@ -200,47 +211,47 @@ const newButton = toolbarButton("New session", () => {
 // editor webview (sandboxed iframe), where prompt() returns null.
 const nameInput = document.createElement("input");
 nameInput.className = "config-title";
-nameInput.placeholder = "session name";
-shell.toolbar.appendChild(nameInput);
+nameInput.placeholder = "config name";
+setupTools.appendChild(nameInput);
 
-const saveButton = toolbarButton("Save", () => {
-    void saveSession();
-});
-
-const openSelect = document.createElement("select");
-openSelect.className = "config-select";
-openSelect.title = "sessions stored on the hub";
-openSelect.addEventListener("change", () => {
-    if (openSelect.value !== "") {
-        void openSession(openSelect.value);
-    }
-});
-shell.toolbar.appendChild(openSelect);
-
-const exportButton = toolbarButton("Export CSV", () => {
-    void exportCsv();
-});
-
-const configSelect = document.createElement("select");
-configSelect.className = "config-select";
-configSelect.title = "named view configs stored on the hub";
-configSelect.addEventListener("change", () => {
-    if (configSelect.value !== "") {
-        void loadNamedConfig(configSelect.value);
-    }
-});
-shell.toolbar.appendChild(configSelect);
-
-const saveConfigButton = toolbarButton("Save config", () => {
+const saveConfigButton = toolbarButton(setupTools, "Save", () => {
     void saveNamedConfig();
 });
 
-const deleteConfigButton = toolbarButton("Delete config", () => {
+const deleteConfigButton = toolbarButton(setupTools, "Delete", () => {
     void deleteNamedConfig();
 });
 
+setupTools.appendChild(configPanel.periodControl);
+
+const startButton = toolbarButton(setupTools, "Start", () => {
+    if (model.list().length === 0) {
+        say("tick at least one measure first");
+        return;
+    }
+    setMode("live");
+});
+
+// Live: the recording and the view of it.
+const liveLabel = document.createElement("span");
+liveLabel.className = "live-label";
+liveTools.appendChild(liveLabel);
+
+const recordButton = toolbarButton(liveTools, "Record", () => {
+    if (recording) {
+        stopRecording();
+        return;
+    }
+    if (sourceNode === null || model.enabledIds().length === 0) {
+        say("no live drone exposes the selected measures");
+        return;
+    }
+    model.clearData();
+    startRecording();
+});
+
 const windowButtons = WINDOWS_S.map((seconds) =>
-    toolbarButton(`${seconds} s`, () => {
+    toolbarButton(liveTools, `${seconds} s`, () => {
         windowS = seconds;
         follow = true;
         refreshToolbar();
@@ -248,19 +259,27 @@ const windowButtons = WINDOWS_S.map((seconds) =>
     })
 );
 
-const followButton = toolbarButton("Follow", () => {
+const followButton = toolbarButton(liveTools, "Follow", () => {
     follow = true;
     refreshToolbar();
     dirty = true;
 });
 
-const pauseButton = toolbarButton("Pause", () => {
+const pauseButton = toolbarButton(liveTools, "Pause", () => {
     paused = !paused;
     refreshToolbar();
     dirty = true;
 });
 
-/** One line of feedback under the toolbar: the last thing that happened. */
+const exportButton = toolbarButton(liveTools, "Export CSV", () => {
+    void exportCsv();
+});
+
+toolbarButton(liveTools, "Edit config", () => {
+    stopRecording();
+    setMode("setup");
+});
+
 function say(text: string): void {
     status.textContent = text;
 }
@@ -295,31 +314,36 @@ function confirmed(button: HTMLButtonElement, label: string): boolean {
 }
 
 function refreshToolbar(): void {
+    setupTools.hidden = mode !== "setup";
+    liveTools.hidden = mode !== "live";
+    configPanel.root.hidden = mode !== "setup";
+    viewer.hidden = mode !== "live";
+
     windowButtons.forEach((button, i) => {
         button.classList.toggle("active", WINDOWS_S[i] === windowS);
     });
     followButton.classList.toggle("active", follow);
     pauseButton.classList.toggle("active", paused);
     pauseButton.textContent = paused ? "Resume" : "Pause";
-    recordButton.textContent = phase === "recording" ? "Stop" : "Record";
-    recordButton.classList.toggle("active", phase === "recording");
-    nameInput.value = nameInput.value === "" && sessionName !== "" ? sessionName : nameInput.value;
-    const label = sessionName === "" ? "unnamed" : sessionName;
-    sessionLabel.textContent = `${label}${unsaved ? " *" : ""} - ${phase}`;
-    sessionLabel.classList.toggle("unsaved", unsaved);
-    document.title = `mark4 telemetry - ${label}${unsaved ? " *" : ""}`;
-    const idle = phase !== "recording";
-    saveButton.disabled = model.list().length === 0;
-    exportButton.disabled = model.list().length === 0;
-    openSelect.disabled = !idle;
-    configSelect.disabled = !idle;
-    saveConfigButton.disabled = !idle;
-    deleteConfigButton.disabled = !idle;
+    recordButton.textContent = recording ? "Stop" : "Record";
+    recordButton.classList.toggle("active", recording);
+    exportButton.disabled = model.durationS() === 0;
+    startButton.disabled = model.list().length === 0;
+    deleteConfigButton.disabled = configName === "";
+    configSelect.value = configName;
+
+    const name = configName === "" ? "unnamed config" : configName;
+    const count = model.list().length;
+    const period =
+        effectivePeriodMs === null || effectivePeriodMs === configPanel.period()
+            ? `${configPanel.period()} ms`
+            : `${configPanel.period()} ms, node clamped to ${effectivePeriodMs} ms`;
+    liveLabel.textContent = `${name}: ${count} series, ${period}`;
+    document.title = `mark4 telemetry - ${name}`;
 }
 
-function setPhase(next: Phase): void {
-    phase = next;
-    configPanel.setFrozen(next === "recording");
+function setMode(next: Mode): void {
+    mode = next;
     refreshToolbar();
     dirty = true;
 }
@@ -334,12 +358,11 @@ shell.nodes.onChange(() => {
         ? sourceNode
         : (drones[0]?.id ?? null);
     if (next !== sourceNode) {
-        if (phase === "recording") {
+        if (recording) {
             // The node vanished mid-recording: break the curves rather than
             // draw a chord across the hole, and keep what was recorded.
             model.markGap();
-            stopStream();
-            setPhase("viewing");
+            stopRecording();
             say("the drone left the table: recording stopped");
         }
         sourceNode = next;
@@ -358,6 +381,10 @@ shell.nodes.onChange(() => {
 /** Rebinds the selection to the source node's current table, by name. */
 function bindSource(): void {
     const table = sourceNode === null ? [] : (tables.get(sourceNode) ?? []);
+    if (pendingConfig !== null && table.length > 0) {
+        applyConfig(pendingConfig);
+        return;
+    }
     model.bind(table);
     configPanel.setDescriptors(table);
     configPanel.render();
@@ -378,7 +405,7 @@ socket.on("nodeTelemetry", (published) => {
         return;
     }
     bindSource();
-    if (phase === "recording") {
+    if (recording) {
         // The node published a table again: it rebooted, or the gateway
         // pulled it late. Either way the ids may have moved, so the enable
         // goes out again on the ids that are current.
@@ -406,9 +433,11 @@ function sendEnable(periodMs: number): void {
     socket.send(frameMessage(sourceNode, envelope));
 }
 
-function startStream(): void {
+function startRecording(): void {
+    recording = true;
     lastDataMs = Date.now();
     brokenBySilence = false;
+    follow = true;
     sendEnable(configPanel.period());
     keepaliveTimer = setInterval(() => {
         sendEnable(configPanel.period());
@@ -417,14 +446,19 @@ function startStream(): void {
             // break instead of drawing a chord over the silence.
             brokenBySilence = true;
             model.markGap();
-            configPanel.render();
             say("the drone went silent: the curves are broken here");
             dirty = true;
         }
     }, KEEPALIVE_MS);
+    refreshToolbar();
 }
 
-function stopStream(): void {
+/** Stops the stream, when one runs. What was recorded stays on screen. */
+function stopRecording(): void {
+    if (!recording) {
+        return;
+    }
+    recording = false;
     if (keepaliveTimer !== null) {
         clearInterval(keepaliveTimer);
         keepaliveTimer = null;
@@ -432,7 +466,9 @@ function stopStream(): void {
     // One explicit stop, so the node does not keep streaming for the three
     // seconds its own keepalive would take to expire.
     sendEnable(0);
+    effectivePeriodMs = null;
     configPanel.setEffectivePeriod(null);
+    refreshToolbar();
 }
 
 socket.onEnvelope((src, envelope) => {
@@ -440,13 +476,15 @@ socket.onEnvelope((src, envelope) => {
         return;
     }
     if (envelope.body.case === "telemetryAck") {
-        configPanel.setEffectivePeriod(envelope.body.value.periodMs);
+        effectivePeriodMs = envelope.body.value.periodMs;
+        configPanel.setEffectivePeriod(effectivePeriodMs);
+        refreshToolbar();
         return;
     }
     if (envelope.body.case !== "telemetryData") {
         return;
     }
-    if (phase !== "recording" || paused) {
+    if (!recording || paused) {
         return;
     }
     lastDataMs = Date.now();
@@ -455,7 +493,9 @@ socket.onEnvelope((src, envelope) => {
         Number(envelope.body.value.timestampUs),
         envelope.body.value.values.map((value) => ({ id: value.id, value: value.value }))
     );
-    unsaved = true;
+    if (exportButton.disabled) {
+        refreshToolbar();
+    }
     dirty = true;
 });
 
@@ -463,13 +503,13 @@ socket.onEnvelope((src, envelope) => {
 // only notice three seconds later, and a board has no bandwidth to waste.
 for (const event of ["pagehide", "beforeunload"]) {
     addEventListener(event, () => {
-        if (phase === "recording") {
+        if (recording) {
             sendEnable(0);
         }
     });
 }
 
-/* -------------------- sessions, exports, configs -------------------- */
+/* -------------------- exports and configs -------------------- */
 
 /** The samples of every selected series, in selection order. */
 function seriesData(): SeriesData[] {
@@ -479,79 +519,8 @@ function seriesData(): SeriesData[] {
     });
 }
 
-function nodeDescription(): { id: number; kind: string; label: string } {
-    const node = sourceNode === null ? undefined : shell.nodes.get(sourceNode);
-    return {
-        id: sourceNode ?? 0,
-        kind: node?.kindName ?? "",
-        label: node === undefined ? "" : nodeLabel(node),
-    };
-}
-
-async function saveSession(): Promise<void> {
-    const name = (nameInput.value.trim() !== "" ? nameInput.value : sessionName).trim();
-    if (name === "") {
-        say("type a name for the session first");
-        return;
-    }
-    const session = buildSession(
-        name,
-        nodeDescription(),
-        model.originUs() ?? 0,
-        model.durationS(),
-        configPanel.period(),
-        model.list(),
-        seriesData()
-    );
-    const result = await store.writeSession(name, JSON.stringify(session));
-    if (!result.ok) {
-        say(`the hub refused the session: ${result.error ?? "unknown reason"}`);
-        return;
-    }
-    sessionName = name;
-    unsaved = false;
-    nameInput.value = "";
-    say(`saved ${name} (${result.value ?? 0} bytes)`);
-    refreshToolbar();
-    await refreshSessionList();
-}
-
-async function openSession(name: string): Promise<void> {
-    if (unsaved && !confirmed(newButton, "Discard?")) {
-        openSelect.value = "";
-        say("the current session is unsaved: New session twice to discard it");
-        return;
-    }
-    const result = await store.readSession(name);
-    openSelect.value = "";
-    if (!result.ok || result.value === undefined) {
-        say(`cannot read ${name}: ${result.error ?? "unknown reason"}`);
-        return;
-    }
-    const session = parseSession(result.value);
-    if (session === null) {
-        say(`${name} is not a session of this page`);
-        return;
-    }
-    stopStream();
-    model.load(session.series, session.series);
-    configPanel.setPeriod(session.periodMs);
-    sessionName = session.name === "" ? name : session.name;
-    unsaved = false;
-    // A stored session is browsed, not streamed: nothing is bound to a node
-    // until the config is used again for a recording.
-    bindSource();
-    setPhase("viewing");
-    follow = false;
-    say(`${sessionName}: ${session.series.length} series, ${session.durationS.toFixed(1)} s`);
-}
-
 async function exportCsv(): Promise<void> {
-    const name = (nameInput.value.trim() !== "" ? nameInput.value : sessionName).trim();
-    if (name === "") {
-        say("type a name for the export first");
-        return;
-    }
+    const name = exportName(configName, new Date());
     const csv = toCsv(model.list(), seriesData());
     const result = await store.writeExport(name, csv);
     if (!result.ok) {
@@ -567,21 +536,6 @@ async function exportCsv(): Promise<void> {
     status.appendChild(link);
 }
 
-async function refreshSessionList(): Promise<void> {
-    const result = await store.listSessions();
-    openSelect.replaceChildren();
-    const head = document.createElement("option");
-    head.value = "";
-    head.textContent = "open session...";
-    openSelect.appendChild(head);
-    for (const entry of result.value ?? []) {
-        const option = document.createElement("option");
-        option.value = entry.name;
-        option.textContent = entry.name;
-        openSelect.appendChild(option);
-    }
-}
-
 async function refreshConfigList(): Promise<void> {
     const result = await store.listConfigs();
     configSelect.replaceChildren();
@@ -595,6 +549,7 @@ async function refreshConfigList(): Promise<void> {
         option.textContent = entry.name;
         configSelect.appendChild(option);
     }
+    configSelect.value = configName;
 }
 
 async function saveNamedConfig(): Promise<void> {
@@ -603,53 +558,86 @@ async function saveNamedConfig(): Promise<void> {
         say("type a name for the config first");
         return;
     }
-    const existing = await store.listConfigs();
-    if ((existing.value ?? []).some((entry) => entry.name === name)) {
-        if (!confirmed(saveConfigButton, `Overwrite ${name}?`)) {
-            return;
+    // Saving over the config that was loaded is the expected edit; saving
+    // over another one is asked twice.
+    if (name !== configName) {
+        const existing = await store.listConfigs();
+        if ((existing.value ?? []).some((entry) => entry.name === name)) {
+            if (!confirmed(saveConfigButton, `Overwrite ${name}?`)) {
+                return;
+            }
         }
     }
     const body = JSON.stringify(buildConfig(configPanel.period(), model.list()));
     const result = await store.writeConfig(name, body);
-    say(result.ok ? `config ${name} saved` : `the hub refused it: ${result.error ?? ""}`);
+    if (!result.ok) {
+        say(`the hub refused it: ${result.error ?? ""}`);
+        return;
+    }
+    configName = name;
+    saveLocal(WORKING_NAME_KEY, configName);
+    say(`config ${name} saved`);
     await refreshConfigList();
-    configSelect.value = "";
+    refreshToolbar();
 }
 
 async function loadNamedConfig(name: string): Promise<void> {
     const result = await store.readConfig(name);
-    configSelect.value = "";
     if (!result.ok || result.value === undefined) {
+        configSelect.value = configName;
         say(`cannot read the config ${name}: ${result.error ?? ""}`);
         return;
     }
-    applyConfigText(result.value, `config ${name} loaded`);
+    const config = parseConfig(result.value);
+    if (config === null) {
+        configSelect.value = configName;
+        say(`${name} is not a config of this page`);
+        return;
+    }
+    stopRecording();
+    model.clearData();
+    configName = name;
+    nameInput.value = name;
+    saveLocal(WORKING_NAME_KEY, configName);
+    applyConfig(config);
+    scheduleAutosave();
+    refreshToolbar();
+    say(`config ${name} loaded`);
 }
 
 async function deleteNamedConfig(): Promise<void> {
-    const name = nameInput.value.trim();
-    if (name === "") {
-        say("type the name of the config to delete");
+    if (configName === "") {
         return;
     }
-    if (!confirmed(deleteConfigButton, `Delete ${name}?`)) {
+    if (!confirmed(deleteConfigButton, `Delete ${configName}?`)) {
         return;
     }
-    const result = await store.deleteConfig(name);
-    say(result.ok ? `config ${name} deleted` : `cannot delete it: ${result.error ?? ""}`);
+    const result = await store.deleteConfig(configName);
+    say(result.ok ? `config ${configName} deleted` : `cannot delete it: ${result.error ?? ""}`);
+    if (result.ok) {
+        // The selection stays: what is gone is its name on the hub.
+        configName = "";
+        nameInput.value = "";
+        saveLocal(WORKING_NAME_KEY, "");
+    }
     await refreshConfigList();
+    refreshToolbar();
 }
 
-/** Applies a stored or auto-saved config to the selection. */
-function applyConfigText(text: string, message: string): void {
-    const config = parseConfig(text);
-    if (config === null) {
+/**
+ * Applies a stored or auto-saved config to the selection. A config names
+ * measures, not ids: it is applied against the source node's current table,
+ * and a measure that node does not expose is dropped rather than kept as a
+ * curve nothing can fill. With no table yet the config waits for one.
+ */
+function applyConfig(config: ViewConfig): void {
+    configPanel.setPeriod(config.periodMs);
+    const table = sourceNode === null ? [] : (tables.get(sourceNode) ?? []);
+    if (table.length === 0) {
+        pendingConfig = config;
         return;
     }
-    // A config names measures, not ids: it is applied against the source
-    // node's current table, and a measure that node does not expose is
-    // dropped rather than kept as a curve nothing can fill.
-    const table = sourceNode === null ? [] : (tables.get(sourceNode) ?? []);
+    pendingConfig = null;
     model.reset();
     for (const entry of config.series) {
         const descriptor = table.find((candidate) => candidate.name === entry.name);
@@ -659,9 +647,8 @@ function applyConfigText(text: string, message: string): void {
         model.add(descriptor);
         model.setLane(entry.name, entry.laneId);
     }
-    configPanel.setPeriod(config.periodMs);
     bindSource();
-    say(message);
+    configPanel.revealSelection();
 }
 
 /** Auto-saves what is ticked right now, debounced. */
@@ -671,7 +658,7 @@ function scheduleAutosave(): void {
     }
     autosaveTimer = setTimeout(() => {
         autosaveTimer = null;
-        saveWorkingConfig(JSON.stringify(buildConfig(configPanel.period(), model.list())));
+        saveLocal(WORKING_CONFIG_KEY, JSON.stringify(buildConfig(configPanel.period(), model.list())));
     }, AUTOSAVE_MS);
 }
 
@@ -745,12 +732,12 @@ addEventListener("pointermove", (event: PointerEvent) => {
 
 function frame(): void {
     requestAnimationFrame(frame);
-    if (!dirty) {
+    if (!dirty || mode !== "live") {
         return;
     }
     dirty = false;
 
-    if (follow && phase === "recording" && !paused) {
+    if (follow && recording && !paused) {
         const end = Math.max(dataEndS(), windowS);
         viewport = { t0: end - windowS, t1: end };
     } else if (!follow) {
@@ -766,12 +753,14 @@ function frame(): void {
 }
 
 rulerCanvas.style.height = `${RULER_H}px`;
-configPanel.setPeriod(clampPeriod(configPanel.period()));
-const working = loadWorkingConfig();
+// The working config is restored now and applied once a drone's table is
+// there: the tables only arrive after the socket opens.
+const working = parseConfig(loadLocal(WORKING_CONFIG_KEY) ?? "");
+configName = loadLocal(WORKING_NAME_KEY) ?? "";
+nameInput.value = configName;
 if (working !== null) {
-    applyConfigText(working, "");
+    applyConfig(working);
 }
 refreshToolbar();
-void refreshSessionList();
 void refreshConfigList();
 requestAnimationFrame(frame);

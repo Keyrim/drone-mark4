@@ -156,6 +156,35 @@ export class TelemetryModel {
         this.routes.set(descriptor.id, this.buffers.get(spec.name) as SeriesBuffer);
     }
 
+    /**
+     * Selects a group of measures at once, the ones already selected left
+     * where they are. The new ones are laid out one lane per unit: a group
+     * is ticked to be compared, and a shared y axis is honest between
+     * measures that read alike. A member already selected lends its lane to
+     * the newcomers of its unit.
+     */
+    addGroup(descriptors: readonly Descriptor[]): void {
+        const laneByUnit = new Map<TelemetryUnit, number>();
+        for (const descriptor of descriptors) {
+            const spec = this.specs.find((series) => series.name === descriptor.name);
+            if (spec !== undefined && !laneByUnit.has(spec.unit)) {
+                laneByUnit.set(spec.unit, spec.laneId);
+            }
+        }
+        for (const descriptor of descriptors) {
+            if (this.buffers.has(descriptor.name)) {
+                continue;
+            }
+            this.add(descriptor);
+            const lane = laneByUnit.get(descriptor.unit);
+            if (lane === undefined) {
+                laneByUnit.set(descriptor.unit, this.specs[this.specs.length - 1]?.laneId ?? 0);
+            } else {
+                this.setLane(descriptor.name, lane);
+            }
+        }
+    }
+
     remove(name: string): void {
         this.specs = this.specs.filter((series) => series.name !== name);
         const buffer = this.buffers.get(name);
@@ -225,7 +254,7 @@ export class TelemetryModel {
     /**
      * Takes one sampling instant. A timestamp that does not strictly
      * increase is dropped whole: the buffers are ascending by contract, and
-     * a rebased stream is a new session, never an inferred one.
+     * a rebased stream is a new recording, never an inferred one.
      *
      * @returns true when the samples were kept
      */
@@ -281,24 +310,6 @@ export class TelemetryModel {
         this.t0 = null;
         this.lastT = -Infinity;
         this.nextLane = 1;
-    }
-
-    /** Replaces the selection wholesale, data included: opening a session. */
-    load(specs: readonly SeriesSpec[], data: readonly { t: number[]; v: (number | null)[] }[]): void {
-        this.reset();
-        specs.forEach((spec, index) => {
-            const copy: SeriesSpec = { ...spec };
-            this.specs.push(copy);
-            const buffer = new SeriesBuffer(seriesDefOf(copy), MAX_POINTS_PER_SERIES, TRIM_FRACTION);
-            const samples = data[index];
-            if (samples) {
-                samples.t.forEach((t, at) => buffer.push(t, samples.v[at] ?? null));
-                this.lastT = Math.max(this.lastT, buffer.endS());
-            }
-            this.buffers.set(copy.name, buffer);
-            this.nextLane = Math.max(this.nextLane, copy.laneId + 1);
-        });
-        this.compactLanes();
     }
 
     /** Renumbers the lanes 0..n-1 in their current order, gaps removed. */

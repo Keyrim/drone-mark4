@@ -186,7 +186,7 @@ Everything C++ lives under `software/`: the executables at its top level
   nanopb struct, so anything per-node and unbounded gets a message of its
   own rather than a field in `Node`. The hub also has an HTTP side, which
   is filesystem-only by invariant:
-  `/api/telemetry/{sessions,exports,configs}` reads and writes files under
+  `/api/telemetry/{configs,exports}` reads and writes files under
   `HttpConfig::telemetryDir` (`logs/telemetry`), and touches no registry
   and no counter. The web pages
   (`software/hub/pages/`) generate their own TypeScript codec of both
