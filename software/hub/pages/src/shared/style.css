@@ -863,3 +863,86 @@ input.config-title {
     width: 140px;
     flex-shrink: 0;
 }
+
+/* ===== Telemetry page ===== */
+
+/* The catalog is the source node's own measure table: it can be long, so it
+   scrolls inside the panel rather than pushing the lanes off screen. */
+.config-catalog {
+    max-height: 220px;
+    overflow-y: auto;
+    border-top: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+.config-measure {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px;
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.config-measure:hover {
+    background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+.config-measure-name {
+    font-family: var(--mono);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.config-period {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--fg-dim);
+}
+
+.config-period input {
+    width: 70px;
+}
+
+.config-note {
+    font-size: 11px;
+    color: var(--fg-dim);
+    padding: 2px 10px;
+}
+
+/* The config is fixed while a recording runs: what is greyed out is what
+   would change the meaning of the samples already in the buffers. */
+.config-panel.frozen .config-catalog,
+.config-panel.frozen .config-lanes {
+    opacity: 0.55;
+    pointer-events: none;
+}
+
+/* A lane whose unit does not match the chip in the air: a shared y axis is
+   only honest between measures that read in the same unit. */
+.config-lane.incompatible {
+    opacity: 0.35;
+}
+
+.config-lane.new-lane {
+    border: 1px dashed var(--border);
+    color: var(--fg-dim);
+    font-size: 11px;
+    justify-content: center;
+}
+
+.session-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+    padding-right: 6px;
+}
+
+.session-label.unsaved {
+    color: var(--warn, #c98500);
+}

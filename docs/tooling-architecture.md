@@ -50,7 +50,7 @@ flowchart LR
     BROWSER["opened in a browser,<br/>VSCode Simple Browser,<br/>or a thin extension later"]
 
     GODOT <-->|"binary sim link kept direct<br/>(lockstep, latency-critical)"| DS
-    DS <-->|"transport frames over UDP<br/>(beacon, telemetry, commands)"| TR
+    DS <-->|"transport frames over UDP<br/>(beacon, status, telemetry, commands)"| TR
     FW <-->|"transport frames, UART then<br/>WiFi through the ESP32 relay"| TR
     WS <--> P1
     WS <--> P2

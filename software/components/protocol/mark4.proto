@@ -16,7 +16,7 @@ package mark4;
 
 message Envelope {
   oneof body {
-    Telemetry telemetry = 1;
+    Status status = 1;
     SimSensor sim_sensor = 2;
     SimActuator sim_actuator = 3;
     Rc rc = 4;
@@ -24,6 +24,11 @@ message Envelope {
     Log log = 6;
     LogModules log_modules = 7;
     LogControl log_control = 8;
+    TelemetryListRequest telemetry_list_request = 9;
+    TelemetryDescriptors telemetry_descriptors = 10;
+    TelemetryEnable telemetry_enable = 11;
+    TelemetryAck telemetry_ack = 12;
+    TelemetryData telemetry_data = 13;
     SimScenario sim_scenario = 16;
     SimRunStats sim_run_stats = 17;
     Reboot reboot = 18;
@@ -103,25 +108,91 @@ message PlantTruth {
   repeated float velocity_mps = 3;   // 3, world [m/s]
 }
 
-// Estimated state snapshot of a flight process, decimated from the loop.
-message Telemetry {
-  uint64 timestamp_us = 1;            // acquisition time [us]
-  repeated float gyro_rad_s = 2;      // 3, body angular rates [rad/s]
-  repeated float attitude_quat = 3;   // 4, estimated attitude, w x y z
-  repeated float gyro_bias_rad_s = 4; // 3, estimated gyro bias [rad/s]
-  repeated float motor = 5;           // 4, normalized motor commands [0, 1]
-  float altitude_m = 6;               // estimated altitude above startup [m]
-  float baro_altitude_m = 7;          // last plausible pressure altitude [m]
-  float vertical_velocity_mps = 8;    // estimated vertical velocity, up [m/s]
-  FlightPhase flight_phase = 9;
-  ThrowState throw_state = 10;
-  uint32 throw_count = 11;            // throws detected since startup
-  float release_velocity_mps = 12;    // last release velocity [m/s]
-  uint64 apex_timestamp_us = 13;      // last predicted apex instant [us]
-  float apex_altitude_m = 14;         // last predicted apex altitude [m]
-  optional PlantTruth truth = 15;     // the plant's exact state, sim only
-  bool imu_valid = 16;                // the frame carried a fresh IMU sample
-  bool baro_valid = 17;               // the frame carried a fresh baro sample
+// What the drone is doing: a small fixed report, always on, broadcast,
+// decimated from the loop. It answers "where is it and is it healthy",
+// which is what a control page, an attitude view and a campaign verdict
+// need on every frame they paint. Everything that is a measurement rather
+// than a state lives in the telemetry registry below instead: a field is
+// added here only when every consumer of Status needs it.
+message Status {
+  uint64 timestamp_us = 1;           // acquisition time [us]
+  repeated float attitude_quat = 2;  // 4, estimated attitude, w x y z
+  repeated float motor = 3;          // 4, normalized motor commands [0, 1]
+  FlightPhase flight_phase = 4;
+  ThrowState throw_state = 5;
+  uint32 throw_count = 6;            // throws detected since startup
+  bool imu_valid = 7;                // the frame carried a fresh IMU sample
+  bool baro_valid = 8;               // the frame carried a fresh baro sample
+  optional PlantTruth truth = 9;     // the plant's exact state, sim only
+}
+
+// Physical dimension of one telemetry measure: what a ground tool labels an
+// axis with, never a conversion (the values on the wire are already in
+// these units).
+enum TelemetryUnit {
+  TELEMETRY_UNIT_UNITLESS = 0;   // ratios, quaternion components, enum codes, booleans as 0/1
+  TELEMETRY_UNIT_M = 1;
+  TELEMETRY_UNIT_M_PER_S = 2;
+  TELEMETRY_UNIT_M_PER_S2 = 3;
+  TELEMETRY_UNIT_RAD = 4;
+  TELEMETRY_UNIT_RAD_PER_S = 5;
+  TELEMETRY_UNIT_PA = 6;
+  TELEMETRY_UNIT_CELSIUS = 7;
+  TELEMETRY_UNIT_V = 8;
+  TELEMETRY_UNIT_A = 9;
+  TELEMETRY_UNIT_US = 10;
+  TELEMETRY_UNIT_COUNT = 11;     // counters
+}
+
+// One measure a node exposes. id is its index in the node's frozen table,
+// stable until the node reboots; name is the stable identity across
+// reboots, so a ground tool binds by name and routes by id.
+message TelemetryDescriptor {
+  uint32 id = 1;
+  string name = 2;  // hierarchical, "area/thing", at most 40 characters
+  TelemetryUnit unit = 3;
+}
+
+// Ground to node, unicast: one page of the table, from cursor.
+message TelemetryListRequest {
+  uint32 cursor = 1;
+}
+
+// Node to requester, unicast: one page. The last page is the one where
+// cursor + descriptors_count == total.
+message TelemetryDescriptors {
+  uint32 total = 1;
+  uint32 cursor = 2;
+  repeated TelemetryDescriptor descriptors = 3;  // at most 6 per page
+}
+
+// Subscriber to node, unicast: replaces the enabled set wholesale and
+// (re)arms the stream. Sent again periodically as the keepalive; a node
+// stops streaming when it stops hearing them. period_ms 0, or no id, stops
+// the stream at once. One active stream per drone: an enable from another
+// node takes it over.
+message TelemetryEnable {
+  repeated uint32 ids = 1;  // at most 64
+  uint32 period_ms = 2;
+}
+
+// Node to subscriber, unicast, on every TelemetryEnable: what was applied.
+message TelemetryAck {
+  uint32 period_ms = 1;  // the period in effect, clamped
+  uint32 enabled = 2;    // ids the node kept
+}
+
+message TelemetryValue {
+  uint32 id = 1;
+  float value = 2;
+}
+
+// Node to subscriber, unicast: one sampling instant, split into several
+// messages when more than 32 values are enabled, all carrying the same
+// timestamp.
+message TelemetryData {
+  uint64 timestamp_us = 1;
+  repeated TelemetryValue values = 2;  // at most 32
 }
 
 // Same values as the flight core's PilotMode.

@@ -22,13 +22,20 @@ Documentation:
 - `flight-core/` - pure flight core: no dynamic allocation, no
   exceptions/RTTI, no clock access. `float` everywhere
   (`-Wdouble-promotion` as an error).
-- `platform/` - 6 abstract interfaces (AbsSensorSource, AbsMotorSink,
-  AbsCommandReceiver, AbsTelemetrySender, AbsLogSink, AbsClock) plus one
-  implementation set per variant. No singletons: each executable has an
+- `platform/` - 5 abstract interfaces (AbsSensorSource, AbsMotorSink,
+  AbsCommandReceiver, AbsLogSink, AbsClock) plus one implementation set per
+  variant. No singletons: each executable has an
   explicit composition root in its main.
 - `protocol/` - one protobuf schema (`mark4.proto`), codecs generated at
   build time for C/C++ (nanopb), GDScript (godobuf) and python; spoken by
   everyone (firmware, sim, Godot, hub).
+- `telemetry/` - the registry of named measures a node exposes, declared
+  next to the variables they read. A leaf: names, units and pointers, no
+  wire. A ground tool discovers the list and streams the subset it wants.
+- `transport/` - the interface manager: frames every payload with a source
+  and a destination node, learns every node it hears, relays between links.
+- `log/` - one logging module per source file, filterable at runtime, its
+  lines going out on the wire like everything else.
 
 ## Build
 

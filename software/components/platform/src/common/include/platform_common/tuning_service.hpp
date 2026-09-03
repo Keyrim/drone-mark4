@@ -18,9 +18,10 @@
 
 #include "flight_core/flight_core.hpp"
 #include "flight_core/tuning_table.hpp"
-#include "platform/telemetry_sender.hpp"
 #include "platform_common/envelope_io.hpp"
 #include "protocol/envelope.hpp"
+#include "transport/frame.hpp"
+#include "transport/transport.hpp"
 
 namespace mark4
 {
@@ -36,9 +37,9 @@ namespace mark4
     static_assert(TuningParam::NAME_SIZE + 1U == sizeof(mark4_TuningInfo::name),
                   "the parameter name width must match the wire");
 
-    /// Answers the tuning messages a composition hands it, on the telemetry
-    /// link the rest of the ground-bound traffic already uses (transport
-    /// broadcast in the simulator, framed UART on the board).
+    /// Answers the tuning messages a composition hands it, as transport
+    /// broadcasts like the rest of the ground-bound traffic: a tuned value
+    /// is state of the drone, and every ground tool watching wants it.
     class TuningService
     {
       public:
@@ -51,10 +52,10 @@ namespace mark4
         static constexpr std::size_t INFOS_PER_PUMP = 1U;
 
         /// @param core flight core owning the parameter registry
-        /// @param sender link the answers go out on
-        TuningService(FlightCore &core, AbsTelemetrySender &sender)
+        /// @param transport transport the answers are broadcast on
+        TuningService(FlightCore &core, Transport &transport)
             : m_core(core),
-              m_sender(sender)
+              m_transport(transport)
         {
         }
 
@@ -170,14 +171,14 @@ namespace mark4
         /// @param envelope answer to send
         void send(const mark4_Envelope &envelope)
         {
-            if (sendEnvelope(m_sender, envelope))
+            if (sendEnvelope(m_transport, BROADCAST_NODE, envelope))
             {
                 ++m_answerCount;
             }
         }
 
         FlightCore &m_core;                ///< registry owner, not owned
-        AbsTelemetrySender &m_sender;      ///< answer link, not owned
+        Transport &m_transport;            ///< answer route, not owned
         std::size_t m_listCursor = 0U;     ///< next table index to describe
         bool m_listPending = false;        ///< a list request is still unrolling
         std::uint32_t m_requestCount = 0U; ///< tuning requests understood

@@ -116,4 +116,19 @@ namespace mark4
                 break;
         }
     }
+
+    float ThrowDetector::ReadState(const void *context)
+    {
+        return static_cast<float>(static_cast<const ThrowDetector *>(context)->m_state);
+    }
+
+    float ThrowDetector::ReadCount(const void *context)
+    {
+        return static_cast<float>(static_cast<const ThrowDetector *>(context)->m_throwCount);
+    }
+
+    float ThrowDetector::ReadApexTime(const void *context)
+    {
+        return static_cast<float>(static_cast<const ThrowDetector *>(context)->m_apexTimestampUs);
+    }
 } // namespace mark4

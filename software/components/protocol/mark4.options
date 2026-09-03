@@ -17,10 +17,16 @@ mark4.PlantTruth.attitude_quat      max_count:4 fixed_count:true
 mark4.PlantTruth.position_m         max_count:3 fixed_count:true
 mark4.PlantTruth.velocity_mps       max_count:3 fixed_count:true
 
-mark4.Telemetry.gyro_rad_s          max_count:3 fixed_count:true
-mark4.Telemetry.attitude_quat       max_count:4 fixed_count:true
-mark4.Telemetry.gyro_bias_rad_s     max_count:3 fixed_count:true
-mark4.Telemetry.motor               max_count:4 fixed_count:true
+mark4.Status.attitude_quat          max_count:4 fixed_count:true
+mark4.Status.motor                  max_count:4 fixed_count:true
+
+# The telemetry family. The page and batch sizes are what keeps one
+# Envelope inside MAX_ENVELOPE_STRUCT_SIZE and one transport frame: raising
+# either is not an option, lowering them is.
+mark4.TelemetryDescriptor.name      max_size:41
+mark4.TelemetryDescriptors.descriptors  max_count:6
+mark4.TelemetryEnable.ids           max_count:64
+mark4.TelemetryData.values          max_count:32
 
 mark4.Log.text                      max_size:97
 mark4.LogModuleInfo.name            max_size:33

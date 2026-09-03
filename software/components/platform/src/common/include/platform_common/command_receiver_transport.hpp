@@ -28,9 +28,10 @@ namespace mark4
         static constexpr std::size_t CAPACITY = 32U;
 
         /// @brief Queues one payload the transport delivered.
+        /// @param src node the payload came from, as the transport reported it
         /// @param payload payload bytes
         /// @param size payload size, at most MAX_PAYLOAD
-        void push(const std::uint8_t *payload, std::size_t size)
+        void push(std::uint32_t src, const std::uint8_t *payload, std::size_t size)
         {
             if (size == 0U || size > MAX_PAYLOAD)
             {
@@ -45,20 +46,25 @@ namespace mark4
             const std::size_t tail = (m_head + m_count) % CAPACITY;
             std::memcpy(m_slots[tail].data(), payload, size);
             m_sizes[tail] = size;
+            m_sources[tail] = src;
             ++m_count;
         }
 
         /// @brief Hands out the oldest queued payload.
         /// @param[out] bufferOut destination, valid only when returning > 0
         /// @param capacity size of the destination buffer in bytes
+        /// @param[out] srcOut node the payload came from
         /// @return payload size, 0 when nothing is queued or it does not fit
-        std::size_t poll(std::uint8_t *bufferOut, std::size_t capacity) override
+        std::size_t poll(std::uint8_t *bufferOut,
+                         std::size_t capacity,
+                         std::uint32_t &srcOut) override
         {
             if (m_count == 0U)
             {
                 return 0U;
             }
             const std::size_t size = m_sizes[m_head];
+            const std::uint32_t src = m_sources[m_head];
             const std::uint8_t *slot = m_slots[m_head].data();
             m_head = (m_head + 1U) % CAPACITY;
             --m_count;
@@ -68,6 +74,7 @@ namespace mark4
                 return 0U;
             }
             std::memcpy(bufferOut, slot, size);
+            srcOut = src;
             ++m_packetsReceived;
             return size;
         }
@@ -86,10 +93,11 @@ namespace mark4
 
       private:
         std::array<std::array<std::uint8_t, MAX_PAYLOAD>, CAPACITY> m_slots{}; ///< ring storage
-        std::array<std::size_t, CAPACITY> m_sizes{}; ///< payload size per slot
-        std::size_t m_head = 0U;                     ///< oldest queued slot
-        std::size_t m_count = 0U;                    ///< slots in use
-        std::uint32_t m_packetsReceived = 0U;        ///< payloads handed out
-        std::uint32_t m_dropped = 0U;                ///< payloads lost
+        std::array<std::size_t, CAPACITY> m_sizes{};     ///< payload size per slot
+        std::array<std::uint32_t, CAPACITY> m_sources{}; ///< origin node per slot
+        std::size_t m_head = 0U;                         ///< oldest queued slot
+        std::size_t m_count = 0U;                        ///< slots in use
+        std::uint32_t m_packetsReceived = 0U;            ///< payloads handed out
+        std::uint32_t m_dropped = 0U;                    ///< payloads lost
     };
 } // namespace mark4

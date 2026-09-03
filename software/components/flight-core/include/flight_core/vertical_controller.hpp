@@ -4,6 +4,7 @@
 /// @brief Vertical velocity to collective command controller.
 
 #include "flight_core/types.hpp"
+#include "telemetry/registry.hpp"
 
 namespace mark4
 {
@@ -89,5 +90,20 @@ namespace mark4
         float m_kp;              ///< proportional gain [collective per m/s]
         float m_ki;              ///< integral gain [collective per m]
         float m_integral = 0.0f; ///< integrator state
+
+        // What the last update() computed, for the telemetry registry.
+        float m_setpointMps = 0.0f; ///< vertical velocity asked for [m/s]
+        float m_measuredMps = 0.0f; ///< vertical velocity estimate used [m/s]
+        float m_errorMps = 0.0f;    ///< setpoint - measurement [m/s]
+        float m_pTerm = 0.0f;       ///< proportional contribution
+        float m_output = 0.0f;      ///< collective returned, clamped [0, 1]
+
+        TelemetryEntry m_setpointEntry{"vertical/setpoint", TelemetryUnit::M_PER_S, m_setpointMps};
+        TelemetryEntry m_measuredEntry{
+            "vertical/measurement", TelemetryUnit::M_PER_S, m_measuredMps};
+        TelemetryEntry m_errorEntry{"vertical/error", TelemetryUnit::M_PER_S, m_errorMps};
+        TelemetryEntry m_pEntry{"vertical/p_term", TelemetryUnit::UNITLESS, m_pTerm};
+        TelemetryEntry m_iEntry{"vertical/i_term", TelemetryUnit::UNITLESS, m_integral};
+        TelemetryEntry m_outputEntry{"vertical/output", TelemetryUnit::UNITLESS, m_output};
     };
 } // namespace mark4

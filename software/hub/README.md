@@ -57,6 +57,32 @@ stream), and every response carries `Cache-Control: no-store`. A URI holding
 a `..` component is refused: nothing outside the pages directory is
 reachable.
 
+## HTTP API: the telemetry store
+
+The HTTP side stays filesystem-only, which is the invariant that keeps the
+hub lock-free: these handlers run on the websocket library's connection
+threads and touch no registry and no counter. They read and write files
+under the telemetry directory, `logs/telemetry` resolved from the hub's own
+location (the repository ignores `logs/`, so a recording is bench output
+and never source). The directory need not exist: the first save creates it.
+
+| route | method | what |
+|-------|--------|------|
+| `/api/telemetry/sessions` | GET | JSON array of `{name, bytes, modified}`, one per stored session, by name. |
+| `/api/telemetry/sessions/<name>` | GET | the stored session document. |
+| `/api/telemetry/sessions/<name>` | PUT | stores it as `sessions/<name>.telemetry.json`. The body must parse as JSON; it is never interpreted, the shape is the page's business. Answers `{name, bytes}`. |
+| `/api/telemetry/sessions/<name>` | DELETE | removes it. |
+| `/api/telemetry/exports/<name>.csv` | GET | serves `exports/<name>.csv` as a download (`Content-Disposition`), so a browser saves it under that name. |
+| `/api/telemetry/exports/<name>.csv` | PUT | stores the CSV the page built, as it comes: the hub never parses it. |
+| `/api/telemetry/configs[/<name>]` | GET, PUT, DELETE | the named view configs, small JSON files under `configs/`. Same rules as the sessions. |
+
+A name becomes a file name, so it obeys one rule: 1 to 64 characters of
+letters, digits, `_` and `-`. No separator, no dot, no leading dot, nothing
+that could name a file outside its own directory; anything else is a 400.
+Every body is capped at 64 MiB. A wrong method on an existing route is a
+405, an unknown route a 404, and so is every telemetry route when the hub
+was given no telemetry directory.
+
 ## Websocket contract: gateway.proto
 
 Every websocket message, both directions, is one binary
@@ -70,6 +96,7 @@ Gateway to client:
 |------|------|------|
 | `frame` | every payload the transport delivers | `src` node id, `payload` = one encoded `Envelope` (telemetry, tuning answers, log lines, OTA answers, announces: whatever the node sent). `dst` is left 0: the transport does not report it, and a delivered frame was for the gateway or for everyone anyway. |
 | `nodes` | every second, on every table change, on connect | `NodeTable`: the gateway itself first (address empty), then every node the transport hears: id, IPv4 `address`, `port`, `last_seen_ms_ago`, `received` / `lost` / `duplicates` frame counters, its last `Announce` when it has beaconed, and its `log_modules` (the last `LogModules` table it published, whole; the gateway queries a node the moment it appears, so a client connecting late still knows every module and level). |
+| `node_telemetry` | on every change of one node's table, on connect | `NodeTelemetry`: one drone node's whole telemetry table, `{id, name, unit}` per measure, as the gateway pulled it page by page (`TelemetryListRequest` / `TelemetryDescriptors`, unicast). The pull starts on the node's first `Announce`, because that is where its kind and its schema are known: only `DRONE_SIM` and `FIRMWARE` are asked, and never a node whose `wire_hash` differs. A page that goes unanswered is asked again every 500 ms, six times, then given up on with one WARN. A node that goes down publishes an empty table: the ids of a table are only stable while the node runs, so a client must drop its curves rather than rebind them to whatever the next boot numbers the same way. Its own message and not a `Node` field: every body of the `GatewayMessage` oneof shares one nanopb struct, and a table per node inside `NodeTable` would cost every message, the per-frame one included, a few hundred kB. |
 | `status` | every second, on connect | `GatewayStatus`: the gateway's node id, `wire_hash` (of `mark4.proto` as built), `clients`, `rc_clients` (clients that sent an Rc frame within 2 s), `frames_in`, `frames_out`, `dropped`, `bad_frames`. |
 | `ota_state` | on every change of the update client, on connect | phase, verdict and its sentence, `target_node`, `target_slot`, the loaded bundle's identity, what the board last said (slots, running / active slot), transfer progress in bytes. |
 | `profiles` | answering `LIST` and `SAVE` | the profile names on disk. |

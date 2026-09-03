@@ -2,7 +2,7 @@
  * Attitude panel of the control page: every live drone drawn superimposed
  * in one 3D view, one color per node - the same color its widget wears -
  * plus the translucent ghost of the exact plant attitude when a drone
- * streams one (Telemetry.truth). Per-drone numbers live in the widgets;
+ * streams one (Status.truth). Per-drone numbers live in the widgets;
  * this panel is the picture.
  */
 
@@ -65,15 +65,15 @@ export class AttitudePanel {
         new ResizeObserver(() => this.scene.resize()).observe(stage);
 
         socket.onEnvelope((src, envelope) => {
-            if (envelope.body.case !== "telemetry" || !this.active.has(src)) {
+            if (envelope.body.case !== "status" || !this.active.has(src)) {
                 return;
             }
-            const telemetry = envelope.body.value;
-            const q = asQuat(telemetry.attitudeQuat);
+            const status = envelope.body.value;
+            const q = asQuat(status.attitudeQuat);
             if (q !== null && isUsable(q)) {
                 this.scene.setDrone(src, toRenderQuat(q), nodeColor(src));
             }
-            const truth = telemetry.truth === undefined ? null : asQuat(telemetry.truth.attitudeQuat);
+            const truth = status.truth === undefined ? null : asQuat(status.truth.attitudeQuat);
             if (truth !== null && isUsable(truth)) {
                 this.scene.setExact(toRenderQuat(truth));
                 const hadTruth = this.truthAtMs !== 0;

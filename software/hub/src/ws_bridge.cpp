@@ -60,7 +60,8 @@ namespace mark4
             [this](const ix::HttpRequestPtr &request,
                    const std::shared_ptr<ix::ConnectionState> &state) -> ix::HttpResponsePtr {
                 static_cast<void>(state);
-                const HttpResult result = routeHttp(m_http, request->method, request->uri);
+                const HttpResult result =
+                    routeHttp(m_http, request->method, request->uri, request->body);
                 ix::WebSocketHttpHeaders headers;
                 headers["Content-Type"] = result.contentType;
                 // A bench page must never read a stale recording out of a

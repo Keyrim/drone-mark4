@@ -14,39 +14,62 @@
 #include "flight_core/rate_controller.hpp"
 #include "flight_core/tuning_table.hpp"
 #include "flight_core/types.hpp"
-#include "platform/telemetry_sender.hpp"
 #include "platform_common/tuning_service.hpp"
 #include "protocol/envelope.hpp"
+#include "recording_link.hpp"
+#include "transport/frame.hpp"
+#include "transport/transport.hpp"
 
 namespace
 {
     constexpr std::uint64_t STEP_US = 2000U; // 500 Hz stream
     constexpr float HELPER_BARO_PA = 101325.0f;
 
-    /// Telemetry sender keeping every datagram handed to it, so a test can
-    /// check the exact bytes that went out. Allocates freely: this is a test.
-    class FakeTelemetrySender final : public mark4::AbsTelemetrySender
+    constexpr std::uint32_t NODE_SELF = 0x51A17000U;
+
+    /// A transport over a recording link: the service answers on it and the
+    /// test reads back the payloads and where they went.
+    class Wire
     {
       public:
-        void send(const std::uint8_t *data, std::size_t size) override
+        Wire()
         {
-            m_sent.emplace_back(data, data + size);
+            static_cast<void>(m_transport.addLink(m_link));
         }
 
-        /// @return datagrams captured since construction
-        [[nodiscard]] const std::vector<std::vector<std::uint8_t>> &sent() const
+        /// @return transport the service under test answers on
+        mark4::Transport &transport()
         {
-            return m_sent;
+            return m_transport;
         }
 
-        /// @brief Forgets everything captured so far.
+        /// @return payload of every frame sent so far, in order
+        [[nodiscard]] std::vector<std::vector<std::uint8_t>> sent() const
+        {
+            std::vector<std::vector<std::uint8_t>> payloads;
+            payloads.reserve(m_link.frames().size());
+            for (const mark4::RecordedFrame &frame : m_link.frames())
+            {
+                payloads.push_back(frame.payload);
+            }
+            return payloads;
+        }
+
+        /// @return every frame sent so far, headers included
+        [[nodiscard]] const std::vector<mark4::RecordedFrame> &frames() const
+        {
+            return m_link.frames();
+        }
+
+        /// @brief Forgets everything recorded so far.
         void clear()
         {
-            m_sent.clear();
+            m_link.clear();
         }
 
       private:
-        std::vector<std::vector<std::uint8_t>> m_sent; ///< captured datagrams
+        mark4::RecordingLink m_link;             ///< the medium
+        mark4::Transport m_transport{NODE_SELF}; ///< what the service holds
     };
 
     /// @param id parameter id
@@ -135,14 +158,14 @@ namespace
 TEST_CASE("a tuning set is applied and acknowledged with the value in effect")
 {
     mark4::FlightCore core;
-    FakeTelemetrySender sender;
-    mark4::TuningService service(core, sender);
+    Wire wire;
+    mark4::TuningService service(core, wire.transport());
 
     REQUIRE(service.handle(makeSet(mark4::TUNING_ID_HOVER_COLLECTIVE, 0.7f)));
     REQUIRE(service.requestCount() == 1U);
-    REQUIRE(sender.sent().size() == 1U);
+    REQUIRE(wire.sent().size() == 1U);
 
-    const mark4_TuningAck ack = decodeAck(sender.sent()[0]);
+    const mark4_TuningAck ack = decodeAck(wire.sent()[0]);
     REQUIRE(ack.id == mark4::TUNING_ID_HOVER_COLLECTIVE);
     REQUIRE(ack.status == mark4_TuningStatus_OK);
     REQUIRE(ack.value == 0.7f);
@@ -156,14 +179,14 @@ TEST_CASE("a tuning set is applied and acknowledged with the value in effect")
 TEST_CASE("an out-of-bounds tuning set is refused and the live value survives")
 {
     mark4::FlightCore core;
-    FakeTelemetrySender sender;
-    mark4::TuningService service(core, sender);
+    Wire wire;
+    mark4::TuningService service(core, wire.transport());
 
     float before = 0.0f;
     REQUIRE(core.getParam(mark4::TUNING_ID_HOVER_COLLECTIVE, before) == mark4::TuningStatus::OK);
 
     REQUIRE(service.handle(makeSet(mark4::TUNING_ID_HOVER_COLLECTIVE, 42.0f)));
-    const mark4_TuningAck ack = decodeAck(sender.sent()[0]);
+    const mark4_TuningAck ack = decodeAck(wire.sent()[0]);
     REQUIRE(ack.status == mark4_TuningStatus_OUT_OF_BOUNDS);
     // The refusal answers with what is still flying, not with what was asked.
     REQUIRE(ack.value == before);
@@ -172,11 +195,11 @@ TEST_CASE("an out-of-bounds tuning set is refused and the live value survives")
 TEST_CASE("an unknown parameter id is acknowledged as unknown")
 {
     mark4::FlightCore core;
-    FakeTelemetrySender sender;
-    mark4::TuningService service(core, sender);
+    Wire wire;
+    mark4::TuningService service(core, wire.transport());
 
     REQUIRE(service.handle(makeSet(9999U, 1.0f)));
-    const mark4_TuningAck ack = decodeAck(sender.sent()[0]);
+    const mark4_TuningAck ack = decodeAck(wire.sent()[0]);
     REQUIRE(ack.id == 9999U);
     REQUIRE(ack.status == mark4_TuningStatus_UNKNOWN_ID);
     REQUIRE(ack.value == 0.0f);
@@ -185,58 +208,58 @@ TEST_CASE("an unknown parameter id is acknowledged as unknown")
 TEST_CASE("a parameter locked while armed is refused with its own status")
 {
     mark4::FlightCore core;
-    FakeTelemetrySender sender;
-    mark4::TuningService service(core, sender);
+    Wire wire;
+    mark4::TuningService service(core, wire.transport());
     driveToArmed(core);
 
     REQUIRE(service.handle(makeSet(mark4::TUNING_ID_AHRS_KP, 3.0f)));
-    const mark4_TuningAck ack = decodeAck(sender.sent()[0]);
+    const mark4_TuningAck ack = decodeAck(wire.sent()[0]);
     REQUIRE(ack.status == mark4_TuningStatus_LOCKED_WHILE_ARMED);
     REQUIRE(ack.value == mark4::AttitudeEstimator::DEFAULT_KP);
 
     // A gain a pilot does retune between throws goes through.
-    sender.clear();
+    wire.clear();
     REQUIRE(service.handle(makeSet(mark4::TUNING_ID_RATE_KP_ROLL_PITCH, 0.05f)));
-    REQUIRE(decodeAck(sender.sent()[0]).status == mark4_TuningStatus_OK);
+    REQUIRE(decodeAck(wire.sent()[0]).status == mark4_TuningStatus_OK);
 }
 
 TEST_CASE("a tuning get reads a value back without changing it")
 {
     mark4::FlightCore core;
-    FakeTelemetrySender sender;
-    mark4::TuningService service(core, sender);
+    Wire wire;
+    mark4::TuningService service(core, wire.transport());
     REQUIRE(core.setParam(mark4::TUNING_ID_VERTICAL_KP, 0.42f) == mark4::TuningStatus::OK);
 
     REQUIRE(service.handle(makeGet(mark4::TUNING_ID_VERTICAL_KP)));
-    const mark4_TuningAck ack = decodeAck(sender.sent()[0]);
+    const mark4_TuningAck ack = decodeAck(wire.sent()[0]);
     REQUIRE(ack.id == mark4::TUNING_ID_VERTICAL_KP);
     REQUIRE(ack.status == mark4_TuningStatus_OK);
     REQUIRE(ack.value == 0.42f);
 
     REQUIRE(service.handle(makeGet(1234U)));
-    REQUIRE(decodeAck(sender.sent()[1]).status == mark4_TuningStatus_UNKNOWN_ID);
+    REQUIRE(decodeAck(wire.sent()[1]).status == mark4_TuningStatus_UNKNOWN_ID);
 }
 
 TEST_CASE("a tuning list unrolls one description per pump, in table order")
 {
     mark4::FlightCore core;
-    FakeTelemetrySender sender;
-    mark4::TuningService service(core, sender);
+    Wire wire;
+    mark4::TuningService service(core, wire.transport());
 
     REQUIRE(service.handle(makeList(0U)));
     // The request itself emits nothing: the answer is paced by pump().
-    REQUIRE(sender.sent().empty());
+    REQUIRE(wire.sent().empty());
 
     // One extra pump past the end must add nothing.
     for (std::size_t i = 0U; i <= mark4::FlightCore::ParamCount(); ++i)
     {
         service.pump();
     }
-    REQUIRE(sender.sent().size() == mark4::FlightCore::ParamCount());
+    REQUIRE(wire.sent().size() == mark4::FlightCore::ParamCount());
 
     for (std::size_t i = 0U; i < mark4::FlightCore::ParamCount(); ++i)
     {
-        const mark4_TuningInfo info = decodeInfo(sender.sent()[i]);
+        const mark4_TuningInfo info = decodeInfo(wire.sent()[i]);
         INFO("entry " << i);
         REQUIRE(info.index == i);
         REQUIRE(info.count == mark4::FlightCore::ParamCount());
@@ -259,49 +282,49 @@ TEST_CASE("a tuning list unrolls one description per pump, in table order")
 
     // Pumping again with nothing pending stays silent.
     service.pump();
-    REQUIRE(sender.sent().size() == mark4::FlightCore::ParamCount());
+    REQUIRE(wire.sent().size() == mark4::FlightCore::ParamCount());
 }
 
 TEST_CASE("a tuning list starting past the end answers nothing")
 {
     mark4::FlightCore core;
-    FakeTelemetrySender sender;
-    mark4::TuningService service(core, sender);
+    Wire wire;
+    mark4::TuningService service(core, wire.transport());
 
     REQUIRE(service.handle(makeList(static_cast<std::uint32_t>(mark4::FlightCore::ParamCount()))));
     for (std::size_t i = 0U; i < 5U; ++i)
     {
         service.pump();
     }
-    REQUIRE(sender.sent().empty());
+    REQUIRE(wire.sent().empty());
 }
 
 TEST_CASE("a new tuning list restarts the walk mid-stream")
 {
     mark4::FlightCore core;
-    FakeTelemetrySender sender;
-    mark4::TuningService service(core, sender);
+    Wire wire;
+    mark4::TuningService service(core, wire.transport());
 
     REQUIRE(service.handle(makeList(0U)));
     service.pump();
     service.pump();
-    REQUIRE(sender.sent().size() == 2U);
-    REQUIRE(decodeInfo(sender.sent()[1]).index == 1U);
+    REQUIRE(wire.sent().size() == 2U);
+    REQUIRE(decodeInfo(wire.sent()[1]).index == 1U);
 
     // A second request repositions the cursor: this is how a ground station
     // asks again for the entries a lost frame took with it.
-    sender.clear();
+    wire.clear();
     REQUIRE(service.handle(makeList(3U)));
     service.pump();
-    REQUIRE(sender.sent().size() == 1U);
-    REQUIRE(decodeInfo(sender.sent()[0]).index == 3U);
+    REQUIRE(wire.sent().size() == 1U);
+    REQUIRE(decodeInfo(wire.sent()[0]).index == 3U);
 }
 
 TEST_CASE("a message that is not a tuning request is left to its owner")
 {
     mark4::FlightCore core;
-    FakeTelemetrySender sender;
-    mark4::TuningService service(core, sender);
+    Wire wire;
+    mark4::TuningService service(core, wire.transport());
 
     mark4_Envelope reboot = mark4_Envelope_init_zero;
     reboot.which_body = mark4_Envelope_reboot_tag;
@@ -309,5 +332,20 @@ TEST_CASE("a message that is not a tuning request is left to its owner")
     REQUIRE(!service.handle(mark4_Envelope_init_zero));
 
     REQUIRE(service.requestCount() == 0U);
-    REQUIRE(sender.sent().empty());
+    REQUIRE(wire.sent().empty());
+}
+
+TEST_CASE("the tuning answers go out as transport broadcasts")
+{
+    mark4::FlightCore core;
+    Wire wire;
+    mark4::TuningService service(core, wire.transport());
+
+    REQUIRE(service.handle(makeSet(mark4::TUNING_ID_HOVER_COLLECTIVE, 0.7f)));
+    REQUIRE(wire.frames().size() == 1U);
+    // A tuned value is state of the drone: every ground tool watching wants
+    // it, so the answer is addressed to nobody in particular.
+    REQUIRE(wire.frames()[0].broadcast);
+    REQUIRE(wire.frames()[0].header.dst == mark4::BROADCAST_NODE);
+    REQUIRE(wire.frames()[0].header.src == NODE_SELF);
 }

@@ -62,8 +62,8 @@ shell.nodes.onChange((nodes, diff) => {
 });
 
 socket.onEnvelope((src, envelope) => {
-    if (envelope.body.case === "telemetry") {
-        widgets.get(src)?.onTelemetry(envelope.body.value);
+    if (envelope.body.case === "status") {
+        widgets.get(src)?.onStatus(envelope.body.value);
     }
 });
 

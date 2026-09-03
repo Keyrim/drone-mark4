@@ -109,6 +109,31 @@ namespace mark4
     /// @param[in,out] tableInOut the node's table
     void applyLogModulesPage(const mark4_LogModules &page, LogModuleTable &tableInOut);
 
+    /// A node's telemetry table, as the gateway pulled it.
+    using TelemetryTable = std::vector<mark4_TelemetryDescriptor>;
+
+    /// @brief Merges one TelemetryDescriptors page into a node's table: a
+    ///        page opening at cursor 0 restarts the table, every page sizes
+    ///        it to the total it announces.
+    /// @param page the page received
+    /// @param[in,out] tableInOut the node's table
+    /// @return the next cursor to ask for, equal to the total once the whole
+    ///         table has arrived
+    std::uint32_t applyTelemetryPage(const mark4_TelemetryDescriptors &page,
+                                     TelemetryTable &tableInOut);
+
+    /// @brief Fills the message that publishes one node's telemetry table.
+    ///        Its own message rather than a Node field: every body of the
+    ///        GatewayMessage oneof shares one nanopb struct, and a whole
+    ///        table per node inside NodeTable would cost every message a few
+    ///        hundred kB (gateway.proto says so at greater length).
+    /// @param node node the table belongs to
+    /// @param table the table, truncated to the wire bound
+    /// @param[out] out receives the message
+    void fillNodeTelemetry(std::uint32_t node,
+                           const TelemetryTable &table,
+                           mark4_NodeTelemetry &out);
+
     /// @brief The gateway's own module table, read from the log registry.
     /// @return the table
     LogModuleTable ownLogModules();

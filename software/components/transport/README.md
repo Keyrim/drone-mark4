@@ -63,7 +63,18 @@ transport.send(dst, payload, size, linkMask); // dst 0 = broadcast, mask optiona
 transport.poll(nowUs, deliver, context); // drain, learn, deliver, relay, expire, beacon
 transport.isAlive(id); transport.findNode(id); transport.nodeCount(); transport.node(i);
 transport.dropped(); transport.relayed(); transport.filtered();
+transport.sent(); transport.sentBytes(); transport.refused(); // this node's own sends
 ```
+
+The send-side counters describe this node's own `send()` calls, the
+periodic beacon included, and nothing else (a relayed frame is somebody
+else's send: `relayed()` and `filtered()` are for those). `sent()` counts
+the calls that reached every link they were meant for and `sentBytes()`
+their payloads; `refused()` counts the rest: a payload longer than
+`MAX_PAYLOAD`, no link declared, a destination unknown or masked out, or a
+medium that would not take the frame (a full UART ring). They are what a
+composition reports as its own output health, which is why they live here
+rather than in a wrapper around `send()`.
 
 `poll()` is the only place anything happens, and `nowUs` comes from the
 caller: the transport never reads a clock. Every frame received, whatever

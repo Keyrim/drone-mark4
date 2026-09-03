@@ -11,6 +11,13 @@ mark4.Node.address                  max_size:16
 mark4.Node.log_modules              max_count:32
 mark4.NodeTable.nodes               max_count:33
 
+# One node's whole telemetry table (the drone side freezes at most
+# MAX_TELEMETRY_ENTRIES = 128 entries). This is why it is not a Node field:
+# 128 x 33 nodes inside NodeTable would not fit nanopb's 16-bit field
+# offsets at all, and would cost every GatewayMessage variable a few
+# hundred kB.
+mark4.NodeTelemetry.descriptors     max_count:128
+
 mark4.OtaCommand.bundle_path        max_size:256
 
 mark4.OtaState.verdict_text         max_size:160

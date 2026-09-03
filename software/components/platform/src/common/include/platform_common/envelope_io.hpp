@@ -1,26 +1,30 @@
 #pragma once
 
 /// @file
-/// @brief The one place an Envelope meets a telemetry sender: encode, then
-///        hand the bytes over. Every answer a composition emits (telemetry,
-///        tuning, run stats, updater replies) goes through here.
+/// @brief The one place an Envelope meets the transport: encode on the
+///        stack, then hand the bytes to a node id. Every answer a
+///        composition emits (status, tuning, run stats, updater replies,
+///        telemetry samples) goes through here.
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 
-#include "platform/telemetry_sender.hpp"
 #include "protocol/envelope.hpp"
+#include "transport/transport.hpp"
 
 namespace mark4
 {
     /// @brief Encodes and sends one Envelope. Best effort: an envelope that
-    ///        does not encode is dropped, and the sender decides what a
-    ///        failed send means.
-    /// @param sender link the bytes go out on
+    ///        does not encode is dropped, and a frame no link took is
+    ///        counted by the transport, never retried.
+    /// @param transport transport the bytes leave by, not owned
+    /// @param dst node to reach, BROADCAST_NODE for every node
     /// @param envelope message to send
-    /// @return true when the bytes were handed to the sender
-    inline bool sendEnvelope(AbsTelemetrySender &sender, const mark4_Envelope &envelope)
+    /// @return true when the frame left on every link it was meant for
+    inline bool sendEnvelope(Transport &transport,
+                             std::uint32_t dst,
+                             const mark4_Envelope &envelope)
     {
         std::array<std::uint8_t, MAX_ENVELOPE_SIZE> bytes{};
         std::size_t size = 0U;
@@ -28,7 +32,6 @@ namespace mark4
         {
             return false;
         }
-        sender.send(bytes.data(), size);
-        return true;
+        return transport.send(dst, bytes.data(), size);
     }
 } // namespace mark4

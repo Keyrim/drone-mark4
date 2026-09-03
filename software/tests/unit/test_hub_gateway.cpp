@@ -170,6 +170,71 @@ TEST_CASE("the node table carries the transport record and the last announce")
     CHECK(mark4::hexNodeId(0xABCDU) == "0000abcd");
 }
 
+TEST_CASE("a telemetry table is merged page by page and published on its own")
+{
+    // The walk the gateway runs against a drone: one request per page, the
+    // cursor the merge returns, and the total closing it. The live pull
+    // itself (a hub asking a real drone_sim) is what scripts/smoke.ts
+    // checks; this is the merge it is built on.
+    mark4::TelemetryTable table;
+    mark4_TelemetryDescriptors page = mark4_TelemetryDescriptors_init_zero;
+    page.total = 3U;
+    page.cursor = 0U;
+    page.descriptors_count = 2U;
+    page.descriptors[0].id = 0U;
+    mark4::copyWireString(
+        "sensor/gyro_x", page.descriptors[0].name, sizeof(page.descriptors[0].name));
+    page.descriptors[0].unit = mark4_TelemetryUnit_TELEMETRY_UNIT_RAD_PER_S;
+    page.descriptors[1].id = 1U;
+    mark4::copyWireString(
+        "estimator/altitude", page.descriptors[1].name, sizeof(page.descriptors[1].name));
+    page.descriptors[1].unit = mark4_TelemetryUnit_TELEMETRY_UNIT_M;
+    CHECK(mark4::applyTelemetryPage(page, table) == 2U);
+    REQUIRE(table.size() == 3U);
+
+    page.cursor = 2U;
+    page.descriptors_count = 1U;
+    page.descriptors[0].id = 2U;
+    mark4::copyWireString(
+        "mixer/motor_0", page.descriptors[0].name, sizeof(page.descriptors[0].name));
+    page.descriptors[0].unit = mark4_TelemetryUnit_TELEMETRY_UNIT_UNITLESS;
+    // The cursor reaches the total: the table is whole and the walk stops.
+    CHECK(mark4::applyTelemetryPage(page, table) == 3U);
+
+    mark4_GatewayMessage message = mark4_GatewayMessage_init_zero;
+    message.which_body = mark4_GatewayMessage_node_telemetry_tag;
+    mark4::fillNodeTelemetry(0xABCDU, table, message.body.node_telemetry);
+    const mark4_GatewayMessage decoded = roundTrip(message);
+    const mark4_NodeTelemetry &published = decoded.body.node_telemetry;
+    CHECK(published.node == 0xABCDU);
+    REQUIRE(published.descriptors_count == 3U);
+    CHECK(std::string(published.descriptors[0].name) == "sensor/gyro_x");
+    CHECK(published.descriptors[1].unit == mark4_TelemetryUnit_TELEMETRY_UNIT_M);
+    CHECK(std::string(published.descriptors[2].name) == "mixer/motor_0");
+
+    // A page opening at cursor 0 restarts the table: a rebooted node with
+    // fewer measures does not keep stale entries, and its ids are its own.
+    page.cursor = 0U;
+    page.total = 1U;
+    page.descriptors_count = 1U;
+    CHECK(mark4::applyTelemetryPage(page, table) == 1U);
+    REQUIRE(table.size() == 1U);
+    CHECK(std::string(table[0].name) == "mixer/motor_0");
+
+    // An empty page while the table is not full would loop the walk forever
+    // on the same cursor: the total closes it instead.
+    mark4::TelemetryTable stalled;
+    page.total = 10U;
+    page.cursor = 4U;
+    page.descriptors_count = 0U;
+    CHECK(mark4::applyTelemetryPage(page, stalled) == 10U);
+
+    // A node that exposes nothing publishes an empty table, which is also
+    // what a node going down publishes.
+    mark4::fillNodeTelemetry(0xABCDU, {}, message.body.node_telemetry);
+    CHECK(roundTrip(message).body.node_telemetry.descriptors_count == 0U);
+}
+
 TEST_CASE("the update state snapshot reads like the client")
 {
     mark4::OtaClient client;

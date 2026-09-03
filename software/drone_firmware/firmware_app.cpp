@@ -135,11 +135,21 @@ namespace mark4
         }
         m_sensorSource.init();
         m_motorSink.init();
-        BOOT.info("loop: %lu Hz, timer paced; telemetry: 1 message / %lu frames; "
+        BOOT.info("loop: %lu Hz, timer paced; status: 1 message / %lu frames; "
                   "rc fail-safe %lu ms",
                   static_cast<unsigned long>(SensorSourceStm32::FRAME_RATE_HZ),
-                  static_cast<unsigned long>(TelemetryPublisher::DECIMATION),
+                  static_cast<unsigned long>(StatusPublisher::DECIMATION),
                   static_cast<unsigned long>(RcTracker::RC_TIMEOUT_US / US_PER_MS));
+        // Last: freezing the registry means every object holding a measure
+        // must already exist.
+        if (!m_telemetryService.init())
+        {
+            BOOT.error("telemetry: the registry is empty");
+            return false;
+        }
+        BOOT.info("telemetry: %lu measures on demand, %lu ms floor",
+                  static_cast<unsigned long>(m_telemetryService.entryCount()),
+                  static_cast<unsigned long>(MIN_TELEMETRY_PERIOD_MS));
 
         refreshArmInterlock();
         OTA.info("running slot %c, %lu byte slots",
@@ -216,8 +226,7 @@ namespace mark4
                                 const std::uint8_t *payload,
                                 std::size_t size)
     {
-        static_cast<void>(src); // every answer is a broadcast, nobody is addressed
-        static_cast<FirmwareApp *>(context)->m_commandReceiver.push(payload, size);
+        static_cast<FirmwareApp *>(context)->m_commandReceiver.push(src, payload, size);
     }
 
     bool FirmwareApp::serveOta(const mark4_Envelope &envelope, std::uint64_t nowUs)
@@ -237,7 +246,7 @@ namespace mark4
         {
             // The same path telemetry and the tuning answers go out by: the
             // updater is one more message type on the one link this board has.
-            static_cast<void>(sendEnvelope(m_telemetrySender, reply));
+            static_cast<void>(sendEnvelope(m_transport, BROADCAST_NODE, reply));
         }
         if (consumed)
         {
@@ -253,7 +262,8 @@ namespace mark4
         std::uint8_t packet[MAX_PAYLOAD];
         for (;;)
         {
-            const std::size_t size = m_commandReceiver.poll(packet, sizeof(packet));
+            std::uint32_t src = BROADCAST_NODE;
+            const std::size_t size = m_commandReceiver.poll(packet, sizeof(packet), src);
             if (size == 0U)
             {
                 return false;
@@ -266,6 +276,10 @@ namespace mark4
             if (serveOta(envelope, nowUs))
             {
                 continue; // the updater claimed it, whatever it answered
+            }
+            if (m_telemetryService.handle(envelope, src, nowUs))
+            {
+                continue; // a discovery or enable request, answered to src
             }
             switch (envelope.which_body)
             {
@@ -369,8 +383,13 @@ namespace mark4
             }
 
             const FlightPhase phaseBefore = m_core.flightPhase();
+            // The frame as the core is about to see it, RC graft and arming
+            // interlock included: the platform measures publish exactly
+            // what was stepped.
+            m_frameTelemetry.update(frame);
             m_core.step(frame, actuators);
             m_motorSink.push(actuators);
+            m_stepDurationUs = static_cast<float>(m_clock.nowUs() - frame.timestampUs);
             if (m_core.flightPhase() == FlightPhase::FAULT && phaseBefore != FlightPhase::FAULT)
             {
                 FLIGHT.error("FAULT: imu lost in flight, motors cut");
@@ -378,7 +397,11 @@ namespace mark4
             updateStatusLeds(m_core.flightPhase(), frame.rc.killSwitch, degraded, frames);
 
             ++frames;
-            m_telemetryPublisher.publish(frame, actuators, m_core);
+            m_statusPublisher.publish(frame, actuators, m_core);
+            // Whatever a subscriber enabled, at the period it asked for; the
+            // frame's own timestamp stamps the samples, so the service never
+            // reads a clock either.
+            m_telemetryService.sample(frame.timestampUs);
             // Paced answers to a list request: one description per frame, so
             // a table dump never bursts ahead of the telemetry sharing the
             // same UART.
@@ -389,7 +412,7 @@ namespace mark4
                 // LED1 on the degraded pattern for the next one.
                 const std::uint32_t failureCount =
                     m_sensorSource.overruns() + m_sensorSource.readFailures() + m_baro.failures() +
-                    m_baro.implausibleSolutions() + m_telemetrySender.dropCount();
+                    m_baro.implausibleSolutions() + m_transport.refused();
                 degraded = failureCount != lastFailureCount;
                 lastFailureCount = failureCount;
                 const std::uint64_t nowUs = frame.timestampUs;
@@ -413,10 +436,15 @@ namespace mark4
                              static_cast<unsigned long>(m_sensorSource.overruns()),
                              static_cast<unsigned long>(m_sensorSource.readFailures()),
                              static_cast<unsigned long>(m_baro.failures()));
+                STATUS.debug("telemetry: %lu measures, %lu enabled every %lu ms, %lu sent",
+                             static_cast<unsigned long>(m_telemetryService.entryCount()),
+                             static_cast<unsigned long>(m_telemetryService.enabledCount()),
+                             static_cast<unsigned long>(m_telemetryService.periodMs()),
+                             static_cast<unsigned long>(m_telemetryService.messageCount()));
                 STATUS.debug("tx: %lu sent %lu dropped  rx: %lu received, %lu nodes%s  "
                              "tuning: %lu asked %lu answered  phase %u",
-                             static_cast<unsigned long>(m_telemetrySender.packetCount()),
-                             static_cast<unsigned long>(m_telemetrySender.dropCount()),
+                             static_cast<unsigned long>(m_transport.sent()),
+                             static_cast<unsigned long>(m_transport.refused()),
                              static_cast<unsigned long>(m_commandReceiver.packetsReceived()),
                              static_cast<unsigned long>(m_transport.nodeCount()),
                              m_rcTracker.failsafeActive(frame.timestampUs) ? " (failsafe)" : "",
@@ -429,9 +457,9 @@ namespace mark4
                     UART.warn("rx ring overrun, %lu frames dropped so far",
                               static_cast<unsigned long>(lastRxDrops));
                 }
-                if (m_telemetrySender.dropCount() != lastTxDrops)
+                if (m_transport.refused() != lastTxDrops)
                 {
-                    lastTxDrops = m_telemetrySender.dropCount();
+                    lastTxDrops = m_transport.refused();
                     UART.warn("tx ring full, %lu frames dropped so far",
                               static_cast<unsigned long>(lastTxDrops));
                 }

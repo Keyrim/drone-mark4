@@ -11,9 +11,10 @@
 #include <cstring>
 
 #include "flight_core/types.hpp"
-#include "platform/telemetry_sender.hpp"
 #include "platform_common/envelope_io.hpp"
 #include "protocol/envelope.hpp"
+#include "transport/frame.hpp"
+#include "transport/transport.hpp"
 
 namespace mark4
 {
@@ -57,9 +58,9 @@ namespace mark4
         static_assert(std::endian::native == std::endian::little,
                       "the hash is defined over little-endian bytes");
 
-        /// @param sender output the run stats are broadcast on
-        explicit SimRunTracker(AbsTelemetrySender &sender)
-            : m_sender(sender)
+        /// @param transport transport the run stats are broadcast on
+        explicit SimRunTracker(Transport &transport)
+            : m_transport(transport)
         {
         }
 
@@ -166,7 +167,7 @@ namespace mark4
             stats.run_hash = m_hash;
             stats.duplicate_frames = m_duplicateFrames;
             stats.lockstep_timeouts = m_lockstepTimeouts;
-            static_cast<void>(sendEnvelope(m_sender, envelope));
+            static_cast<void>(sendEnvelope(m_transport, BROADCAST_NODE, envelope));
         }
 
         /// @return reset counter of the run being measured
@@ -218,7 +219,7 @@ namespace mark4
         }
 
       private:
-        AbsTelemetrySender &m_sender;                          ///< output link, not owned
+        Transport &m_transport;                                ///< output, not owned
         std::uint64_t m_hash = FNV_OFFSET_BASIS;               ///< running trajectory hash
         std::uint64_t m_runStartUs = 0U;                       ///< simulated start of the run [us]
         std::uint32_t m_hashWindowUs = DEFAULT_HASH_WINDOW_US; ///< hashed window [us]

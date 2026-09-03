@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include "flight_core/types.hpp"
+#include "telemetry/registry.hpp"
 
 namespace mark4
 {
@@ -120,5 +121,32 @@ namespace mark4
         std::uint64_t m_releaseTimestampUs = 0U; ///< last release instant [us]
         std::uint64_t m_apexTimestampUs = 0U;    ///< last predicted apex instant [us]
         float m_apexAltitudeM = 0.0f;            ///< last predicted apex altitude [m]
+
+        /// @param context the detector the entry was built with
+        /// @return the detection phase as its numeric code
+        static float ReadState(const void *context);
+
+        /// @param context the detector the entry was built with
+        /// @return the throw count
+        static float ReadCount(const void *context);
+
+        /// @param context the detector the entry was built with
+        /// @return the predicted apex instant [us]. A float carries 24 bits
+        ///         of mantissa, so past about 4.7 hours of uptime the value
+        ///         is rounded to a multiple of a microsecond or more; the
+        ///         measure is meant to be read against the frame timestamps
+        ///         of the same session, where the difference is what matters.
+        static float ReadApexTime(const void *context);
+
+        // Measures. The phase, the count and the apex instant are not floats,
+        // so they go through readers; the release velocity and the apex
+        // altitude are read straight out of their members.
+        TelemetryEntry m_stateEntry{"throw/state", TelemetryUnit::UNITLESS, this, &ReadState};
+        TelemetryEntry m_countEntry{"throw/count", TelemetryUnit::COUNT, this, &ReadCount};
+        TelemetryEntry m_releaseEntry{
+            "throw/release_velocity", TelemetryUnit::M_PER_S, m_releaseVelocityMps};
+        TelemetryEntry m_apexAltitudeEntry{
+            "throw/apex_altitude", TelemetryUnit::M, m_apexAltitudeM};
+        TelemetryEntry m_apexTimeEntry{"throw/apex_time", TelemetryUnit::US, this, &ReadApexTime};
     };
 } // namespace mark4

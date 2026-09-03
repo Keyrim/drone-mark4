@@ -16,7 +16,7 @@ extends Node
 ## travel here, and this project does not hold one. It reaches the flight
 ## process out-of-band as an Rc envelope, the same path the real board is
 ## flown through. The plant's exact state (PlantTruth) rides inside every
-## sensor envelope, and the flight process forwards it inside its telemetry
+## sensor envelope, and the flight process forwards it inside its status
 ## so the ground tools compare estimate and truth sample by sample.
 ##
 ## Anything that does not decode as a SimActuator or a SimScenario is
@@ -132,8 +132,9 @@ func receive(payload: PackedByteArray) -> void:
 	if payload.is_empty():
 		packets_dropped += 1
 		return
-	# One byte tells the body apart before the codec runs: telemetry and
-	# the rest of what the flight process broadcasts is not for the plant.
+	# One byte tells the body apart before the codec runs: the status
+	# report and the rest of what the flight process broadcasts is not for
+	# the plant.
 	match payload[0]:
 		Mark4Announce.TAG_SIM_ACTUATOR:
 			var envelope := Mark4.Envelope.new()

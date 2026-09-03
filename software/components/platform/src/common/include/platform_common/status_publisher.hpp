@@ -1,31 +1,32 @@
 #pragma once
 
 /// @file
-/// @brief Decimated telemetry publishing, shared by every composition.
+/// @brief Decimated Status publishing, shared by every composition.
 
 #include <cstdint>
 
 #include "flight_core/flight_core.hpp"
 #include "flight_core/types.hpp"
-#include "platform/telemetry_sender.hpp"
 #include "platform_common/envelope_io.hpp"
-#include "platform_common/telemetry_packer.hpp"
+#include "platform_common/status_packer.hpp"
+#include "transport/frame.hpp"
+#include "transport/transport.hpp"
 
 namespace mark4
 {
-    /// Packs one telemetry snapshot every DECIMATION frames and hands it to
-    /// the sender. Owns the frame counter, so every composition decimates the
-    /// same stream the same way instead of each keeping a drifting copy of
-    /// the counter and the factor.
-    class TelemetryPublisher
+    /// Packs one Status report every DECIMATION frames and broadcasts it.
+    /// Owns the frame counter, so every composition decimates the same
+    /// stream the same way instead of each keeping a drifting copy of the
+    /// counter and the factor.
+    class StatusPublisher
     {
       public:
-        /// Frames per telemetry message: a 500 Hz loop telemeters at 50 Hz.
+        /// Frames per Status message: a 500 Hz loop reports at 50 Hz.
         static constexpr std::uint32_t DECIMATION = 10U;
 
-        /// @param sender telemetry output the packed snapshots go to
-        explicit TelemetryPublisher(AbsTelemetrySender &sender)
-            : m_sender(sender)
+        /// @param transport transport the reports are broadcast on
+        explicit StatusPublisher(Transport &transport)
+            : m_transport(transport)
         {
         }
 
@@ -46,18 +47,18 @@ namespace mark4
                 return;
             }
             mark4_Envelope envelope = mark4_Envelope_init_zero;
-            envelope.which_body = mark4_Envelope_telemetry_tag;
-            packTelemetry(frame, actuators, core, envelope.body.telemetry);
+            envelope.which_body = mark4_Envelope_status_tag;
+            packStatus(frame, actuators, core, envelope.body.status);
             if (truth != nullptr)
             {
-                envelope.body.telemetry.has_truth = true;
-                envelope.body.telemetry.truth = *truth;
+                envelope.body.status.has_truth = true;
+                envelope.body.status.truth = *truth;
             }
-            static_cast<void>(sendEnvelope(m_sender, envelope));
+            static_cast<void>(sendEnvelope(m_transport, BROADCAST_NODE, envelope));
         }
 
       private:
-        AbsTelemetrySender &m_sender;    ///< output link, not owned
+        Transport &m_transport;          ///< output, not owned
         std::uint32_t m_frameCount = 0U; ///< frames seen since construction
     };
 } // namespace mark4

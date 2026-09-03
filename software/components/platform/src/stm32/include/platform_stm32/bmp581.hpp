@@ -8,6 +8,7 @@
 
 #include "platform_stm32/i2c_bus.hpp"
 #include "platform_stm32/sensor_health.hpp"
+#include "telemetry/registry.hpp"
 
 namespace mark4
 {
@@ -113,5 +114,11 @@ namespace mark4
         std::uint32_t m_failures = 0U;    ///< failed bus reads
         std::uint32_t m_implausible = 0U; ///< solutions rejected by the gate
         SensorHealth m_health;            ///< read outcomes and their logs
+
+        /// The chip compensates its pressure with this, so it is the one
+        /// temperature the board already measures: worth watching next to
+        /// the altitude channel it feeds.
+        TelemetryEntry m_temperatureEntry{
+            "sensor/baro_temperature", TelemetryUnit::CELSIUS, m_temperatureC};
     };
 } // namespace mark4
