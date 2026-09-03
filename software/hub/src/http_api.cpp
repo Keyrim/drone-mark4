@@ -118,7 +118,7 @@ namespace mark4
         }
 
         /// One family of stored files under the telemetry directory. The
-        /// three differ only in where they live, what suffix they carry and
+        /// two differ only in where they live, what suffix they carry and
         /// whether their body has to be JSON, so they share one handler.
         struct Collection
         {
@@ -130,10 +130,9 @@ namespace mark4
             bool download;         ///< a GET offers the file as a download
         };
 
-        /// Sessions are whole recordings, exports are what a spreadsheet
-        /// opens, configs are the ticked series with no data in them.
+        /// Exports are what a spreadsheet opens, configs are the ticked
+        /// series with their layout and no data in them.
         constexpr Collection COLLECTIONS[] = {
-            {"sessions", "sessions", ".telemetry.json", "application/json", true, false},
             {"exports", "exports", ".csv", "text/csv; charset=utf-8", false, true},
             {"configs", "configs", ".json", "application/json", true, false},
         };
@@ -276,9 +275,9 @@ namespace mark4
             }
             if (collection.json)
             {
-                // Parsed but not interpreted: the shape of a session or a
-                // config is the page's business, and the hub only refuses to
-                // store what it could never hand back as JSON.
+                // Parsed but not interpreted: the shape of a config is the
+                // page's business, and the hub only refuses to store what it
+                // could never hand back as JSON.
                 const auto parsed = nlohmann::json::parse(body, nullptr, false);
                 if (parsed.is_discarded())
                 {

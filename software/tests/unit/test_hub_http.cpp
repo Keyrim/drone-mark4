@@ -119,56 +119,56 @@ TEST_CASE("anything but a read is refused")
     CHECK(mark4::routeHttp(config, "HEAD", "/").status == mark4::HTTP_OK);
 }
 
-TEST_CASE("a telemetry session round trips through the store")
+TEST_CASE("a view config round trips through the store")
 {
     mark4::HttpConfig config;
-    config.telemetryDir = scratchDirectory("hub_http_sessions");
+    config.telemetryDir = scratchDirectory("hub_http_configs");
 
-    // Nothing recorded yet: an empty list, not an error. The directory
-    // itself need not exist.
-    const mark4::HttpResult empty = mark4::routeHttp(config, "GET", "/api/telemetry/sessions");
+    // Nothing stored yet: an empty list, not an error. The directory itself
+    // need not exist.
+    const mark4::HttpResult empty = mark4::routeHttp(config, "GET", "/api/telemetry/configs");
     REQUIRE(empty.status == mark4::HTTP_OK);
     CHECK(nlohmann::json::parse(empty.body).empty());
 
-    const std::string session = R"({"version":1,"name":"throw_12","series":[]})";
+    const std::string document = R"({"version":1,"periodMs":50,"series":[]})";
     const mark4::HttpResult saved =
-        mark4::routeHttp(config, "PUT", "/api/telemetry/sessions/throw_12", session);
+        mark4::routeHttp(config, "PUT", "/api/telemetry/configs/rate-tuning", document);
     REQUIRE(saved.status == mark4::HTTP_OK);
     const nlohmann::json answer = nlohmann::json::parse(saved.body);
-    CHECK(answer["name"] == "throw_12");
-    CHECK(answer["bytes"] == session.size());
+    CHECK(answer["name"] == "rate-tuning");
+    CHECK(answer["bytes"] == document.size());
     // The name becomes a file name, suffix and all, so a reader outside the
     // hub knows what a file holds.
-    CHECK(std::filesystem::exists(config.telemetryDir + "/sessions/throw_12.telemetry.json"));
+    CHECK(std::filesystem::exists(config.telemetryDir + "/configs/rate-tuning.json"));
 
-    const mark4::HttpResult listed = mark4::routeHttp(config, "GET", "/api/telemetry/sessions");
+    const mark4::HttpResult listed = mark4::routeHttp(config, "GET", "/api/telemetry/configs");
     const nlohmann::json entries = nlohmann::json::parse(listed.body);
     REQUIRE(entries.size() == 1U);
-    CHECK(entries[0]["name"] == "throw_12");
-    CHECK(entries[0]["bytes"] == session.size());
+    CHECK(entries[0]["name"] == "rate-tuning");
+    CHECK(entries[0]["bytes"] == document.size());
     // Unix seconds, not whatever epoch the file clock happens to use: a
     // page formats this as a date.
     CHECK(entries[0]["modified"] > 1700000000);
 
     const mark4::HttpResult read =
-        mark4::routeHttp(config, "GET", "/api/telemetry/sessions/throw_12");
+        mark4::routeHttp(config, "GET", "/api/telemetry/configs/rate-tuning");
     REQUIRE(read.status == mark4::HTTP_OK);
-    CHECK(read.body == session);
+    CHECK(read.body == document);
     CHECK(read.contentType == "application/json");
-    // A session is opened by the page, not downloaded by the browser.
+    // A config is opened by the page, not downloaded by the browser.
     CHECK(read.attachmentName.empty());
 
     // A second PUT replaces it rather than piling up.
     const std::string shorter = R"({"version":1})";
-    CHECK(mark4::routeHttp(config, "PUT", "/api/telemetry/sessions/throw_12", shorter).status ==
+    CHECK(mark4::routeHttp(config, "PUT", "/api/telemetry/configs/rate-tuning", shorter).status ==
           mark4::HTTP_OK);
-    CHECK(mark4::routeHttp(config, "GET", "/api/telemetry/sessions/throw_12").body == shorter);
+    CHECK(mark4::routeHttp(config, "GET", "/api/telemetry/configs/rate-tuning").body == shorter);
 
-    CHECK(mark4::routeHttp(config, "DELETE", "/api/telemetry/sessions/throw_12").status ==
+    CHECK(mark4::routeHttp(config, "DELETE", "/api/telemetry/configs/rate-tuning").status ==
           mark4::HTTP_OK);
-    CHECK(mark4::routeHttp(config, "GET", "/api/telemetry/sessions/throw_12").status ==
+    CHECK(mark4::routeHttp(config, "GET", "/api/telemetry/configs/rate-tuning").status ==
           mark4::HTTP_NOT_FOUND);
-    CHECK(mark4::routeHttp(config, "DELETE", "/api/telemetry/sessions/throw_12").status ==
+    CHECK(mark4::routeHttp(config, "DELETE", "/api/telemetry/configs/rate-tuning").status ==
           mark4::HTTP_NOT_FOUND);
 }
 
@@ -220,13 +220,13 @@ TEST_CASE("what the telemetry store refuses")
 
     SECTION("a body that is not JSON where JSON is expected")
     {
-        CHECK(mark4::routeHttp(config, "PUT", "/api/telemetry/sessions/bad", "{oops").status ==
+        CHECK(mark4::routeHttp(config, "PUT", "/api/telemetry/configs/bad", "{oops").status ==
               mark4::HTTP_BAD_REQUEST);
-        CHECK(!std::filesystem::exists(config.telemetryDir + "/sessions/bad.telemetry.json"));
+        CHECK(!std::filesystem::exists(config.telemetryDir + "/configs/bad.json"));
     }
     SECTION("an empty body")
     {
-        CHECK(mark4::routeHttp(config, "PUT", "/api/telemetry/sessions/bad", "").status ==
+        CHECK(mark4::routeHttp(config, "PUT", "/api/telemetry/configs/bad", "").status ==
               mark4::HTTP_BAD_REQUEST);
     }
     SECTION("a body over the cap")
@@ -236,14 +236,14 @@ TEST_CASE("what the telemetry store refuses")
         std::string big = "[\"";
         big.append(mark4::HTTP_MAX_BODY, 'x');
         big += "\"]";
-        CHECK(mark4::routeHttp(config, "PUT", "/api/telemetry/sessions/big", big).status ==
+        CHECK(mark4::routeHttp(config, "PUT", "/api/telemetry/configs/big", big).status ==
               mark4::HTTP_BAD_REQUEST);
     }
     SECTION("a name that could name a file elsewhere")
     {
         for (const char *name : {"..", "../escape", "with/slash", "with.dot", ".hidden", ""})
         {
-            const std::string uri = std::string("/api/telemetry/sessions/") + name;
+            const std::string uri = std::string("/api/telemetry/configs/") + name;
             const int status = mark4::routeHttp(config, "PUT", uri, "{}").status;
             CHECK((status == mark4::HTTP_BAD_REQUEST || status == mark4::HTTP_NOT_FOUND));
         }
@@ -255,23 +255,26 @@ TEST_CASE("what the telemetry store refuses")
     }
     SECTION("a method the collection does not have")
     {
-        CHECK(mark4::routeHttp(config, "POST", "/api/telemetry/sessions/x", "{}").status ==
+        CHECK(mark4::routeHttp(config, "POST", "/api/telemetry/configs/x", "{}").status ==
               mark4::HTTP_METHOD_NOT_ALLOWED);
-        CHECK(mark4::routeHttp(config, "PUT", "/api/telemetry/sessions", "{}").status ==
+        CHECK(mark4::routeHttp(config, "PUT", "/api/telemetry/configs", "{}").status ==
               mark4::HTTP_METHOD_NOT_ALLOWED);
     }
     SECTION("a collection that does not exist")
     {
         CHECK(mark4::routeHttp(config, "GET", "/api/telemetry/nonsense").status ==
               mark4::HTTP_NOT_FOUND);
+        // Recordings used to be stored here; the route is gone with them.
+        CHECK(mark4::routeHttp(config, "GET", "/api/telemetry/sessions").status ==
+              mark4::HTTP_NOT_FOUND);
         CHECK(mark4::routeHttp(config, "GET", "/api/telemetry").status == mark4::HTTP_NOT_FOUND);
     }
     SECTION("everything, when the hub was given no telemetry directory")
     {
         mark4::HttpConfig none;
-        CHECK(mark4::routeHttp(none, "GET", "/api/telemetry/sessions").status ==
+        CHECK(mark4::routeHttp(none, "GET", "/api/telemetry/configs").status ==
               mark4::HTTP_NOT_FOUND);
-        CHECK(mark4::routeHttp(none, "PUT", "/api/telemetry/sessions/x", "{}").status ==
+        CHECK(mark4::routeHttp(none, "PUT", "/api/telemetry/configs/x", "{}").status ==
               mark4::HTTP_NOT_FOUND);
     }
 }

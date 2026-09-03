@@ -2,18 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { TelemetryUnit } from "../src/gen/mark4_pb";
+import { buildConfig, CONFIG_VERSION, exportName, parseConfig, toCsv } from "../src/telemetry/config";
 import { TelemetryModel, type Descriptor, type SeriesSpec } from "../src/telemetry/model";
-import {
-    buildConfig,
-    buildSession,
-    CONFIG_VERSION,
-    parseConfig,
-    parseSession,
-    SESSION_VERSION,
-    toCsv,
-} from "../src/telemetry/session";
-
-const NODE = { id: 0x1234abcd, kind: "drone_sim", label: "drone_sim 1234abcd" };
 
 const SPECS: SeriesSpec[] = [
     { name: "estimator/altitude", unit: TelemetryUnit.M, color: "#3987e5", laneId: 0 },
@@ -24,66 +14,6 @@ const DATA = [
     { t: [0, 0.05, 0.1], v: [1.5, null, 2.5] },
     { t: [0, 0.05], v: [0, 1] },
 ];
-
-test("a session round trips through its stored form", () => {
-    const session = buildSession("throw_12", NODE, 7_000_000, 0.1, 50, SPECS, DATA);
-    assert.equal(session.version, SESSION_VERSION);
-    const back = parseSession(JSON.stringify(session));
-    assert.ok(back);
-    assert.equal(back.name, "throw_12");
-    assert.equal(back.node.id, NODE.id);
-    assert.equal(back.t0Us, 7_000_000);
-    assert.equal(back.periodMs, 50);
-    assert.equal(back.series.length, 2);
-    assert.equal(back.series[0]?.name, "estimator/altitude");
-    assert.deepEqual(back.series[0]?.v, [1.5, null, 2.5]);
-    assert.equal(back.series[1]?.laneId, 1);
-});
-
-test("a stored session opens into the model, gap markers and lanes included", () => {
-    const session = buildSession("throw_12", NODE, 7_000_000, 0.1, 50, SPECS, DATA);
-    const parsed = parseSession(JSON.stringify(session));
-    assert.ok(parsed);
-    const model = new TelemetryModel();
-    model.load(parsed.series, parsed.series);
-    assert.deepEqual(
-        model.list().map((series) => series.name),
-        ["estimator/altitude", "throw/count"]
-    );
-    assert.deepEqual(model.buffer("estimator/altitude")?.v, [1.5, null, 2.5]);
-    assert.deepEqual(model.lanes(), [0, 1]);
-    assert.equal(model.durationS(), 0.1);
-    // Nothing is bound until it is bound to a node: a session is browsed.
-    assert.deepEqual(model.enabledIds(), []);
-});
-
-test("what parseSession refuses", () => {
-    assert.equal(parseSession("not json"), null);
-    assert.equal(parseSession("[]"), null);
-    assert.equal(parseSession(JSON.stringify({ version: 99, series: [] })), null);
-    // A series whose arrays do not line up would draw values at the wrong
-    // instants: refused whole rather than half loaded.
-    assert.equal(
-        parseSession(
-            JSON.stringify({ version: SESSION_VERSION, series: [{ name: "a", t: [0, 1], v: [1] }] })
-        ),
-        null
-    );
-    assert.equal(
-        parseSession(
-            JSON.stringify({ version: SESSION_VERSION, series: [{ name: "a", t: [0], v: ["x"] }] })
-        ),
-        null
-    );
-    assert.equal(
-        parseSession(JSON.stringify({ version: SESSION_VERSION, series: [{ t: [], v: [] }] })),
-        null
-    );
-    // A document with no samples at all is still a session.
-    const bare = parseSession(JSON.stringify({ version: SESSION_VERSION, series: [] }));
-    assert.ok(bare);
-    assert.equal(bare.series.length, 0);
-});
 
 test("a view config carries what is ticked and no data", () => {
     const config = buildConfig(20, SPECS);
@@ -128,6 +58,15 @@ test("a series name that needs quoting is quoted", () => {
     ];
     const csv = toCsv(odd, [{ t: [0], v: [1] }]);
     assert.ok(csv.includes('"weird,""name",,0,1'));
+});
+
+test("an export is named after its config and its instant", () => {
+    const at = new Date(2026, 8, 3, 14, 7, 9);
+    assert.equal(exportName("rate-tuning", at), "rate-tuning-20260903-140709");
+    // No config name: a generic stem, never an empty one.
+    assert.equal(exportName("", at), "telemetry-20260903-140709");
+    // Only what the hub takes as a file name survives.
+    assert.equal(exportName("odd name.v2", at), "oddnamev2-20260903-140709");
 });
 
 test("a descriptor list drives the selection, no catalog anywhere", () => {

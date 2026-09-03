@@ -63,18 +63,17 @@ The HTTP side stays filesystem-only, which is the invariant that keeps the
 hub lock-free: these handlers run on the websocket library's connection
 threads and touch no registry and no counter. They read and write files
 under the telemetry directory, `logs/telemetry` resolved from the hub's own
-location (the repository ignores `logs/`, so a recording is bench output
-and never source). The directory need not exist: the first save creates it.
+location (the repository ignores `logs/`, so an export is bench output and
+never source). The directory need not exist: the first save creates it.
 
 | route | method | what |
 |-------|--------|------|
-| `/api/telemetry/sessions` | GET | JSON array of `{name, bytes, modified}`, one per stored session, by name. |
-| `/api/telemetry/sessions/<name>` | GET | the stored session document. |
-| `/api/telemetry/sessions/<name>` | PUT | stores it as `sessions/<name>.telemetry.json`. The body must parse as JSON; it is never interpreted, the shape is the page's business. Answers `{name, bytes}`. |
-| `/api/telemetry/sessions/<name>` | DELETE | removes it. |
+| `/api/telemetry/configs` | GET | JSON array of `{name, bytes, modified}`, one per stored view config, by name. |
+| `/api/telemetry/configs/<name>` | GET | the stored config document. |
+| `/api/telemetry/configs/<name>` | PUT | stores it as `configs/<name>.json`. The body must parse as JSON; it is never interpreted, the shape is the page's business. Answers `{name, bytes}`. |
+| `/api/telemetry/configs/<name>` | DELETE | removes it. |
 | `/api/telemetry/exports/<name>.csv` | GET | serves `exports/<name>.csv` as a download (`Content-Disposition`), so a browser saves it under that name. |
 | `/api/telemetry/exports/<name>.csv` | PUT | stores the CSV the page built, as it comes: the hub never parses it. |
-| `/api/telemetry/configs[/<name>]` | GET, PUT, DELETE | the named view configs, small JSON files under `configs/`. Same rules as the sessions. |
 
 A name becomes a file name, so it obeys one rule: 1 to 64 characters of
 letters, digits, `_` and `-`. No separator, no dot, no leading dot, nothing

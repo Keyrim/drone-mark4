@@ -1,8 +1,8 @@
 /**
  * The hub's telemetry store, seen from the page: the HTTP side of the hub
- * (software/hub/README.md, "HTTP API"). Recordings, their CSV exports and
- * the named view configs are files on the hub's disk, so a session survives
- * the tab that recorded it and can be opened from another machine.
+ * (software/hub/README.md, "HTTP API"). The named view configs and the CSV
+ * exports are files on the hub's disk, so a config outlives the browser
+ * that made it and an export is reachable from another machine.
  *
  * Every call answers a result rather than throwing: a hub that is down or a
  * refused name is a line in the toolbar, never an unhandled rejection.
@@ -23,7 +23,6 @@ export interface StoreResult<T> {
     readonly error?: string;
 }
 
-const SESSIONS = "/api/telemetry/sessions";
 const EXPORTS = "/api/telemetry/exports";
 const CONFIGS = "/api/telemetry/configs";
 
@@ -101,12 +100,6 @@ async function remove(path: string): Promise<StoreResult<void>> {
 }
 
 export const store = {
-    listSessions: (): Promise<StoreResult<StoredEntry[]>> => list(SESSIONS),
-    readSession: (name: string): Promise<StoreResult<string>> => read(`${SESSIONS}/${name}`),
-    writeSession: (name: string, body: string): Promise<StoreResult<number>> =>
-        write(`${SESSIONS}/${name}`, body, "application/json"),
-    deleteSession: (name: string): Promise<StoreResult<void>> => remove(`${SESSIONS}/${name}`),
-
     /** The path a GET serves the export from, for the download link. */
     exportPath: (name: string): string => `${EXPORTS}/${name}.csv`,
     writeExport: (name: string, csv: string): Promise<StoreResult<number>> =>
@@ -122,21 +115,27 @@ export const store = {
 /** Versioned key the working config is auto-saved under, per browser. */
 export const WORKING_CONFIG_KEY = "mark4.pages.telemetry.v1";
 
-/** Reads the working config back, null when there is none to read. */
-export function loadWorkingConfig(): string | null {
+/** Key of the name the working config was loaded from or saved under. */
+export const WORKING_NAME_KEY = "mark4.pages.telemetry.name.v1";
+
+/** Key of the folders left open in the catalog tree. */
+export const TREE_STATE_KEY = "mark4.pages.telemetry.tree.v1";
+
+/** Reads one per-browser value back, null when there is none to read. */
+export function loadLocal(key: string): string | null {
     try {
-        return localStorage.getItem(WORKING_CONFIG_KEY);
+        return localStorage.getItem(key);
     } catch {
         return null;
     }
 }
 
-/** Auto-saves the working config. A browser refusing storage costs nothing. */
-export function saveWorkingConfig(body: string): void {
+/** Stores one per-browser value. A browser refusing storage costs nothing. */
+export function saveLocal(key: string, body: string): void {
     try {
-        localStorage.setItem(WORKING_CONFIG_KEY, body);
+        localStorage.setItem(key, body);
     } catch {
-        // A private window or a browser with site data blocked: the config
-        // is still on the hub if it was ever saved under a name.
+        // A private window or a browser with site data blocked: a config is
+        // still on the hub if it was ever saved under a name.
     }
 }

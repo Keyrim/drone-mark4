@@ -43,10 +43,9 @@ namespace mark4
         std::string pagesDir;     ///< directory the static pages are read
                                   ///< from, empty or missing = every page is
                                   ///< a 404
-        std::string telemetryDir; ///< directory the recorded sessions, their
-                                  ///< CSV exports and the named view configs
-                                  ///< live in, empty = every /api/telemetry
-                                  ///< request is a 404
+        std::string telemetryDir; ///< directory the CSV exports and the named
+                                  ///< view configs live in, empty = every
+                                  ///< /api/telemetry request is a 404
     };
 
     /// One answer, ready to be turned into an HTTP response.

@@ -76,6 +76,23 @@ test("series of the same unit can be grouped, and lanes reordered", () => {
     assert.equal(m.lanes().length, 3);
 });
 
+test("a group opens one lane per unit, joining the lane a member already has", () => {
+    const m = model(GYRO_X);
+    const lane = m.list()[0]?.laneId;
+    m.addGroup([GYRO_X, GYRO_Y, ALTITUDE]);
+    assert.deepEqual(
+        m.list().map((series) => series.name),
+        ["sensor/gyro_x", "sensor/gyro_y", "estimator/altitude"]
+    );
+    // gyro_y reads like gyro_x and joins its lane; altitude reads in
+    // metres and gets one of its own.
+    assert.equal(m.list()[1]?.laneId, lane);
+    assert.equal(m.lanes().length, 2);
+    // Ticking the group again changes nothing.
+    m.addGroup([GYRO_X, GYRO_Y, ALTITUDE]);
+    assert.equal(m.list().length, 3);
+});
+
 test("routes are rebuilt from the node's table, by name", () => {
     const m = model(GYRO_X, ALTITUDE);
 

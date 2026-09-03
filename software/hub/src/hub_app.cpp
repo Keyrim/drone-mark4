@@ -196,7 +196,7 @@ namespace mark4
         HttpConfig http;
         http.pagesDir = m_config.pagesDir;
         http.telemetryDir = m_config.telemetryDir;
-        MODULE.info("telemetry sessions in %s", m_config.telemetryDir.c_str());
+        MODULE.info("telemetry store in %s", m_config.telemetryDir.c_str());
         if (!m_ws.start(m_config.wsPort, m_config.bindAddress, std::move(http)))
         {
             return false;
