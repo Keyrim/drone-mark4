@@ -65,7 +65,7 @@ test("the level, and it alone, colors the whole line", () => {
 });
 
 test("the kind, the node id and the module do not change the scope", () => {
-    for (const kind of ["firmware", "drone_sim", "plant", "gateway", "batch", "relay", "unknown"]) {
+    for (const kind of ["firmware", "drone_sim", "plant", "gateway", "batch", "relay", "phone", "unknown"]) {
         assert.equal(
             scopeOf(formatLogLine(at, LogLevel.WARN, kind, SIM, "app/boot", "node d5000001 left")),
             "string.unquoted.line.warn.mark4-log",

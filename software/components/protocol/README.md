@@ -77,7 +77,8 @@ includes this library.
   `PHASE_FAULT` is the flight core's latched motors-off state after the IMU
   was lost with the motors running. The relay beacons its own `Announce`
   too, kind `RELAY` and mcu `ESP32C3`, on both of its links, so the board
-  and the LAN see it as one more node.
+  and the LAN see it as one more node; so does the phone (kind `PHONE`,
+  named after the device) from its Dart codec of this file.
 - The telemetry family, all unicast, one active stream per drone:
   `TelemetryListRequest` (ground to node, from a cursor) is answered by one
   `TelemetryDescriptors` page back to the requester; `TelemetryEnable`
