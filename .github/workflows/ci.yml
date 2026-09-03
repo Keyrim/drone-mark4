@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:72c155a55fdcc058990f854a684274fa26d6cf861e3470523bcf2bfdc72314d9
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:08b0c0d5733119d0cd64f2417686c6ad98e535c6ca69281c7249a94c6259e71d
       # The image runs as user "dev"; the runner's mounted workdirs belong to
       # another UID, so container jobs must run as root.
       options: --user root
