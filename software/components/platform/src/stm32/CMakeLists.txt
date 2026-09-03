@@ -1,3 +1,12 @@
+# The vendored CMSIS headers (software/third_party/cmsis): the STM32F405
+# register map and the Cortex-M4 core access functions. SYSTEM keeps the
+# project warning set away from vendor code.
+add_library(cmsis_f4 INTERFACE)
+target_include_directories(cmsis_f4 SYSTEM INTERFACE
+    ${CMAKE_SOURCE_DIR}/third_party/cmsis/device
+    ${CMAKE_SOURCE_DIR}/third_party/cmsis/core)
+target_compile_definitions(cmsis_f4 INTERFACE STM32F405xx)
+
 # Target variant: startup + vector table, board clock/timebase/LEDs, RTT
 # debug console, the I2C master the sensor drivers sit on, and the internal
 # flash driver the update system stores firmware slots in.
@@ -21,7 +30,7 @@ target_include_directories(platform_stm32 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/inc
 # transport is public too: the UART byte stream implements its interface.
 target_link_libraries(platform_stm32
     PUBLIC platform platform_common protocol transport log
-    PRIVATE drone_warnings drone_strict)
+    PRIVATE cmsis_f4 drone_warnings drone_strict)
 
 # The flash map of docs/ota-design.md section 4.2, mirrored in C++ by
 # platform_stm32/ota_slots.hpp: change the two together. The bootloader owns

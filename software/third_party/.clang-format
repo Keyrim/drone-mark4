@@ -1,0 +1,5 @@
+---
+# Vendored code is kept verbatim: never reformat anything under third_party.
+DisableFormat: true
+SortIncludes: Never
+...

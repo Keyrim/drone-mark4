@@ -2,39 +2,26 @@
 
 #include <cstdint>
 
-#include "registers.hpp"
+#include <stm32f405xx.h>
+
+#include "platform_stm32/board.hpp"
 
 namespace mark4
 {
     namespace
     {
-        constexpr std::uint32_t RCC_AHB1ENR_GPIOBEN = 1U << 1U;
-        constexpr std::uint32_t RCC_AHB1ENR_DMA2EN = 1U << 22U;
-        constexpr std::uint32_t RCC_APB2ENR_USART1EN = 1U << 4U;
-
         constexpr std::uint32_t TX_PIN = 6U; ///< PB6
         constexpr std::uint32_t RX_PIN = 7U; ///< PB7
         constexpr std::uint32_t GPIO_AF7 = 7U;
         constexpr std::uint32_t GPIO_MODER_AF = 2U;
 
-        constexpr std::uint32_t USART_CR1_UE = 1U << 13U;
-        constexpr std::uint32_t USART_CR1_TE = 1U << 3U;
-        constexpr std::uint32_t USART_CR1_RE = 1U << 2U;
-        constexpr std::uint32_t USART_CR1_TXEIE = 1U << 7U;
-        constexpr std::uint32_t USART_SR_TXE = 1U << 7U;
-        constexpr std::uint32_t USART_SR_ORE = 1U << 3U;
-        constexpr std::uint32_t USART_CR3_DMAR = 1U << 6U;
-
-        constexpr std::uint32_t DMA_SXCR_EN = 1U << 0U;
-        constexpr std::uint32_t DMA_SXCR_CIRC = 1U << 8U;
-        constexpr std::uint32_t DMA_SXCR_MINC = 1U << 10U;
-        constexpr std::uint32_t DMA_SXCR_CHSEL_4 = 4U << 25U;
+        /// USART1_RX lives on DMA2 stream 2, channel 4 (RM0090 table 43).
+        constexpr std::uint32_t DMA_SXCR_CHSEL_4 = 4U << DMA_SxCR_CHSEL_Pos;
 
         /// Every interrupt flag of DMA2 stream 2 in LIFCR (RM0090 10.5.2).
-        constexpr std::uint32_t DMA_LIFCR_STREAM2_ALL = 0x3DU << 16U;
-
-        constexpr std::uint32_t APB2_CLOCK_HZ = 84000000U;
-        constexpr std::uint32_t USART1_IRQ_NUMBER = 37U;
+        constexpr std::uint32_t DMA_LIFCR_STREAM2_ALL = DMA_LIFCR_CTCIF2 | DMA_LIFCR_CHTIF2 |
+                                                        DMA_LIFCR_CTEIF2 | DMA_LIFCR_CDMEIF2 |
+                                                        DMA_LIFCR_CFEIF2;
 
         /// Transmit ring capacity; must be a power of two. Holds about
         /// 45 ms of a saturated line, the drop policy of the senders covers
@@ -110,21 +97,21 @@ namespace mark4
         // started before DMAR so no request is ever unanswered. A stale
         // data byte is flushed first, or it would be the stream's first.
         RCC->AHB1ENR = RCC->AHB1ENR | RCC_AHB1ENR_DMA2EN;
-        DMA2_STREAM2->CR = 0U;
-        while ((DMA2_STREAM2->CR & DMA_SXCR_EN) != 0U)
+        DMA2_Stream2->CR = 0U;
+        while ((DMA2_Stream2->CR & DMA_SxCR_EN) != 0U)
         {
         }
         DMA2->LIFCR = DMA_LIFCR_STREAM2_ALL;
         static_cast<void>(USART1->SR);
         static_cast<void>(USART1->DR);
-        DMA2_STREAM2->PAR = reinterpret_cast<std::uint32_t>(&USART1->DR);
-        DMA2_STREAM2->M0AR = reinterpret_cast<std::uint32_t>(&g_rxRing[0]);
-        DMA2_STREAM2->NDTR = RX_RING_SIZE;
-        DMA2_STREAM2->CR = DMA_SXCR_CHSEL_4 | DMA_SXCR_MINC | DMA_SXCR_CIRC | DMA_SXCR_EN;
+        DMA2_Stream2->PAR = reinterpret_cast<std::uint32_t>(&USART1->DR);
+        DMA2_Stream2->M0AR = reinterpret_cast<std::uint32_t>(&g_rxRing[0]);
+        DMA2_Stream2->NDTR = RX_RING_SIZE;
+        DMA2_Stream2->CR = DMA_SXCR_CHSEL_4 | DMA_SxCR_MINC | DMA_SxCR_CIRC | DMA_SxCR_EN;
         USART1->CR3 = USART1->CR3 | USART_CR3_DMAR;
 
         // The interrupt only feeds the transmitter now.
-        NVIC_ISER[USART1_IRQ_NUMBER / 32U] = 1U << (USART1_IRQ_NUMBER % 32U);
+        NVIC_EnableIRQ(USART1_IRQn);
         g_initialized = true;
         return true;
     }
@@ -162,7 +149,7 @@ namespace mark4
             g_rxDrops = g_rxDrops + 1U;
         }
 
-        const std::uint32_t head = (RX_RING_SIZE - DMA2_STREAM2->NDTR) & RX_RING_MASK;
+        const std::uint32_t head = (RX_RING_SIZE - DMA2_Stream2->NDTR) & RX_RING_MASK;
         if (g_rxTail == head)
         {
             return false;
@@ -183,17 +170,17 @@ namespace mark4
 /// the circular DMA owns it.
 extern "C" void USART1_IRQHandler(void)
 {
-    const std::uint32_t sr = mark4::USART1->SR;
+    const std::uint32_t sr = USART1->SR;
 
-    if ((mark4::USART1->CR1 & mark4::USART_CR1_TXEIE) != 0U && (sr & mark4::USART_SR_TXE) != 0U)
+    if ((USART1->CR1 & USART_CR1_TXEIE) != 0U && (sr & USART_SR_TXE) != 0U)
     {
         if (mark4::g_txTail == mark4::g_txHead)
         {
-            mark4::USART1->CR1 = mark4::USART1->CR1 & ~mark4::USART_CR1_TXEIE;
+            USART1->CR1 = USART1->CR1 & ~USART_CR1_TXEIE;
         }
         else
         {
-            mark4::USART1->DR = mark4::g_txRing[mark4::g_txTail & mark4::TX_RING_MASK];
+            USART1->DR = mark4::g_txRing[mark4::g_txTail & mark4::TX_RING_MASK];
             mark4::g_txTail = mark4::g_txTail + 1U;
         }
     }
