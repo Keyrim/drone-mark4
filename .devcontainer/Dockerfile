@@ -38,6 +38,7 @@ ARG IDF_TARGETS=esp32c3
 # -----------------------------------------------------------------------------
 # Layer 1 - base tools, native compiler, build system, debug, Python
 #   - distro gcc for the desktop presets (no clang for compiling)
+#   - git is not here: it comes from the git-core PPA in layer 1b
 #   - Ubuntu 24.04 cmake 3.28 (>= 3.25 required) + Ninja
 #   - gdb-multiarch for cross debugging via JLinkGDBServer (both run in the
 #     container, see layer 4)
@@ -49,7 +50,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         unzip \
         xz-utils \
         gnupg \
-        git \
         pkg-config \
         sudo \
         build-essential \
@@ -60,6 +60,34 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-pip \
         python3-venv \
     && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------------------------------
+# Layer 1b - git from the git-core PPA (>= 2.48 for relative worktree paths)
+#   noble ships git 2.43, which predates `worktree.useRelativePaths` (git
+#   2.48). With it the links between a checkout under worktrees/ and the
+#   main clone are relative, so they resolve both at the container path
+#   (/workspaces/drone-mark4) and at the host's own clone path, which is
+#   different (see worktrees/README.md). Same keyring + sources.list.d
+#   pattern as the gh layer, no software-properties-common. The key is the
+#   4096-bit one Launchpad lists on
+#   https://launchpad.net/~git-core/+archive/ubuntu/ppa; the 1024-bit key
+#   of 2009 still co-signs the repository but apt on noble flags it as weak.
+#   The setting is written to the SYSTEM config (/etc/gitconfig) on purpose:
+#   VS Code copies the host ~/.gitconfig into the container only when no
+#   ~/.gitconfig exists yet, and a --global write would create one and
+#   silently suppress that copy, leaving the container without user.name /
+#   user.email. Here rather than in postCreateCommand: the image is the
+#   single source of truth for the environment.
+# -----------------------------------------------------------------------------
+ARG GIT_PPA_KEY=F911AB184317630C59970973E363C90F8F1B6217
+RUN curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${GIT_PPA_KEY}" \
+        | gpg --dearmor -o /usr/share/keyrings/git-core-ppa-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/git-core-ppa-keyring.gpg] https://ppa.launchpadcontent.net/git-core/ppa/ubuntu noble main" \
+        > /etc/apt/sources.list.d/git-core-ppa.list \
+    && apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/* \
+    && git config --system worktree.useRelativePaths true \
+    && git --version
 
 # The wire codecs are generated at build time from mark4.proto: nanopb's
 # generator needs the protobuf runtime and drives the protoc bundled in
