@@ -2,6 +2,7 @@
 
 [![ci](https://github.com/Keyrim/drone-mark4/actions/workflows/ci.yml/badge.svg)](https://github.com/Keyrim/drone-mark4/actions/workflows/ci.yml)
 [![devcontainer-image](https://github.com/Keyrim/drone-mark4/actions/workflows/devcontainer-image.yml/badge.svg)](https://github.com/Keyrim/drone-mark4/actions/workflows/devcontainer-image.yml)
+[![docs](https://github.com/Keyrim/drone-mark4/actions/workflows/docs.yml/badge.svg)](https://keyrim.github.io/drone-mark4/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A 5-inch racing drone is thrown by hand, motors off. The firmware detects the
@@ -13,6 +14,7 @@ tooling - as a deliberate learning project. Behavioral reference: ArduPilot's
 
 Documentation:
 
+- [API reference](https://keyrim.github.io/drone-mark4/) - Doxygen over the C++ of every node plus these pages, published from `main`
 - [docs/architecture.md](docs/architecture.md) - system architecture (diagrams)
 - [docs/plan-dev.md](docs/plan-dev.md) - development plan and reference document
 - [docs/contributing/cpp-guidelines.md](docs/contributing/cpp-guidelines.md) - C++ coding guidelines

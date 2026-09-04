@@ -15,6 +15,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 # Pinned versions (a single line to change for an upgrade)
 ARG ARM_TOOLCHAIN_VERSION=14.2.rel1
 ARG LLVM_VERSION=21
+ARG DOXYGEN_VERSION=1.18.0
 ARG JLINK_VERSION=V812
 ARG GODOT_VERSION=4.7.1-stable
 ARG NODE_VERSION=22.21.1
@@ -42,6 +43,8 @@ ARG IDF_TARGETS=esp32c3
 #   - Ubuntu 24.04 cmake 3.28 (>= 3.25 required) + Ninja
 #   - gdb-multiarch for cross debugging via JLinkGDBServer (both run in the
 #     container, see layer 4)
+#   - graphviz (dot) for the class and include graphs of the API reference;
+#     doxygen itself comes from the official tarball in layer 1c
 # -----------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -56,6 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gdb-multiarch \
         cmake \
         ninja-build \
+        graphviz \
         python3 \
         python3-pip \
         python3-venv \
@@ -94,6 +98,21 @@ RUN curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${GIT_PP
 # grpcio-tools (no system protoc). System-wide so the dev user and the root
 # user CI jobs run as share one install.
 RUN pip install --no-cache-dir --break-system-packages protobuf grpcio-tools
+
+# -----------------------------------------------------------------------------
+# Layer 1c - Doxygen (official Linux binary, pinned) for the API reference
+#   (Doxyfile at the root, published to GitHub Pages by docs.yml). Noble ships
+#   1.9.8; the release tarball is a static-ish build that only needs libz,
+#   libtinfo and libstdc++, all already in the image. Installed under /opt,
+#   exposed via a symlink.
+# -----------------------------------------------------------------------------
+RUN wget -qO /tmp/doxygen.tar.gz \
+        "https://github.com/doxygen/doxygen/releases/download/Release_$(echo "${DOXYGEN_VERSION}" | tr . _)/doxygen-${DOXYGEN_VERSION}.linux.bin.tar.gz" \
+    && mkdir -p /opt/doxygen \
+    && tar -xzf /tmp/doxygen.tar.gz --strip-components=1 -C /opt/doxygen \
+    && rm /tmp/doxygen.tar.gz \
+    && ln -s /opt/doxygen/bin/doxygen /usr/local/bin/doxygen \
+    && doxygen --version
 
 # -----------------------------------------------------------------------------
 # Layer 2 - clang-format / clang-tidy / clangd from apt.llvm.org (pinned)

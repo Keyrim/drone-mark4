@@ -446,6 +446,9 @@ by team decision, not ad hoc - they change the baseline a codebase must support.
   without updating it - a comment that says "compares color" on a method that compares state is
   worse than none.
 - Mark deferred work with `TODO(<username>)`; for placeholder values, say so explicitly.
+- The reference built from these comments is published at
+  https://keyrim.github.io/drone-mark4/ (`scripts/build_docs.sh` builds it locally, the count
+  of Doxygen warnings on its last line is the count of public entities still owed a comment).
 
 ## Sources
 
