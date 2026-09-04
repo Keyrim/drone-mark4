@@ -23,7 +23,7 @@ lib/
   back/          the managers and what they expose; no widget, no material import
     manager.dart AbsManager
     backend.dart the composition root
-    <area>/      one directory per manager: transport/, drone/, settings/, platform/
+    <area>/      one directory per manager: transport/, drone/, gamepad/, settings/, platform/
   pages/<page>/  one directory per page: <page>_page.dart, _bloc, _event, _state
   widgets/       widgets shared by several pages
   gen/           generated (gitignored): protobuf codec, wire hash, ffigen binding
@@ -99,7 +99,11 @@ test/            mirrors lib/ (back/, pages/), fakes in test/fakes/
   of the schema as CMake bakes into every C++ node), and the ffigen binding
   of `native/include/mark4/transport_shim.h`. Never write `dart:ffi`
   bindings by hand; a new native function is a line in the C header and a
-  rerun of the script.
+  rerun of the script. A stale `lib/gen/` is the first thing to suspect
+  when the app stops building after a schema change: the `mobile gen`
+  VS Code task reruns the script (after `flutter pub get`), and the
+  `mobile (flutter debug)` launch configuration of the workspace runs it
+  before every debug session.
 - The native side lists no source of the transport: `native/CMakeLists.txt`
   adds `software/components/transport` as it is, with `DRONE_PLATFORM`
   `android`.

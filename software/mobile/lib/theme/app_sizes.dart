@@ -31,4 +31,25 @@ abstract final class AppSizes {
 
   /// Height of the app bar.
   static double get appBar => 72.h;
+
+  /// Side of the square a stick moves in.
+  static double get stickPad => 150.w;
+
+  /// Diameter of the dot marking a stick position.
+  static double get stickDot => 22.w;
+
+  /// Height of a trigger gauge.
+  static double get gauge => 20.h;
+
+  /// Width of a stroke drawn around a pad or a gauge.
+  static double get stroke => 2.w;
+
+  /// Height of the phase band of the cockpit.
+  static double get phaseBand => 110.h;
+
+  /// Height of one motor bar.
+  static double get motorBar => 14.h;
+
+  /// Side of the horizon square.
+  static double get horizon => 120.w;
 }

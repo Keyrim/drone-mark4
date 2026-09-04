@@ -169,8 +169,63 @@ for the conventions). What the first iteration put in place:
   BLoC per page over those managers; `lib/widgets/` what pages share;
   `lib/theme/` every size and color, scaled by `flutter_screenutil` from a
   portrait design. The Android activity answers one method channel
-  (`mark4/platform`: the Wi-Fi multicast lock, the device name), wrapped in
-  `lib/back/platform/`.
+  (`mark4/platform`: the Wi-Fi multicast lock, the device name, the
+  haptics), wrapped in `lib/back/platform/` and `lib/back/gamepad/`.
+- **The gamepad, read at the activity** (2026-09-04). What PoC 2 found is
+  now the app's `GamepadBridge.kt`: `dispatchGenericMotionEvent` and
+  `dispatchKeyEvent` hand every gamepad-source event to the bridge and
+  consume it (BACK excepted), the batched history is drained oldest first,
+  `requestUnbufferedDispatch` is on for the gamepad sources from
+  `onResume`, and an `InputManager.InputDeviceListener` reports the
+  controllers coming and going. One `EventChannel` (`mark4/gamepad`)
+  carries two kinds of events towards Dart: a report packed as a
+  `Float64List` (device id, kernel timestamp in the uptime base, the two
+  sticks, the two triggers, the hat, a button mask; the layout is spelled
+  out once in the Kotlin constants and mirrored by `GamepadSample.fromPacked`)
+  and the device list as a list of maps. Triggers are read from both the
+  `BRAKE`/`GAS` and `LTRIGGER`/`RTRIGGER` axes (Xbox pads use the former),
+  a hat reported as axes is folded into the four D-pad bits. Haptics are
+  two methods of `mark4/platform`: `gamepadRumble` through the input
+  device's vibrator manager, `vibratePhone` filed as `USAGE_ALARM` so the
+  touch-feedback setting cannot silence it. On the Dart side
+  `GamepadManager` exposes every report raw on `samples` (for whoever
+  flies with them) and a throttled `state` (devices, last report, report
+  rate) for the screens; a trailing timer publishes the last report a
+  controller sent before going quiet, so released sticks show released.
+- **The transmitter** (2026-09-04): `PilotManager` (`lib/back/pilot/`)
+  turns the controller into the `Rc` stream of the connected drone, at
+  50 Hz from the moment the cockpit opens (`engage()`) to the moment it
+  closes (`disengage()`, the safe state twice, then silence). Every session
+  starts killed. The gestures: B kills at once and latches, B held 1 s
+  while killed clears it; A held 1 s arms, when the drone is IDLE with
+  valid sensors and a fresh Status, the throttle is at its rest (RT
+  released, or the left stick centred in altitude auto: the two interlocks
+  of the flight core) and the sticks are centred (the missing condition is
+  shown), A held again with the throttle at rest disarms; D-pad left /
+  right cycles the mode while disarmed (`manual`, `level`, `altitude
+  auto`), as does the segmented control on screen. X
+  and Y are contextual, bound by the connected drone's kind: a `drone_sim`
+  gets `reset scene` and `hand throw` (the `SimScenario` the web console
+  sends with its defaults, forwarded by the flight process to its plant),
+  shown as tappable chips on the cockpit; a board binds nothing to them
+  yet.
+  RT is the throttle in the direct-thrust modes (released = motors
+  stopped), the left stick's vertical axis is the throttle of altitude auto
+  (centre = hold); right stick roll and pitch (forward = nose down), left
+  stick yaw. A controller leaving kills at once, the app leaving the
+  foreground kills, and a drone that dropped out of the armed phases while
+  the phone still says armed (its fail-safe tripped, a cutoff) disarms the
+  phone too, so flying again is a gesture and never a stream resuming;
+  that watch waits 300 ms after arming and 2 s after a scene action, the
+  time a simulated core takes to restart and re-arm on the switch it still
+  sees.
+  `DroneManager` decodes the `Status` broadcasts of the connected drone
+  (`status`, throttled to 50 ms except on a phase change); the two links
+  the cockpit shows are the drone being heard and `Status.rc_link_ok`
+  fresh: the drone hears us; the controller's presence is in the app bar. Haptic cues (armed,
+  disarmed, killed, kill cleared, refused, mode, link lost every 2 s while
+  it lasts, link back) go to the controller, or the phone when it has no
+  rumble.
 - **Tests without a phone.** The managers run in `flutter test` over a fake
   transport node and a fake platform (`test/fakes/`): the test is the
   network, it puts nodes in the table and Envelopes in the queue and polls.
@@ -180,62 +235,46 @@ Screens: the home page lists the drones (kind `FIRMWARE` or `DRONE_SIM`,
 the same `isDrone` as the pages) with their name and id and counts the
 other nodes; tapping one opens its page, which connects and shows a banner
 (connected / disconnected / waiting) above what the drone announced and the
-link counters. Portrait, few things per screen, large: the phone is set
-down and the hands are on the controller.
+link counters; since the transmitter it is the **cockpit**: a full-width
+phase band in one word and one color (grey idle, orange armed, green
+flying, red for killed, cutoff, fault, a lost drone or no Status), the two
+links of the drone with their age (heard, hears us), the mode selector, the gesture line (a
+ring filling while A or B is held, the refusal reason, or the next thing
+to do), the throttle gauge, a small horizon from the estimated attitude
+next to the four motor bars, and the old details folded at the bottom.
+The controller is the app's, not a drone's: the gamepad icon of every app
+bar (`GamepadStatusBloc`, above the router like the theme) is green while
+one is present, red otherwise, and opens the gamepad page: the controller's name,
+the report count and rate, the two sticks drawn on their squares, the two
+triggers as gauges, every button as a chip lit while down, and two buttons
+to rumble the pad and buzz the phone. It is the page to open when a stick
+feels wrong, before blaming the drone. Portrait, few things per screen,
+large: the phone is set down and the hands are on the controller.
 
 ## Roadmap of software/mobile
 
 Done: the transport through ffigen with `NodeKind.PHONE`, the generated Dart
 codec and wire hash, the drone list and the drone page (the first two steps
-of the original roadmap, plus the foundations above). Next, each its own
-pull request:
+of the original roadmap, plus the foundations above), the gamepad input
+module (the Kotlin hooks of PoC 2, the event stream, the device list, the
+haptics, the gamepad page), and the transmitter with the cockpit (the
+`Rc` stream at 50 Hz, the gestures, the three links, the haptic cues; the
+wire and the flight core carry the sticks, the `MANUAL` rate mode, the
+`LEVEL` leveling mode and `Status.rc_link_ok`, the fail-safe is 200 ms).
+To fly against `drone_sim` and the Godot plant before any motor turns.
+Next, each its own pull request:
 
-1. **Gamepad input module**: the Kotlin hooks of PoC 2 (consume, unbuffered
-   dispatch on, history drained), one stream of stick / trigger / button
-   samples towards Dart, plus a device list.
-2. **Command path and cockpit**: the drone page becomes the cockpit. The
-   wire and the flight core are ready for it (`Rc` carries the three
-   sticks in the pilot's convention, the core has the `MANUAL` rate mode
-   and the `LEVEL` leveling mode, `Status.rc_link_ok` says whether the
-   drone hears its pilot, the fail-safe is 200 ms of silence). What the
-   phone adds, gamepad in hand and nothing to touch on the screen:
-   - `Rc` streamed at 50 Hz to the drone node id, sticks clamped and
-     otherwise raw (deadband and ranges are the core's, tunable).
-   - Layout (Xbox, mode 2): RT is the throttle in the direct-thrust modes
-     (released = 0 = motors stopped, which is why a spring-loaded stick is
-     not the throttle there); right stick roll and pitch; left stick X
-     yaw; left stick Y reserved for the vertical velocity of altitude
-     auto, where centre = hold has a physical meaning. B is the kill: one
-     press, instant, latched by the phone until B is held for 1 s. A held
-     for 1 s arms, only with RT at zero, sticks centred, drone connected,
-     phase IDLE, IMU and baro valid; the missing condition is shown. A
-     held again at zero throttle disarms. D-pad up/down selects the mode,
-     while disarmed only. Menu and View stay the phone's.
-   - Gamepad loss (`InputDeviceListener`, Bluetooth ACL disconnect), the
-     app going to the background or the page being left send the safe
-     state at once, then the stream stops.
-   - Screen: a full-width phase band (grey IDLE, orange ARMED, green
-     MANUAL / LEVEL, red FAULT and kill), three link indicators with
-     their age (gamepad to phone, phone to drone, drone hears the phone
-     from `rc_link_ok`), selected and locked mode side by side, the
-     throttle gauge, four motor bars, a small horizon.
-   - Haptics on the gamepad first, the phone (`USAGE_ALARM`) as fallback:
-     double pulse armed, long buzz kill, repeated triple pulses while a
-     link is lost, two short for a refused arm, one tick per mode change.
-   Flown against `drone_sim` and the Godot plant before any motor turns.
-   The transport `poll()` moves off the UI isolate before this step if
-   PoC 1's numbers say so.
-3. **Lifecycle**: foreground service while a drone is armed, sockets and
+1. **Lifecycle**: foreground service while a drone is armed, sockets and
    the multicast lock survive the screen turning off, link status on
    screen.
-4. **Latency budget in the repository**: the PoC 2 metrics as a debug
+2. **Latency budget in the repository**: the PoC 2 metrics as a debug
    screen of the real app, so every change to the input path is measured
    with the same numbers; the press -> buzz film test documented in
    `docs/bring-up.md` alongside the board procedures.
-5. **Poll off the UI isolate** when the measured cost of the 10 ms timer
+3. **Poll off the UI isolate** when the measured cost of the 10 ms timer
    says so: a native thread in the shim with a queue towards Dart, or a
    Dart isolate; the C ABI already accumulates and never calls back.
-6. Later, not planned: iOS (the transport compiles, the input path and
+4. Later, not planned: iOS (the transport compiles, the input path and
    the BLE HID rules differ), telemetry views (the pages already do it;
    a phone screen is a different design), a network page or filters on the
    home page listing every node and not only the drones, a stable node id

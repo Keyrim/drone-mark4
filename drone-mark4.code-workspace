@@ -29,6 +29,15 @@
         "version": "0.2.0",
         "configurations": [
             {
+                "name": "mobile (flutter debug)",
+                "type": "dart",
+                "request": "launch",
+                "cwd": "${workspaceFolder:software}/mobile",
+                "program": "lib/main.dart",
+                "flutterMode": "debug",
+                "preLaunchTask": "mobile gen"
+            },
+            {
                 "name": "drone_sim (gdb)",
                 "type": "cppdbg",
                 "request": "launch",

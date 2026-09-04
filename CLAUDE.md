@@ -101,7 +101,10 @@ cd tools/vscode-mark4 && pnpm install --frozen-lockfile && pnpm build && pnpm pa
 # docs/contributing/dart-guidelines.md the conventions). tool/gen.sh writes
 # lib/gen/ (gitignored): the Dart codec of mark4.proto, wire_hash.dart and the
 # ffigen binding of native/include/mark4/transport_shim.h; every analyze /
-# test / build needs it first. The phone is reached over Wi-Fi:
+# test / build needs it first (the "mobile gen" VS Code task runs it, and the
+# "mobile (flutter debug)" launch config runs it before debugging; a build
+# error right after a schema change is a stale lib/gen). The phone is
+# reached over Wi-Fi:
 # ./scripts/adb_wifi.sh discovers, pairs and connects it (wireless debugging
 # on, same Wi-Fi). Never run flutter on the host.
 cd software/mobile && flutter pub get && ./tool/gen.sh && flutter analyze && dart format --set-exit-if-changed lib test && flutter test
@@ -321,11 +324,15 @@ as it is (`native/CMakeLists.txt` adds the component with `DRONE_PLATFORM`
 `native/include/mark4/transport_shim.h`, bound by ffigen, never by hand.
 `lib/back/` is the managers (`Backend` boots them in declaration order like
 an App class; `TransportManager` owns the node and polls it, `DroneManager`
-follows the connected drone, `SettingsManager` the theme), each exposing
-its state as a `ValueStream` of an `Equatable` and its commands as methods
-returning a `Future`; `lib/pages/` is one BLoC per page; `lib/theme/` every
-size and color through `flutter_screenutil`. `docs/mobile-app.md` has the
-structure and the roadmap.
+follows the connected drone and decodes its `Status`, `GamepadManager` the
+controller read at the Android activity (`GamepadBridge.kt`, one event
+channel), `PilotManager` the transmitter (the `Rc` stream at 50 Hz, the
+kill and arm latches, the gestures, the haptic cues), `SettingsManager`
+the theme), each exposing its state as a `ValueStream` of an `Equatable`
+and its commands as methods returning a `Future`; `lib/pages/` is one BLoC
+per page (the drone page is the cockpit); `lib/theme/` every size and
+color through `flutter_screenutil`. `docs/mobile-app.md` has the structure
+and the roadmap.
 
 Each executable is flight-core plus one composition of platform services,
 assembled in an App class (see `software/drone_sim/drone_sim_app.hpp`): services
