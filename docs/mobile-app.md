@@ -198,9 +198,10 @@ for the conventions). What the first iteration put in place:
   closes (`disengage()`, the safe state twice, then silence). Every session
   starts killed. The gestures: B kills at once and latches, B held 1 s
   while killed clears it; A held 1 s arms, when the drone is IDLE with
-  valid sensors and a fresh Status, RT is released and the sticks are
-  centred (the missing condition is shown), A held again with RT released
-  disarms; D-pad up / down cycles the mode while disarmed (`manual`,
+  valid sensors and a fresh Status, the throttle is at its rest (RT
+  released, or the left stick centred in altitude auto: the two interlocks
+  of the flight core) and the sticks are centred (the missing condition is
+  shown), A held again with the throttle at rest disarms; D-pad up / down cycles the mode while disarmed (`manual`,
   `level`, `altitude auto`), as does the segmented control on screen.
   RT is the throttle in the direct-thrust modes (released = motors
   stopped), the left stick's vertical axis is the throttle of altitude auto

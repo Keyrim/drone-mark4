@@ -318,6 +318,9 @@ class _Gesture extends StatelessWidget {
     } else if (!pilot.armed) {
       hint = 'A held 1 s arms';
       color = colors.muted;
+    } else if (pilot.mode == RcMode.RC_ALTITUDE_AUTO) {
+      hint = 'armed: the left stick climbs and sinks, B kills';
+      color = colors.ok;
     } else {
       hint = 'armed: RT is the throttle, B kills';
       color = colors.ok;
@@ -358,6 +361,7 @@ class _Gesture extends StatelessWidget {
     ArmRefusal.imuInvalid => 'refused: IMU invalid',
     ArmRefusal.baroInvalid => 'refused: baro invalid',
     ArmRefusal.throttleNotZero => 'refused: release RT',
+    ArmRefusal.throttleNotCentred => 'refused: centre the left stick',
     ArmRefusal.sticksNotCentered => 'refused: centre the sticks',
   };
 }

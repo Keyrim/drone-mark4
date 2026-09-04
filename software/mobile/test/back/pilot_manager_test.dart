@@ -291,6 +291,42 @@ void main() {
     },
   );
 
+  test('altitude auto arms and disarms with the left stick centred', () async {
+    await cockpit.hold([GamepadButtons.bitB], 1100);
+    await cockpit.report(pad(down: [GamepadButtons.bitDpadUp]));
+    await cockpit.report(pad());
+    await cockpit.report(pad(down: [GamepadButtons.bitDpadUp]));
+    await cockpit.report(pad());
+    expect(cockpit.state.mode, RcMode.RC_ALTITUDE_AUTO);
+
+    // At rest the left stick is mid throttle: that is the interlock here,
+    // RT plays no part.
+    await cockpit.status();
+    await cockpit.hold([GamepadButtons.bitA], 1100, rt: 0.8);
+    expect(cockpit.state.armed, isTrue);
+    expect(cockpit.sentRc.last.throttle, closeTo(0.5, 1e-6));
+    await cockpit.status(phase: FlightPhase.PHASE_ARMED);
+
+    // Pushed stick: no disarm.
+    await cockpit.report(pad(leftY: -0.5, down: [GamepadButtons.bitA]));
+    await cockpit.wait(1100);
+    await cockpit.report(pad(leftY: -0.5));
+    expect(cockpit.state.armed, isTrue);
+    expect(cockpit.state.refusal, ArmRefusal.throttleNotCentred);
+
+    // Centred: disarmed.
+    await cockpit.hold([GamepadButtons.bitA], 1100);
+    expect(cockpit.state.armed, isFalse);
+
+    // And a pushed stick refuses to arm, naming the stick and not RT.
+    await cockpit.status();
+    await cockpit.report(pad(leftY: 0.4, down: [GamepadButtons.bitA]));
+    await cockpit.wait(1100);
+    await cockpit.report(pad(leftY: 0.4));
+    expect(cockpit.state.armed, isFalse);
+    expect(cockpit.state.refusal, ArmRefusal.throttleNotCentred);
+  });
+
   test('disarming wants RT released', () async {
     await cockpit.clearKillAndArm();
     expect(cockpit.state.armed, isTrue);

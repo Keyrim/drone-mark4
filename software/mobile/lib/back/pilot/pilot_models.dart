@@ -18,8 +18,12 @@ enum ArmRefusal {
   imuInvalid,
   baroInvalid,
 
-  /// RT must be fully released to arm or to disarm.
+  /// RT must be fully released to arm or to disarm (direct-thrust modes).
   throttleNotZero,
+
+  /// The left stick must sit at its centre to arm or to disarm (altitude
+  /// auto, where the centre means hold and anything else is a takeoff).
+  throttleNotCentred,
   sticksNotCentered,
 }
 

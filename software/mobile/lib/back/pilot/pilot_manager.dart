@@ -20,8 +20,10 @@ final Logger _log = Logger('back/pilot');
 /// - B kills at once, one press, and the kill stays latched; holding B for
 ///   [holdDuration] while killed clears it. Every session starts killed.
 /// - A held for [holdDuration] arms, if the drone is IDLE with valid
-///   sensors, RT is released and the sticks are centred; held again with RT
-///   released it disarms. A refused gesture says why.
+///   sensors, the throttle is at its rest (RT released, or the left stick
+///   centred in altitude auto, the two interlocks of the flight core) and
+///   the sticks are centred; held again with the throttle at rest it
+///   disarms. A refused gesture says why.
 /// - D-pad up / down cycles the mode, while disarmed only.
 /// - RT is the throttle in the direct-thrust modes (released = motors
 ///   stopped); the left stick's vertical axis is the throttle of altitude
@@ -48,6 +50,10 @@ class PilotManager extends AbsManager {
 
   /// RT under this counts as released.
   static const double throttleZero = 0.02;
+
+  /// Half-width of the band around mid throttle read as centred in altitude
+  /// auto: the flight core's own centre deadband.
+  static const double throttleCentreBand = 0.05;
 
   /// A stick within this of the centre counts as centred.
   static const double stickCentre = 0.15;
@@ -349,9 +355,10 @@ class PilotManager extends AbsManager {
   }
 
   void _disarmGesture() {
-    if (_pending.sticks.throttle > throttleZero) {
-      _pending = _pending.copyWith(refusal: ArmRefusal.throttleNotZero);
-      _log.info('disarm refused: throttle not zero');
+    final refusal = _throttleRefusal();
+    if (refusal != ArmRefusal.none) {
+      _pending = _pending.copyWith(refusal: refusal);
+      _log.info('disarm refused: ${refusal.name}');
       _cue(HapticCue.refused);
       return;
     }
@@ -385,16 +392,31 @@ class PilotManager extends AbsManager {
     if (!status.baroValid) {
       return ArmRefusal.baroInvalid;
     }
-    final sticks = _pending.sticks;
-    if (sticks.throttle > throttleZero) {
-      return ArmRefusal.throttleNotZero;
+    final throttle = _throttleRefusal();
+    if (throttle != ArmRefusal.none) {
+      return throttle;
     }
+    final sticks = _pending.sticks;
     if (sticks.roll.abs() > stickCentre ||
         sticks.pitch.abs() > stickCentre ||
         sticks.yaw.abs() > stickCentre) {
       return ArmRefusal.sticksNotCentered;
     }
     return ArmRefusal.none;
+  }
+
+  /// The throttle at rest, as the mode defines it: released in the
+  /// direct-thrust modes, centred in altitude auto.
+  ArmRefusal _throttleRefusal() {
+    final throttle = _pending.sticks.throttle;
+    if (_pending.mode == RcMode.RC_ALTITUDE_AUTO) {
+      return (throttle - 0.5).abs() > throttleCentreBand
+          ? ArmRefusal.throttleNotCentred
+          : ArmRefusal.none;
+    }
+    return throttle > throttleZero
+        ? ArmRefusal.throttleNotZero
+        : ArmRefusal.none;
   }
 
   void _kill(String why) {
