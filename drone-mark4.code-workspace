@@ -11,7 +11,19 @@
         "cmake.automaticReconfigure": true,
         // clangd finds the database by walking up from the source files,
         // so the copy lands at the software folder root.
-        "cmake.copyCompileCommands": "${workspaceFolder}/compile_commands.json"
+        "cmake.copyCompileCommands": "${workspaceFolder}/compile_commands.json",
+        // Git worktrees (worktrees/README.md): each one is a full copy of the
+        // repository meant to be worked on in its own window, so the file
+        // watcher, search and the Dart analyzer of this window skip them.
+        "files.watcherExclude": {
+            "**/worktrees/**": true
+        },
+        "search.exclude": {
+            "**/worktrees/**": true
+        },
+        "dart.analysisExcludedFolders": [
+            "worktrees"
+        ]
     },
     "launch": {
         "version": "0.2.0",

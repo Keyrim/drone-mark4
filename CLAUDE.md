@@ -124,6 +124,16 @@ clang-format and clang-tidy are pinned to LLVM 21 (devcontainer). Fix
 formatting with `clang-format -i`. `software/tests/.clang-tidy` inherits the root
 config and only relaxes magic numbers.
 
+## Git worktrees
+
+**Read `worktrees/README.md` in full before creating or removing a
+worktree.** Worktrees belong in `worktrees/<name>`, created from inside the
+container. A fresh one has the tracked files only: no generated codecs, no
+pnpm or Flutter dependencies, so its build and analyzer output mean nothing
+until the bring-up for the area being touched has run (the C++ build alone
+needs nothing beyond `cmake --preset desktop`; the test suite also wants the
+Godot project imported once). That page has the commands and the reasons.
+
 ## Architecture
 
 Everything C++ lives under `software/`: the executables at its top level

@@ -37,3 +37,13 @@ sim-godot/scripts/gen/
 software/hub/pages/src/gen/
 # Godot user data written next to the project by a headless run
 sim-godot/godot/
+
+# Git worktrees: home for `git worktree add worktrees/<name>` checkouts, so
+# they live inside the clone (bind-mounted into the container) without ever
+# showing up as untracked content. The README explains the workflow and stays
+# tracked, which also keeps the directory present after a fresh clone.
+/worktrees/*
+!/worktrees/README.md
+# Claude Code's built-in worktree feature puts its checkouts here instead;
+# ignored so a stray one does no harm. worktrees/README.md has the convention.
+.claude/worktrees/
