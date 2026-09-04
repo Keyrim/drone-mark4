@@ -42,6 +42,8 @@ ARG IDF_TARGETS=esp32c3
 #   - Ubuntu 24.04 cmake 3.28 (>= 3.25 required) + Ninja
 #   - gdb-multiarch for cross debugging via JLinkGDBServer (both run in the
 #     container, see layer 4)
+#   - doxygen + graphviz (dot) for the API reference (Doxyfile at the root,
+#     published to GitHub Pages by docs.yml)
 # -----------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -56,6 +58,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gdb-multiarch \
         cmake \
         ninja-build \
+        doxygen \
+        graphviz \
         python3 \
         python3-pip \
         python3-venv \
