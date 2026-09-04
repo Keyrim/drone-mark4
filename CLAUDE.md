@@ -101,7 +101,10 @@ cd tools/vscode-mark4 && pnpm install --frozen-lockfile && pnpm build && pnpm pa
 # docs/contributing/dart-guidelines.md the conventions). tool/gen.sh writes
 # lib/gen/ (gitignored): the Dart codec of mark4.proto, wire_hash.dart and the
 # ffigen binding of native/include/mark4/transport_shim.h; every analyze /
-# test / build needs it first. The phone is reached over Wi-Fi:
+# test / build needs it first (the "mobile gen" VS Code task runs it, and the
+# "mobile (flutter debug)" launch config runs it before debugging; a build
+# error right after a schema change is a stale lib/gen). The phone is
+# reached over Wi-Fi:
 # ./scripts/adb_wifi.sh discovers, pairs and connects it (wireless debugging
 # on, same Wi-Fi). Never run flutter on the host.
 cd software/mobile && flutter pub get && ./tool/gen.sh && flutter analyze && dart format --set-exit-if-changed lib test && flutter test

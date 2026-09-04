@@ -84,6 +84,21 @@
             }
         },
         {
+            "label": "mobile gen",
+            "detail": "Regenerate software/mobile/lib/gen (Dart codec of mark4.proto, wire hash, ffigen binding) after a pub get. Every analyze, test, build and debug of the app needs it; the mobile launch config runs it first.",
+            "type": "shell",
+            "command": "flutter pub get && ./tool/gen.sh",
+            "options": {
+                "cwd": "${workspaceFolder}/software/mobile"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "group": "build"
+        },
+        {
             "label": "build drone_sim",
             "type": "shell",
             "command": "python3",
