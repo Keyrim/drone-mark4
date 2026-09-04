@@ -48,6 +48,7 @@ class PilotManager extends AbsManager {
     this.holdDuration = const Duration(seconds: 1),
     this.statusStaleAfter = const Duration(milliseconds: 500),
     this.armSettle = const Duration(milliseconds: 300),
+    this.scenarioSettle = const Duration(seconds: 2),
     this.linkAlarmPeriod = const Duration(seconds: 2),
     this.statePeriod = const Duration(milliseconds: 50),
   }) : _clockUs = clockUs ?? _stopwatchClock();
@@ -94,6 +95,11 @@ class PilotManager extends AbsManager {
   /// Grace after arming before a drone still IDLE means it refused.
   final Duration armSettle;
 
+  /// Grace after a scene action: the plant teleports, the flight process
+  /// restarts its core, and the drone re-arms on the arm switch it still
+  /// sees once its baro reference is captured again.
+  final Duration scenarioSettle;
+
   /// Cadence of the repeated alarm while a link is lost.
   final Duration linkAlarmPeriod;
 
@@ -111,7 +117,9 @@ class PilotManager extends AbsManager {
   int? _armHoldSinceUs;
   bool _armHoldDone = false;
   int? _killHoldSinceUs;
-  int _armedAtUs = 0;
+
+  /// Instant from which a drone out of the armed phases disarms the phone.
+  int _watchDroneFromUs = 0;
   int _lastLinkAlarmUs = 0;
   bool _linksWereOk = true;
   int _scenarioSequence = 0;
@@ -238,6 +246,9 @@ class PilotManager extends AbsManager {
           ..swingSeconds = handThrowSwingS;
     }
     _log.info('scenario ${scenario.kind.name} #$_scenarioSequence');
+    if (_pending.armed) {
+      _watchDroneFromUs = _clockUs() + scenarioSettle.inMicroseconds;
+    }
     _cue(HapticCue.action);
     await _transport.send(
       connection.nodeId,
@@ -407,7 +418,7 @@ class PilotManager extends AbsManager {
       _cue(HapticCue.refused);
       return;
     }
-    _armedAtUs = nowUs;
+    _watchDroneFromUs = nowUs + armSettle.inMicroseconds;
     _pending = _pending.copyWith(armed: true, refusal: ArmRefusal.none);
     _log.info('armed, mode ${pilotModeName(_pending.mode)}');
     _cue(HapticCue.armed);
@@ -513,8 +524,10 @@ class PilotManager extends AbsManager {
   /// A drone that left the armed phases while the phone still says armed
   /// (its fail-safe tripped, a cutoff, a fault) disarms the phone too, so
   /// flying again is a deliberate gesture and never a stream resuming.
+  /// Not before the drone had time to follow: a fresh arm, or a scene
+  /// action that restarted a simulated core.
   void _watchDrone(int nowUs) {
-    if (!_pending.armed || nowUs - _armedAtUs < armSettle.inMicroseconds) {
+    if (!_pending.armed || nowUs < _watchDroneFromUs) {
       return;
     }
     final status = _drones.status.value;

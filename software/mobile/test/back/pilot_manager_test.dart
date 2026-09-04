@@ -381,6 +381,31 @@ void main() {
     },
   );
 
+  test('a scene action gives a restarting core time to re-arm', () async {
+    await cockpit.clearKillAndArm();
+    await cockpit.status(phase: FlightPhase.PHASE_ARMED);
+    await cockpit.wait(400);
+    expect(cockpit.state.armed, isTrue);
+
+    // The hand throw resets the plant: the core restarts and reports IDLE
+    // for a while before it re-arms on the switch it still sees.
+    await cockpit.report(pad(down: [GamepadButtons.bitY]));
+    await cockpit.report(pad());
+    await cockpit.status();
+    await cockpit.wait(1500);
+    expect(cockpit.state.armed, isTrue, reason: 'grace after the scenario');
+    await cockpit.status(phase: FlightPhase.PHASE_ARMED);
+    await cockpit.wait(1000);
+    expect(cockpit.state.armed, isTrue);
+
+    // A core that never re-arms does disarm the phone once the grace is over.
+    await cockpit.report(pad(down: [GamepadButtons.bitX]));
+    await cockpit.report(pad());
+    await cockpit.status();
+    await cockpit.wait(2500);
+    expect(cockpit.state.armed, isFalse);
+  });
+
   test('disarming wants RT released', () async {
     await cockpit.clearKillAndArm();
     expect(cockpit.state.armed, isTrue);

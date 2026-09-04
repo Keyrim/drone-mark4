@@ -215,7 +215,10 @@ for the conventions). What the first iteration put in place:
   stick yaw. A controller leaving kills at once, the app leaving the
   foreground kills, and a drone that dropped out of the armed phases while
   the phone still says armed (its fail-safe tripped, a cutoff) disarms the
-  phone too, so flying again is a gesture and never a stream resuming.
+  phone too, so flying again is a gesture and never a stream resuming;
+  that watch waits 300 ms after arming and 2 s after a scene action, the
+  time a simulated core takes to restart and re-arm on the switch it still
+  sees.
   `DroneManager` decodes the `Status` broadcasts of the connected drone
   (`status`, throttled to 50 ms except on a phase change); the three links
   the cockpit shows are the controller's presence, the drone being heard,
