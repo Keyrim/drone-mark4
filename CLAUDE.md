@@ -293,11 +293,15 @@ as it is (`native/CMakeLists.txt` adds the component with `DRONE_PLATFORM`
 `native/include/mark4/transport_shim.h`, bound by ffigen, never by hand.
 `lib/back/` is the managers (`Backend` boots them in declaration order like
 an App class; `TransportManager` owns the node and polls it, `DroneManager`
-follows the connected drone, `SettingsManager` the theme), each exposing
-its state as a `ValueStream` of an `Equatable` and its commands as methods
-returning a `Future`; `lib/pages/` is one BLoC per page; `lib/theme/` every
-size and color through `flutter_screenutil`. `docs/mobile-app.md` has the
-structure and the roadmap.
+follows the connected drone and decodes its `Status`, `GamepadManager` the
+controller read at the Android activity (`GamepadBridge.kt`, one event
+channel), `PilotManager` the transmitter (the `Rc` stream at 50 Hz, the
+kill and arm latches, the gestures, the haptic cues), `SettingsManager`
+the theme), each exposing its state as a `ValueStream` of an `Equatable`
+and its commands as methods returning a `Future`; `lib/pages/` is one BLoC
+per page (the drone page is the cockpit); `lib/theme/` every size and
+color through `flutter_screenutil`. `docs/mobile-app.md` has the structure
+and the roadmap.
 
 Each executable is flight-core plus one composition of platform services,
 assembled in an App class (see `software/drone_sim/drone_sim_app.hpp`): services

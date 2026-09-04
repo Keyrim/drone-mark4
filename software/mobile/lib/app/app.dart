@@ -43,6 +43,7 @@ class _Mark4AppState extends State<Mark4App> {
             RepositoryProvider.value(value: widget.backend.transport),
             RepositoryProvider.value(value: widget.backend.drones),
             RepositoryProvider.value(value: widget.backend.gamepad),
+            RepositoryProvider.value(value: widget.backend.pilot),
           ],
           child: BlocProvider(
             create: (_) =>

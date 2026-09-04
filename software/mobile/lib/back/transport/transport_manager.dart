@@ -78,6 +78,10 @@ class TransportManager extends AbsManager {
   /// Envelopes that were not one; a bench running another schema shows here.
   int get decodeErrors => _decodeErrors;
 
+  /// The transport's clock now [us]: the base of every instant in the
+  /// snapshots, for whoever stamps something against them.
+  int nowUs() => _clockUs();
+
   @override
   Future<bool> init() async {
     if (!await _platform.acquireMulticastLock()) {

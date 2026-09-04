@@ -4,6 +4,7 @@ import 'package:mark4/back/gamepad/abs_gamepad_source.dart';
 import 'package:mark4/back/gamepad/android_gamepad_source.dart';
 import 'package:mark4/back/gamepad/gamepad_manager.dart';
 import 'package:mark4/back/manager.dart';
+import 'package:mark4/back/pilot/pilot_manager.dart';
 import 'package:mark4/back/platform/abs_platform.dart';
 import 'package:mark4/back/platform/android_platform.dart';
 import 'package:mark4/back/settings/settings_manager.dart';
@@ -23,7 +24,8 @@ class Backend {
     this.transport,
     this.drones,
     this.gamepad,
-  ) : _managers = [settings, transport, drones, gamepad];
+    this.pilot,
+  ) : _managers = [settings, transport, drones, gamepad, pilot];
 
   /// The real composition, or one over fakes when the arguments are given.
   factory Backend({
@@ -34,6 +36,9 @@ class Backend {
     Duration? pollPeriod = const Duration(milliseconds: 10),
     AbsGamepadSource? gamepadSource,
     Duration gamepadStatePeriod = const Duration(milliseconds: 50),
+    Duration statusPeriod = const Duration(milliseconds: 50),
+    Duration? pilotPeriod = const Duration(milliseconds: 20),
+    Duration pilotStatePeriod = const Duration(milliseconds: 50),
   }) {
     final resolvedPlatform = platform ?? AndroidPlatform();
     final settings = SettingsManager();
@@ -44,12 +49,27 @@ class Backend {
       clockUs: clockUs,
       pollPeriod: pollPeriod,
     );
-    final drones = DroneManager(transport);
+    final drones = DroneManager(transport, statusPeriod: statusPeriod);
     final gamepad = GamepadManager(
       gamepadSource ?? AndroidGamepadSource(),
       statePeriod: gamepadStatePeriod,
     );
-    return Backend._(resolvedPlatform, settings, transport, drones, gamepad);
+    final pilot = PilotManager(
+      gamepad: gamepad,
+      drones: drones,
+      transport: transport,
+      clockUs: clockUs,
+      period: pilotPeriod,
+      statePeriod: pilotStatePeriod,
+    );
+    return Backend._(
+      resolvedPlatform,
+      settings,
+      transport,
+      drones,
+      gamepad,
+      pilot,
+    );
   }
 
   final AbsPlatform platform;
@@ -57,6 +77,7 @@ class Backend {
   final TransportManager transport;
   final DroneManager drones;
   final GamepadManager gamepad;
+  final PilotManager pilot;
   final List<AbsManager> _managers;
 
   /// Which manager failed, null after a successful init().

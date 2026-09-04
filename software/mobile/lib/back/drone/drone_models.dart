@@ -1,6 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:equatable/equatable.dart';
 import 'package:mark4/back/transport/transport_snapshot.dart';
-import 'package:mark4/gen/mark4.pbenum.dart';
+import 'package:mark4/gen/mark4.pb.dart';
 
 /// One drone on the network, what the home list shows.
 class DroneSummary extends Equatable {
@@ -114,4 +116,94 @@ class DroneConnection extends Equatable {
 
   @override
   List<Object?> get props => [status, nodeId, info];
+}
+
+/// The last Status report of the connected drone: what it is doing, as the
+/// flight core published it, decimated to 50 Hz and always on.
+class DroneStatus extends Equatable {
+  const DroneStatus({
+    required this.receivedAtUs,
+    required this.timestampUs,
+    required this.phase,
+    required this.attitude,
+    required this.motors,
+    required this.imuValid,
+    required this.baroValid,
+    required this.rcLinkOk,
+    required this.throwCount,
+  });
+
+  /// From the wire, stamped with the phone clock it arrived at.
+  factory DroneStatus.fromWire(Status status, int receivedAtUs) => DroneStatus(
+    receivedAtUs: receivedAtUs,
+    timestampUs: status.timestampUs.toInt(),
+    phase: status.flightPhase,
+    attitude: status.attitudeQuat.length == 4
+        ? List.unmodifiable(status.attitudeQuat)
+        : const [1, 0, 0, 0],
+    motors: status.motor.length == 4
+        ? List.unmodifiable(status.motor)
+        : const [0, 0, 0, 0],
+    imuValid: status.imuValid,
+    baroValid: status.baroValid,
+    rcLinkOk: status.rcLinkOk,
+    throwCount: status.throwCount,
+  );
+
+  /// Phone clock at reception [us], the transport's clock.
+  final int receivedAtUs;
+
+  /// The drone's acquisition time [us].
+  final int timestampUs;
+  final FlightPhase phase;
+
+  /// Estimated attitude, w x y z.
+  final List<double> attitude;
+
+  /// Normalized motor commands [0, 1].
+  final List<double> motors;
+  final bool imuValid;
+  final bool baroValid;
+
+  /// The drone heard a pilot recently: its RC fail-safe is not active.
+  final bool rcLinkOk;
+  final int throwCount;
+
+  /// The motors may run in this phase.
+  bool get armed =>
+      phase != FlightPhase.PHASE_IDLE &&
+      phase != FlightPhase.PHASE_CUTOFF &&
+      phase != FlightPhase.PHASE_FAULT;
+
+  /// Roll angle of the estimated attitude, positive right [rad].
+  double get rollRad {
+    final w = attitude[0];
+    final x = attitude[1];
+    final y = attitude[2];
+    final z = attitude[3];
+    return math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y));
+  }
+
+  /// Pitch angle of the estimated attitude, positive nose down [rad].
+  double get pitchRad {
+    final w = attitude[0];
+    final x = attitude[1];
+    final y = attitude[2];
+    final z = attitude[3];
+    final sinP = (2 * (w * y - z * x)).clamp(-1.0, 1.0);
+    return math.asin(sinP);
+  }
+
+  @override
+  List<Object?> get props => [
+    receivedAtUs,
+    timestampUs,
+    phase,
+    attitude,
+    motors,
+    imuValid,
+    baroValid,
+    rcLinkOk,
+    throwCount,
+  ];
 }

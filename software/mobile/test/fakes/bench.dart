@@ -14,10 +14,13 @@ const int phoneNodeId = 0x0A0B0C0D;
 /// polls the transport itself. The gamepad state is published at once by
 /// default; a test of the throttle passes its own [gamepadStatePeriod].
 class Bench {
-  Bench({FakePlatform? platform, Duration gamepadStatePeriod = Duration.zero})
-    : platform = platform ?? FakePlatform(),
-      node = FakeTransportNode(phoneNodeId),
-      gamepad = FakeGamepadSource() {
+  Bench({
+    FakePlatform? platform,
+    Duration gamepadStatePeriod = Duration.zero,
+    Duration pilotStatePeriod = Duration.zero,
+  }) : platform = platform ?? FakePlatform(),
+       node = FakeTransportNode(phoneNodeId),
+       gamepad = FakeGamepadSource() {
     SharedPreferences.setMockInitialValues({});
     backend = Backend(
       platform: this.platform,
@@ -27,6 +30,9 @@ class Bench {
       pollPeriod: null,
       gamepadSource: gamepad,
       gamepadStatePeriod: gamepadStatePeriod,
+      statusPeriod: Duration.zero,
+      pilotPeriod: null,
+      pilotStatePeriod: pilotStatePeriod,
     );
   }
 

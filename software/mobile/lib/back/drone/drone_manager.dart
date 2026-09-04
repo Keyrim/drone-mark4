@@ -11,21 +11,33 @@ import 'package:rxdart/rxdart.dart';
 
 final Logger _log = Logger('back/drone');
 
-/// The drones of the network and the one the user connected to. Reads the
-/// transport's node table; the services that fly a drone (commands, flight
-/// modes, telemetry) will hang off this manager and address [connection].
+/// The drones of the network, the one the user connected to, and what that
+/// one reports. Reads the transport's node table and the Status broadcasts
+/// of the connected drone; the pilot service addresses [connection].
 class DroneManager extends AbsManager {
-  DroneManager(this._transport);
+  DroneManager(
+    this._transport, {
+    this.statusPeriod = const Duration(milliseconds: 50),
+  });
 
   final TransportManager _transport;
+
+  /// Least time between two [status] values with the same phase: Status
+  /// lands at 50 Hz, a screen reads it slower; a phase change goes out at
+  /// once.
+  final Duration statusPeriod;
+
   final BehaviorSubject<DroneRoster> _roster = BehaviorSubject.seeded(
     DroneRoster.empty,
   );
   final BehaviorSubject<DroneConnection> _connection = BehaviorSubject.seeded(
     DroneConnection.none,
   );
+  final BehaviorSubject<DroneStatus?> _status = BehaviorSubject.seeded(null);
   StreamSubscription<TransportSnapshot>? _subscription;
+  StreamSubscription<InboundEnvelope>? _envelopes;
   int _targetId = broadcastNode;
+  int _lastStatusUs = 0;
 
   /// Every drone heard, from the nodes that announced a drone kind.
   ValueStream<DroneRoster> get roster => _roster.stream;
@@ -33,16 +45,25 @@ class DroneManager extends AbsManager {
   /// The connected drone, [DroneConnection.none] when there is none.
   ValueStream<DroneConnection> get connection => _connection.stream;
 
+  /// The last Status of the connected drone, null until one arrived or
+  /// after a disconnect. Kept while the drone is lost: it is what was last
+  /// known.
+  ValueStream<DroneStatus?> get status => _status.stream;
+
   @override
   Future<bool> init() async {
     _subscription = _transport.snapshots.listen(_onSnapshot);
+    _envelopes = _transport.envelopes.listen(_onEnvelope);
     return true;
   }
 
   @override
   Future<void> dispose() async {
+    await _envelopes?.cancel();
+    _envelopes = null;
     await _subscription?.cancel();
     _subscription = null;
+    await _status.close();
     await _connection.close();
     await _roster.close();
   }
@@ -52,6 +73,9 @@ class DroneManager extends AbsManager {
   Future<void> connect(int nodeId) async {
     _log.info('connect to ${formatNodeId(nodeId)}');
     _targetId = nodeId;
+    if (_status.value != null) {
+      _status.add(null);
+    }
     _emit(DroneConnection(status: DroneLinkStatus.lost, nodeId: nodeId));
     _onSnapshot(_transport.snapshots.value);
   }
@@ -63,7 +87,28 @@ class DroneManager extends AbsManager {
     }
     _log.info('disconnect from ${formatNodeId(_targetId)}');
     _targetId = broadcastNode;
+    if (_status.value != null) {
+      _status.add(null);
+    }
     _emit(DroneConnection.none);
+  }
+
+  void _onEnvelope(InboundEnvelope inbound) {
+    if (inbound.src != _targetId || !inbound.envelope.hasStatus()) {
+      return;
+    }
+    final nowUs = _transport.nowUs();
+    final status = DroneStatus.fromWire(inbound.envelope.status, nowUs);
+    final previous = _status.value;
+    final phaseChanged = previous == null || previous.phase != status.phase;
+    if (phaseChanged) {
+      _log.info('drone ${formatNodeId(_targetId)}: phase ${status.phase.name}');
+    }
+    if (!phaseChanged && nowUs - _lastStatusUs < statusPeriod.inMicroseconds) {
+      return;
+    }
+    _lastStatusUs = nowUs;
+    _status.add(status);
   }
 
   void _onSnapshot(TransportSnapshot snapshot) {

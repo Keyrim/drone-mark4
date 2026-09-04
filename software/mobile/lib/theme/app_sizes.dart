@@ -43,4 +43,16 @@ abstract final class AppSizes {
 
   /// Width of a stroke drawn around a pad or a gauge.
   static double get stroke => 2.w;
+
+  /// Height of the phase band of the cockpit.
+  static double get phaseBand => 110.h;
+
+  /// Height of one motor bar.
+  static double get motorBar => 14.h;
+
+  /// Side of the horizon square.
+  static double get horizon => 120.w;
+
+  /// Diameter of a link indicator dot.
+  static double get linkDot => 16.w;
 }
