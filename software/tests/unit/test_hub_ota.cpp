@@ -28,6 +28,7 @@
 #include "hub/gateway_codec.hpp"
 #include "hub/ota_bundle.hpp"
 #include "hub/ota_client.hpp"
+#include "ota/crc32_mpeg2.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
 
@@ -145,7 +146,7 @@ namespace
         header.mcuId = mcuId;
         header.slotId = slot;
         header.imageSize = static_cast<std::uint32_t>(image.size());
-        header.imageCrc = otaImageCrc32(image.data() + OTA_IMAGE_HEADER_SIZE, TEST_PAYLOAD);
+        header.imageCrc = crc32Mpeg2(image.data() + OTA_IMAGE_HEADER_SIZE, TEST_PAYLOAD);
         header.buildEpoch = buildEpoch;
         const auto field = hashField(gitHash);
         std::memcpy(&header.gitHash, field.data(), field.size());
@@ -195,7 +196,7 @@ namespace
         for (std::uint8_t slot = 0U; slot < OTA_SLOT_COUNT; ++slot)
         {
             built.images[slot] = makeImage(slot, mcuId, buildEpoch, gitHash);
-            built.crc[slot] = otaImageCrc32(built.images[slot].data(), built.images[slot].size());
+            built.crc[slot] = crc32Mpeg2(built.images[slot].data(), built.images[slot].size());
             if (slot == breakCrcOfSlot)
             {
                 built.crc[slot] ^= 1U;
@@ -494,8 +495,88 @@ TEST_CASE("a bundle round trips through the reader")
 
     const OtaBundleImage *slotB = findOtaBundleImage(bundle, OTA_SLOT_B);
     REQUIRE(slotB != nullptr);
-    CHECK(slotB->crc32 == otaImageCrc32(slotB->bytes.data(), slotB->bytes.size()));
+    CHECK(slotB->crc32 == crc32Mpeg2(slotB->bytes.data(), slotB->bytes.size()));
     CHECK(findOtaBundleImage(bundle, OTA_SLOT_COUNT) == nullptr);
+}
+
+namespace
+{
+    /// @brief Assembles a relay bundle the way scripts/make_ota.py does in
+    ///        its esp32 mode: one raw ESP-IDF image, no header of ours.
+    /// @param firstByte what the image opens with, the IDF magic or not
+    /// @return the file content and the image
+    BuiltBundle buildEspBundle(std::uint8_t firstByte)
+    {
+        static constexpr std::uint32_t ESP_IMAGE_SIZE = 3000U;
+        BuiltBundle built;
+        std::vector<std::uint8_t> &image = built.images[0];
+        image.resize(ESP_IMAGE_SIZE);
+        for (std::uint32_t index = 0U; index < ESP_IMAGE_SIZE; ++index)
+        {
+            image[index] = static_cast<std::uint8_t>((index * 13U + 5U) & 0xFFU);
+        }
+        image[0] = firstByte;
+        built.crc[0] = crc32Mpeg2(image.data(), image.size());
+
+        const std::string manifest =
+            R"({"name":"esp32_bridge","mcuId":)" + std::to_string(OTA_MCU_ESP32C3) +
+            R"(,"buildEpoch":77,"gitHash":"cafe0000","wireHash":")" + currentWireHash() +
+            R"(","imageCount":1,"images":[{"slot":0,"size":)" + std::to_string(image.size()) +
+            R"(,"crc32":)" + std::to_string(built.crc[0]) + "}]}";
+        const char *magic = otaBundleMagic();
+        built.bytes.assign(magic, magic + OTA_BUNDLE_MAGIC_SIZE);
+        appendU32(built.bytes, static_cast<std::uint32_t>(manifest.size()));
+        built.bytes.insert(built.bytes.end(), manifest.begin(), manifest.end());
+        appendU32(built.bytes, static_cast<std::uint32_t>(image.size()));
+        built.bytes.insert(built.bytes.end(), image.begin(), image.end());
+        return built;
+    }
+} // namespace
+
+TEST_CASE("a relay bundle carries one image, and it fills either slot")
+{
+    static constexpr std::uint8_t ESP_IMAGE_MAGIC = 0xE9U;
+    const ScratchDirectory directory;
+    OtaBundle bundle;
+    std::string error;
+
+    SECTION("the one image serves both slots")
+    {
+        const BuiltBundle built = buildEspBundle(ESP_IMAGE_MAGIC);
+        REQUIRE(loadOtaBundle(directory.write("relay.ota", built.bytes), bundle, error));
+        CHECK(bundle.mcuId == OTA_MCU_ESP32C3);
+        CHECK(bundle.name == "esp32_bridge");
+        CHECK(bundle.buildEpoch == 77U);
+        REQUIRE(bundle.images.size() == 1U);
+        const OtaBundleImage *slotA = findOtaBundleImage(bundle, OTA_SLOT_A);
+        const OtaBundleImage *slotB = findOtaBundleImage(bundle, OTA_SLOT_B);
+        REQUIRE(slotA != nullptr);
+        CHECK(slotA == slotB);
+        CHECK(slotA->bytes == built.images[0]);
+        CHECK(slotA->crc32 == built.crc[0]);
+        CHECK(findOtaBundleImage(bundle, OTA_SLOT_COUNT) == nullptr);
+    }
+
+    SECTION("an image that is not an ESP-IDF application is refused")
+    {
+        const BuiltBundle built = buildEspBundle(0x00U);
+        CHECK(!(loadOtaBundle(directory.write("garbage.ota", built.bytes), bundle, error)));
+        CHECK(error.find("ESP-IDF") != std::string::npos);
+    }
+
+    SECTION("a manifest whose image count disagrees with its list is refused")
+    {
+        BuiltBundle built = buildEspBundle(ESP_IMAGE_MAGIC);
+        const std::string wrong = R"("imageCount":2)";
+        const std::string right = R"("imageCount":1)";
+        std::string text(built.bytes.begin(), built.bytes.end());
+        const std::size_t at = text.find(right);
+        REQUIRE(at != std::string::npos);
+        text.replace(at, right.size(), wrong);
+        built.bytes.assign(text.begin(), text.end());
+        CHECK(!(loadOtaBundle(directory.write("count.ota", built.bytes), bundle, error)));
+        CHECK(error.find("announces 2 images") != std::string::npos);
+    }
 }
 
 TEST_CASE("a rebuilt bundle is picked up with no gesture, and a deleted one is forgotten")

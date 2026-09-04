@@ -35,9 +35,10 @@ add_library(hub_core STATIC
 target_include_directories(hub_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
                                             ${CMAKE_CURRENT_SOURCE_DIR})
 # nlohmann_json reads the two on-disk formats (the bundle manifest, the
-# profile files); nothing of it reaches the websocket.
+# profile files); nothing of it reaches the websocket. ota is header-only
+# and brings the one CRC of the update system, the same code the boards run.
 target_link_libraries(hub_core
-    PUBLIC protocol nanopb_gateway transport log log_wire nlohmann_json::nlohmann_json)
+    PUBLIC protocol ota nanopb_gateway transport log log_wire nlohmann_json::nlohmann_json)
 target_link_libraries(hub_core PRIVATE drone_warnings)
 
 # The hub itself: hub_core plus everything that owns a resource. Desktop only,

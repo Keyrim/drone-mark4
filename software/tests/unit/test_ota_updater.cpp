@@ -19,9 +19,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "platform/firmware_store.hpp"
-#include "platform_common/crc32_mpeg2.hpp"
-#include "platform_common/ota_updater.hpp"
+#include "ota/crc32_mpeg2.hpp"
+#include "ota/firmware_store.hpp"
+#include "ota/image_header.hpp"
+#include "ota/updater.hpp"
 #include "platform_sim/firmware_store_sim.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
@@ -170,6 +171,20 @@ namespace
             m_meta = state;
             ++m_metaWriteCount;
             return true;
+        }
+
+        /// The fake is a header-format store like the real ones on the
+        /// desktop and the F405: the image checks the updater used to make
+        /// itself are the ones this store answers with.
+        [[nodiscard]] bool imageValid(std::uint8_t slot, std::uint32_t imageSize) const override
+        {
+            return mark4::otaHeaderImageValid(*this, slot, imageSize);
+        }
+
+        [[nodiscard]] bool readIdentity(std::uint8_t slot,
+                                        mark4::OtaImageIdentity &identityOut) const override
+        {
+            return mark4::otaHeaderIdentity(*this, slot, identityOut);
         }
 
         /// @brief Writes slot bytes behind the store's own rules, the way a

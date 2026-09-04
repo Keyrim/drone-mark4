@@ -2,8 +2,8 @@
 
 #include <cstring>
 
-#include "platform_common/crc32_mpeg2.hpp"
-#include "platform_common/ota_boot_policy.hpp"
+#include "ota/boot_policy.hpp"
+#include "ota/crc32_mpeg2.hpp"
 #include "platform_stm32/board.hpp"
 #include "platform_stm32/internal_flash.hpp"
 #include "platform_stm32/ota_slots.hpp"
@@ -34,7 +34,7 @@ namespace mark4
         constexpr std::uint32_t PANIC_SHORT_COUNT = 2U;
 
         /// @brief CRC-32/MPEG-2 of a memory-mapped flash range, per the
-        ///        convention of protocol/ota.hpp.
+        ///        convention of protocol/ota_image.hpp.
         /// @param address absolute start address
         /// @param size byte count
         std::uint32_t crcRange(std::uint32_t address, std::uint32_t size)
@@ -125,7 +125,7 @@ namespace mark4
         }
 
         // The decision itself is shared with the desktop flight process
-        // (platform_common/ota_boot_policy.hpp): the sim's fake trial boot
+        // (ota/boot_policy.hpp): the sim's fake trial boot
         // must be the same state machine, not an imitation of it. Only the
         // storage and the image validation below are this executable's.
         const OtaBootDecision decision = otaDecideBoot(state);

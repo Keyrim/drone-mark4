@@ -3,7 +3,7 @@
 Composed helpers shared across variants (interface base classes stay pure -
 shared code goes here, by composition): StatusPublisher (decimation) and
 packStatus (state to the `Status` message), TelemetryService, FrameTelemetry,
-RcTracker, TuningService, OtaUpdater, and `sendEnvelope()` (envelope_io.hpp),
+RcTracker, TuningService, and `sendEnvelope()` (envelope_io.hpp),
 the one place a message meets the transport: it encodes on the stack and
 hands the bytes to a node id, `BROADCAST_NODE` for everything a ground tool
 may want to watch. These are the IO adapters between flight-core accessors

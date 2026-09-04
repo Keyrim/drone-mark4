@@ -2,7 +2,7 @@
 
 /// @file
 /// @brief Software CRC-32/MPEG-2, the one image and metadata checksum of
-///        the update system (see protocol/ota.hpp): polynomial
+///        the update system (see protocol/ota_image.hpp): polynomial
 ///        0x04C11DB7, init 0xFFFFFFFF, no reflection, no final xor,
 ///        consumed as 32-bit words packed in memory order (byte 0 is the
 ///        word's least significant byte). It reproduces bit for bit

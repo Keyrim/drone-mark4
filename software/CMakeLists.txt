@@ -35,6 +35,7 @@ add_subdirectory(components/protocol)
 add_subdirectory(components/log)
 add_subdirectory(components/telemetry)
 add_subdirectory(components/transport)
+add_subdirectory(components/ota)
 add_subdirectory(components/flight-core)
 add_subdirectory(components/platform)
 

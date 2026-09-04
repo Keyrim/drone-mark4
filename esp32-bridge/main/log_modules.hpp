@@ -14,5 +14,6 @@ namespace mark4
     inline constexpr std::uint16_t LOG_MODULE_APP_WIFI = LOG_MODULE_APP_BASE + 1U;   ///< app/wifi
     inline constexpr std::uint16_t LOG_MODULE_RELAY_CORE = LOG_MODULE_APP_BASE + 2U; ///< relay/core
     inline constexpr std::uint16_t LOG_MODULE_RELAY_STATS =
-        LOG_MODULE_APP_BASE + 3U; ///< relay/stats
+        LOG_MODULE_APP_BASE + 3U;                                                   ///< relay/stats
+    inline constexpr std::uint16_t LOG_MODULE_RELAY_OTA = LOG_MODULE_APP_BASE + 4U; ///< relay/ota
 } // namespace mark4

@@ -1,7 +1,8 @@
 #include "platform_stm32/firmware_store_stm32.hpp"
 
-#include "platform_common/crc32_mpeg2.hpp"
-#include "platform_common/ota_meta_log.hpp"
+#include "ota/crc32_mpeg2.hpp"
+#include "ota/image_header.hpp"
+#include "ota/meta_log.hpp"
 #include "platform_stm32/ota_slots.hpp"
 
 namespace mark4
@@ -121,7 +122,7 @@ namespace mark4
                                             std::uint32_t size) const
     {
         // Software CRC on purpose, not the F405 hardware CRC unit. The two
-        // agree bit for bit (see platform_common/crc32_mpeg2.hpp), so the
+        // agree bit for bit (see ota/crc32_mpeg2.hpp), so the
         // choice is about cost: this is one implementation shared with the
         // hub, the sim store and the desktop tests, while the hardware unit
         // would add a peripheral, an RCC dependency and a second thing to
@@ -153,5 +154,15 @@ namespace mark4
     {
         OtaMetaLog<OtaMetaFlashBackend> log(m_metaBackend);
         return log.append(state);
+    }
+
+    bool FirmwareStoreStm32::imageValid(std::uint8_t slot, std::uint32_t imageSize) const
+    {
+        return otaHeaderImageValid(*this, slot, imageSize);
+    }
+
+    bool FirmwareStoreStm32::readIdentity(std::uint8_t slot, OtaImageIdentity &identityOut) const
+    {
+        return otaHeaderIdentity(*this, slot, identityOut);
     }
 } // namespace mark4

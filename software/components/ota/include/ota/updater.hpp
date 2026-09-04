@@ -13,18 +13,15 @@
 ///        is never erased nor programmed (the target is always the other
 ///        one, and the store refuses it too), and every persisted state
 ///        change is a single metadata append (see
-///        platform_common/ota_meta_log.hpp), which is what makes a power cut
+///        ota/meta_log.hpp), which is what makes a power cut
 ///        at any byte harmless.
 ///
 ///        Board-safe: no allocation, no exceptions, one message worth of
 ///        stack per call.
 
-#include <array>
-#include <cstddef>
 #include <cstdint>
-#include <cstring>
 
-#include "platform/firmware_store.hpp"
+#include "ota/firmware_store.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
 
@@ -42,14 +39,6 @@ namespace mark4
         /// enough that a hub that walked away never leaves the board sitting
         /// in update mode.
         static constexpr std::uint64_t SESSION_TIMEOUT_US = 3000000U;
-
-        /// Bytes of OtaImageHeader the updater ever reads: magic through git
-        /// hash. Reading the prefix instead of the whole 512-byte header
-        /// keeps one message worth of stack the largest thing here.
-        static constexpr std::uint32_t HEADER_PREFIX_SIZE = 28U;
-
-        static_assert(HEADER_PREFIX_SIZE == offsetof(OtaImageHeader, reserved),
-                      "the prefix must cover every field the updater reads");
 
         /// Facts only the surrounding app knows, refreshed per call.
         struct Inputs
@@ -200,22 +189,6 @@ namespace mark4
             replyOut.body.ota_chunk_ack.next_offset = nextOffset;
         }
 
-        /// @brief Reads the image header prefix of a slot.
-        /// @param slot slot to read from
-        /// @param[out] headerOut header fields, valid only on true; the
-        ///             fields past the prefix stay zeroed
-        /// @return false on a store read failure
-        [[nodiscard]] bool readImageHeader(std::uint8_t slot, OtaImageHeader &headerOut) const
-        {
-            std::array<std::uint8_t, HEADER_PREFIX_SIZE> bytes{};
-            if (!m_store.read(slot, 0U, bytes.data(), HEADER_PREFIX_SIZE))
-            {
-                return false;
-            }
-            std::memcpy(&headerOut, bytes.data(), bytes.size());
-            return true;
-        }
-
         /// @brief Answers a status request; legal at any time, session or
         ///        not, and never refused.
         /// @param[out] replyOut message to fill
@@ -244,17 +217,14 @@ namespace mark4
             {
                 mark4_OtaSlotStatus &out = status.slots[slot];
                 out.state = otaSlotStateToWire(metaRead ? meta.slotState[slot] : OTA_SLOT_EMPTY);
-                // The identity is reported raw out of each slot's image
-                // header, stamped or not (an unstamped image says
-                // OTA_IMAGE_UNSTAMPED); a slot with no header at all (or
-                // an unreadable one) reports nothing instead of garbage.
-                OtaImageHeader header{};
-                if (readImageHeader(slot, header) && header.magic == OTA_IMAGE_MAGIC)
+                // The identity is whatever the store reads out of each
+                // slot's image, in the format of this chip; a slot holding
+                // no readable image reports nothing instead of garbage.
+                OtaImageIdentity identity;
+                if (m_store.readIdentity(slot, identity))
                 {
-                    out.build_epoch = header.buildEpoch;
-                    std::array<char, OTA_GIT_HASH_SIZE> hash{};
-                    std::memcpy(hash.data(), &header.gitHash, OTA_GIT_HASH_SIZE);
-                    otaGitHashToWire(hash, out.git_hash);
+                    out.build_epoch = identity.buildEpoch;
+                    otaGitHashToWire(identity.gitHash, out.git_hash);
                 }
             }
         }
@@ -407,11 +377,9 @@ namespace mark4
                 return;
             }
 
-            OtaImageHeader header{};
-            if (!readImageHeader(m_targetSlot, header) || header.magic != OTA_IMAGE_MAGIC ||
-                header.headerVersion != OTA_IMAGE_HEADER_VERSION ||
-                header.mcuId != m_store.mcuId() || header.slotId != m_targetSlot ||
-                header.imageSize != m_imageSize)
+            // The bytes add up; whether they are an image for this chip and
+            // this slot is the store's question, in the format of its chip.
+            if (!m_store.imageValid(m_targetSlot, m_imageSize))
             {
                 closeSession();
                 Ack(mark4_OtaOp_FINISH, session, mark4_OtaResult_BAD_IMAGE, replyOut);

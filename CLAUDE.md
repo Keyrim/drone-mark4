@@ -58,6 +58,12 @@ python3 scripts/build_app.py drone_sim
 # Flash the board over SWD with a J-Link (never run by an agent, board required)
 ./scripts/flash_stm32.sh install   # also: boot | slot-a | slot-b | meta-wipe | erase
 
+# ESP32 relay (ESP-IDF project, see esp32-bridge/README.md): the image and
+# the esp32_bridge.ota bundle the hub sends it; the USB flash lays the two
+# OTA slots out once per module, every later image goes over the air
+idf.py -C esp32-bridge build
+idf.py -C esp32-bridge -p /dev/ttyACM0 flash monitor
+
 # Run one test (Catch2, by test name or ctest regex)
 ./software/build/desktop/tests/unit/unit_tests "kill switch forces all motors to zero"
 (cd software && ctest --preset desktop -R "kill switch")
@@ -118,6 +124,10 @@ git ls-files '*.cpp' '*.hpp' '*.c' '*.h' | xargs clang-format --dry-run --Werror
 run-clang-tidy -p software/build/desktop -quiet "$(pwd)/software/(components|drone_sim|drone_firmware|hub|tests)/"
 ./scripts/tidy_stm32.sh    # clang-tidy over the stm32 compile database
 ./scripts/check_ascii.sh   # ASCII-only hard rule
+
+# API reference (Doxygen, root Doxyfile): build/doxygen/html, warnings counted in
+# build/doxygen/warnings.log. Published from main at https://keyrim.github.io/drone-mark4/
+./scripts/build_docs.sh
 ```
 
 clang-format and clang-tidy are pinned to LLVM 21 (devcontainer). Fix
@@ -138,7 +148,7 @@ Godot project imported once). That page has the commands and the reasons.
 
 Everything C++ lives under `software/`: the executables at its top level
 (`drone_sim`, `drone_firmware`, `hub`), the libraries in
-`software/components/`. Six libraries, one rule of dependency flow:
+`software/components/`. Seven libraries, one rule of dependency flow:
 
 - `flight-core/` - pure static lib. Single entry point
   `FlightCore::step(const SensorFrame&, ActuatorFrame&)`: synchronous,
@@ -242,15 +252,33 @@ Everything C++ lives under `software/`: the executables at its top level
   and `Announce` broadcasts through and keeps every other LAN broadcast
   off the line; it logs through the log library, its lines and module
   table going out on the LAN link alone (the optional link mask of
-  `send()`), and answers the `LogControl` addressed to it. It compiles
-  `transport.cpp`, `uart_link.cpp`, `posix/udp_link.cpp`, the log library
-  and the nanopb codec straight from `software/components/`. The hub holds
+  `send()`), answers the `LogControl` addressed to it, and updates itself
+  over the air (the shared `OtaUpdater` over `FirmwareStoreEsp32`, which
+  maps the metadata onto the IDF bootloader's `otadata` and rollback; two
+  OTA partitions in `esp32-bridge/partitions.csv`, one USB flash per
+  module to lay them out, `esp32_bridge.ota` packaged by every build). It
+  compiles `transport.cpp`, `uart_link.cpp`, `posix/udp_link.cpp`, the log
+  library, the `ota/` headers and the nanopb codec straight from
+  `software/components/`. The hub holds
   one `UdpLink`, relays nothing, and sees the board and the relay as two
   more nodes (kinds `firmware` and `relay`, their own Announces, at the
   relay's address). The firmware broadcasts everything
   it emits (telemetry, answers, `Log` lines through the log library's
   `TransportSink`) and takes commands through `CommandReceiverTransport`
   fed by `Transport::poll()` once per flight frame.
+- `ota/` - the firmware update brick every node with two firmware slots
+  builds on (`software/components/ota/README.md`): header-only INTERFACE
+  target `ota`, `protocol` alone underneath, builds for the F405, the ESP32
+  and the desktop. `AbsFirmwareStore` (slot geometry, erase, program in
+  order, read, CRC, boot metadata, plus `imageValid()` / `readIdentity()`,
+  the two reads that depend on the chip's image format), `OtaUpdater` (the
+  board-side session state machine, one `Ota*` message in, at most one
+  reply out, pure logic against the store), the boot policy `drone_boot`
+  and `drone_sim` share, `OtaMetaLog` and the CRC-32/MPEG-2 helper the hub
+  uses too. Store implementations stay with their targets:
+  `platform_stm32` (internal flash), `platform_sim` (files),
+  `esp32-bridge/main` (ESP-IDF partitions, the IDF bootloader's own
+  rollback standing in for the metadata log).
 - `telemetry/` - the registry of named float measures every node exposes
   (`software/components/telemetry/README.md`). A leaf like `log` (static
   lib, `drone_warnings` alone, no heap, no iostream, builds for stm32): it
@@ -334,8 +362,9 @@ it to GHCR (`ghcr.io/keyrim/drone-mark4-devcontainer`) when `.devcontainer/`
 changes; `ci.yml` runs 8 jobs (desktop+tests+batch through headless Godot, stm32,
 esp32, desktop-san, pages pnpm typecheck+build+test, mobile gen+analyze+
 format+test+apk, format+ascii, tidy desktop+stm32) inside that image, pinned
-by digest.
-After a `.devcontainer/` change, bump the digest in `ci.yml` to the one the
+by digest; `docs.yml` builds the Doxygen reference in the same image on every
+PR and on main, and deploys it to GitHub Pages from main only.
+After a `.devcontainer/` change, bump the digest in `ci.yml` and `docs.yml` to the one the
 image workflow pushed (`docker manifest inspect ...:latest`). Container jobs need `options: --user root` (the
 image defaults to user `dev`, the runner mounts workdirs for another UID).
 If CI needs a new tool, add it to the Dockerfile; the image is the single

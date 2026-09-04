@@ -1,0 +1,62 @@
+# Workflow 3: the Doxygen API reference. The build job runs on every PR and
+# on main, INSIDE the devcontainer image like every ci.yml job (doxygen and
+# graphviz come from it; same digest, bumped together). The deploy job
+# publishes the html to GitHub Pages from main only; on a PR the site is the
+# downloadable github-pages artifact of the build job.
+#
+# Doxygen warnings (undocumented public entities, unresolved references) are
+# listed and counted but do not fail the job yet: the Doxyfile turns them
+# fatal (WARN_AS_ERROR) once the count reaches zero.
+name: docs
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+
+# One deployment at a time; a superseded PR build must not keep a runner.
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: doxygen
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:8e65c9a45affdaa62b4919a974cfbba8e4eca5b6a46183b58fcca4a84ca2a50a
+      options: --user root
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: ./scripts/build_docs.sh
+      - name: Doxygen warnings
+        run: |
+          cat build/doxygen/warnings.log
+          echo "## Doxygen: $(wc -l < build/doxygen/warnings.log) warning(s)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: build/doxygen/html
+
+  deploy:
+    name: github pages
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

@@ -53,6 +53,40 @@ namespace mark4
         return data != nullptr && size > 0U && data[0] == ANNOUNCE_TAG_BYTE;
     }
 
+    /// Bytes a protobuf varint spans at most; the tag of a field number
+    /// under 2^28 fits four, one more than any field of the Envelope needs.
+    inline constexpr std::size_t PB_TAG_MAX_BYTES = 5U;
+
+    /// @brief Reads the field number of the body an encoded Envelope
+    ///        carries, without decoding it: the varint tag that opens the
+    ///        bytes. What a node asks of every payload it is handed before
+    ///        spending a decode on the few it answers.
+    /// @param data encoded Envelope
+    /// @param size byte count
+    /// @return the mark4_Envelope_*_tag of the body, 0 when the bytes do
+    ///         not open with a length-delimited field tag
+    constexpr std::uint32_t envelopeBodyTag(const std::uint8_t *data, std::size_t size)
+    {
+        constexpr std::uint8_t CONTINUATION = 0x80U;
+        constexpr std::uint8_t VALUE_MASK = 0x7FU;
+        constexpr unsigned BITS_PER_BYTE = 7U;
+        constexpr std::uint32_t WIRE_TYPE_MASK = 0x07U;
+        if (data == nullptr)
+        {
+            return 0U;
+        }
+        std::uint32_t tag = 0U;
+        for (std::size_t i = 0U; i < size && i < PB_TAG_MAX_BYTES; ++i)
+        {
+            tag |= static_cast<std::uint32_t>(data[i] & VALUE_MASK) << (BITS_PER_BYTE * i);
+            if ((data[i] & CONTINUATION) == 0U)
+            {
+                return ((tag & WIRE_TYPE_MASK) == PB_WT_STRING) ? (tag >> PB_TAG_FIELD_SHIFT) : 0U;
+            }
+        }
+        return 0U;
+    }
+
     /// @brief Encodes one Envelope.
     /// @param envelope message to encode; which_body must name a body
     /// @param[out] out destination bytes

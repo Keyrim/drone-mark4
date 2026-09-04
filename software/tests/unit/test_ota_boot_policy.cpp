@@ -9,8 +9,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "platform/firmware_store.hpp"
-#include "platform_common/ota_boot_policy.hpp"
+#include "ota/boot_policy.hpp"
+#include "ota/firmware_store.hpp"
 #include "protocol/ota_image.hpp"
 
 TEST_CASE("a blank board boots the slot its metadata prefers, and owes no record")

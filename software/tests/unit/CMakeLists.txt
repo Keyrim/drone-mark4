@@ -41,7 +41,7 @@ add_executable(unit_tests
     test_tuning_service.cpp
     test_vertical_estimator.cpp)
 target_link_libraries(unit_tests
-    PRIVATE flight_core platform_common platform_sim protocol telemetry transport log log_wire
+    PRIVATE flight_core platform_common platform_sim protocol ota telemetry transport log log_wire
             hub_core
             Catch2::Catch2WithMain drone_warnings)
 # The libs under test are compiled with -fno-rtti (drone_strict) and emit no

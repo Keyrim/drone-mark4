@@ -25,11 +25,11 @@ add_library(platform_stm32 STATIC
     ota_meta_flash.cpp
     firmware_store_stm32.cpp)
 target_include_directories(platform_stm32 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-# protocol and platform_common are public: the firmware store is an
+# protocol, platform_common and ota are public: the firmware store is an
 # OtaMetaLog over a flash backend, and drone_boot reuses the same log. The
 # transport is public too: the UART byte stream implements its interface.
 target_link_libraries(platform_stm32
-    PUBLIC platform platform_common protocol transport log
+    PUBLIC platform platform_common ota protocol transport log
     PRIVATE cmsis_f4 drone_warnings drone_strict)
 
 # The flash map of docs/ota-design.md section 4.2, mirrored in C++ by

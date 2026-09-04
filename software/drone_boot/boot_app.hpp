@@ -20,8 +20,8 @@
 
 #include <cstdint>
 
-#include "platform/firmware_store.hpp"
-#include "platform_common/ota_meta_log.hpp"
+#include "ota/firmware_store.hpp"
+#include "ota/meta_log.hpp"
 #include "platform_stm32/ota_meta_flash.hpp"
 
 namespace mark4
