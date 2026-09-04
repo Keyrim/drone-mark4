@@ -33,9 +33,14 @@ RECURSIVE              = YES
 FILE_PATTERNS          = *.c *.cpp *.h *.hpp *.md
 EXCLUDE                = software/hub/pages
 EXCLUDE_PATTERNS       = */build/*
-# The leading ./ matters: given a bare file name, Doxygen 1.9 takes every
-# README.md of the tree for the main page and drops all but the first one.
+# The leading ./ matters to Doxygen 1.9 (the noble package): given a bare file
+# name it takes every README.md of the tree for the main page and drops all
+# but the first one. Harmless on 1.18, the version the image installs.
 USE_MDFILE_AS_MAINPAGE = ./README.md
+# Since 1.12 a README.md found in a subdirectory documents that directory
+# instead of becoming a page, and the links between READMEs stop resolving.
+# Off, so that every module README is a page of its own under Related Pages.
+IMPLICIT_DIR_DOCS      = NO
 STRIP_FROM_PATH        = .
 # So that the include line of a class reads as the code writes it
 # (`#include "platform/clock.hpp"`), not as a path from the repository root.
