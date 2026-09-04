@@ -1,7 +1,9 @@
 /// @file
-/// @brief The two piloting modes: how each is entered, what the stick means
+/// @brief The piloting modes: how each is entered, what the sticks mean
 ///        once it is, and everything that must never happen in between.
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 
@@ -24,7 +26,10 @@ namespace
     {
         bool arm = false;                                 ///< arm switch
         mark4::PilotMode mode = mark4::PilotMode::MANUAL; ///< mode switch
-        float throttle = 0.0f;                            ///< stick position [0, 1]
+        float throttle = 0.0f;                            ///< throttle position [0, 1]
+        float roll = 0.0f;                                ///< roll stick [-1, 1], right positive
+        float pitch = 0.0f; ///< pitch stick [-1, 1], nose down positive
+        float yaw = 0.0f;   ///< yaw stick [-1, 1], clockwise positive
     };
 
     /// Drives one core with a scripted RC state, at rest and level unless a
@@ -45,6 +50,9 @@ namespace
                 frame.rc.armSwitch = stick.arm;
                 frame.rc.mode = stick.mode;
                 frame.rc.throttle = stick.throttle;
+                frame.rc.roll = stick.roll;
+                frame.rc.pitch = stick.pitch;
+                frame.rc.yaw = stick.yaw;
                 frame.gyroRadS = m_gyroRadS;
                 frame.accelMps2 = m_accelMps2;
                 frame.baroPa = HELPER_BARO_PA;
@@ -233,8 +241,9 @@ TEST_CASE("the direct-thrust stick is the collective, and zero means zero")
     REQUIRE(motorFor(0.5f) > motorFor(0.2f));
     REQUIRE(motorFor(0.9f) > motorFor(0.5f));
 
-    // The leveling still runs underneath: a standing roll rate splits the
-    // left and right motors even though the collective is a raw stick value.
+    // The rate loop still runs underneath: a standing roll rate against a
+    // released stick splits the left and right motors even though the
+    // collective is a raw stick value.
     Pilot rolling;
     rolling.settle(GROUND);
     rolling.hold({true, mark4::PilotMode::MANUAL, 0.0f}, 1U);
@@ -512,4 +521,196 @@ TEST_CASE("entering direct-thrust flight under absurd readings goes straight to 
     hit.hold({true, mark4::PilotMode::MANUAL, 0.0f}, 1U);
     REQUIRE(hit.phase() == mark4::FlightPhase::CUTOFF);
     REQUIRE(hit.maxMotor() == 0.0f);
+}
+
+namespace
+{
+    /// @param motor the four motor commands
+    /// @return true when the four commands are equal to within float noise
+    bool allEqual(const std::array<float, 4> &motor)
+    {
+        return std::ranges::all_of(motor,
+                                   [&motor](float m) { return std::fabs(m - motor[0]) <= 1e-6f; });
+    }
+
+    /// Gravity as read by a drone rolled right by ROLLED_RAD, at rest.
+    constexpr float ROLLED_RAD = 0.3f;
+
+    /// @return specific force felt at rest under that roll
+    std::array<float, 3> rolledGravity()
+    {
+        return {0.0f,
+                std::sin(ROLLED_RAD) * mark4::GRAVITY_MPS2,
+                std::cos(ROLLED_RAD) * mark4::GRAVITY_MPS2};
+    }
+} // namespace
+
+TEST_CASE("the manual sticks command body rates and nothing levels the drone")
+{
+    // Sitting tilted: gravity read off-axis long enough for the estimator to
+    // believe the roll, then flying with the sticks released and no rate.
+    Pilot manual;
+    manual.setAccel(rolledGravity());
+    manual.settle(GROUND);
+    manual.hold({true, mark4::PilotMode::MANUAL, 0.0f}, 1U);
+    REQUIRE(manual.phase() == mark4::FlightPhase::MANUAL);
+    manual.hold({true, mark4::PilotMode::MANUAL, 0.5f}, 20U);
+    REQUIRE(manual.phase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(manual.maxMotor() > 0.0f);
+    // A released stick asks for zero rate, a still gyro reads zero: the
+    // torque is zero and the tilt is left exactly as it is.
+    REQUIRE(allEqual(manual.motor()));
+
+    // The same tilt in the leveling mode: the attitude loop asks for a roll
+    // rate the gyro does not deliver, and the motors split to produce it.
+    Pilot level;
+    level.setAccel(rolledGravity());
+    level.settle(GROUND);
+    level.hold({true, mark4::PilotMode::LEVEL, 0.0f}, 1U);
+    REQUIRE(level.phase() == mark4::FlightPhase::LEVEL);
+    level.hold({true, mark4::PilotMode::LEVEL, 0.5f}, 20U);
+    REQUIRE(level.phase() == mark4::FlightPhase::LEVEL);
+    REQUIRE(!allEqual(level.motor()));
+}
+
+TEST_CASE("the manual sticks split the motors along the body axes")
+{
+    Pilot pilot;
+    pilot.settle(GROUND);
+    pilot.hold({true, mark4::PilotMode::MANUAL, 0.0f}, 1U);
+    REQUIRE(pilot.phase() == mark4::FlightPhase::MANUAL);
+
+    // Roll right: a positive rate about x is asked, the gyro reads none, so
+    // the loop raises the left motors (2, 3) over the right ones (0, 1).
+    pilot.hold({true, mark4::PilotMode::MANUAL, 0.5f, 1.0f, 0.0f, 0.0f}, 5U);
+    std::array<float, 4> motor = pilot.motor();
+    REQUIRE(motor[2] > motor[0]);
+    REQUIRE(motor[3] > motor[1]);
+    REQUIRE(std::fabs(motor[0] - motor[1]) < 1e-6f);
+
+    // Nose down: the rear motors (0, 2) over the front ones (1, 3).
+    pilot.accessCore().reset();
+    pilot.settle(GROUND);
+    pilot.hold({true, mark4::PilotMode::MANUAL, 0.0f}, 1U);
+    pilot.hold({true, mark4::PilotMode::MANUAL, 0.5f, 0.0f, 1.0f, 0.0f}, 5U);
+    motor = pilot.motor();
+    REQUIRE(motor[0] > motor[1]);
+    REQUIRE(motor[2] > motor[3]);
+
+    // Clockwise yaw: a negative torque about z, which the mixer puts on the
+    // (0, 3) diagonal; the other way round for the other stick direction.
+    pilot.accessCore().reset();
+    pilot.settle(GROUND);
+    pilot.hold({true, mark4::PilotMode::MANUAL, 0.0f}, 1U);
+    pilot.hold({true, mark4::PilotMode::MANUAL, 0.5f, 0.0f, 0.0f, 1.0f}, 5U);
+    motor = pilot.motor();
+    REQUIRE(motor[0] + motor[3] > motor[1] + motor[2]);
+    pilot.hold({true, mark4::PilotMode::MANUAL, 0.5f, 0.0f, 0.0f, -1.0f}, 10U);
+    motor = pilot.motor();
+    REQUIRE(motor[0] + motor[3] < motor[1] + motor[2]);
+}
+
+TEST_CASE("the leveling mode shares the stick-down interlock and its sticks lean the drone")
+{
+    // A raised stick is refused exactly as in the rate mode.
+    Pilot raised;
+    raised.settle(GROUND);
+    raised.hold({true, mark4::PilotMode::LEVEL, 0.5f}, 5U);
+    REQUIRE(raised.phase() == mark4::FlightPhase::IDLE);
+    REQUIRE(raised.maxMotor() == 0.0f);
+
+    Pilot pilot;
+    pilot.settle(GROUND);
+    pilot.hold({true, mark4::PilotMode::LEVEL, 0.0f}, 1U);
+    REQUIRE(pilot.phase() == mark4::FlightPhase::LEVEL);
+    REQUIRE(pilot.accessCore().pilotMode() == mark4::PilotMode::LEVEL);
+
+    // Zero means zero here too.
+    pilot.hold({true, mark4::PilotMode::LEVEL, 0.0f, 1.0f, 1.0f, 1.0f}, 5U);
+    REQUIRE(pilot.maxMotor() == 0.0f);
+
+    // Level and still, roll stick right: the desired thrust direction leans
+    // right, the attitude loop asks for a positive roll rate, and the left
+    // motors rise over the right ones - the same split as the rate mode,
+    // reached through the outer loop.
+    pilot.hold({true, mark4::PilotMode::LEVEL, 0.5f, 1.0f, 0.0f, 0.0f}, 5U);
+    std::array<float, 4> motor = pilot.motor();
+    REQUIRE(motor[2] > motor[0]);
+    REQUIRE(motor[3] > motor[1]);
+
+    // Yaw is a rate in this mode as well: clockwise loads the (0, 3) pair.
+    pilot.hold({true, mark4::PilotMode::LEVEL, 0.5f, 0.0f, 0.0f, 0.0f}, 20U);
+    pilot.hold({true, mark4::PilotMode::LEVEL, 0.5f, 0.0f, 0.0f, 1.0f}, 5U);
+    motor = pilot.motor();
+    REQUIRE(motor[0] + motor[3] > motor[1] + motor[2]);
+}
+
+TEST_CASE("the mode switch is ignored once the leveling mission started")
+{
+    Pilot pilot;
+    pilot.setAccel(rolledGravity());
+    pilot.settle(GROUND);
+    pilot.hold({true, mark4::PilotMode::LEVEL, 0.0f}, 1U);
+    REQUIRE(pilot.phase() == mark4::FlightPhase::LEVEL);
+
+    // Flipping to manual mid-flight: still leveling, so the tilt still
+    // splits the motors, and the latched mode says which loop is flying.
+    pilot.hold({true, mark4::PilotMode::MANUAL, 0.5f}, 20U);
+    REQUIRE(pilot.phase() == mark4::FlightPhase::LEVEL);
+    REQUIRE(pilot.accessCore().pilotMode() == mark4::PilotMode::LEVEL);
+    REQUIRE(!allEqual(pilot.motor()));
+
+    // Disarm, and the new mode takes on the next arm.
+    pilot.hold({false, mark4::PilotMode::MANUAL, 0.0f}, 1U);
+    REQUIRE(pilot.phase() == mark4::FlightPhase::IDLE);
+    pilot.hold({true, mark4::PilotMode::MANUAL, 0.0f}, 1U);
+    REQUIRE(pilot.phase() == mark4::FlightPhase::MANUAL);
+}
+
+TEST_CASE("the kill switch ends a leveling flight")
+{
+    Pilot pilot;
+    const Stick flying{true, mark4::PilotMode::LEVEL, 0.5f};
+    pilot.settle(GROUND);
+    pilot.hold({true, mark4::PilotMode::LEVEL, 0.0f}, 1U);
+    pilot.hold(flying, 5U);
+    REQUIRE(pilot.phase() == mark4::FlightPhase::LEVEL);
+    REQUIRE(pilot.maxMotor() > 0.0f);
+
+    pilot.setKill(true);
+    pilot.hold(flying, 1U);
+    REQUIRE(pilot.phase() == mark4::FlightPhase::IDLE);
+    REQUIRE(pilot.maxMotor() == 0.0f);
+
+    pilot.setKill(false);
+    pilot.hold(flying, 5U);
+    REQUIRE(pilot.phase() == mark4::FlightPhase::IDLE);
+    REQUIRE(pilot.maxMotor() == 0.0f);
+}
+
+TEST_CASE("the stick ranges are tunable through the core, in flight")
+{
+    Pilot pilot;
+    pilot.settle(GROUND);
+    pilot.hold({true, mark4::PilotMode::MANUAL, 0.0f}, 1U);
+    const Stick rollingRight{true, mark4::PilotMode::MANUAL, 0.5f, 1.0f, 0.0f, 0.0f};
+    pilot.hold(rollingRight, 5U);
+    REQUIRE(!allEqual(pilot.motor()));
+
+    // A zero roll range while armed: accepted, and the stick asks for
+    // nothing from then on (the integrator had nothing to keep either).
+    REQUIRE(pilot.accessCore().setParam(mark4::TUNING_ID_STICK_RATE_ROLL_PITCH, 0.0f) ==
+            mark4::TuningStatus::OK);
+    pilot.accessCore().reset();
+    pilot.settle(GROUND);
+    REQUIRE(pilot.accessCore().setParam(mark4::TUNING_ID_STICK_RATE_ROLL_PITCH, 0.0f) ==
+            mark4::TuningStatus::OK);
+    pilot.hold({true, mark4::PilotMode::MANUAL, 0.0f}, 1U);
+    pilot.hold(rollingRight, 5U);
+    REQUIRE(pilot.phase() == mark4::FlightPhase::MANUAL);
+    REQUIRE(allEqual(pilot.motor()));
+
+    // Out of bounds is refused and changes nothing.
+    REQUIRE(pilot.accessCore().setParam(mark4::TUNING_ID_STICK_DEADBAND, 0.9f) ==
+            mark4::TuningStatus::OUT_OF_BOUNDS);
 }

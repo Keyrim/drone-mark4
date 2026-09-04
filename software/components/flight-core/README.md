@@ -26,7 +26,7 @@ Evaluated in `step()` right after the kill switch and the frame checks.
 
 | Situation | Behaviour |
 | --- | --- |
-| IMU invalid, motors off (IDLE, ARMED, BALLISTIC, CUTOFF, MANUAL at zero stick) | Nothing integrates: attitude, bias, altitude and the throw detector keep their state. IDLE is never left, so arming is refused. Releasing the arm switch still disarms. Valid frames resume normal operation, there is no latch. This is a board booting without its sensors, or a simulator waiting for its plant. |
+| IMU invalid, motors off (IDLE, ARMED, BALLISTIC, CUTOFF, MANUAL or LEVEL at zero stick) | Nothing integrates: attitude, bias, altitude and the throw detector keep their state. IDLE is never left, so arming is refused. Releasing the arm switch still disarms. Valid frames resume normal operation, there is no latch. This is a board booting without its sensors, or a simulator waiting for its plant. |
 | IMU invalid, motors on | The last command is held for up to `IMU_FAULT_FRAMES - 1` consecutive frames (a lone bus glitch). On the `IMU_FAULT_FRAMES`th (10, 20 ms at 500 Hz) the core enters `FlightPhase::FAULT`: every motor at zero, latched. Valid frames coming back change nothing, nor does the arm switch. The kill switch is the only exit (back to IDLE, as after any kill). |
 | Baro invalid | Never a fault. The vertical estimator skips the baro correction and coasts on the integrated accelerometer; `baroAltitudeM()` stops moving. On the ground, arming is refused while it lasts. In flight, the flight continues. |
 

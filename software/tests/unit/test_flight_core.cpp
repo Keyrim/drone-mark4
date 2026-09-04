@@ -236,7 +236,7 @@ TEST_CASE("a frame carrying NaN or Inf is rejected as a whole")
     const float inf = std::numeric_limits<float>::infinity();
     mark4::SensorFrame bad = frame;
     std::uint64_t timestamp = settled + STEP_US;
-    for (std::uint32_t poison = 0U; poison < 4U; ++poison)
+    for (std::uint32_t poison = 0U; poison < 7U; ++poison)
     {
         bad = frame;
         bad.timestampUs = timestamp;
@@ -251,6 +251,15 @@ TEST_CASE("a frame carrying NaN or Inf is rejected as a whole")
             case 2U:
                 bad.baroPa = nan;
                 break;
+            case 3U:
+                bad.rc.roll = nan;
+                break;
+            case 4U:
+                bad.rc.pitch = inf;
+                break;
+            case 5U:
+                bad.rc.yaw = nan;
+                break;
             default:
                 bad.rc.throttle = inf;
                 break;
@@ -258,7 +267,7 @@ TEST_CASE("a frame carrying NaN or Inf is rejected as a whole")
         core.step(bad, actuators);
         timestamp += STEP_US;
     }
-    REQUIRE(core.invalidFrameCount() == 4U);
+    REQUIRE(core.invalidFrameCount() == 7U);
     REQUIRE(core.flightPhase() == mark4::FlightPhase::MANUAL);
     REQUIRE(actuators.motor == held);
     for (const float m : actuators.motor)

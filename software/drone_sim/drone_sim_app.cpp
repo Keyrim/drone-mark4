@@ -55,6 +55,8 @@ namespace
                 return "manual";
             case mark4::FlightPhase::FAULT:
                 return "fault";
+            case mark4::FlightPhase::LEVEL:
+                return "level";
         }
         return "?";
     }
@@ -576,8 +578,11 @@ namespace mark4
             // The plant's exact state rides next to the estimate, so a ground
             // tool compares the two sample by sample; a frame without sensors
             // has no plant behind it and no truth.
-            m_statusPublisher.publish(
-                frame, actuators, m_core, frame.imuValid ? &m_sensorSource.truth() : nullptr);
+            m_statusPublisher.publish(frame,
+                                      actuators,
+                                      m_core,
+                                      !m_rcTracker.failsafeActive(frame.timestampUs),
+                                      frame.imuValid ? &m_sensorSource.truth() : nullptr);
             // Whatever a subscriber enabled, at the period it asked for; the
             // frame's own timestamp stamps the samples, so the service never
             // reads a clock either.

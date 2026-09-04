@@ -70,8 +70,9 @@ includes this library.
   broadcasts (drone_sim, and the board through the ESP32 relay). `Status`
   is the small fixed report of what the drone is doing, decimated to 50 Hz
   and always on: attitude, motors, phase, throw state and count, the two
-  validity flags, and the plant's exact state in `Status.truth` when the
-  sender has one. `Status.imu_valid` / `baro_valid` repeat the validity
+  validity flags, whether the RC uplink is heard (`rc_link_ok`, the pilot's
+  device reads it as "the drone hears me"), and the plant's exact state in
+  `Status.truth` when the sender has one. `Status.imu_valid` / `baro_valid` repeat the validity
   flags of the frame that was stepped (a fresh measurement acquired for
   that frame, see `software/components/platform/README.md`);
   `PHASE_FAULT` is the flight core's latched motors-off state after the IMU
@@ -96,7 +97,14 @@ includes this library.
   its table. See `software/components/log/README.md`.
 - `Rc`, `Reboot`, `SimScenario`, `Tuning{Set,Get,List}`, the `Ota*`
   requests: ground to flight process, as transport unicasts or serial
-  frames.
+  frames. `Rc` is the pilot state as a stream (kill, arm, mode, throttle
+  and the three sticks in the pilot's convention: positive is right,
+  forward, clockwise), repeated at 20 Hz by a web page and 50 Hz by a
+  gamepad path; the flight process treats 200 ms of silence as a kill
+  (`platform_common/rc_tracker.hpp`) and reports whether it hears a pilot
+  in `Status.rc_link_ok`. The sticks are raw positions: deadband, ranges
+  and the mapping onto the body frame are the flight core's, tunable like
+  a gain (`stick_*` in the tuning table).
 - `SimSensor` (truth included) and `SimActuator`: the lockstep exchange
   between a flight process and its plant, transport unicasts between the
   two node ids; `SimScenario` is forwarded to the plant the same way as

@@ -193,11 +193,38 @@ pull request:
 1. **Gamepad input module**: the Kotlin hooks of PoC 2 (consume, unbuffered
    dispatch on, history drained), one stream of stick / trigger / button
    samples towards Dart, plus a device list.
-2. **Command path**: sticks -> `RcCommand` envelopes at the report rate,
-   unicast to the drone node id; kill switch on a button, arming gesture,
-   link-loss behaviour identical to what the firmware does when the
-   transport goes silent. The transport `poll()` moves off the UI isolate
-   before this step if PoC 1's numbers say so.
+2. **Command path and cockpit**: the drone page becomes the cockpit. The
+   wire and the flight core are ready for it (`Rc` carries the three
+   sticks in the pilot's convention, the core has the `MANUAL` rate mode
+   and the `LEVEL` leveling mode, `Status.rc_link_ok` says whether the
+   drone hears its pilot, the fail-safe is 200 ms of silence). What the
+   phone adds, gamepad in hand and nothing to touch on the screen:
+   - `Rc` streamed at 50 Hz to the drone node id, sticks clamped and
+     otherwise raw (deadband and ranges are the core's, tunable).
+   - Layout (Xbox, mode 2): RT is the throttle in the direct-thrust modes
+     (released = 0 = motors stopped, which is why a spring-loaded stick is
+     not the throttle there); right stick roll and pitch; left stick X
+     yaw; left stick Y reserved for the vertical velocity of altitude
+     auto, where centre = hold has a physical meaning. B is the kill: one
+     press, instant, latched by the phone until B is held for 1 s. A held
+     for 1 s arms, only with RT at zero, sticks centred, drone connected,
+     phase IDLE, IMU and baro valid; the missing condition is shown. A
+     held again at zero throttle disarms. D-pad up/down selects the mode,
+     while disarmed only. Menu and View stay the phone's.
+   - Gamepad loss (`InputDeviceListener`, Bluetooth ACL disconnect), the
+     app going to the background or the page being left send the safe
+     state at once, then the stream stops.
+   - Screen: a full-width phase band (grey IDLE, orange ARMED, green
+     MANUAL / LEVEL, red FAULT and kill), three link indicators with
+     their age (gamepad to phone, phone to drone, drone hears the phone
+     from `rc_link_ok`), selected and locked mode side by side, the
+     throttle gauge, four motor bars, a small horizon.
+   - Haptics on the gamepad first, the phone (`USAGE_ALARM`) as fallback:
+     double pulse armed, long buzz kill, repeated triple pulses while a
+     link is lost, two short for a refused arm, one tick per mode change.
+   Flown against `drone_sim` and the Godot plant before any motor turns.
+   The transport `poll()` moves off the UI isolate before this step if
+   PoC 1's numbers say so.
 3. **Lifecycle**: foreground service while a drone is armed, sockets and
    the multicast lock survive the screen turning off, link status on
    screen.

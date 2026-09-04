@@ -147,10 +147,11 @@ Incremental, one observable win per step:
    the LAN (kind `firmware`, its Announce, at the relay's address) and the
    Connections panel of the control page connects to it with the same
    click as to `drone_sim`. The uplink carries the pilot state
-   (`Rc`: kill, arm, mode, throttle): an `rc` message aimed at
-   `firmware` on the hub websocket endpoint is a transport unicast to the
-   board's node, and 500 ms of silence trips the fail-safe (kill engaged,
-   disarmed), so closing the sender is itself a safe action. A simulated
+   (`Rc`: kill, arm, mode, throttle and the three sticks): an `rc`
+   message aimed at `firmware` on the hub websocket endpoint is a
+   transport unicast to the board's node, and 200 ms of silence trips the
+   fail-safe (kill engaged, disarmed), so closing the sender is itself a
+   safe action. A simulated
    flight is flown the same way: an `rc` message aimed at `drone_sim`
    is a transport unicast to that process's node, so the RC path and its
    fail-safe are exercised in every simulated flight, not only on the

@@ -390,7 +390,8 @@ namespace mark4
             updateStatusLeds(m_core.flightPhase(), frame.rc.killSwitch, degraded, frames);
 
             ++frames;
-            m_statusPublisher.publish(frame, actuators, m_core);
+            m_statusPublisher.publish(
+                frame, actuators, m_core, !m_rcTracker.failsafeActive(frame.timestampUs));
             // Whatever a subscriber enabled, at the period it asked for; the
             // frame's own timestamp stamps the samples, so the service never
             // reads a clock either.

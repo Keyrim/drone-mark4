@@ -60,6 +60,7 @@ namespace
                 return PATTERN_CUTOFF;
             case mark4::FlightPhase::ALTITUDE_AUTO:
             case mark4::FlightPhase::MANUAL:
+            case mark4::FlightPhase::LEVEL:
             case mark4::FlightPhase::BALLISTIC:
             case mark4::FlightPhase::RECOVERY:
             case mark4::FlightPhase::HOVER:

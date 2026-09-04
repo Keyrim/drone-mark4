@@ -23,21 +23,31 @@ namespace mark4
     };
 
     /// Piloting mode selected by the pilot. MANUAL is 0 so a zeroed RcInput
-    /// (the fail-safe state) lands on the mode that never flies on its own.
-    /// The values mirror the wire-level RC_MODE_* constants one for one; the
-    /// platform adapter that decodes the uplink is where the two meet and
-    /// where they are asserted equal, so flight-core stays wire-free.
+    /// (the fail-safe state) lands on the mode that flies the least on its
+    /// own: no leveling, no altitude loop, the sticks alone. The values
+    /// mirror the wire-level RC_MODE_* constants one for one; the platform
+    /// adapter that decodes the uplink is where the two meet and where they
+    /// are asserted equal, so flight-core stays wire-free.
     enum class PilotMode : std::uint8_t
     {
-        MANUAL = 0U,        ///< the stick commands the collective directly
-        ALTITUDE_AUTO = 1U, ///< the stick commands a vertical velocity
+        MANUAL = 0U,        ///< sticks command body rates, the throttle is the collective
+        ALTITUDE_AUTO = 1U, ///< sticks command the tilt, the throttle a vertical velocity
+        LEVEL = 2U,         ///< sticks command the tilt, the throttle is the collective
     };
 
     /// RC state. The kill switch is processed before anything else in step().
+    /// The three sticks are the pilot's, not the body's: positive means
+    /// right, forward and clockwise as seen by someone holding the
+    /// transmitter, and the core maps them onto the body frame (x forward,
+    /// y left, z up) where it needs them. Deadband and scaling are the
+    /// core's business too: the values here are the raw stick positions.
     struct RcInput
     {
         bool killSwitch = true;             ///< defaults to safe: motors cut
         float throttle = 0.0f;              ///< normalized [0, 1]
+        float roll = 0.0f;                  ///< normalized [-1, 1], positive rolls right
+        float pitch = 0.0f;                 ///< normalized [-1, 1], positive noses down
+        float yaw = 0.0f;                   ///< normalized [-1, 1], positive turns right
         bool armSwitch = false;             ///< true = motors may run
         PilotMode mode = PilotMode::MANUAL; ///< piloting mode, read while disarmed
     };

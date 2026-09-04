@@ -70,6 +70,12 @@ namespace mark4
     inline constexpr std::uint16_t TUNING_ID_VEST_ALTITUDE_GAIN = 501U;
     inline constexpr std::uint16_t TUNING_ID_VEST_VELOCITY_GAIN = 502U;
 
+    /// Stick mapping, 7xx: the feel of the piloted modes.
+    inline constexpr std::uint16_t TUNING_ID_STICK_RATE_ROLL_PITCH = 701U;
+    inline constexpr std::uint16_t TUNING_ID_STICK_RATE_YAW = 702U;
+    inline constexpr std::uint16_t TUNING_ID_STICK_TILT_MAX = 703U;
+    inline constexpr std::uint16_t TUNING_ID_STICK_DEADBAND = 704U;
+
     /// Fixed-size registry of the tunable parameters: their live values, their
     /// bounds and whether they may move while the drone is armed. No
     /// allocation, no ordering assumption, lookup by id.
@@ -82,7 +88,7 @@ namespace mark4
     {
       public:
         /// Number of registered parameters.
-        static constexpr std::size_t PARAM_COUNT = 12U;
+        static constexpr std::size_t PARAM_COUNT = 16U;
 
         /// @brief Builds the registry with every value at its module's default.
         TuningTable();

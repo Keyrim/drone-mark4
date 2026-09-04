@@ -10,6 +10,7 @@
 #include "flight_core/attitude_controller.hpp"
 #include "flight_core/attitude_estimator.hpp"
 #include "flight_core/rate_controller.hpp"
+#include "flight_core/stick_mapper.hpp"
 #include "flight_core/throw_detector.hpp"
 #include "flight_core/tuning_table.hpp"
 #include "flight_core/types.hpp"
@@ -31,8 +32,11 @@ namespace mark4
     /// Each mode leaves IDLE through its own interlock, and which mode was
     /// used is latched on the way out, so moving the mode switch afterwards
     /// changes nothing until the drone is disarmed again:
-    /// - MANUAL wants the stick down. The motors follow the stick from zero,
-    ///   so entering on a raised stick would be a jump to a live collective.
+    /// - MANUAL and LEVEL want the stick down. The motors follow the stick
+    ///   from zero, so entering on a raised stick would be a jump to a live
+    ///   collective. The two differ in what the other sticks mean: body
+    ///   rates in MANUAL (nothing levels the drone, the pilot does), a tilt
+    ///   in LEVEL (the attitude loop levels it, the pilot leans it).
     /// - ALTITUDE_AUTO wants the stick centered, and leads to ARMED, not to
     ///   piloted flight. In that mode a centered stick means "hold this
     ///   altitude", which on the ground is a takeoff nobody asked for; so
@@ -47,8 +51,9 @@ namespace mark4
         RECOVERY = 4U,      ///< motors on, leveling from an arbitrary attitude
         HOVER = 5U,         ///< recovered: altitude hold until the pilot takes over
         CUTOFF = 6U,        ///< safety cutoff latched: motors stopped until rearm
-        MANUAL = 7U,        ///< piloted flight: the stick commands the collective
+        MANUAL = 7U,        ///< piloted flight: sticks command body rates, throttle the collective
         FAULT = 8U,         ///< IMU lost with the motors running: stopped until the kill
+        LEVEL = 9U,         ///< piloted flight: sticks command the tilt, throttle the collective
     };
 
     /// Synchronous, single-threaded flight core, paced by data arrival
@@ -198,8 +203,8 @@ namespace mark4
         [[nodiscard]] const TuningParam *paramInfo(std::size_t index) const;
 
         /// Throttle under which the stick counts as down: the interlock the
-        /// direct-thrust mode is entered through, and the position it starts
-        /// its collective from.
+        /// direct-thrust modes are entered through, and the position they
+        /// start their collective from.
         static constexpr float STICK_DOWN_THROTTLE = 0.05f;
 
         /// Throttle above which the stick counts as raised again. The band
@@ -395,6 +400,7 @@ namespace mark4
         AttitudeController m_attitudeController;
         RateController m_rateController;
         VerticalController m_verticalController;
+        StickMapper m_stickMapper;
         std::uint64_t m_prevTimestampUs = 0U; ///< timestamp of the last accepted frame [us]
         bool m_hasPrevTimestamp = false;      ///< false until the first accepted frame
         TuningTable m_tuning;                 ///< registry of the tunable gains

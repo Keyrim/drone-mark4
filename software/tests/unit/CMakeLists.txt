@@ -32,6 +32,7 @@ add_executable(unit_tests
     test_serial_framing.cpp
     test_sim_run_tracker.cpp
     test_status.cpp
+    test_stick_mapper.cpp
     test_telemetry_registry.cpp
     test_telemetry_service.cpp
     test_throw_detector.cpp

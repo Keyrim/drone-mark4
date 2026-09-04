@@ -15,6 +15,7 @@ export const FLIGHT_PHASE_NAMES = [
     "cutoff",
     "manual",
     "fault",
+    "level",
 ];
 
 /** mark4.ThrowState, by value. */

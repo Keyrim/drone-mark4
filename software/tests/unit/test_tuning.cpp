@@ -9,6 +9,7 @@
 #include "flight_core/attitude_estimator.hpp"
 #include "flight_core/flight_core.hpp"
 #include "flight_core/rate_controller.hpp"
+#include "flight_core/stick_mapper.hpp"
 #include "flight_core/tuning_table.hpp"
 #include "flight_core/types.hpp"
 #include "flight_core/vertical_controller.hpp"
@@ -116,6 +117,14 @@ TEST_CASE("the registry defaults are the owning modules' constants")
     REQUIRE(readParam(table, mark4::TUNING_ID_HOVER_COLLECTIVE) ==
             mark4::VerticalController::DEFAULT_HOVER_COLLECTIVE);
     REQUIRE(readParam(table, mark4::TUNING_ID_AHRS_KI) == mark4::AttitudeEstimator::DEFAULT_KI);
+    REQUIRE(readParam(table, mark4::TUNING_ID_STICK_RATE_ROLL_PITCH) ==
+            mark4::StickMapper::DEFAULT_RATE_ROLL_PITCH_RADS);
+    REQUIRE(readParam(table, mark4::TUNING_ID_STICK_RATE_YAW) ==
+            mark4::StickMapper::DEFAULT_RATE_YAW_RADS);
+    REQUIRE(readParam(table, mark4::TUNING_ID_STICK_TILT_MAX) ==
+            mark4::StickMapper::DEFAULT_TILT_MAX_RAD);
+    REQUIRE(readParam(table, mark4::TUNING_ID_STICK_DEADBAND) ==
+            mark4::StickMapper::DEFAULT_DEADBAND);
 }
 
 TEST_CASE("an unknown id is rejected and changes nothing")

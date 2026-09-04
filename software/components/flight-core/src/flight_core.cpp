@@ -27,7 +27,9 @@ namespace mark4
                     return false;
                 }
             }
-            return std::isfinite(frame.baroPa) && std::isfinite(frame.rc.throttle);
+            return std::isfinite(frame.baroPa) && std::isfinite(frame.rc.throttle) &&
+                   std::isfinite(frame.rc.roll) && std::isfinite(frame.rc.pitch) &&
+                   std::isfinite(frame.rc.yaw);
         }
     } // namespace
 
@@ -219,15 +221,18 @@ namespace mark4
                     // The single gate: nothing leaves IDLE without it.
                     break;
                 }
-                if (sensors.rc.mode == PilotMode::MANUAL && stickDown)
+                if ((sensors.rc.mode == PilotMode::MANUAL || sensors.rc.mode == PilotMode::LEVEL) &&
+                    stickDown)
                 {
                     // The mode is read here and nowhere else, then latched:
                     // from now on the machine follows m_lockedMode, so the
                     // switch moving mid-flight is structurally ignored.
-                    m_lockedMode = PilotMode::MANUAL;
+                    m_lockedMode = sensors.rc.mode;
+                    const FlightPhase piloted =
+                        m_lockedMode == PilotMode::LEVEL ? FlightPhase::LEVEL : FlightPhase::MANUAL;
                     // Checked on entry too, so a takeoff attempt under already
                     // absurd sensor readings never powers the motors at all.
-                    m_phase = cutoffTripped(sensors) ? FlightPhase::CUTOFF : FlightPhase::MANUAL;
+                    m_phase = cutoffTripped(sensors) ? FlightPhase::CUTOFF : piloted;
                 }
                 else if (sensors.rc.mode == PilotMode::ALTITUDE_AUTO && m_stickCentered)
                 {
@@ -239,7 +244,12 @@ namespace mark4
                 }
                 break;
             case FlightPhase::MANUAL:
+            case FlightPhase::LEVEL:
             case FlightPhase::ALTITUDE_AUTO:
+                // The tilt cutoff applies to MANUAL too, where nothing levels
+                // the drone: this is the mode the rate loop is tuned in, not
+                // an acrobatic one, and past that tilt the stack can only
+                // push the drone into the ground.
                 if (!arm)
                 {
                     m_phase = FlightPhase::IDLE;
@@ -426,11 +436,16 @@ namespace mark4
                 actuators.motor = mixMotors(collective, torqueCmd);
                 return;
             }
-            case FlightPhase::MANUAL: {
+            case FlightPhase::MANUAL:
+            case FlightPhase::LEVEL: {
                 // Direct thrust: the stick IS the collective, no vertical loop
-                // between the two. The attitude cascade still runs, so the
-                // drone levels itself and the pilot only flies the altitude -
-                // what a beginner rate-free mode is on any other stack.
+                // between the two. What the other sticks drive is the one
+                // difference between the two modes. In MANUAL they are body
+                // rate setpoints and the rate loop alone tracks them: nothing
+                // levels the drone, a released stick holds whatever attitude
+                // it has. In LEVEL they lean the desired thrust direction and
+                // the attitude cascade tracks it, so a released stick levels
+                // the drone - what a beginner mode is on any other stack.
                 //
                 // The vertical controller is held reset for the whole mode:
                 // its integrator sees no setpoint here, and letting it charge
@@ -439,7 +454,7 @@ namespace mark4
                 m_verticalController.reset();
 
                 // Stick at the bottom means motors stopped, exactly zero, not
-                // "zero plus whatever torque the leveling asks for": on the
+                // "zero plus whatever torque the loops ask for": on the
                 // ground that is the difference between still props and props
                 // that creep. The rate loop is held reset with them so it
                 // cannot integrate while nothing answers it.
@@ -449,8 +464,20 @@ namespace mark4
                     m_rateController.reset();
                     return;
                 }
-                const std::array<float, 3> rateSetpoint =
-                    m_attitudeController.rateSetpointRadS(m_attitudeEstimator.attitude());
+                std::array<float, 3> rateSetpoint{};
+                if (m_phase == FlightPhase::MANUAL)
+                {
+                    rateSetpoint = m_stickMapper.rateSetpointRadS(sensors.rc);
+                }
+                else
+                {
+                    rateSetpoint = m_attitudeController.rateSetpointRadS(
+                        m_attitudeEstimator.attitude(),
+                        m_stickMapper.desiredUpWorld(sensors.rc, m_attitudeEstimator.attitude()));
+                    // The attitude loop leaves yaw at zero: the yaw stick
+                    // steers the heading at a rate, exactly as in MANUAL.
+                    rateSetpoint[2] = m_stickMapper.yawRateRadS(sensors.rc);
+                }
                 const std::array<float, 3> torqueCmd =
                     m_rateController.update(rateSetpoint, sensors.gyroRadS, dt);
                 actuators.motor = mixMotors(sensors.rc.throttle, torqueCmd);
@@ -593,6 +620,18 @@ namespace mark4
                 break;
             case TUNING_ID_VEST_VELOCITY_GAIN:
                 m_verticalEstimator.setVelocityGain(value);
+                break;
+            case TUNING_ID_STICK_RATE_ROLL_PITCH:
+                m_stickMapper.setRateRollPitch(value);
+                break;
+            case TUNING_ID_STICK_RATE_YAW:
+                m_stickMapper.setRateYaw(value);
+                break;
+            case TUNING_ID_STICK_TILT_MAX:
+                m_stickMapper.setTiltMax(value);
+                break;
+            case TUNING_ID_STICK_DEADBAND:
+                m_stickMapper.setDeadband(value);
                 break;
             default:
                 // Unreachable: this runs only after the table accepted the id,

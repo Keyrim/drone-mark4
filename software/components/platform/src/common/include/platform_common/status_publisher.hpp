@@ -34,11 +34,14 @@ namespace mark4
         /// @param frame sensor frame of this step
         /// @param actuators actuator outputs of this step
         /// @param core flight core the estimates are read from
+        /// @param rcLinkOk true when the RC fail-safe is not active for this
+        ///        frame, so a pilot's device can tell it is being heard
         /// @param truth the plant's exact state at this frame, nullptr when
         ///        the composition has none (a real board)
         void publish(const SensorFrame &frame,
                      const ActuatorFrame &actuators,
                      const FlightCore &core,
+                     bool rcLinkOk,
                      const mark4_PlantTruth *truth = nullptr)
         {
             ++m_frameCount;
@@ -48,7 +51,7 @@ namespace mark4
             }
             mark4_Envelope envelope = mark4_Envelope_init_zero;
             envelope.which_body = mark4_Envelope_status_tag;
-            packStatus(frame, actuators, core, envelope.body.status);
+            packStatus(frame, actuators, core, rcLinkOk, envelope.body.status);
             if (truth != nullptr)
             {
                 envelope.body.status.has_truth = true;
