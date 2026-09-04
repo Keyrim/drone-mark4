@@ -91,10 +91,15 @@ cd software/hub/pages && pnpm install --frozen-lockfile && pnpm build
 # Install from VSIX".
 cd tools/vscode-mark4 && pnpm install --frozen-lockfile && pnpm build && pnpm package
 
-# Mobile app (Flutter, Android; software/mobile is the Flutter project root).
-# The phone is reached over Wi-Fi: ./scripts/adb_wifi.sh discovers, pairs and
-# connects it (wireless debugging on, same Wi-Fi). Never run flutter on the host.
-cd software/mobile && flutter analyze && flutter build apk --debug --target-platform android-arm64
+# Mobile app (Flutter, Android; software/mobile is the Flutter project root,
+# docs/contributing/dart-guidelines.md the conventions). tool/gen.sh writes
+# lib/gen/ (gitignored): the Dart codec of mark4.proto, wire_hash.dart and the
+# ffigen binding of native/include/mark4/transport_shim.h; every analyze /
+# test / build needs it first. The phone is reached over Wi-Fi:
+# ./scripts/adb_wifi.sh discovers, pairs and connects it (wireless debugging
+# on, same Wi-Fi). Never run flutter on the host.
+cd software/mobile && flutter pub get && ./tool/gen.sh && flutter analyze && dart format --set-exit-if-changed lib test && flutter test
+flutter build apk --debug --target-platform android-arm64   # compiles the transport with the NDK too
 
 # Monte Carlo throw campaign through headless Godot (see tools/batch/README.md;
 # needs the desktop build for drone_sim and the generated python codec)
@@ -269,6 +274,20 @@ Everything C++ lives under `software/`: the executables at its top level
   itself). The pages toast WARN/ERROR only, module name resolved from
   the table.
 
+The mobile app (`software/mobile`, Flutter, Android) is one more node, kind
+`PHONE`: the C++ transport compiled by the NDK from `software/components`
+as it is (`native/CMakeLists.txt` adds the component with `DRONE_PLATFORM`
+`android`; the shared warning targets come from
+`software/cmake/drone_targets.cmake`) behind the C ABI of
+`native/include/mark4/transport_shim.h`, bound by ffigen, never by hand.
+`lib/back/` is the managers (`Backend` boots them in declaration order like
+an App class; `TransportManager` owns the node and polls it, `DroneManager`
+follows the connected drone, `SettingsManager` the theme), each exposing
+its state as a `ValueStream` of an `Equatable` and its commands as methods
+returning a `Future`; `lib/pages/` is one BLoC per page; `lib/theme/` every
+size and color through `flutter_screenutil`. `docs/mobile-app.md` has the
+structure and the roadmap.
+
 Each executable is flight-core plus one composition of platform services,
 assembled in an App class (see `software/drone_sim/drone_sim_app.hpp`): services
 as value members, declaration order = construction/init order (destruction
@@ -298,9 +317,9 @@ every project target, not by FetchContent deps such as Catch2).
 `.github/workflows/devcontainer-image.yml` rebuilds the dev image and pushes
 it to GHCR (`ghcr.io/keyrim/drone-mark4-devcontainer`) when `.devcontainer/`
 changes; `ci.yml` runs 8 jobs (desktop+tests+batch through headless Godot, stm32,
-esp32, desktop-san, pages pnpm typecheck+build+test, mobile flutter
-analyze+apk, format+ascii, tidy desktop+stm32) inside that image, pinned by
-digest.
+esp32, desktop-san, pages pnpm typecheck+build+test, mobile gen+analyze+
+format+test+apk, format+ascii, tidy desktop+stm32) inside that image, pinned
+by digest.
 After a `.devcontainer/` change, bump the digest in `ci.yml` to the one the
 image workflow pushed (`docker manifest inspect ...:latest`). Container jobs need `options: --user root` (the
 image defaults to user `dev`, the runner mounts workdirs for another UID).

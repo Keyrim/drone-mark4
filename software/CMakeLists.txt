@@ -22,14 +22,9 @@ if(DRONE_PLATFORM STREQUAL "")
     message(STATUS "DRONE_PLATFORM not set, inferred from the toolchain: ${DRONE_PLATFORM}")
 endif()
 
-# Warnings shared by all project code (not by FetchContent dependencies).
-add_library(drone_warnings INTERFACE)
-target_compile_options(drone_warnings INTERFACE -Wall -Wextra -Wdouble-promotion -Werror)
-
-# flight-core and platform: no exceptions, no RTTI, on every preset.
-add_library(drone_strict INTERFACE)
-target_compile_options(drone_strict INTERFACE
-    $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti>)
+# drone_warnings and drone_strict, shared with the other CMake projects that
+# compile components from this tree (the mobile app's native library).
+include(cmake/drone_targets.cmake)
 
 # Absolute path of the repository, for the generators that write outside
 # software/ (the GDScript codec lands in the Godot project) and the flash

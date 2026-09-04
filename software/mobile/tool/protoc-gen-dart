@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# protoc plugin entry point: the protoc_plugin package of the pubspec, run
+# from the pub cache like any dependency (no `dart pub global activate`).
+exec dart run protoc_plugin:protoc_plugin "$@"

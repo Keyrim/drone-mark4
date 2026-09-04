@@ -20,6 +20,7 @@ const KINDS: Record<number, { name: string; icon: string }> = {
     // The ESP32 relay: named here so it reads as itself even on a build
     // whose schema does not know the value yet.
     [6]: { name: "relay", icon: "radio-tower" },
+    [7]: { name: "phone", icon: "device-mobile" },
 };
 
 export function kindName(kind: number): string {

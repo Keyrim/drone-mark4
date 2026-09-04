@@ -1,20 +1,19 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:logging/logging.dart';
+import 'package:mark4/app/app.dart';
+import 'package:mark4/back/backend.dart';
 
-void main() {
-  runApp(const Mark4App());
-}
-
-/// Scaffold of the phone-as-gateway app: one screen, nothing behind it yet.
-class Mark4App extends StatelessWidget {
-  const Mark4App({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const MaterialApp(
-      title: 'mark4',
-      home: Scaffold(
-        body: Center(child: Text('mark4 mobile')),
-      ),
-    );
-  }
+/// Boots the back end, then runs the app; a failed boot runs the error page.
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  Logger.root.level = kDebugMode ? Level.ALL : Level.INFO;
+  Logger.root.onRecord.listen(
+    (record) => debugPrint(
+      '${record.level.name} ${record.loggerName}: ${record.message}',
+    ),
+  );
+  final backend = Backend();
+  await backend.init();
+  runApp(Mark4App(backend: backend));
 }

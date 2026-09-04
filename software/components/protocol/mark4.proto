@@ -58,6 +58,7 @@ enum NodeKind {
   GATEWAY = 4;    // the hub
   BATCH = 5;      // a Monte Carlo campaign
   RELAY = 6;      // the ESP32 riding the drone, relaying between UART and LAN
+  PHONE = 7;      // the pilot's phone: gamepad in hand, transport over Wi-Fi
 }
 
 // Target chip of a firmware image; a board refuses an image built for
