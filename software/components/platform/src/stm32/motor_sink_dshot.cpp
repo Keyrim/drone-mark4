@@ -106,6 +106,11 @@ namespace mark4
         // At 500 Hz the 30 us transfer is always long done; the guard only
         // matters if the loop rate ever changes.
         // TODO(tmagne): surface m_skipped (status log line) once it can occur.
+        // A skipped frame drops its telemetry request too: the sequencer
+        // behind it times out and moves on, which is the right outcome for
+        // a request that never reached the wire.
+        const std::size_t telemetryMotor = m_telemetryMotor;
+        m_telemetryMotor = DSHOT_MOTORS;
         if ((DMA1_Stream2->CR & DMA_SxCR_EN) != 0U)
         {
             ++m_skipped;
@@ -116,7 +121,7 @@ namespace mark4
         for (std::size_t motor = 0U; motor < DSHOT_MOTORS; ++motor)
         {
             const std::uint16_t value = dshotThrottle(frame.motor[motor]);
-            const std::uint16_t encoded = dshotFrame(value, false);
+            const std::uint16_t encoded = dshotFrame(value, motor == telemetryMotor);
             dshotExpand(encoded, &m_buffer[motor], DSHOT_MOTORS);
         }
 

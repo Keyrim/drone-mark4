@@ -8,8 +8,9 @@ target_include_directories(cmsis_f4 SYSTEM INTERFACE
 target_compile_definitions(cmsis_f4 INTERFACE STM32F405xx)
 
 # Target variant: startup + vector table, board clock/timebase/LEDs, RTT
-# debug console, the I2C master the sensor drivers sit on, and the internal
-# flash driver the update system stores firmware slots in.
+# debug console, the I2C master the sensor drivers sit on, the two USARTs
+# (the link and the ESC telemetry wire), and the internal flash driver the
+# update system stores firmware slots in.
 add_library(platform_stm32 STATIC
     startup.c
     board.cpp
@@ -18,6 +19,7 @@ add_library(platform_stm32 STATIC
     mpu6050.cpp
     bmp581.cpp
     uart1.cpp
+    esc_uart.cpp
     clock_stm32.cpp
     sensor_source_stm32.cpp
     motor_sink_dshot.cpp

@@ -51,6 +51,8 @@ const UNIT_LABELS: Record<number, string> = {
     [TelemetryUnit.A]: "A",
     [TelemetryUnit.US]: "us",
     [TelemetryUnit.COUNT]: "count",
+    [TelemetryUnit.RPM]: "rpm",
+    [TelemetryUnit.MAH]: "mAh",
 };
 
 export function unitLabel(unit: TelemetryUnit): string {

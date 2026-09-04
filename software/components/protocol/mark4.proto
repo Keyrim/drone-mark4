@@ -143,6 +143,8 @@ enum TelemetryUnit {
   TELEMETRY_UNIT_A = 9;
   TELEMETRY_UNIT_US = 10;
   TELEMETRY_UNIT_COUNT = 11;     // counters
+  TELEMETRY_UNIT_RPM = 12;       // revolutions per minute, electrical or mechanical
+  TELEMETRY_UNIT_MAH = 13;       // milliampere-hours, a consumed charge
 }
 
 // One measure a node exposes. id is its index in the node's frozen table,

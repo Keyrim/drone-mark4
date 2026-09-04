@@ -48,6 +48,8 @@ namespace mark4
         A = 9U,
         US = 10U,
         COUNT = 11U, ///< counters
+        RPM = 12U,   ///< revolutions per minute, electrical or mechanical
+        MAH = 13U,   ///< milliampere-hours, a consumed charge
     };
 
     /// Longest measure name, terminator excluded (mark4.TelemetryDescriptor).

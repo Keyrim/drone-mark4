@@ -9,6 +9,7 @@
 #include "log_modules.hpp"
 #include "platform_common/envelope_io.hpp"
 #include "platform_common/ota_boot_policy.hpp"
+#include "platform_stm32/esc_uart.hpp"
 #include "platform_stm32/rtt.hpp"
 #include "platform_stm32/uart1.hpp"
 #include "protocol/envelope.hpp"
@@ -24,6 +25,7 @@ namespace
     mark4::LogModule OTA{mark4::LOG_MODULE_OTA_UPDATER, "ota/updater"};
     mark4::LogModule UART{mark4::LOG_MODULE_TRANSPORT_UART, "transport/uart"};
     mark4::LogModule FLIGHT{mark4::LOG_MODULE_FLIGHT_CORE, "flight/core"};
+    mark4::LogModule ESC{mark4::LOG_MODULE_PLATFORM_ESC, "platform/esc"};
 
     constexpr std::uint32_t US_PER_MS = 1000U;
 
@@ -135,6 +137,9 @@ namespace mark4
         }
         m_sensorSource.init();
         m_motorSink.init();
+        static_cast<void>(escUartInit());
+        BOOT.info("esc: telemetry wire %lu baud, one request in flight",
+                  static_cast<unsigned long>(ESC_TELEMETRY_BAUD_RATE));
         BOOT.info("loop: %lu Hz, timer paced; status: 1 message / %lu frames; "
                   "rc fail-safe %lu ms",
                   static_cast<unsigned long>(SensorSourceStm32::FRAME_RATE_HZ),
@@ -219,6 +224,54 @@ namespace mark4
             m_logModulesPublished = true;
             publishLogModules();
         }
+    }
+
+    void FirmwareApp::pollEscTelemetry(std::uint64_t nowUs)
+    {
+        // Everything the wire delivered since the last frame belongs to the
+        // request outstanding, if any; the sequencer sorts it out.
+        std::uint8_t byte = 0U;
+        while (escUartRxPop(byte))
+        {
+            m_escTelemetry.feed(byte, nowUs);
+        }
+        std::size_t motor = 0U;
+        if (m_escTelemetry.nextRequest(nowUs, motor))
+        {
+            m_motorSink.requestTelemetry(motor);
+        }
+    }
+
+    void FirmwareApp::logEscTransitions(std::uint64_t nowUs)
+    {
+        std::uint32_t mask = 0U;
+        for (std::size_t motor = 0U; motor < ESC_COUNT; ++motor)
+        {
+            if (m_escTelemetry.online(motor, nowUs))
+            {
+                mask |= 1U << motor;
+            }
+        }
+        const std::uint32_t changed = mask ^ m_escOnlineMask;
+        for (std::size_t motor = 0U; motor < ESC_COUNT; ++motor)
+        {
+            const std::uint32_t bit = 1U << motor;
+            if ((changed & bit) == 0U)
+            {
+                continue;
+            }
+            if ((mask & bit) != 0U)
+            {
+                ESC.info("esc %u reporting", static_cast<unsigned>(motor));
+            }
+            else
+            {
+                ESC.warn("esc %u silent for %lu ms",
+                         static_cast<unsigned>(motor),
+                         static_cast<unsigned long>(EscTelemetry::SILENCE_US / US_PER_MS));
+            }
+        }
+        m_escOnlineMask = mask;
     }
 
     void FirmwareApp::OnPayload(void *context,
@@ -388,6 +441,9 @@ namespace mark4
             // what was stepped.
             m_frameTelemetry.update(frame);
             m_core.step(frame, actuators);
+            // The ESC answers ride the frame the sink is about to clock out:
+            // drain what the previous one brought back, flag the next request.
+            pollEscTelemetry(frame.timestampUs);
             m_motorSink.push(actuators);
             m_stepDurationUs = static_cast<float>(m_clock.nowUs() - frame.timestampUs);
             if (m_core.flightPhase() == FlightPhase::FAULT && phaseBefore != FlightPhase::FAULT)
@@ -436,6 +492,22 @@ namespace mark4
                              static_cast<unsigned long>(m_sensorSource.overruns()),
                              static_cast<unsigned long>(m_sensorSource.readFailures()),
                              static_cast<unsigned long>(m_baro.failures()));
+                STATUS.debug("esc: %lu ok %lu crc %lu tmo %lu stray %lu drops  "
+                             "mV %ld %ld %ld %ld  degC %ld %ld %ld %ld",
+                             static_cast<unsigned long>(m_escTelemetry.frames()),
+                             static_cast<unsigned long>(m_escTelemetry.crcErrors()),
+                             static_cast<unsigned long>(m_escTelemetry.timeouts()),
+                             static_cast<unsigned long>(m_escTelemetry.strayBytes()),
+                             static_cast<unsigned long>(escUartRxDrops()),
+                             milli(m_escTelemetry.sample(0U).voltageV),
+                             milli(m_escTelemetry.sample(1U).voltageV),
+                             milli(m_escTelemetry.sample(2U).voltageV),
+                             milli(m_escTelemetry.sample(3U).voltageV),
+                             static_cast<long>(m_escTelemetry.sample(0U).temperatureC),
+                             static_cast<long>(m_escTelemetry.sample(1U).temperatureC),
+                             static_cast<long>(m_escTelemetry.sample(2U).temperatureC),
+                             static_cast<long>(m_escTelemetry.sample(3U).temperatureC));
+                logEscTransitions(nowUs);
                 STATUS.debug("telemetry: %lu measures, %lu enabled every %lu ms, %lu sent",
                              static_cast<unsigned long>(m_telemetryService.entryCount()),
                              static_cast<unsigned long>(m_telemetryService.enabledCount()),

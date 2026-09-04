@@ -19,6 +19,7 @@
 #include "platform_stm32/bmp581.hpp"
 #include "platform_stm32/board.hpp"
 #include "platform_stm32/clock_stm32.hpp"
+#include "platform_stm32/esc_telemetry.hpp"
 #include "platform_stm32/firmware_store_stm32.hpp"
 #include "platform_stm32/i2c_bus.hpp"
 #include "platform_stm32/motor_sink_dshot.hpp"
@@ -128,6 +129,18 @@ namespace mark4
         /// @brief Broadcasts the module table (LogModules pages).
         void publishLogModules();
 
+        /// @brief Drains the ESC telemetry wire into the sequencer, then
+        ///        hands the motor sink the request of the frame about to go
+        ///        out. Runs once per frame, before the push.
+        /// @param nowUs instant of the frame [us]
+        void pollEscTelemetry(std::uint64_t nowUs);
+
+        /// @brief Logs the ESCs that appeared or fell silent since the last
+        ///        call (platform/esc). Runs once per status window, so a
+        ///        flapping wire costs one line per second at most.
+        /// @param nowUs instant of the check [us]
+        void logEscTransitions(std::uint64_t nowUs);
+
         // Declaration order = construction order; dependencies are
         // injected by reference, so a service may only depend on those
         // declared above it. The link comes first so that an init failure
@@ -143,6 +156,9 @@ namespace mark4
         mark4::Bmp581 m_baro{m_bus};
         mark4::SensorSourceStm32 m_sensorSource{m_imu, m_baro, m_clock};
         mark4::MotorSinkDshot m_motorSink;
+        /// The four ESCs on their shared telemetry wire (USART2, PA3): what
+        /// they report is health data in the registry, never a control input.
+        mark4::EscTelemetry m_escTelemetry;
         mark4::StatusPublisher m_statusPublisher{m_transport};
         mark4::CommandReceiverTransport m_commandReceiver;
         mark4::RcTracker m_rcTracker;
@@ -177,5 +193,8 @@ namespace mark4
 
         /// The module table goes out once the first beacon did.
         bool m_logModulesPublished = false;
+
+        /// ESCs reporting at the last status window, one bit per motor.
+        std::uint32_t m_escOnlineMask = 0U;
     };
 } // namespace mark4
