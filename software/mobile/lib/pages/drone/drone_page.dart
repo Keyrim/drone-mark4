@@ -425,11 +425,15 @@ class _Throttle extends StatelessWidget {
         ),
         SizedBox(width: AppSizes.gapSmall),
         SizedBox(
-          width: AppSizes.stickDot * 2,
+          width: AppSizes.stickDot * 3,
           child: Text(
             '${(throttle * 100).round()}%',
             textAlign: TextAlign.end,
-            style: text.bodyLarge,
+            maxLines: 1,
+            softWrap: false,
+            style: text.bodyLarge?.copyWith(
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
           ),
         ),
       ],
