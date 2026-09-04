@@ -69,3 +69,14 @@ final class DroneModeSelected extends DroneEvent {
 final class DroneBackgrounded extends DroneEvent {
   const DroneBackgrounded();
 }
+
+/// The user tapped a contextual action on the screen (a button does the
+/// same).
+final class DroneActionRequested extends DroneEvent {
+  const DroneActionRequested(this.kind);
+
+  final PilotActionKind kind;
+
+  @override
+  List<Object?> get props => [kind];
+}

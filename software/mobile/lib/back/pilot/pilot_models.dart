@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import 'package:mark4/back/gamepad/gamepad_models.dart';
 import 'package:mark4/gen/mark4.pbenum.dart';
 
 /// Why the last arming gesture did nothing, shown until the next one.
@@ -38,9 +39,59 @@ enum HapticCue {
   killCleared,
   refused,
   modeChanged,
+
+  /// A contextual action was sent.
+  action,
   linkLost,
   linkBack,
 }
+
+/// What a contextual button does for the connected drone's kind.
+enum PilotActionKind {
+  /// Sim: teleport the plant back to its start pose.
+  resetScene,
+
+  /// Sim: reset, then play a full hand throw.
+  handThrow,
+}
+
+/// One contextual control: a button of the controller bound to an action
+/// the connected drone's kind offers. A simulated drone offers its scene;
+/// a real one offers nothing yet.
+class PilotAction extends Equatable {
+  const PilotAction({
+    required this.button,
+    required this.kind,
+    required this.label,
+  });
+
+  /// Bit of the button in GamepadButtons.
+  final int button;
+  final PilotActionKind kind;
+
+  /// Short word for the screen.
+  final String label;
+
+  /// The button's own name.
+  String get buttonName => GamepadButtons.names[button];
+
+  @override
+  List<Object?> get props => [button, kind, label];
+}
+
+/// The contextual controls of a simulated drone.
+const List<PilotAction> simActions = [
+  PilotAction(
+    button: GamepadButtons.bitX,
+    kind: PilotActionKind.resetScene,
+    label: 'reset scene',
+  ),
+  PilotAction(
+    button: GamepadButtons.bitY,
+    kind: PilotActionKind.handThrow,
+    label: 'hand throw',
+  ),
+];
 
 /// The piloting modes in the order the D-pad cycles them.
 const List<RcMode> pilotModes = [
@@ -110,6 +161,7 @@ class PilotState extends Equatable {
     this.holdProgress = 0,
     this.refusal = ArmRefusal.none,
     this.rcSent = 0,
+    this.actions = const [],
   });
 
   static const PilotState idle = PilotState();
@@ -146,6 +198,9 @@ class PilotState extends Equatable {
   /// Rc messages sent since boot.
   final int rcSent;
 
+  /// The contextual controls the connected drone's kind offers.
+  final List<PilotAction> actions;
+
   /// Every link is up.
   bool get linksOk => gamepadOk && droneOk && droneHearsUs;
 
@@ -162,6 +217,7 @@ class PilotState extends Equatable {
     double? holdProgress,
     ArmRefusal? refusal,
     int? rcSent,
+    List<PilotAction>? actions,
   }) => PilotState(
     engaged: engaged ?? this.engaged,
     killed: killed ?? this.killed,
@@ -175,6 +231,7 @@ class PilotState extends Equatable {
     holdProgress: holdProgress ?? this.holdProgress,
     refusal: refusal ?? this.refusal,
     rcSent: rcSent ?? this.rcSent,
+    actions: actions ?? this.actions,
   );
 
   @override
@@ -191,5 +248,6 @@ class PilotState extends Equatable {
     holdProgress,
     refusal,
     rcSent,
+    actions,
   ];
 }

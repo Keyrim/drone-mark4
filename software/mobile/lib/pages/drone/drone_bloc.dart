@@ -34,6 +34,7 @@ class DroneBloc extends Bloc<DroneEvent, DroneState> {
     );
     on<DroneTicked>((event, emit) => emit(state.copyWith(nowUs: event.nowUs)));
     on<DroneModeSelected>((event, _) => _pilot.selectMode(event.mode));
+    on<DroneActionRequested>((event, _) => _pilot.perform(event.kind));
     on<DroneBackgrounded>((_, _) => _pilot.killNow());
   }
 

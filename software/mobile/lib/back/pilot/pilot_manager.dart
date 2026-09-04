@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:fixnum/fixnum.dart';
 import 'package:logging/logging.dart';
 import 'package:mark4/back/drone/drone_manager.dart';
 import 'package:mark4/back/drone/drone_models.dart';
@@ -24,7 +25,10 @@ final Logger _log = Logger('back/pilot');
 ///   centred in altitude auto, the two interlocks of the flight core) and
 ///   the sticks are centred; held again with the throttle at rest it
 ///   disarms. A refused gesture says why.
-/// - D-pad up / down cycles the mode, while disarmed only.
+/// - D-pad left / right cycles the mode, while disarmed only.
+/// - X and Y are contextual: on a simulated drone they reset the scene and
+///   play a hand throw (the SimScenario the web console sends, with its
+///   defaults); a real drone binds nothing to them yet.
 /// - RT is the throttle in the direct-thrust modes (released = motors
 ///   stopped); the left stick's vertical axis is the throttle of altitude
 ///   auto, where centre means hold. Right stick roll and pitch, left stick
@@ -60,6 +64,18 @@ class PilotManager extends AbsManager {
 
   /// How many times the safe state goes out when the stream stops.
   static const int goodbyeFrames = 2;
+
+  /// Highest scenario sequence before wrapping; 0 is "no scenario".
+  static const int maxScenarioSequence = 255;
+
+  /// The hand throw the web console plays by default: seed, hold, tilt,
+  /// azimuth, swing, release speed and spin.
+  static const int scenarioSeed = 1234;
+  static const double handThrowHeldS = 1.5;
+  static const double handThrowTiltRad = 0.3;
+  static const double handThrowAzimuthRad = 0;
+  static const double handThrowSwingS = 0.35;
+  static const double handThrowVelocityMps = 6;
 
   final GamepadManager _gamepad;
   final DroneManager _drones;
@@ -98,6 +114,7 @@ class PilotManager extends AbsManager {
   int _armedAtUs = 0;
   int _lastLinkAlarmUs = 0;
   bool _linksWereOk = true;
+  int _scenarioSequence = 0;
 
   /// The transmitter as it is.
   ValueStream<PilotState> get state => _state.stream;
@@ -192,6 +209,42 @@ class PilotManager extends AbsManager {
     _publish(force: true);
   }
 
+  /// Performs one contextual action on the connected drone, if its kind
+  /// offers it (the screen may ask too). A simulated drone receives a
+  /// SimScenario, which the flight process forwards to its plant.
+  Future<void> perform(PilotActionKind kind) async {
+    if (!_pending.actions.any((action) => action.kind == kind)) {
+      return;
+    }
+    final connection = _drones.connection.value;
+    if (connection.status == DroneLinkStatus.none) {
+      return;
+    }
+    _scenarioSequence = _scenarioSequence % maxScenarioSequence + 1;
+    final scenario = SimScenario()
+      ..sequence = _scenarioSequence
+      ..seed = Int64(scenarioSeed);
+    switch (kind) {
+      case PilotActionKind.resetScene:
+        scenario.kind = SimScenarioKind.RESET;
+      case PilotActionKind.handThrow:
+        scenario
+          ..kind = SimScenarioKind.HAND_THROW
+          ..velocityMps.addAll([0, 0, handThrowVelocityMps])
+          ..angularVelocityRadS.addAll([0, 0, 0])
+          ..heldSeconds = handThrowHeldS
+          ..heldTiltRad = handThrowTiltRad
+          ..heldAzimuthRad = handThrowAzimuthRad
+          ..swingSeconds = handThrowSwingS;
+    }
+    _log.info('scenario ${scenario.kind.name} #$_scenarioSequence');
+    _cue(HapticCue.action);
+    await _transport.send(
+      connection.nodeId,
+      Envelope()..simScenario = scenario,
+    );
+  }
+
   /// One step of the stream: the held gestures, the links, one Rc message.
   /// What the timer does every [period].
   void tickNow() {
@@ -240,10 +293,16 @@ class PilotManager extends AbsManager {
       _armHoldDone = false;
     }
     // D-pad: the mode, disarmed only.
-    if (after.dpadUp && !before.dpadUp) {
+    if (after.dpadRight && !before.dpadRight) {
       _cycleMode(1);
-    } else if (after.dpadDown && !before.dpadDown) {
+    } else if (after.dpadLeft && !before.dpadLeft) {
       _cycleMode(-1);
+    }
+    // The contextual buttons of the connected drone's kind.
+    for (final action in _pending.actions) {
+      if (after.isDown(action.button) && !before.isDown(action.button)) {
+        unawaited(perform(action.kind));
+      }
     }
     _refreshHold(nowUs);
     _publish(force: false);
@@ -442,7 +501,12 @@ class PilotManager extends AbsManager {
     final status = _drones.status.value;
     final droneOk = connection.status == DroneLinkStatus.connected;
     final hearsUs = status != null && !_stale(status, nowUs) && status.rcLinkOk;
-    _pending = _pending.copyWith(droneOk: droneOk, droneHearsUs: hearsUs);
+    final kind = connection.info?.announce.kind;
+    _pending = _pending.copyWith(
+      droneOk: droneOk,
+      droneHearsUs: hearsUs,
+      actions: kind == NodeKind.DRONE_SIM ? simActions : const [],
+    );
     _publish(force: false);
   }
 
@@ -529,6 +593,7 @@ class PilotManager extends AbsManager {
       HapticCue.killCleared => const [60],
       HapticCue.refused => const [40, 80, 40],
       HapticCue.modeChanged => const [30],
+      HapticCue.action => const [30],
       HapticCue.linkLost => const [60, 80, 60, 80, 60],
       HapticCue.linkBack => const [80],
     };

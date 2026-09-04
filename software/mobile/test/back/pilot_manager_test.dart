@@ -257,14 +257,14 @@ void main() {
   );
 
   test(
-    'the D-pad cycles the mode while disarmed only, and altitude auto moves the throttle to the left stick',
+    'the D-pad cycles the mode left and right while disarmed only, and altitude auto moves the throttle to the left stick',
     () async {
       await cockpit.hold([GamepadButtons.bitB], 1100);
       expect(cockpit.state.mode, RcMode.RC_MANUAL);
-      await cockpit.report(pad(down: [GamepadButtons.bitDpadUp]));
+      await cockpit.report(pad(down: [GamepadButtons.bitDpadRight]));
       await cockpit.report(pad());
       expect(cockpit.state.mode, RcMode.RC_LEVEL);
-      await cockpit.report(pad(down: [GamepadButtons.bitDpadUp]));
+      await cockpit.report(pad(down: [GamepadButtons.bitDpadRight]));
       await cockpit.report(pad());
       expect(cockpit.state.mode, RcMode.RC_ALTITUDE_AUTO);
 
@@ -274,9 +274,9 @@ void main() {
       await cockpit.report(pad(leftY: -1));
       expect(cockpit.state.sticks.throttle, closeTo(1, 1e-6));
 
-      await cockpit.report(pad(down: [GamepadButtons.bitDpadDown]));
+      await cockpit.report(pad(down: [GamepadButtons.bitDpadLeft]));
       await cockpit.report(pad());
-      await cockpit.report(pad(down: [GamepadButtons.bitDpadDown]));
+      await cockpit.report(pad(down: [GamepadButtons.bitDpadLeft]));
       await cockpit.report(pad());
       expect(cockpit.state.mode, RcMode.RC_MANUAL);
 
@@ -284,7 +284,7 @@ void main() {
       await cockpit.status();
       await cockpit.hold([GamepadButtons.bitA], 1100);
       expect(cockpit.state.armed, isTrue);
-      await cockpit.report(pad(down: [GamepadButtons.bitDpadUp]));
+      await cockpit.report(pad(down: [GamepadButtons.bitDpadRight]));
       await cockpit.report(pad());
       expect(cockpit.state.mode, RcMode.RC_MANUAL);
       expect(cockpit.sentRc.last.mode, RcMode.RC_MANUAL);
@@ -293,9 +293,9 @@ void main() {
 
   test('altitude auto arms and disarms with the left stick centred', () async {
     await cockpit.hold([GamepadButtons.bitB], 1100);
-    await cockpit.report(pad(down: [GamepadButtons.bitDpadUp]));
+    await cockpit.report(pad(down: [GamepadButtons.bitDpadRight]));
     await cockpit.report(pad());
-    await cockpit.report(pad(down: [GamepadButtons.bitDpadUp]));
+    await cockpit.report(pad(down: [GamepadButtons.bitDpadRight]));
     await cockpit.report(pad());
     expect(cockpit.state.mode, RcMode.RC_ALTITUDE_AUTO);
 
@@ -326,6 +326,60 @@ void main() {
     expect(cockpit.state.armed, isFalse);
     expect(cockpit.state.refusal, ArmRefusal.throttleNotCentred);
   });
+
+  test(
+    'a simulated drone binds X and Y to its scene, a real one nothing',
+    () async {
+      expect(cockpit.state.actions, simActions);
+      final before = bench.node.sent.length;
+      await cockpit.report(pad(down: [GamepadButtons.bitX]));
+      await cockpit.report(pad());
+      await cockpit.report(pad(down: [GamepadButtons.bitY]));
+      await cockpit.report(pad());
+      final scenarios = <SimScenario>[];
+      for (final (dst, payload) in bench.node.sent.sublist(before)) {
+        final envelope = Envelope.fromBuffer(payload);
+        if (dst == simId && envelope.hasSimScenario()) {
+          scenarios.add(envelope.simScenario);
+        }
+      }
+      expect(scenarios.map((s) => s.kind), [
+        SimScenarioKind.RESET,
+        SimScenarioKind.HAND_THROW,
+      ]);
+      expect(scenarios.map((s) => s.sequence), [1, 2]);
+      expect(scenarios.last.heldSeconds, PilotManager.handThrowHeldS);
+      expect(scenarios.last.velocityMps, [
+        0,
+        0,
+        PilotManager.handThrowVelocityMps,
+      ]);
+
+      // The screen asks the same way.
+      await cockpit.pilot.perform(PilotActionKind.resetScene);
+      expect(bench.node.sent.length, greaterThan(before + 2));
+
+      // A board offers nothing: X does nothing.
+      const boardId = 0x22222222;
+      bench.node.announceDrone(
+        boardId,
+        'mark4',
+        NodeKind.FIRMWARE,
+        bench.nowUs,
+      );
+      await bench.poll();
+      await bench.backend.drones.connect(boardId);
+      await bench.settle();
+      expect(cockpit.state.actions, isEmpty);
+      final sent = bench.node.sent.length;
+      await cockpit.report(pad(down: [GamepadButtons.bitX]));
+      await cockpit.report(pad());
+      final toBoard = bench.node.sent
+          .sublist(sent)
+          .where((entry) => Envelope.fromBuffer(entry.$2).hasSimScenario());
+      expect(toBoard, isEmpty);
+    },
+  );
 
   test('disarming wants RT released', () async {
     await cockpit.clearKillAndArm();

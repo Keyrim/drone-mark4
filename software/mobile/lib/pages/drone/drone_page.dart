@@ -85,6 +85,10 @@ class _CockpitView extends StatelessWidget {
                     _ModeRow(state: state),
                     SizedBox(height: AppSizes.gap),
                     _Gesture(state: state),
+                    if (state.pilot.actions.isNotEmpty) ...[
+                      SizedBox(height: AppSizes.gap),
+                      _Actions(actions: state.pilot.actions),
+                    ],
                     SizedBox(height: AppSizes.gap),
                     _Throttle(state: state),
                     SizedBox(height: AppSizes.gap),
@@ -359,6 +363,36 @@ class _Gesture extends StatelessWidget {
     ArmRefusal.throttleNotCentred => 'refused: centre the left stick',
     ArmRefusal.sticksNotCentered => 'refused: centre the sticks',
   };
+}
+
+/// The contextual controls of the connected drone's kind: one chip per
+/// bound button, tappable too.
+class _Actions extends StatelessWidget {
+  const _Actions({required this.actions});
+
+  final List<PilotAction> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final bloc = context.read<DroneBloc>();
+    return Wrap(
+      spacing: AppSizes.gapSmall,
+      runSpacing: AppSizes.gapSmall,
+      children: [
+        for (final action in actions)
+          ActionChip(
+            avatar: CircleAvatar(
+              child: Text(
+                action.buttonName,
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+            ),
+            label: Text(action.label),
+            onPressed: () => bloc.add(DroneActionRequested(action.kind)),
+          ),
+      ],
+    );
+  }
 }
 
 /// The throttle as streamed.

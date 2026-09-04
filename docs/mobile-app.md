@@ -201,8 +201,14 @@ for the conventions). What the first iteration put in place:
   valid sensors and a fresh Status, the throttle is at its rest (RT
   released, or the left stick centred in altitude auto: the two interlocks
   of the flight core) and the sticks are centred (the missing condition is
-  shown), A held again with the throttle at rest disarms; D-pad up / down cycles the mode while disarmed (`manual`,
-  `level`, `altitude auto`), as does the segmented control on screen.
+  shown), A held again with the throttle at rest disarms; D-pad left /
+  right cycles the mode while disarmed (`manual`, `level`, `altitude
+  auto`), as does the segmented control on screen. X
+  and Y are contextual, bound by the connected drone's kind: a `drone_sim`
+  gets `reset scene` and `hand throw` (the `SimScenario` the web console
+  sends with its defaults, forwarded by the flight process to its plant),
+  shown as tappable chips on the cockpit; a board binds nothing to them
+  yet.
   RT is the throttle in the direct-thrust modes (released = motors
   stopped), the left stick's vertical axis is the throttle of altitude auto
   (centre = hold); right stick roll and pitch (forward = nose down), left
