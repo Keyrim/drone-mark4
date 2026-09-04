@@ -1,12 +1,16 @@
 import 'package:go_router/go_router.dart';
 import 'package:mark4/back/transport/node_id.dart';
 import 'package:mark4/pages/drone/drone_page.dart';
+import 'package:mark4/pages/gamepad/gamepad_page.dart';
 import 'package:mark4/pages/home/home_page.dart';
 
 /// Location of the page of one drone.
 String droneRoute(int nodeId) => '/drone/${formatNodeId(nodeId)}';
 
-/// The pages: the home list, and one drone by node id.
+/// Location of the gamepad page.
+const String gamepadRoute = '/gamepad';
+
+/// The pages: the home list, one drone by node id, the gamepad.
 GoRouter buildRouter() => GoRouter(
   routes: [
     GoRoute(
@@ -21,6 +25,10 @@ GoRouter buildRouter() => GoRouter(
               : null,
           builder: (context, state) =>
               DronePage(nodeId: parseNodeId(state.pathParameters['id']!)!),
+        ),
+        GoRoute(
+          path: 'gamepad',
+          builder: (context, state) => const GamepadPage(),
         ),
       ],
     ),

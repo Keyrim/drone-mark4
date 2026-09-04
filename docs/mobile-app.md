@@ -169,8 +169,29 @@ for the conventions). What the first iteration put in place:
   BLoC per page over those managers; `lib/widgets/` what pages share;
   `lib/theme/` every size and color, scaled by `flutter_screenutil` from a
   portrait design. The Android activity answers one method channel
-  (`mark4/platform`: the Wi-Fi multicast lock, the device name), wrapped in
-  `lib/back/platform/`.
+  (`mark4/platform`: the Wi-Fi multicast lock, the device name, the
+  haptics), wrapped in `lib/back/platform/` and `lib/back/gamepad/`.
+- **The gamepad, read at the activity** (2026-09-04). What PoC 2 found is
+  now the app's `GamepadBridge.kt`: `dispatchGenericMotionEvent` and
+  `dispatchKeyEvent` hand every gamepad-source event to the bridge and
+  consume it (BACK excepted), the batched history is drained oldest first,
+  `requestUnbufferedDispatch` is on for the gamepad sources from
+  `onResume`, and an `InputManager.InputDeviceListener` reports the
+  controllers coming and going. One `EventChannel` (`mark4/gamepad`)
+  carries two kinds of events towards Dart: a report packed as a
+  `Float64List` (device id, kernel timestamp in the uptime base, the two
+  sticks, the two triggers, the hat, a button mask; the layout is spelled
+  out once in the Kotlin constants and mirrored by `GamepadSample.fromPacked`)
+  and the device list as a list of maps. Triggers are read from both the
+  `BRAKE`/`GAS` and `LTRIGGER`/`RTRIGGER` axes (Xbox pads use the former),
+  a hat reported as axes is folded into the four D-pad bits. Haptics are
+  two methods of `mark4/platform`: `gamepadRumble` through the input
+  device's vibrator manager, `vibratePhone` filed as `USAGE_ALARM` so the
+  touch-feedback setting cannot silence it. On the Dart side
+  `GamepadManager` exposes every report raw on `samples` (for whoever
+  flies with them) and a throttled `state` (devices, last report, report
+  rate) for the screens; a trailing timer publishes the last report a
+  controller sent before going quiet, so released sticks show released.
 - **Tests without a phone.** The managers run in `flutter test` over a fake
   transport node and a fake platform (`test/fakes/`): the test is the
   network, it puts nodes in the table and Envelopes in the queue and polls.
@@ -180,20 +201,23 @@ Screens: the home page lists the drones (kind `FIRMWARE` or `DRONE_SIM`,
 the same `isDrone` as the pages) with their name and id and counts the
 other nodes; tapping one opens its page, which connects and shows a banner
 (connected / disconnected / waiting) above what the drone announced and the
-link counters. Portrait, few things per screen, large: the phone is set
-down and the hands are on the controller.
+link counters. The gamepad icon of the home app bar is lit while a
+controller is present and opens the gamepad page: the controller's name,
+the report count and rate, the two sticks drawn on their squares, the two
+triggers as gauges, every button as a chip lit while down, and two buttons
+to rumble the pad and buzz the phone. It is the page to open when a stick
+feels wrong, before blaming the drone. Portrait, few things per screen,
+large: the phone is set down and the hands are on the controller.
 
 ## Roadmap of software/mobile
 
 Done: the transport through ffigen with `NodeKind.PHONE`, the generated Dart
 codec and wire hash, the drone list and the drone page (the first two steps
-of the original roadmap, plus the foundations above). Next, each its own
-pull request:
+of the original roadmap, plus the foundations above), and the gamepad
+input module (the Kotlin hooks of PoC 2, the event stream, the device
+list, the haptics, the gamepad page). Next, each its own pull request:
 
-1. **Gamepad input module**: the Kotlin hooks of PoC 2 (consume, unbuffered
-   dispatch on, history drained), one stream of stick / trigger / button
-   samples towards Dart, plus a device list.
-2. **Command path and cockpit**: the drone page becomes the cockpit. The
+1. **Command path and cockpit**: the drone page becomes the cockpit. The
    wire and the flight core are ready for it (`Rc` carries the three
    sticks in the pilot's convention, the core has the `MANUAL` rate mode
    and the `LEVEL` leveling mode, `Status.rc_link_ok` says whether the
@@ -225,17 +249,17 @@ pull request:
    Flown against `drone_sim` and the Godot plant before any motor turns.
    The transport `poll()` moves off the UI isolate before this step if
    PoC 1's numbers say so.
-3. **Lifecycle**: foreground service while a drone is armed, sockets and
+2. **Lifecycle**: foreground service while a drone is armed, sockets and
    the multicast lock survive the screen turning off, link status on
    screen.
-4. **Latency budget in the repository**: the PoC 2 metrics as a debug
+3. **Latency budget in the repository**: the PoC 2 metrics as a debug
    screen of the real app, so every change to the input path is measured
    with the same numbers; the press -> buzz film test documented in
    `docs/bring-up.md` alongside the board procedures.
-5. **Poll off the UI isolate** when the measured cost of the 10 ms timer
+4. **Poll off the UI isolate** when the measured cost of the 10 ms timer
    says so: a native thread in the shim with a queue towards Dart, or a
    Dart isolate; the C ABI already accumulates and never calls back.
-6. Later, not planned: iOS (the transport compiles, the input path and
+5. Later, not planned: iOS (the transport compiles, the input path and
    the BLE HID rules differ), telemetry views (the pages already do it;
    a phone screen is a different design), a network page or filters on the
    home page listing every node and not only the drones, a stable node id

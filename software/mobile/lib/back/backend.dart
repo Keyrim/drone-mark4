@@ -1,5 +1,8 @@
 import 'package:logging/logging.dart';
 import 'package:mark4/back/drone/drone_manager.dart';
+import 'package:mark4/back/gamepad/abs_gamepad_source.dart';
+import 'package:mark4/back/gamepad/android_gamepad_source.dart';
+import 'package:mark4/back/gamepad/gamepad_manager.dart';
 import 'package:mark4/back/manager.dart';
 import 'package:mark4/back/platform/abs_platform.dart';
 import 'package:mark4/back/platform/android_platform.dart';
@@ -14,8 +17,13 @@ final Logger _log = Logger('app/boot');
 /// initialized in declaration order and disposed in the reverse order, the
 /// first failure stopping the boot.
 class Backend {
-  Backend._(this.platform, this.settings, this.transport, this.drones)
-    : _managers = [settings, transport, drones];
+  Backend._(
+    this.platform,
+    this.settings,
+    this.transport,
+    this.drones,
+    this.gamepad,
+  ) : _managers = [settings, transport, drones, gamepad];
 
   /// The real composition, or one over fakes when the arguments are given.
   factory Backend({
@@ -24,6 +32,8 @@ class Backend {
     int Function()? drawNodeId,
     int Function()? clockUs,
     Duration? pollPeriod = const Duration(milliseconds: 10),
+    AbsGamepadSource? gamepadSource,
+    Duration gamepadStatePeriod = const Duration(milliseconds: 50),
   }) {
     final resolvedPlatform = platform ?? AndroidPlatform();
     final settings = SettingsManager();
@@ -35,13 +45,18 @@ class Backend {
       pollPeriod: pollPeriod,
     );
     final drones = DroneManager(transport);
-    return Backend._(resolvedPlatform, settings, transport, drones);
+    final gamepad = GamepadManager(
+      gamepadSource ?? AndroidGamepadSource(),
+      statePeriod: gamepadStatePeriod,
+    );
+    return Backend._(resolvedPlatform, settings, transport, drones, gamepad);
   }
 
   final AbsPlatform platform;
   final SettingsManager settings;
   final TransportManager transport;
   final DroneManager drones;
+  final GamepadManager gamepad;
   final List<AbsManager> _managers;
 
   /// Which manager failed, null after a successful init().

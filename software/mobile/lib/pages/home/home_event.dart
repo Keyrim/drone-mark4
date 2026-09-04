@@ -33,3 +33,13 @@ final class HomeIdentityChanged extends HomeEvent {
   @override
   List<Object?> get props => [identity];
 }
+
+/// A game controller appeared or left.
+final class HomeGamepadChanged extends HomeEvent {
+  const HomeGamepadChanged({required this.connected});
+
+  final bool connected;
+
+  @override
+  List<Object?> get props => [connected];
+}
