@@ -247,10 +247,18 @@ class GamepadBridge(private val context: Context) : EventChannel.StreamHandler, 
         const val BUTTONS = 10
         const val SAMPLE_SIZE = 11
 
-        /** The sources that mean "a game controller": both bits, because pads set either. */
+        /** The sources that mean "a game controller": pads set either, some both. */
         const val GAMEPAD_SOURCES = InputDevice.SOURCE_GAMEPAD or InputDevice.SOURCE_JOYSTICK
 
-        fun isGamepadSource(source: Int): Boolean = source and GAMEPAD_SOURCES != 0
+        /**
+         * Whole-mask test on purpose: every source carries its class in its
+         * low bits (SOURCE_GAMEPAD is a button class, SOURCE_JOYSTICK a
+         * joystick class), so a non-zero `and` also matches the keyboard of
+         * the phone's own buttons, its fingerprint sensor and its touch panel.
+         */
+        fun isGamepadSource(source: Int): Boolean =
+            source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+                source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
 
         fun isGamepad(device: InputDevice): Boolean = isGamepadSource(device.sources)
 
