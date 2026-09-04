@@ -51,6 +51,8 @@ namespace mark4
     static_assert(static_cast<int>(TelemetryUnit::US) == mark4_TelemetryUnit_TELEMETRY_UNIT_US);
     static_assert(static_cast<int>(TelemetryUnit::COUNT) ==
                   mark4_TelemetryUnit_TELEMETRY_UNIT_COUNT);
+    static_assert(static_cast<int>(TelemetryUnit::RPM) == mark4_TelemetryUnit_TELEMETRY_UNIT_RPM);
+    static_assert(static_cast<int>(TelemetryUnit::MAH) == mark4_TelemetryUnit_TELEMETRY_UNIT_MAH);
     static_assert(MAX_TELEMETRY_NAME + 1U == sizeof(mark4_TelemetryDescriptor::name),
                   "the measure name width must match the wire");
 

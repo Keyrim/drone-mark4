@@ -191,6 +191,7 @@ test("a unit has one axis label, and the unitless one has none", () => {
     assert.equal(unitLabel(TelemetryUnit.RAD_PER_S), "rad/s");
     assert.equal(unitLabel(TelemetryUnit.UNITLESS), "");
     assert.equal(unitLabel(TelemetryUnit.CELSIUS), "degC");
+    assert.equal(unitLabel(TelemetryUnit.MAH), "mAh");
 });
 
 test("the period is clamped to what a subscriber may ask for", () => {

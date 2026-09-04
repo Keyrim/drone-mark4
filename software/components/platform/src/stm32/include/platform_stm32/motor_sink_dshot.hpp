@@ -91,9 +91,20 @@ namespace mark4
         void init();
 
         /// @brief Encodes the four commands into the burst buffer and re-arms
-        ///        the DMA stream. Never blocks.
+        ///        the DMA stream. Never blocks. The frame of the motor a
+        ///        requestTelemetry() named carries the telemetry bit; the
+        ///        request is consumed whether or not the frame went out.
         /// @param frame actuator frame to output
         void push(const mark4::ActuatorFrame &frame) override;
+
+        /// @brief Asks one ESC to answer on the telemetry wire: the next
+        ///        push() sets the telemetry bit in that motor's frame, and
+        ///        that one only. One request at a time, the last one wins.
+        /// @param motor motor index, below DSHOT_MOTORS
+        void requestTelemetry(std::size_t motor)
+        {
+            m_telemetryMotor = motor;
+        }
 
         /// @return last frame pushed by the core, for the status log line
         [[nodiscard]] const mark4::ActuatorFrame &last() const
@@ -107,5 +118,6 @@ namespace mark4
         std::array<std::uint16_t, DSHOT_BUFFER> m_buffer{};
         mark4::ActuatorFrame m_last;  ///< last commands, for status logs
         std::uint32_t m_skipped = 0U; ///< frames dropped because the DMA was still busy
+        std::size_t m_telemetryMotor = DSHOT_MOTORS; ///< pending request, DSHOT_MOTORS for none
     };
 } // namespace mark4

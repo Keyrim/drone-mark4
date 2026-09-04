@@ -78,8 +78,8 @@ pulled.
 
 Registered today, by area and by where they live. `[r]` marks a reader
 rather than a pointer. The count a node exposes is logged at boot
-(`platform/telemetry`): 76 for `drone_sim`, a few less for the firmware,
-which has no plant behind it.
+(`platform/telemetry`): 76 for `drone_sim`; the firmware has no plant
+behind it and adds the ESC measures below.
 
 Platform, from the frame the loop stepped
 (`platform_common/frame_telemetry.hpp`, a copy of the last `SensorFrame`):
@@ -90,6 +90,20 @@ Platform, from the frame the loop stepped
     sensor/imu_valid [r]  sensor/baro_valid [r]        0/1
     sensor/frame_dt                                   us
     rc/throttle                                       unitless
+
+ESC telemetry, firmware only (`platform_stm32/esc_telemetry.hpp`): the
+KISS frame each of the four ESCs answers on the shared TLM wire when its
+DShot frame asks for it, one ESC at a time. Health data, never a control
+input. The consumption is what the ESC integrated since it powered up, so
+it restarts with the pack; the eRPM is electrical (mechanical rpm times
+the pole pairs of the motor, which the firmware does not know):
+
+    esc/{0,1,2,3}/temperature                         degC
+    esc/{0,1,2,3}/voltage                             V
+    esc/{0,1,2,3}/current                             A
+    esc/{0,1,2,3}/consumption                         mAh
+    esc/{0,1,2,3}/erpm                                rpm
+    esc/frames [r]  esc/crc_errors [r]  esc/timeouts [r]   count
 
 Attitude estimator (`flight_core/attitude_estimator.hpp`). The quaternion
 components are read straight out of the estimate; the Euler angles and the

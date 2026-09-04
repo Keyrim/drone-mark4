@@ -51,6 +51,20 @@ connector and share **I2C1**: a **GY-86** for the IMU and compass, and an
   it only appears on the main bus once the MPU I2C bypass
   (INT_PIN_CFG.I2C_BYPASS_EN) is open.
 
+### Motors and ESC
+
+A commercial 4-in-1 ESC (BLHeli32, KISS telemetry protocol) on the
+motor outputs PA6/PA7 (TIM3 CH1/CH2) and PB0/PB1 (TIM3 CH3/CH4),
+DShot600. Its shared **TLM** wire goes to **PA3** (USART2_RX, 115200
+baud, receive only): the firmware asks one ESC at a time through the
+DShot telemetry bit and exposes what comes back (temperature, voltage,
+current, consumption, eRPM per ESC) as `esc/...` telemetry measures. The
+ESC must be powered from the pack for anything to come back: on the
+FTDI-powered bench alone every request times out, which the `esc/timeouts`
+counter and the 1 Hz `app/status` line show. With the pack connected and
+the propellers removed, the ESCs answer at zero throttle, so the wire can
+be validated without spinning anything.
+
 Constraints this hardware puts on the firmware:
 
 - The MPU interrupt line is **not wired**: the main loop is paced by a
