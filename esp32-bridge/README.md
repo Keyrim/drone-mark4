@@ -9,7 +9,9 @@ name `relay-<last three bytes of its MAC>`, mcu `ESP32C3`, the build epoch
 and short commit hash of its build, the wire hash), and it logs through the
 project's log library. From the LAN's point of view the board and the relay
 are two nodes on udp/47820 sharing one address, exactly like `drone_sim` is
-one; the hub has no path, port or click specific to either.
+one; the hub has no path, port or click specific to either. It updates
+itself over the air from the hub's update panel, like the flight
+controller does (see "Over-the-air update" below).
 
 ## What crosses, and what does not
 
@@ -34,8 +36,10 @@ beacon takes both links.
 
 The announce check reads one byte of the envelope
 (`envelopeIsAnnounce()`, `protocol/envelope.hpp`): the Envelope has a single
-field, its oneof, so the body's tag opens the bytes. Nothing is decoded on
-the relay.
+field, its oneof, so the body's tag opens the bytes. Nothing relayed is
+decoded; what the delivery hands to the relay itself is decoded only when
+its tag (`envelopeBodyTag()`, the same first bytes) is one the relay
+answers: `LogControl`, `Reboot`, the `Ota*` requests.
 
 ## Composition
 
@@ -56,6 +60,10 @@ without an address) then hands over to `relayRun()` in `main/relay.cpp`:
   echoes;
 - `Transport` with node id `hashNodeId()` of the WiFi MAC, `setRelay(true)`,
   the filter, and the `Announce` beacon;
+- `FirmwareStoreEsp32` (`main/firmware_store_esp32.cpp`) over the two OTA
+  partitions and the shared `OtaUpdater` (`ota/updater.hpp`) on top of it:
+  the update session, fed by the `Ota*` unicasts a hub addresses to the
+  relay;
 - the log library: the shared `ConsoleSinkPosix` (its console is plain
   stdio) and a `TransportSink` broadcasting every line onto the LAN. The
   clock is `esp_timer_get_time()`. The bring-up in `bridge_main.c` is C and
@@ -72,8 +80,9 @@ lost and the framing resynchronizes) and 1024 on the way out.
 
 The shared sources are compiled by the ESP-IDF build straight from
 `software/components/`: `transport.cpp`, `uart_link.cpp`,
-`posix/udp_link.cpp` and the log library (`module.cpp`, `wire.cpp`,
-`posix/console_sink_posix.cpp`) in the `main` component, the nanopb runtime,
+`posix/udp_link.cpp`, the log library (`module.cpp`, `wire.cpp`,
+`posix/console_sink_posix.cpp`) and the header-only update brick (`ota/`)
+in the `main` component, the nanopb runtime,
 `envelope.cpp` and the codec generated from
 `software/components/protocol/mark4.proto` in `components/mark4_proto/` (same generator, same pinned nanopb commit, same
 `PB_NO_MALLOC PB_BUFFER_ONLY` as the desktop build; the generator needs a
@@ -84,9 +93,10 @@ component carries the project's warning set (`-Wall -Wextra -Wconversion
 
 ## Logs
 
-Four modules, ids from `main/log_modules.hpp` (256 up, the shared code
+Five modules, ids from `main/log_modules.hpp` (256 up, the shared code
 takes its own from `log/module_ids.hpp`): `app/boot`, `app/wifi`,
-`relay/core`, `relay/stats`. Every line goes to the USB Serial/JTAG console
+`relay/core`, `relay/stats`, `relay/ota`; the firmware store logs as the
+shared `ota/store`. Every line goes to the USB Serial/JTAG console
 (115200) and, once the transport is up, onto the LAN as a `Log` envelope
 any client reads. What a healthy relay prints:
 
@@ -150,20 +160,30 @@ The dev image ships ESP-IDF (see `.devcontainer/Dockerfile`); `idf.py` is on
 the PATH and needs no `source export.sh`. From the repository root:
 
 ```sh
-idf.py -C esp32-bridge build                       # -> build/esp32_bridge.bin
+idf.py -C esp32-bridge build                       # -> build/esp32_bridge.bin and .ota
 idf.py -C esp32-bridge -p /dev/ttyACM0 flash monitor
 idf.py -C esp32-bridge fullclean                   # wipe build/
 ```
 
 The build identity the `Announce` carries (build epoch, short commit hash)
 is read by CMake at configure time, so a plain rebuild keeps the previous
-pair; `idf.py -C esp32-bridge reconfigure` refreshes it.
+pair; `idf.py -C esp32-bridge reconfigure` refreshes it. The same pair is
+stamped into the image as `PROJECT_VER` (`<buildEpoch>-<gitHash>`, the
+version field of the ESP-IDF application description) and into the
+manifest of `build/esp32_bridge.ota`, the bundle the hub sends: the
+identity a slot reports and the one a bundle announces are the same value.
+
+The USB flash is needed once per module, to lay the flash out
+(`partitions.csv`: `nvs`, `otadata`, `phy_init`, then the two application
+slots `ota_0` and `ota_1` of 1984 KB each on the 4 MB flash) and to put the
+first image in `ota_0`. Every later image arrives over the air.
 
 `fullclean` keeps `sdkconfig`, so a change to `sdkconfig.defaults` only lands
 after `rm esp32-bridge/sdkconfig` (or `idf.py -C esp32-bridge set-target ...`
 for the target itself).
 
-`sdkconfig.defaults` pins the `esp32c3` target, the console and the tick rate,
+`sdkconfig.defaults` pins the `esp32c3` target, the console, the tick rate,
+the 4 MB flash, the custom partition table and the bootloader's rollback,
 and is the only tracked configuration; `sdkconfig` and `build/` are
 generated. The port is whatever the board enumerates as once attached to WSL
 with `usbipd` (`/dev/ttyACM*` for the native USB serial of the C3,
@@ -175,3 +195,41 @@ Nothing to do: the board shows up in the hub's discovery like `drone_sim`
 does, and the Connect button of its row is the same. The relay sits next to
 it as a `relay` node at the same address: nothing to click, a place to read
 its logs and turn `relay/stats` on.
+
+## Over-the-air update
+
+The relay runs the update system of `docs/ota-design.md` (section 8) as
+one more node: the same `OtaUpdater` as the flight controller, the same
+`Ota*` messages, the same hub panel. What differs is underneath and is the
+store's business (`main/firmware_store_esp32.cpp`):
+
+- the two slots are the `ota_0` / `ota_1` partitions (slot A / slot B),
+  and in place of the flight controller's metadata log the store reads and
+  writes what the ESP-IDF bootloader keeps in `otadata`: a staged image is
+  `esp_ota_set_boot_partition()`, the self-confirmation of a trial image on
+  its first ground contact is `esp_ota_mark_app_valid_cancel_rollback()`,
+  a revert points the bootloader at the other slot. With
+  `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` the IDF bootloader boots a new
+  image exactly once as pending-verify and rolls back on the next reset if
+  it was never confirmed: the one-shot trial of the design, implemented by
+  IDF;
+- the image is a raw ESP-IDF application image, verified before staging
+  with IDF's own `esp_image_verify()` and matched against the announced
+  length; its identity is the `PROJECT_VER` above;
+- the bundle holds one image for both slots (an IDF image is
+  position-independent across OTA partitions), packaged by
+  `scripts/make_ota.py --esp32` at the end of every build.
+
+From the hub's update panel: pick the relay node, type the bundle path
+(`esp32-bridge/build/esp32_bridge.ota`, the default being the flight
+controller's bundle) and click update. The erase of a 1984 KB slot takes a
+few seconds, in 64 KB blocks with a yield between two so the task watchdog
+stays quiet; the relay relays nothing meanwhile, which the design accepts
+(the drone is on the ground when its radio gets reflashed). The transfer
+runs over UDP directly, so the UART budget does not apply: a 870 KB image
+is on the far side in seconds. The relay then answers the `Reboot`,
+`relay/ota` logs the request, and the new image announces itself; the
+first `OtaStatusRequest` it serves confirms it.
+
+A relay still on the old single-app layout logs `no two-slot partition
+table` at boot and relays as before; it needs the USB flash above once.

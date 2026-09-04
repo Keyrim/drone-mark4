@@ -58,6 +58,12 @@ python3 scripts/build_app.py drone_sim
 # Flash the board over SWD with a J-Link (never run by an agent, board required)
 ./scripts/flash_stm32.sh install   # also: boot | slot-a | slot-b | meta-wipe | erase
 
+# ESP32 relay (ESP-IDF project, see esp32-bridge/README.md): the image and
+# the esp32_bridge.ota bundle the hub sends it; the USB flash lays the two
+# OTA slots out once per module, every later image goes over the air
+idf.py -C esp32-bridge build
+idf.py -C esp32-bridge -p /dev/ttyACM0 flash monitor
+
 # Run one test (Catch2, by test name or ctest regex)
 ./software/build/desktop/tests/unit/unit_tests "kill switch forces all motors to zero"
 (cd software && ctest --preset desktop -R "kill switch")
@@ -241,9 +247,14 @@ Everything C++ lives under `software/`: the executables at its top level
   and `Announce` broadcasts through and keeps every other LAN broadcast
   off the line; it logs through the log library, its lines and module
   table going out on the LAN link alone (the optional link mask of
-  `send()`), and answers the `LogControl` addressed to it. It compiles
-  `transport.cpp`, `uart_link.cpp`, `posix/udp_link.cpp`, the log library
-  and the nanopb codec straight from `software/components/`. The hub holds
+  `send()`), answers the `LogControl` addressed to it, and updates itself
+  over the air (the shared `OtaUpdater` over `FirmwareStoreEsp32`, which
+  maps the metadata onto the IDF bootloader's `otadata` and rollback; two
+  OTA partitions in `esp32-bridge/partitions.csv`, one USB flash per
+  module to lay them out, `esp32_bridge.ota` packaged by every build). It
+  compiles `transport.cpp`, `uart_link.cpp`, `posix/udp_link.cpp`, the log
+  library, the `ota/` headers and the nanopb codec straight from
+  `software/components/`. The hub holds
   one `UdpLink`, relays nothing, and sees the board and the relay as two
   more nodes (kinds `firmware` and `relay`, their own Announces, at the
   relay's address). The firmware broadcasts everything
