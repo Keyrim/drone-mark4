@@ -3,7 +3,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mark4/app/router.dart';
 import 'package:mark4/back/drone/drone_manager.dart';
-import 'package:mark4/back/gamepad/gamepad_manager.dart';
 import 'package:mark4/back/transport/transport_manager.dart';
 import 'package:mark4/pages/home/home_bloc.dart';
 import 'package:mark4/theme/app_colors.dart';
@@ -23,7 +22,6 @@ class HomePage extends StatelessWidget {
       create: (context) => HomeBloc(
         drones: context.read<DroneManager>(),
         transport: context.read<TransportManager>(),
-        gamepad: context.read<GamepadManager>(),
       )..add(const HomeStarted()),
       child: const _HomeView(),
     );
@@ -36,7 +34,7 @@ class _HomeView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: Mark4AppBar(title: 'Drones', actions: const [_GamepadAction()]),
+      appBar: const Mark4AppBar(title: 'Drones'),
       body: BlocBuilder<HomeBloc, HomeState>(
         builder: (context, state) {
           final drones = state.roster.drones;
@@ -60,26 +58,6 @@ class _HomeView extends StatelessWidget {
         },
       ),
       bottomNavigationBar: const _Footer(),
-    );
-  }
-}
-
-/// Opens the gamepad page; lit when a controller is present.
-class _GamepadAction extends StatelessWidget {
-  const _GamepadAction();
-
-  @override
-  Widget build(BuildContext context) {
-    return BlocSelector<HomeBloc, HomeState, bool>(
-      selector: (state) => state.gamepadConnected,
-      builder: (context, connected) => IconButton(
-        tooltip: connected ? 'Gamepad connected' : 'No gamepad',
-        icon: Icon(
-          Icons.sports_esports,
-          color: connected ? context.appColors.ok : context.appColors.muted,
-        ),
-        onPressed: () => context.push(gamepadRoute),
-      ),
     );
   }
 }

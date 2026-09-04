@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:go_router/go_router.dart';
+import 'package:mark4/app/gamepad_status_bloc/gamepad_status_bloc.dart';
 import 'package:mark4/app/router.dart';
 import 'package:mark4/app/theme_bloc/theme_bloc.dart';
 import 'package:mark4/back/backend.dart';
@@ -45,9 +46,19 @@ class _Mark4AppState extends State<Mark4App> {
             RepositoryProvider.value(value: widget.backend.gamepad),
             RepositoryProvider.value(value: widget.backend.pilot),
           ],
-          child: BlocProvider(
-            create: (_) =>
-                ThemeBloc(widget.backend.settings)..add(const ThemeStarted()),
+          child: MultiBlocProvider(
+            providers: [
+              BlocProvider(
+                create: (_) =>
+                    ThemeBloc(widget.backend.settings)
+                      ..add(const ThemeStarted()),
+              ),
+              BlocProvider(
+                create: (_) =>
+                    GamepadStatusBloc(widget.backend.gamepad)
+                      ..add(const GamepadStatusStarted()),
+              ),
+            ],
             child: BlocBuilder<ThemeBloc, ThemeState>(
               builder: (context, state) => MaterialApp.router(
                 title: 'mark4',

@@ -36,7 +36,7 @@ class _GamepadView extends StatelessWidget {
         final device = gamepad.active ?? gamepad.devices.firstOrNull;
         final sample = gamepad.sample;
         return Scaffold(
-          appBar: const Mark4AppBar(title: 'Gamepad'),
+          appBar: const Mark4AppBar(title: 'Gamepad', showGamepad: false),
           body: Column(
             children: [
               StatusBanner(

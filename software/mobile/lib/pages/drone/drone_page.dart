@@ -172,9 +172,10 @@ class _PhaseBand extends StatelessWidget {
   }
 }
 
-/// The three links, each an icon in the link's color: the controller to the
-/// phone, the phone to the drone (its beacons arrive), and the drone hearing
-/// the phone (its Status says the RC fail-safe is not active).
+/// The two links of this drone, each an icon in the link's color: the phone
+/// hearing the drone (its beacons arrive) and the drone hearing the phone
+/// (its Status says the RC fail-safe is not active). The controller is the
+/// app's, in the app bar.
 class _Links extends StatelessWidget {
   const _Links({required this.state});
 
@@ -191,12 +192,6 @@ class _Links extends StatelessWidget {
       ),
       child: Row(
         children: [
-          _LinkIndicator(
-            ok: pilot.gamepadOk,
-            icon: Icons.sports_esports,
-            label: 'pad',
-            detail: pilot.gamepadOk ? 'in hand' : 'none',
-          ),
           _LinkIndicator(
             ok: state.isConnected,
             icon: Icons.wifi,
@@ -598,6 +593,18 @@ class _Details extends StatelessWidget {
 
   final DroneState state;
 
+  /// The host of a "host:port" address.
+  static String _host(String address) {
+    final colon = address.lastIndexOf(':');
+    return colon < 0 ? address : address.substring(0, colon);
+  }
+
+  /// The port of a "host:port" address, empty without one.
+  static String _port(String address) {
+    final colon = address.lastIndexOf(':');
+    return colon < 0 ? '' : address.substring(colon + 1);
+  }
+
   @override
   Widget build(BuildContext context) {
     final info = state.connection.info;
@@ -620,7 +627,8 @@ class _Details extends StatelessWidget {
         if (info != null) ...[
           InfoRow(label: 'Kind', value: kindName(info.announce.kind)),
           InfoRow(label: 'MCU', value: info.announce.mcu.name),
-          InfoRow(label: 'Address', value: info.address, mono: true),
+          InfoRow(label: 'IP', value: _host(info.address), mono: true),
+          InfoRow(label: 'Port', value: _port(info.address), mono: true),
           InfoRow(
             label: 'Build',
             value: info.announce.gitHash.isEmpty

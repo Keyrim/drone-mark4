@@ -6,25 +6,17 @@ final class HomeState extends Equatable {
   const HomeState({
     this.roster = DroneRoster.empty,
     this.identity = TransportIdentity.none,
-    this.gamepadConnected = false,
   });
 
   final DroneRoster roster;
   final TransportIdentity identity;
 
-  /// A game controller is present.
-  final bool gamepadConnected;
-
-  HomeState copyWith({
-    DroneRoster? roster,
-    TransportIdentity? identity,
-    bool? gamepadConnected,
-  }) => HomeState(
-    roster: roster ?? this.roster,
-    identity: identity ?? this.identity,
-    gamepadConnected: gamepadConnected ?? this.gamepadConnected,
-  );
+  HomeState copyWith({DroneRoster? roster, TransportIdentity? identity}) =>
+      HomeState(
+        roster: roster ?? this.roster,
+        identity: identity ?? this.identity,
+      );
 
   @override
-  List<Object?> get props => [roster, identity, gamepadConnected];
+  List<Object?> get props => [roster, identity];
 }

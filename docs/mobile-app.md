@@ -220,9 +220,9 @@ for the conventions). What the first iteration put in place:
   time a simulated core takes to restart and re-arm on the switch it still
   sees.
   `DroneManager` decodes the `Status` broadcasts of the connected drone
-  (`status`, throttled to 50 ms except on a phase change); the three links
-  the cockpit shows are the controller's presence, the drone being heard,
-  and `Status.rc_link_ok` fresh: the drone hears us. Haptic cues (armed,
+  (`status`, throttled to 50 ms except on a phase change); the two links
+  the cockpit shows are the drone being heard and `Status.rc_link_ok`
+  fresh: the drone hears us; the controller's presence is in the app bar. Haptic cues (armed,
   disarmed, killed, kill cleared, refused, mode, link lost every 2 s while
   it lasts, link back) go to the controller, or the phone when it has no
   rumble.
@@ -237,13 +237,14 @@ other nodes; tapping one opens its page, which connects and shows a banner
 (connected / disconnected / waiting) above what the drone announced and the
 link counters; since the transmitter it is the **cockpit**: a full-width
 phase band in one word and one color (grey idle, orange armed, green
-flying, red for killed, cutoff, fault, a lost drone or no Status), the
-three link dots with their age, the mode selector, the gesture line (a
+flying, red for killed, cutoff, fault, a lost drone or no Status), the two
+links of the drone with their age (heard, hears us), the mode selector, the gesture line (a
 ring filling while A or B is held, the refusal reason, or the next thing
 to do), the throttle gauge, a small horizon from the estimated attitude
 next to the four motor bars, and the old details folded at the bottom.
-The gamepad icon of the home app bar is lit while a
-controller is present and opens the gamepad page: the controller's name,
+The controller is the app's, not a drone's: the gamepad icon of every app
+bar (`GamepadStatusBloc`, above the router like the theme) is green while
+one is present, red otherwise, and opens the gamepad page: the controller's name,
 the report count and rate, the two sticks drawn on their squares, the two
 triggers as gauges, every button as a chip lit while down, and two buttons
 to rumble the pad and buzz the phone. It is the page to open when a stick
