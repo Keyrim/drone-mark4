@@ -1,6 +1,7 @@
 #include "platform_stm32/firmware_store_stm32.hpp"
 
 #include "ota/crc32_mpeg2.hpp"
+#include "ota/image_header.hpp"
 #include "ota/meta_log.hpp"
 #include "platform_stm32/ota_slots.hpp"
 
@@ -153,5 +154,15 @@ namespace mark4
     {
         OtaMetaLog<OtaMetaFlashBackend> log(m_metaBackend);
         return log.append(state);
+    }
+
+    bool FirmwareStoreStm32::imageValid(std::uint8_t slot, std::uint32_t imageSize) const
+    {
+        return otaHeaderImageValid(*this, slot, imageSize);
+    }
+
+    bool FirmwareStoreStm32::readIdentity(std::uint8_t slot, OtaImageIdentity &identityOut) const
+    {
+        return otaHeaderIdentity(*this, slot, identityOut);
     }
 } // namespace mark4

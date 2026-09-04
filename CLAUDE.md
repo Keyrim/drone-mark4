@@ -138,7 +138,7 @@ Godot project imported once). That page has the commands and the reasons.
 
 Everything C++ lives under `software/`: the executables at its top level
 (`drone_sim`, `drone_firmware`, `hub`), the libraries in
-`software/components/`. Six libraries, one rule of dependency flow:
+`software/components/`. Seven libraries, one rule of dependency flow:
 
 - `flight-core/` - pure static lib. Single entry point
   `FlightCore::step(const SensorFrame&, ActuatorFrame&)`: synchronous,
@@ -250,6 +250,19 @@ Everything C++ lives under `software/`: the executables at its top level
   it emits (telemetry, answers, `Log` lines through the log library's
   `TransportSink`) and takes commands through `CommandReceiverTransport`
   fed by `Transport::poll()` once per flight frame.
+- `ota/` - the firmware update brick every node with two firmware slots
+  builds on (`software/components/ota/README.md`): header-only INTERFACE
+  target `ota`, `protocol` alone underneath, builds for the F405, the ESP32
+  and the desktop. `AbsFirmwareStore` (slot geometry, erase, program in
+  order, read, CRC, boot metadata, plus `imageValid()` / `readIdentity()`,
+  the two reads that depend on the chip's image format), `OtaUpdater` (the
+  board-side session state machine, one `Ota*` message in, at most one
+  reply out, pure logic against the store), the boot policy `drone_boot`
+  and `drone_sim` share, `OtaMetaLog` and the CRC-32/MPEG-2 helper the hub
+  uses too. Store implementations stay with their targets:
+  `platform_stm32` (internal flash), `platform_sim` (files),
+  `esp32-bridge/main` (ESP-IDF partitions, the IDF bootloader's own
+  rollback standing in for the metadata log).
 - `telemetry/` - the registry of named float measures every node exposes
   (`software/components/telemetry/README.md`). A leaf like `log` (static
   lib, `drone_warnings` alone, no heap, no iostream, builds for stm32): it

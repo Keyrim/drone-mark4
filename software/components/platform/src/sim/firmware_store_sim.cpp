@@ -8,6 +8,7 @@
 #include "log/module.hpp"
 #include "log/module_ids.hpp"
 #include "ota/crc32_mpeg2.hpp"
+#include "ota/image_header.hpp"
 #include "ota/meta_log.hpp"
 
 namespace mark4
@@ -429,6 +430,16 @@ namespace mark4
         MetaAreaFiles areas(m_metaPath.at(0U).data(), m_metaPath.at(1U).data());
         OtaMetaLog<MetaAreaFiles> log(areas);
         return log.append(state);
+    }
+
+    bool FirmwareStoreSim::imageValid(std::uint8_t slot, std::uint32_t imageSize) const
+    {
+        return otaHeaderImageValid(*this, slot, imageSize);
+    }
+
+    bool FirmwareStoreSim::readIdentity(std::uint8_t slot, OtaImageIdentity &identityOut) const
+    {
+        return otaHeaderIdentity(*this, slot, identityOut);
     }
 
     const char *FirmwareStoreSim::slotPath(std::uint8_t slot) const

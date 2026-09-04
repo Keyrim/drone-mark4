@@ -56,11 +56,29 @@ namespace mark4
     static_assert(offsetof(OtaMetaRecord, crc) == 12U);
     // NOLINTEND(readability-magic-numbers)
 
+    /// The build identity an image carries, as OtaStatus reports it per
+    /// slot: what the ground side compares to decide which build a slot
+    /// holds. Where it is read from is the store's business (an
+    /// OtaImageHeader on the F405 and in the sim, the ESP-IDF app
+    /// description on the relay).
+    struct OtaImageIdentity
+    {
+        std::uint32_t buildEpoch = 0U;                 ///< packaging time [unix s]
+        std::array<char, OTA_GIT_HASH_SIZE> gitHash{}; ///< short hash, not terminated
+    };
+
     /// Two firmware slots and the boot metadata, behind the storage
     /// details. Slots are erase-then-program-in-order devices: program()
     /// is only legal at increasing offsets after eraseSlot(), like the
     /// flash underneath. The running slot must never be erased or
     /// programmed; implementations refuse it.
+    ///
+    /// The store also owns the image format: the updater never parses a
+    /// slot's bytes itself, it asks imageValid() once a transfer is complete
+    /// and readIdentity() when it reports the status, because what an image
+    /// opens with depends on the chip (the OtaImageHeader of
+    /// protocol/ota_image.hpp on the F405, the ESP-IDF image header on the
+    /// relay).
     class AbsFirmwareStore
     {
       public:
@@ -123,5 +141,23 @@ namespace mark4
         /// @param state logical content to persist
         /// @return false on storage failure
         virtual bool writeMeta(const OtaMetaState &state) = 0;
+
+        /// @brief Says whether a slot holds a complete image built for this
+        ///        chip and for that slot, of the size the transfer
+        ///        announced. Asked once after the CRC of a transfer passed,
+        ///        before the image is staged.
+        /// @param slot OTA_SLOT_A or OTA_SLOT_B
+        /// @param imageSize bytes the transfer announced
+        /// @return false when the slot must not be staged
+        [[nodiscard]] virtual bool imageValid(std::uint8_t slot, std::uint32_t imageSize) const = 0;
+
+        /// @brief Reads the build identity of the image a slot holds.
+        /// @param slot OTA_SLOT_A or OTA_SLOT_B
+        /// @param[out] identityOut the identity, valid only on true
+        /// @return false when the slot holds no image with a readable
+        ///         identity (erased, garbage, or a storage failure): the
+        ///         status then reports nothing for it rather than noise
+        [[nodiscard]] virtual bool readIdentity(std::uint8_t slot,
+                                                OtaImageIdentity &identityOut) const = 0;
     };
 } // namespace mark4

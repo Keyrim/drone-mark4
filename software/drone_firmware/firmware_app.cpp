@@ -184,18 +184,11 @@ namespace mark4
         // The identity is whatever the packaging script stamped into this
         // slot's image header: unstamped (SWD-flashed) images carry erased
         // bytes, reported as 0xFFFFFFFF and an empty hash.
-        std::array<std::uint8_t, OtaUpdater::HEADER_PREFIX_SIZE> bytes{};
-        if (m_firmwareStore.read(m_firmwareStore.runningSlot(), 0U, bytes.data(), bytes.size()))
+        OtaImageIdentity identity;
+        if (m_firmwareStore.readIdentity(m_firmwareStore.runningSlot(), identity))
         {
-            OtaImageHeader header{};
-            std::memcpy(&header, bytes.data(), bytes.size());
-            if (header.magic == OTA_IMAGE_MAGIC)
-            {
-                announce.build_epoch = header.buildEpoch;
-                std::array<char, OTA_GIT_HASH_SIZE> hash{};
-                std::memcpy(hash.data(), &header.gitHash, OTA_GIT_HASH_SIZE);
-                otaGitHashToWire(hash, announce.git_hash);
-            }
+            announce.build_epoch = identity.buildEpoch;
+            otaGitHashToWire(identity.gitHash, announce.git_hash);
         }
         // The announce is the beacon: the transport broadcasts it once per
         // second and unicasts it to every node the moment it appears.

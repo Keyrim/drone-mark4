@@ -57,6 +57,14 @@ namespace mark4
         bool readMeta(OtaMetaState &stateOut) const override;
         bool writeMeta(const OtaMetaState &state) override;
 
+        /// @brief The slot opens with an OtaImageHeader for this chip and
+        ///        this slot (ota/image_header.hpp).
+        [[nodiscard]] bool imageValid(std::uint8_t slot, std::uint32_t imageSize) const override;
+
+        /// @brief Build identity out of the slot's OtaImageHeader.
+        [[nodiscard]] bool readIdentity(std::uint8_t slot,
+                                        OtaImageIdentity &identityOut) const override;
+
       private:
         /// @brief Tells whether a slot may be written at all: a known slot
         ///        that is not the one this image executes from.

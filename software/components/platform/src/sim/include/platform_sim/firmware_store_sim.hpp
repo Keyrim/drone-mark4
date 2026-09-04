@@ -141,6 +141,20 @@ namespace mark4
         /// @return false on a file error
         bool writeMeta(const OtaMetaState &state) override;
 
+        /// @brief The slot file opens with an OtaImageHeader for the sim
+        ///        chip and this slot (ota/image_header.hpp).
+        /// @param slot slot to check
+        /// @param imageSize bytes the transfer announced
+        /// @return false when the slot must not be staged
+        [[nodiscard]] bool imageValid(std::uint8_t slot, std::uint32_t imageSize) const override;
+
+        /// @brief Build identity out of the slot's OtaImageHeader.
+        /// @param slot slot to read
+        /// @param[out] identityOut the identity, valid only on true
+        /// @return false when the slot holds no header
+        [[nodiscard]] bool readIdentity(std::uint8_t slot,
+                                        OtaImageIdentity &identityOut) const override;
+
         /// @param slot slot index
         /// @return the backing file path of a slot, empty for an unknown one
         [[nodiscard]] const char *slotPath(std::uint8_t slot) const;
