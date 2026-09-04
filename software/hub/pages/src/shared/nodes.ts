@@ -77,6 +77,14 @@ export function isDrone(node: { kind: NodeKind }): boolean {
 }
 
 /**
+ * A node the update panel can target: every node that runs the updater
+ * over two firmware slots, the drones and the ESP32 relay riding the board.
+ */
+export function isUpdatable(node: { kind: NodeKind }): boolean {
+    return isDrone(node) || node.kind === NodeKind.RELAY;
+}
+
+/**
  * Categorical palette (validated: colour-vision-deficiency separation,
  * chroma, lightness band and contrast against a dark surface).
  */

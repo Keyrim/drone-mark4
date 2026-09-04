@@ -11,6 +11,7 @@ import {
     diffNodes,
     hexNodeId,
     isDrone,
+    isUpdatable,
     nodeColor,
     nodeLabel,
     wireMismatch,
@@ -47,6 +48,13 @@ test("the node table lists every node by id and the drones apart", () => {
     assert.equal(plant.address, "192.168.1.5");
     assert.equal(model.get(10)!.name, "sim-a");
     assert.equal(isDrone(model.get(1)!), false);
+});
+
+test("the update panel targets the drones and the relay, nothing else", () => {
+    const model = new NodeModel();
+    model.applyTable(table([{ id: 13, kind: NodeKind.RELAY }]));
+    assert.deepEqual(model.list().filter(isUpdatable).map((node) => node.id).sort(), [10, 11, 13]);
+    assert.equal(isDrone(model.get(13)!), false);
 });
 
 test("two drone_sim are two nodes, never one flapping entry", () => {
