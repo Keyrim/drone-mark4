@@ -512,3 +512,33 @@ TEST_CASE("the codec refuses what is not an envelope")
     REQUIRE(mark4::encodeEnvelope(rc, bytes.data(), bytes.size(), size));
     CHECK(!mark4::decodeEnvelope(bytes.data(), size - 1U, decoded));
 }
+
+TEST_CASE("the body tag is read off the first bytes without decoding")
+{
+    std::array<std::uint8_t, mark4::MAX_ENVELOPE_SIZE> bytes{};
+    std::size_t size = 0U;
+
+    // A one-byte tag (field 3) and two-byte tags (fields 18 and 30 to 38):
+    // what the relay tells apart before deciding to decode.
+    for (const pb_size_t tag : {static_cast<pb_size_t>(mark4_Envelope_announce_tag),
+                                static_cast<pb_size_t>(mark4_Envelope_log_control_tag),
+                                static_cast<pb_size_t>(mark4_Envelope_reboot_tag),
+                                static_cast<pb_size_t>(mark4_Envelope_ota_status_request_tag),
+                                static_cast<pb_size_t>(mark4_Envelope_ota_chunk_tag),
+                                static_cast<pb_size_t>(mark4_Envelope_ota_ack_tag)})
+    {
+        const mark4_Envelope envelope = withBody(tag);
+        REQUIRE(mark4::encodeEnvelope(envelope, bytes.data(), bytes.size(), size));
+        CHECK(mark4::envelopeBodyTag(bytes.data(), size) == tag);
+        CHECK(mark4::envelopeIsAnnounce(bytes.data(), size) ==
+              (tag == mark4_Envelope_announce_tag));
+    }
+
+    // Nothing, garbage, a varint tag cut short, a tag of another wire type.
+    CHECK(mark4::envelopeBodyTag(nullptr, 4U) == 0U);
+    CHECK(mark4::envelopeBodyTag(bytes.data(), 0U) == 0U);
+    const std::array<std::uint8_t, 1> cut = {0xF2U};
+    CHECK(mark4::envelopeBodyTag(cut.data(), cut.size()) == 0U);
+    const std::array<std::uint8_t, 2> varint = {(3U << 3U) | PB_WT_VARINT, 0x01U};
+    CHECK(mark4::envelopeBodyTag(varint.data(), varint.size()) == 0U);
+}

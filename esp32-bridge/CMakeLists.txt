@@ -13,6 +13,23 @@ cmake_minimum_required(VERSION 3.16)
 # Without the file, the relay is an access point and nothing else.
 include(local.cmake OPTIONAL)
 
+# The build identity of this image, the same two values the flight images
+# carry (scripts/make_ota.py): the configure time and the short commit hash.
+# Both are read at configure, so a reconfigure is what refreshes them. They
+# reach the code twice: as compile definitions for the Announce (main/), and
+# as PROJECT_VER, which ESP-IDF stamps into the application description of
+# the image, where the firmware store reads a slot's identity back from
+# ("<buildEpoch>-<gitHash>", 19 characters of the 32 the field holds).
+string(TIMESTAMP BRIDGE_BUILD_EPOCH "%s" UTC)
+execute_process(COMMAND git -C "${CMAKE_CURRENT_SOURCE_DIR}" rev-parse --short=8 HEAD
+                OUTPUT_VARIABLE BRIDGE_GIT_HASH
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET)
+if(NOT BRIDGE_GIT_HASH)
+    set(BRIDGE_GIT_HASH "00000000")
+endif()
+set(PROJECT_VER "${BRIDGE_BUILD_EPOCH}-${BRIDGE_GIT_HASH}")
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 project(esp32_bridge)

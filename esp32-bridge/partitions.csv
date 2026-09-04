@@ -1,0 +1,13 @@
+# The two-slot layout of the relay, on the 4 MB flash of the ESP32-C3
+# SuperMini: the two OTA application slots the update system alternates
+# between (ota_0 is slot A, ota_1 slot B) and the otadata entry the IDF
+# bootloader reads to pick one, the same shape as the flight controller's
+# dual bank. Everything the IDF bootloader needs to roll a failed trial back
+# lives in otadata; there is no factory partition, the first image is
+# flashed into ota_0 over USB and every later one arrives over the air.
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x4000,
+otadata,    data, ota,     0xd000,   0x2000,
+phy_init,   data, phy,     0xf000,   0x1000,
+ota_0,      app,  ota_0,   0x10000,  0x1F0000,
+ota_1,      app,  ota_1,   0x200000, 0x1F0000,
