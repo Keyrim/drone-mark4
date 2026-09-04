@@ -19,7 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "platform/firmware_store.hpp"
+#include "ota/firmware_store.hpp"
 
 namespace mark4
 {
@@ -118,7 +118,7 @@ namespace mark4
                   std::uint32_t size) const override;
 
         /// @brief CRC-32/MPEG-2 of a slot range, the tail padded with 0xFF
-        ///        (see protocol/ota.hpp). Bytes outside the slot, or in a
+        ///        (see protocol/ota_image.hpp). Bytes outside the slot, or in a
         ///        file shorter than the range, count as 0xFF.
         /// @param slot slot to checksum
         /// @param offset byte offset from the slot base

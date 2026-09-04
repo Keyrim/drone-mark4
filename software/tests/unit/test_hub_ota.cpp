@@ -28,6 +28,7 @@
 #include "hub/gateway_codec.hpp"
 #include "hub/ota_bundle.hpp"
 #include "hub/ota_client.hpp"
+#include "ota/crc32_mpeg2.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
 
@@ -145,7 +146,7 @@ namespace
         header.mcuId = mcuId;
         header.slotId = slot;
         header.imageSize = static_cast<std::uint32_t>(image.size());
-        header.imageCrc = otaImageCrc32(image.data() + OTA_IMAGE_HEADER_SIZE, TEST_PAYLOAD);
+        header.imageCrc = crc32Mpeg2(image.data() + OTA_IMAGE_HEADER_SIZE, TEST_PAYLOAD);
         header.buildEpoch = buildEpoch;
         const auto field = hashField(gitHash);
         std::memcpy(&header.gitHash, field.data(), field.size());
@@ -195,7 +196,7 @@ namespace
         for (std::uint8_t slot = 0U; slot < OTA_SLOT_COUNT; ++slot)
         {
             built.images[slot] = makeImage(slot, mcuId, buildEpoch, gitHash);
-            built.crc[slot] = otaImageCrc32(built.images[slot].data(), built.images[slot].size());
+            built.crc[slot] = crc32Mpeg2(built.images[slot].data(), built.images[slot].size());
             if (slot == breakCrcOfSlot)
             {
                 built.crc[slot] ^= 1U;
@@ -494,7 +495,7 @@ TEST_CASE("a bundle round trips through the reader")
 
     const OtaBundleImage *slotB = findOtaBundleImage(bundle, OTA_SLOT_B);
     REQUIRE(slotB != nullptr);
-    CHECK(slotB->crc32 == otaImageCrc32(slotB->bytes.data(), slotB->bytes.size()));
+    CHECK(slotB->crc32 == crc32Mpeg2(slotB->bytes.data(), slotB->bytes.size()));
     CHECK(findOtaBundleImage(bundle, OTA_SLOT_COUNT) == nullptr);
 }
 

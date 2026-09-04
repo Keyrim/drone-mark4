@@ -10,7 +10,7 @@ target_link_libraries(platform INTERFACE flight_core_types)
 add_library(platform_common INTERFACE)
 target_include_directories(platform_common INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src/common/include)
 target_link_libraries(platform_common INTERFACE
-    platform flight_core protocol telemetry transport log)
+    platform flight_core protocol telemetry transport log ota)
 
 if(DRONE_PLATFORM STREQUAL "stm32")
     add_subdirectory(src/stm32)

@@ -19,7 +19,7 @@
 
 #include <cstdint>
 
-#include "platform/firmware_store.hpp"
+#include "ota/firmware_store.hpp"
 #include "platform_stm32/internal_flash.hpp"
 #include "platform_stm32/ota_meta_flash.hpp"
 

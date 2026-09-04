@@ -11,19 +11,14 @@
 #include <ios>
 #include <nlohmann/json.hpp>
 
+#include "ota/crc32_mpeg2.hpp"
+
 namespace mark4
 {
     namespace
     {
         using Json = nlohmann::json;
 
-        /// Bits of one CRC word, and the bytes it is fed from.
-        constexpr std::size_t CRC_WORD_BITS = 32U;
-        constexpr std::size_t CRC_WORD_BYTES = 4U;
-        constexpr std::uint32_t CRC_POLYNOMIAL = 0x04C11DB7U;
-        constexpr std::uint32_t CRC_INIT = 0xFFFFFFFFU;
-        constexpr std::uint32_t CRC_TOP_BIT = 0x80000000U;
-        constexpr std::uint8_t CRC_PAD_BYTE = 0xFFU;
         constexpr std::size_t BITS_PER_BYTE = 8U;
 
         /// Bytes of the u32 length fields the container is built from.
@@ -313,42 +308,11 @@ namespace mark4
         return MAGIC;
     }
 
-    std::uint32_t otaImageCrc32(const std::uint8_t *data, std::size_t size)
-    {
-        std::uint32_t crc = CRC_INIT;
-        std::size_t offset = 0U;
-        while (offset < size)
-        {
-            // Bytes are packed into a word in memory order, the tail padded
-            // with 0xFF: the F405 hardware unit sees exactly these words
-            // when fed from flash, so the two agree bit for bit.
-            std::uint32_t word = 0U;
-            for (std::size_t byte = 0U; byte < CRC_WORD_BYTES; ++byte)
-            {
-                const std::uint8_t value =
-                    offset + byte < size ? data[offset + byte] : CRC_PAD_BYTE;
-                word |= static_cast<std::uint32_t>(value) << (BITS_PER_BYTE * byte);
-            }
-            offset += CRC_WORD_BYTES;
-            crc ^= word;
-            for (std::size_t bit = 0U; bit < CRC_WORD_BITS; ++bit)
-            {
-                const bool top = (crc & CRC_TOP_BIT) != 0U;
-                crc <<= 1U;
-                if (top)
-                {
-                    crc ^= CRC_POLYNOMIAL;
-                }
-            }
-        }
-        return crc;
-    }
-
     std::string otaGitHashText(const std::array<char, OTA_GIT_HASH_SIZE> &hash)
     {
         std::size_t length = 0U;
         while (length < hash.size() && hash[length] != '\0' &&
-               static_cast<unsigned char>(hash[length]) != CRC_PAD_BYTE)
+               static_cast<unsigned char>(hash[length]) != OTA_ERASED_BYTE)
         {
             ++length;
         }
@@ -482,12 +446,12 @@ namespace mark4
             // header included. The post-header value is named too: it is the
             // one other plausible convention, and saying which one matched
             // turns a refusal into a diagnosis.
-            const std::uint32_t whole = otaImageCrc32(image.bytes.data(), image.bytes.size());
+            const std::uint32_t whole = crc32Mpeg2(image.bytes.data(), image.bytes.size());
             if (whole != image.crc32)
             {
                 const std::uint32_t afterHeader =
-                    otaImageCrc32(image.bytes.data() + OTA_IMAGE_HEADER_SIZE,
-                                  image.bytes.size() - OTA_IMAGE_HEADER_SIZE);
+                    crc32Mpeg2(image.bytes.data() + OTA_IMAGE_HEADER_SIZE,
+                               image.bytes.size() - OTA_IMAGE_HEADER_SIZE);
                 errorOut = "the " + which + " image announces crc32 " + hexText(image.crc32) +
                            " but its bytes hash to " + hexText(whole) + " (" +
                            hexText(afterHeader) + " without the header)";

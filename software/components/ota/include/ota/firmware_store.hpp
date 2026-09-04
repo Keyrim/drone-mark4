@@ -104,7 +104,7 @@ namespace mark4
                           std::uint32_t size) const = 0;
 
         /// @brief CRC-32/MPEG-2 of a slot range, word-wise, the range
-        ///        padded to 4 bytes with 0xFF (see protocol/ota.hpp).
+        ///        padded to 4 bytes with 0xFF (see protocol/ota_image.hpp).
         /// @param slot OTA_SLOT_A or OTA_SLOT_B
         /// @param offset byte offset from the slot base
         /// @param size byte count before padding

@@ -7,8 +7,8 @@
 
 #include "log/module.hpp"
 #include "log/module_ids.hpp"
-#include "platform_common/crc32_mpeg2.hpp"
-#include "platform_common/ota_meta_log.hpp"
+#include "ota/crc32_mpeg2.hpp"
+#include "ota/meta_log.hpp"
 
 namespace mark4
 {
@@ -169,7 +169,7 @@ namespace mark4
         }
 
         /// The two metadata areas as two files: the backend OtaMetaLog runs
-        /// on (see platform_common/ota_meta_log.hpp). It holds paths and no
+        /// on (see ota/meta_log.hpp). It holds paths and no
         /// state of its own, so the store builds one per metadata access
         /// instead of keeping a mutable member around.
         class MetaAreaFiles

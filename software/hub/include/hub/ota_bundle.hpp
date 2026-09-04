@@ -43,15 +43,6 @@ namespace mark4
     /// @return the magic every bundle opens with, "M4OTA1" and two zeros
     [[nodiscard]] const char *otaBundleMagic();
 
-    /// CRC-32/MPEG-2 of a byte range, tail padded to a word with 0xFF: the
-    /// one checksum of the update system (see protocol/ota_image.hpp). The
-    /// hub links protocol/ alone, so it carries its own copy of this rather
-    /// than reaching into platform_common for it.
-    /// @param data bytes to checksum
-    /// @param size byte count
-    /// @return the CRC the board and the packaging script compute too
-    [[nodiscard]] std::uint32_t otaImageCrc32(const std::uint8_t *data, std::size_t size);
-
     /// One firmware image of a bundle: the manifest entry and the bytes.
     struct OtaBundleImage
     {

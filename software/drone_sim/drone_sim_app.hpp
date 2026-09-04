@@ -11,9 +11,9 @@
 #include "flight_core/flight_core.hpp"
 #include "log/console_sink_posix.hpp"
 #include "log/wire.hpp"
+#include "ota/updater.hpp"
 #include "platform_common/command_receiver_transport.hpp"
 #include "platform_common/frame_telemetry.hpp"
-#include "platform_common/ota_updater.hpp"
 #include "platform_common/rc_tracker.hpp"
 #include "platform_common/status_publisher.hpp"
 #include "platform_common/telemetry_service.hpp"
@@ -118,7 +118,7 @@ namespace mark4
 
       private:
         /// @brief The fake bootloader: runs the slot decision shared with
-        ///        drone_boot (platform_common/ota_boot_policy.hpp) over the
+        ///        drone_boot (ota/boot_policy.hpp) over the
         ///        file-backed metadata, validates the slot it picked the way
         ///        the bootloader validates an image, then binds the store and
         ///        the updater to the slot that won. Called at init and on

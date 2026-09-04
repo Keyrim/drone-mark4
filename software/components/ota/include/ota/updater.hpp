@@ -13,7 +13,7 @@
 ///        is never erased nor programmed (the target is always the other
 ///        one, and the store refuses it too), and every persisted state
 ///        change is a single metadata append (see
-///        platform_common/ota_meta_log.hpp), which is what makes a power cut
+///        ota/meta_log.hpp), which is what makes a power cut
 ///        at any byte harmless.
 ///
 ///        Board-safe: no allocation, no exceptions, one message worth of
@@ -24,7 +24,7 @@
 #include <cstdint>
 #include <cstring>
 
-#include "platform/firmware_store.hpp"
+#include "ota/firmware_store.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
 

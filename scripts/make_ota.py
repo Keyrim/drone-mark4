@@ -72,7 +72,7 @@ def crc32_mpeg2(data: bytes) -> int:
 
     Polynomial 0x04C11DB7, init 0xFFFFFFFF, no reflection, no final xor,
     consumed as 32-bit little-endian words with the tail padded to a word
-    with 0xFF. It matches mark4::crc32Mpeg2 (platform_common) and the F405
+    with 0xFF. It matches mark4::crc32Mpeg2 (components/ota) and the F405
     hardware CRC unit bit for bit. tools/telemetry_wire.py is the home of the
     Python wire codecs and holds the same function; this copy exists so the
     packaging step depends on nothing but the standard library.
