@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 # Vendored files (software/third_party) are verbatim upstream copies, exempt.
 mapfile -t files < <(git ls-files \
     '*.cpp' '*.hpp' '*.c' '*.h' '*.ld' '*.ld.in' '*.cmake' '*CMakeLists.txt' '*CMakePresets.json' \
-    '*.md' '*.py' '*.gd' '*.sh' '*.yml' '*.yaml' '*.json' '*.clang-format' '*.clang-tidy' \
+    '*.md' '*.py' '*.gd' '*.sh' '*.yml' '*.yaml' '*.json' '*.clang-format' '*.clang-tidy' 'Doxyfile' \
     '*.ts' '*.js' '*.html' '*.css' \
     ':!software/third_party')
 

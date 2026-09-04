@@ -118,6 +118,10 @@ git ls-files '*.cpp' '*.hpp' '*.c' '*.h' | xargs clang-format --dry-run --Werror
 run-clang-tidy -p software/build/desktop -quiet "$(pwd)/software/(components|drone_sim|drone_firmware|hub|tests)/"
 ./scripts/tidy_stm32.sh    # clang-tidy over the stm32 compile database
 ./scripts/check_ascii.sh   # ASCII-only hard rule
+
+# API reference (Doxygen, root Doxyfile): build/doxygen/html, warnings counted in
+# build/doxygen/warnings.log. Published from main at https://keyrim.github.io/drone-mark4/
+./scripts/build_docs.sh
 ```
 
 clang-format and clang-tidy are pinned to LLVM 21 (devcontainer). Fix

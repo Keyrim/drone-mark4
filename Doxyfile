@@ -1,0 +1,76 @@
+# Doxygen configuration of the drone-mark4 API reference.
+#
+# Run `scripts/build_docs.sh` (the paths below are relative to the repository
+# root, and the output directory must exist before Doxygen opens its warning
+# log). The site lands in build/doxygen/html, the warnings in
+# build/doxygen/warnings.log; docs.yml runs the same script and publishes the
+# html to GitHub Pages. Only the settings that differ from the Doxygen
+# defaults are listed: `doxygen -x Doxyfile` shows exactly these, `doxygen -g`
+# the full template.
+
+PROJECT_NAME           = drone-mark4
+PROJECT_BRIEF          = "Throw-drone: firmware, simulator, tooling"
+OUTPUT_DIRECTORY       = build/doxygen
+GENERATE_LATEX         = NO
+QUIET                  = YES
+
+# --- Input ------------------------------------------------------------------
+# The C and C++ of every node plus the markdown: the root README is the main
+# page, every module README and the design documents of docs/ become pages.
+# Tests, the vendored CMSIS, the TypeScript pages, the Godot plant and the
+# Flutter app are not part of the reference; build trees never are.
+INPUT                  = README.md \
+                         docs \
+                         software/components \
+                         software/drone_sim \
+                         software/drone_firmware \
+                         software/drone_boot \
+                         software/hub \
+                         software/mobile/native \
+                         esp32-bridge/main \
+                         esp32-bridge/README.md
+RECURSIVE              = YES
+FILE_PATTERNS          = *.c *.cpp *.h *.hpp *.md
+EXCLUDE                = software/hub/pages
+EXCLUDE_PATTERNS       = */build/*
+# The leading ./ matters: given a bare file name, Doxygen 1.9 takes every
+# README.md of the tree for the main page and drops all but the first one.
+USE_MDFILE_AS_MAINPAGE = ./README.md
+STRIP_FROM_PATH        = .
+# So that the include line of a class reads as the code writes it
+# (`#include "platform/clock.hpp"`), not as a path from the repository root.
+STRIP_FROM_INC_PATH    = software/components/flight-core/include \
+                         software/components/log/include \
+                         software/components/platform/include \
+                         software/components/platform/src/common/include \
+                         software/components/platform/src/sim/include \
+                         software/components/platform/src/stm32/include \
+                         software/components/protocol/include \
+                         software/components/telemetry/include \
+                         software/components/transport/include \
+                         software/hub/include
+
+# --- What gets documented ---------------------------------------------------
+# EXTRACT_ALL stays off so that an undocumented public entity is a warning
+# (WARN_IF_UNDOCUMENTED, on by default), the measure of what the coding
+# guidelines still owe. Warnings are collected, counted by docs.yml and not
+# yet fatal: WARN_AS_ERROR becomes FAIL_ON_WARNINGS_PRINT once the count is
+# zero.
+EXTRACT_ALL            = NO
+EXTRACT_STATIC         = YES
+WARN_NO_PARAMDOC       = YES
+WARN_AS_ERROR          = NO
+WARN_LOGFILE           = build/doxygen/warnings.log
+
+# --- Output -----------------------------------------------------------------
+GENERATE_TREEVIEW      = YES
+SOURCE_BROWSER         = YES
+TOC_INCLUDE_HEADINGS   = 3
+HTML_COLORSTYLE        = TOGGLE
+
+# --- Graphs (graphviz) ------------------------------------------------------
+HAVE_DOT               = YES
+DOT_IMAGE_FORMAT       = svg
+INCLUDE_GRAPH          = YES
+INCLUDED_BY_GRAPH      = YES
+DOT_NUM_THREADS        = 0
