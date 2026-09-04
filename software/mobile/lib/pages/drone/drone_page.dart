@@ -168,8 +168,9 @@ class _PhaseBand extends StatelessWidget {
   }
 }
 
-/// The three links: the controller to the phone, the phone to the drone,
-/// and the drone hearing the phone.
+/// The three links, each an icon in the link's color: the controller to the
+/// phone, the phone to the drone (its beacons arrive), and the drone hearing
+/// the phone (its Status says the RC fail-safe is not active).
 class _Links extends StatelessWidget {
   const _Links({required this.state});
 
@@ -186,13 +187,13 @@ class _Links extends StatelessWidget {
       ),
       child: Row(
         children: [
-          _LinkDot(
+          _LinkIndicator(
             ok: pilot.gamepadOk,
             icon: Icons.sports_esports,
             label: 'pad',
             detail: pilot.gamepadOk ? 'in hand' : 'none',
           ),
-          _LinkDot(
+          _LinkIndicator(
             ok: state.isConnected,
             icon: Icons.wifi,
             label: 'drone',
@@ -200,7 +201,7 @@ class _Links extends StatelessWidget {
                 ? 'never'
                 : '${heardAgo.inMilliseconds} ms',
           ),
-          _LinkDot(
+          _LinkIndicator(
             ok: pilot.droneHearsUs,
             icon: Icons.hearing,
             label: 'hears us',
@@ -216,8 +217,8 @@ class _Links extends StatelessWidget {
   }
 }
 
-class _LinkDot extends StatelessWidget {
-  const _LinkDot({
+class _LinkIndicator extends StatelessWidget {
+  const _LinkIndicator({
     required this.ok,
     required this.icon,
     required this.label,
@@ -237,13 +238,7 @@ class _LinkDot extends StatelessWidget {
     return Expanded(
       child: Row(
         children: [
-          Container(
-            width: AppSizes.linkDot,
-            height: AppSizes.linkDot,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          ),
-          SizedBox(width: AppSizes.gapSmall),
-          Icon(icon, size: AppSizes.iconAction, color: color),
+          Icon(icon, size: AppSizes.icon, color: color),
           SizedBox(width: AppSizes.gapSmall),
           Expanded(
             child: Column(

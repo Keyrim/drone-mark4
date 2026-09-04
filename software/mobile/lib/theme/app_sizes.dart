@@ -52,7 +52,4 @@ abstract final class AppSizes {
 
   /// Side of the horizon square.
   static double get horizon => 120.w;
-
-  /// Diameter of a link indicator dot.
-  static double get linkDot => 16.w;
 }
