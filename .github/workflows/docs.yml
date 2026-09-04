@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:3942eed9626bc296b699ad6945b46e40239ce224afaf6aa3496901da67111660
+      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:8e65c9a45affdaa62b4919a974cfbba8e4eca5b6a46183b58fcca4a84ca2a50a
       options: --user root
       credentials:
         username: ${{ github.actor }}
