@@ -9,6 +9,7 @@ add_library(flight_core STATIC
     src/control/attitude_controller.cpp
     src/control/mixer.cpp
     src/control/rate_controller.cpp
+    src/control/stick_mapper.cpp
     src/control/vertical_controller.cpp
     src/estimator/attitude_estimator.cpp
     src/estimator/vertical_estimator.cpp

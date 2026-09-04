@@ -70,6 +70,9 @@ namespace mark4
         TelemetryEntry m_accelZ{"sensor/accel_z", TelemetryUnit::M_PER_S2, m_frame.accelMps2[2]};
         TelemetryEntry m_baro{"sensor/baro_pressure", TelemetryUnit::PA, m_frame.baroPa};
         TelemetryEntry m_throttle{"rc/throttle", TelemetryUnit::UNITLESS, m_frame.rc.throttle};
+        TelemetryEntry m_roll{"rc/roll", TelemetryUnit::UNITLESS, m_frame.rc.roll};
+        TelemetryEntry m_pitch{"rc/pitch", TelemetryUnit::UNITLESS, m_frame.rc.pitch};
+        TelemetryEntry m_yaw{"rc/yaw", TelemetryUnit::UNITLESS, m_frame.rc.yaw};
         TelemetryEntry m_imuValid{"sensor/imu_valid", TelemetryUnit::UNITLESS, this, &ReadImuValid};
         TelemetryEntry m_baroValid{
             "sensor/baro_valid", TelemetryUnit::UNITLESS, this, &ReadBaroValid};

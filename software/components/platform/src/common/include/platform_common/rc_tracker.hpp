@@ -23,9 +23,11 @@ namespace mark4
     {
       public:
         /// Fail-safe: silence on the RC uplink longer than this reverts to
-        /// the safe state (kill engaged, disarmed, throttle zero). Five
-        /// missed messages at the 10 Hz the sender streams at.
-        static constexpr std::uint64_t RC_TIMEOUT_US = 500000U;
+        /// the safe state (kill engaged, disarmed, sticks released). Four
+        /// missed messages from a web page at 20 Hz, ten from a gamepad at
+        /// 50 Hz; short enough that a piloted drone losing its pilot cuts
+        /// before it has travelled far on a stale command.
+        static constexpr std::uint64_t RC_TIMEOUT_US = 200000U;
 
         /// @brief Takes one Rc message the composition drained.
         /// @param rc decoded message
@@ -35,12 +37,25 @@ namespace mark4
             m_rc.killSwitch = rc.kill;
             m_rc.armSwitch = rc.arm;
             m_rc.throttle = rc.throttle;
+            m_rc.roll = rc.roll;
+            m_rc.pitch = rc.pitch;
+            m_rc.yaw = rc.yaw;
             /* An unknown mode decodes to the safest mode rather than being
                rejected: a newer ground station selecting a mode this build
-               does not know must degrade to direct thrust, never to a mode
-               that flies on its own. */
-            m_rc.mode = rc.mode == mark4_RcMode_RC_ALTITUDE_AUTO ? PilotMode::ALTITUDE_AUTO
-                                                                 : PilotMode::MANUAL;
+               does not know must degrade to the sticks alone, never to a
+               mode that flies on its own. */
+            switch (rc.mode)
+            {
+                case mark4_RcMode_RC_ALTITUDE_AUTO:
+                    m_rc.mode = PilotMode::ALTITUDE_AUTO;
+                    break;
+                case mark4_RcMode_RC_LEVEL:
+                    m_rc.mode = PilotMode::LEVEL;
+                    break;
+                default:
+                    m_rc.mode = PilotMode::MANUAL;
+                    break;
+            }
             m_lastRcUs = nowUs;
             m_everReceived = true;
             ++m_rcPacketCount;

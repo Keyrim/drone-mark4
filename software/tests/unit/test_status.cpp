@@ -36,7 +36,7 @@ TEST_CASE("packStatus carries the estimated attitude, the motors and the phase")
     }
 
     mark4_Status status;
-    mark4::packStatus(frame, actuators, core, status);
+    mark4::packStatus(frame, actuators, core, true, status);
     REQUIRE(status.timestamp_us == frame.timestampUs);
 
     const mark4::Quaternion &attitude = core.attitude();
@@ -61,11 +61,18 @@ TEST_CASE("packStatus carries the estimated attitude, the motors and the phase")
     REQUIRE(status.imu_valid);
     REQUIRE(status.baro_valid);
     frame.baroValid = false;
-    mark4::packStatus(frame, actuators, core, status);
+    mark4::packStatus(frame, actuators, core, true, status);
     REQUIRE(status.imu_valid);
     REQUIRE(!status.baro_valid);
     frame.baroValid = true;
-    mark4::packStatus(frame, actuators, core, status);
+
+    // The RC link flag is the composition's word, not the frame's: a frame
+    // carrying the kill looks the same whether a pilot holds it or the
+    // fail-safe grafted it, so the packer is told.
+    mark4::packStatus(frame, actuators, core, false, status);
+    REQUIRE(!status.rc_link_ok);
+    mark4::packStatus(frame, actuators, core, true, status);
+    REQUIRE(status.rc_link_ok);
 
     // And the message survives the wire.
     mark4_Envelope envelope = mark4_Envelope_init_zero;
@@ -91,7 +98,7 @@ TEST_CASE("the throw state and count are the only throw facts Status carries")
     core.step(frame, actuators);
 
     mark4_Status status;
-    mark4::packStatus(frame, actuators, core, status);
+    mark4::packStatus(frame, actuators, core, false, status);
     REQUIRE(status.throw_state == mark4_ThrowState_THROW_IDLE);
     REQUIRE(status.throw_count == 0U);
     // The release velocity, the apex and its instant left the wire as

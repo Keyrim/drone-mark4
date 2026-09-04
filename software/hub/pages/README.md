@@ -119,10 +119,14 @@ plot: it is sampled at the loop rate rather than at the 50 Hz of Status.
 
 ## Piloting
 
-The transmitter of a drone widget is its switches (kill, arm, mode) and its
-throttle slider: no engage ritual, no keyboard layer. The widget streams an
-`Rc` envelope to its node at 10 Hz from the first interaction on and never
-stops while the page is visible.
+The transmitter of a drone widget is its switches (kill, arm), its mode
+selector and its throttle slider: no engage ritual, no keyboard layer. The
+widget streams an `Rc` envelope to its node at 20 Hz from the first
+interaction on and never stops while the page is visible. It has no sticks
+and streams them released, which is why it starts in the `level` mode
+(released sticks mean level) rather than `manual` (the sticks are body
+rates and nothing levels the drone: that mode is flown from a gamepad,
+through the phone).
 
 **The silence is the fail-safe**: the drone cuts on its own RC timeout, so a
 closed tab, a frozen browser or a dead link all end the same way. Hiding the

@@ -90,7 +90,7 @@ PHASE_HOVER = pb.PHASE_HOVER
 PHASE_CUTOFF = pb.PHASE_CUTOFF
 PHASE_NAMES = [
     "idle", "altitude", "armed", "ballistic", "recovery", "hover", "cutoff", "manual",
-    "fault",
+    "fault", "level",
 ]
 
 # One transport discovery port per instance: Godot, drone_sim and the
@@ -601,10 +601,10 @@ class Instance:
             if sample is None or _seconds(sample) < run_start_s:
                 continue
             # Ranking phases by their numeric value is only a rough "how far
-            # did it get", and MANUAL sits at 7, above every other phase,
-            # purely because it was appended last. A campaign holds a centered
-            # stick and never enters it, so the ranking stays honest here; a
-            # scenario that flew manually would need a real ordering.
+            # did it get", and MANUAL (7) and LEVEL (9) sit above every other
+            # phase purely because they were appended last. A campaign holds a
+            # centered stick and never enters them, so the ranking stays honest
+            # here; a scenario that flew by stick would need a real ordering.
             highest_phase = max(highest_phase, sample.flight_phase)
             if sample.flight_phase == PHASE_CUTOFF:
                 result.outcome = "cutoff"

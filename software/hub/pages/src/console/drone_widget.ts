@@ -4,11 +4,13 @@
  * vertical, apex, motors), and the controls its nature calls for. Every
  * command it sends is an Envelope to THIS node's id.
  *
- * A real or simulated drone gets the transmitter: kill, arm and mode are
- * switches, the throttle is a slider, and the widget streams the RC state
- * at TICK_MS from the first interaction on. There is no engage ritual: the
- * silence fail-safe of the drone itself covers a closed tab or a frozen
- * browser, and hiding the page flips the kill switch on.
+ * A real or simulated drone gets the transmitter: kill and arm are
+ * switches, the mode a selector, the throttle a slider, and the widget
+ * streams the RC state at TICK_MS from the first interaction on. It has no
+ * sticks, so it streams them released and starts in the leveling mode,
+ * the one where released sticks mean level (see rc.ts). There is no
+ * engage ritual: the silence fail-safe of the drone itself covers a closed
+ * tab or a frozen browser, and hiding the page flips the kill switch on.
  *
  * The simulated drone also carries the scenario block, and both natures
  * carry the tuning table, folded until needed.
@@ -27,7 +29,7 @@ import {
 import { frameMessage, type GatewaySocket } from "../shared/gateway_socket";
 import { FADING_MS, type NodeView, hexNodeId, nodeColor } from "../shared/nodes";
 import { FLIGHT_PHASE_NAMES, THROW_STATE_NAMES } from "../shared/phases";
-import { MODE_ALTITUDE_AUTO, MODE_MANUAL, SAFE_RC, TICK_MS, clamp01, rcEnvelope, type RcState } from "./rc";
+import { MODE_LEVEL, MODE_OPTIONS, SAFE_RC, TICK_MS, clamp01, rcEnvelope, type RcState } from "./rc";
 import { TuningPanel } from "./tuning";
 
 /** How often the readout repaints: Status lands far faster than eyes read. */
@@ -63,7 +65,8 @@ export interface WidgetHooks {
 export class DroneWidget {
     readonly root: HTMLElement;
     readonly nodeId: number;
-    private state: RcState = SAFE_RC;
+    /** Starts safe, in the mode the selector shows; SAFE_RC again on leaving. */
+    private state: RcState = { ...SAFE_RC, mode: MODE_LEVEL };
     private timer: ReturnType<typeof setInterval> | null = null;
     private latest: Status | null = null;
     private latestAtMs = 0;
@@ -254,11 +257,32 @@ export class DroneWidget {
             }).root
         );
 
-        const mode = this.switchRow("altitude auto", false, (on) => {
-            this.apply({ ...this.state, mode: on ? MODE_ALTITUDE_AUTO : MODE_MANUAL });
+        const mode = document.createElement("label");
+        mode.className = "dw-mode";
+        const modeCaption = document.createElement("span");
+        modeCaption.textContent = "mode";
+        const modeSelect = document.createElement("select");
+        modeSelect.className = "config-select";
+        for (const option of MODE_OPTIONS) {
+            const item = document.createElement("option");
+            item.value = String(option.mode);
+            item.textContent = option.label;
+            item.selected = option.mode === this.state.mode;
+            modeSelect.appendChild(item);
+        }
+        modeSelect.addEventListener("change", () => {
+            const chosen = MODE_OPTIONS.find((option) => String(option.mode) === modeSelect.value);
+            if (chosen !== undefined) {
+                this.apply({ ...this.state, mode: chosen.mode });
+            }
         });
-        mode.root.title = "off = manual (stick is the collective), on = altitude auto";
-        block.appendChild(mode.root);
+        mode.title =
+            "level: the throttle is the collective and the drone levels itself (no sticks here). " +
+            "manual: the sticks are body rates, nothing levels the drone. " +
+            "altitude auto: mid throttle holds the altitude.";
+        mode.appendChild(modeCaption);
+        mode.appendChild(modeSelect);
+        block.appendChild(mode);
 
         const throttle = document.createElement("label");
         throttle.className = "dw-throttle";

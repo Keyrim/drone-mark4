@@ -576,6 +576,14 @@ input.config-title {
     border-top: 1px solid var(--border);
 }
 
+.dw-mode {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    color: var(--fg-dim);
+}
+
 .dw-throttle {
     display: flex;
     align-items: center;

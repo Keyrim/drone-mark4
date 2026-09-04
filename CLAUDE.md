@@ -186,8 +186,9 @@ Everything C++ lives under `software/`: the executables at its top level
   --python_out` for the batch tool (target `proto_py`). Two different
   things travel on it: `Status`, the small fixed report of what the drone
   is doing (attitude, motors, phase, throw state and count, the validity
-  flags, the plant truth when there is one), broadcast every 10 frames and
-  always on; and the telemetry family (`TelemetryListRequest`/`Descriptors`,
+  flags, the RC link flag, the plant truth when there is one), broadcast
+  every 10 frames and always on; and the telemetry family
+  (`TelemetryListRequest`/`Descriptors`,
   `TelemetryEnable`/`Ack`, `TelemetryData`), unicast on demand, one active
   stream per drone, which is how any registered measure is plotted without
   touching the schema. Every message on

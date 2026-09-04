@@ -90,8 +90,9 @@ enum FlightPhase {
   PHASE_RECOVERY = 4;
   PHASE_HOVER = 5;
   PHASE_CUTOFF = 6;
-  PHASE_MANUAL = 7;
+  PHASE_MANUAL = 7;  // piloted flight: the sticks command body rates, the throttle is the collective
   PHASE_FAULT = 8;   // IMU lost with the motors running, latched until the kill
+  PHASE_LEVEL = 9;   // piloted flight: the sticks command the tilt, the throttle is the collective
 }
 
 // Same names and values as the flight core's ThrowState.
@@ -125,6 +126,7 @@ message Status {
   bool imu_valid = 7;                // the frame carried a fresh IMU sample
   bool baro_valid = 8;               // the frame carried a fresh baro sample
   optional PlantTruth truth = 9;     // the plant's exact state, sim only
+  bool rc_link_ok = 10;              // the RC fail-safe is not active: a pilot was heard recently
 }
 
 // Physical dimension of one telemetry measure: what a ground tool labels an
@@ -196,19 +198,28 @@ message TelemetryData {
   repeated TelemetryValue values = 2;  // at most 32
 }
 
-// Same values as the flight core's PilotMode.
+// Same values as the flight core's PilotMode. 0 is the mode that flies the
+// least on its own: a zeroed message, or a mode this build does not know,
+// lands there.
 enum RcMode {
-  RC_MANUAL = 0;         // the stick commands the collective directly
-  RC_ALTITUDE_AUTO = 1;  // the stick commands a vertical velocity
+  RC_MANUAL = 0;         // sticks command body rates, the throttle is the collective
+  RC_ALTITUDE_AUTO = 1;  // sticks command the tilt, the throttle a vertical velocity
+  RC_LEVEL = 2;          // sticks command the tilt, the throttle is the collective
 }
 
-// Pilot state, streamed at 10 Hz: the flight process treats a silent
-// uplink as a kill, so holding a state means repeating it.
+// Pilot state, streamed by the pilot's device (20 Hz from a web page,
+// 50 Hz from a gamepad): the flight process treats a silent uplink as a
+// kill, so holding a state means repeating it. The sticks are written in
+// the pilot's terms, never in the body frame: the flight core turns them
+// into body rates or a tilt, deadband and scaling included.
 message Rc {
   bool kill = 1;
   bool arm = 2;
   RcMode mode = 3;
-  float throttle = 4;  // normalized [0, 1]
+  float throttle = 4;  // normalized [0, 1], 0 = motors stopped in the direct-thrust modes
+  float roll = 5;      // normalized [-1, 1], positive rolls right
+  float pitch = 6;     // normalized [-1, 1], positive noses down (flies forward)
+  float yaw = 7;       // normalized [-1, 1], positive turns right (clockwise seen from above)
 }
 
 // Resets the flight controller (or re-runs the boot decision of a desktop

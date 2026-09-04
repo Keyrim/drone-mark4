@@ -3,6 +3,7 @@
 #include "flight_core/attitude_controller.hpp"
 #include "flight_core/attitude_estimator.hpp"
 #include "flight_core/rate_controller.hpp"
+#include "flight_core/stick_mapper.hpp"
 #include "flight_core/vertical_controller.hpp"
 #include "flight_core/vertical_estimator.hpp"
 
@@ -116,6 +117,35 @@ namespace mark4
                0.0f,
                20.0f,
                false},
+              // The stick ranges may move in flight: they shape a setpoint
+              // the loops then track, nothing jumps. Zero is allowed on a
+              // rate: a stick that asks for nothing is how one axis is held
+              // still while another is tuned. The tilt stays under a right
+              // angle, where its tangent is still a lean.
+              {TUNING_ID_STICK_RATE_ROLL_PITCH,
+               makeName("stick_rate_rp"),
+               StickMapper::DEFAULT_RATE_ROLL_PITCH_RADS,
+               0.0f,
+               12.0f,
+               true},
+              {TUNING_ID_STICK_RATE_YAW,
+               makeName("stick_rate_yaw"),
+               StickMapper::DEFAULT_RATE_YAW_RADS,
+               0.0f,
+               8.0f,
+               true},
+              {TUNING_ID_STICK_TILT_MAX,
+               makeName("stick_tilt_max"),
+               StickMapper::DEFAULT_TILT_MAX_RAD,
+               0.0f,
+               1.0f,
+               true},
+              {TUNING_ID_STICK_DEADBAND,
+               makeName("stick_deadband"),
+               StickMapper::DEFAULT_DEADBAND,
+               0.0f,
+               0.5f,
+               true},
           }}
     {
     }

@@ -131,10 +131,49 @@ TEST_CASE("the piloting mode of an rc message reaches the frame")
     tracker.graft(frame);
     REQUIRE(frame.rc.mode == mark4::PilotMode::ALTITUDE_AUTO);
 
+    tracker.onRc(makeRc(false, true, TEST_THROTTLE, mark4_RcMode_RC_LEVEL), T0_US);
+    tracker.graft(frame);
+    REQUIRE(frame.rc.mode == mark4::PilotMode::LEVEL);
+
     // Back to manual: the mode is a level like the switches are.
     tracker.onRc(makeRc(false, true, TEST_THROTTLE, mark4_RcMode_RC_MANUAL), T0_US);
     tracker.graft(frame);
     REQUIRE(frame.rc.mode == mark4::PilotMode::MANUAL);
+}
+
+TEST_CASE("the sticks of an rc message reach the frame and the fail-safe releases them")
+{
+    mark4::RcTracker tracker;
+    mark4_Rc rc = makeRc(false, true, TEST_THROTTLE);
+    rc.roll = 0.25f;
+    rc.pitch = -0.5f;
+    rc.yaw = 1.0f;
+    tracker.onRc(rc, T0_US);
+
+    // Raw positions, untouched: deadband and scaling are the core's.
+    mark4::SensorFrame frame;
+    frame.timestampUs = T0_US;
+    tracker.graft(frame);
+    REQUIRE(frame.rc.roll == 0.25f);
+    REQUIRE(frame.rc.pitch == -0.5f);
+    REQUIRE(frame.rc.yaw == 1.0f);
+
+    // Silence: the sticks are released along with everything else.
+    mark4::SensorFrame lost;
+    lost.timestampUs = T0_US + mark4::RcTracker::RC_TIMEOUT_US + 1U;
+    tracker.graft(lost);
+    REQUIRE(lost.rc.killSwitch == true);
+    REQUIRE(lost.rc.roll == 0.0f);
+    REQUIRE(lost.rc.pitch == 0.0f);
+    REQUIRE(lost.rc.yaw == 0.0f);
+}
+
+TEST_CASE("the rc timeout is 200 ms")
+{
+    // Pinned on purpose: every pilot device streams against this number
+    // (20 Hz from a page, 50 Hz from a gamepad), and a piloted drone must
+    // not travel far on a stale command before it cuts.
+    REQUIRE(mark4::RcTracker::RC_TIMEOUT_US == 200000U);
 }
 
 TEST_CASE("an unknown mode decodes to the safest mode")
