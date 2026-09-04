@@ -21,6 +21,17 @@ Produced next to the elfs:
                         --slot-b build/.../drone_firmware_b.elf \\
                         --outdir build/.../
     scripts/make_ota.py --verify build/.../drone_firmware.ota
+
+The ESP32 relay takes the other mode: one raw ESP-IDF application image
+(the .bin the IDF build produced, position-independent across the two OTA
+partitions, so the same bytes program either slot) and no header stamping,
+the IDF image format having a header of its own. The manifest names the
+chip, carries the one image, and its buildEpoch and gitHash are the pair
+the build stamped into the image as PROJECT_VER, so the identity the relay
+reports and the one the bundle announces are the same:
+
+    scripts/make_ota.py --esp32 build/esp32_bridge.bin --name esp32_bridge \\
+                        --build-epoch N --git-hash H --wire-hash W --outdir build/
 """
 
 import argparse
@@ -58,6 +69,8 @@ GIT_HASH_SIZE = 8
 IMAGE_MAGIC = 0x5746344D  # "M4FW" read as a little-endian word
 IMAGE_HEADER_VERSION = 1
 MCU_STM32F405 = 1  # mark4.Mcu.STM32F405
+MCU_ESP32C3 = 3  # mark4.Mcu.ESP32C3
+ESP_IMAGE_MAGIC = 0xE9  # first byte of every ESP-IDF application image
 UNSTAMPED = 0xFFFFFFFF
 WIRE_HASH_SIZE = 8  # hex characters of the mark4.proto hash
 
@@ -223,20 +236,24 @@ def verify_image(image: bytes, slot: int) -> bool:
     return ok
 
 
-def build_bundle(name: str, images: list, git_hash: str, wire_hash: str) -> bytes:
+def build_bundle(name: str, images: list, git_hash: str, wire_hash: str,
+                 mcu_id: int, build_epoch: int) -> bytes:
     """Serializes the pinned .ota container around a JSON manifest.
 
     wire_hash is the 8 hex characters the build computed from mark4.proto
     (DRONE_WIRE_HASH_HEX): the hub refuses a bundle built on another schema,
-    since a board flashed with it would go silent on the bench.
+    since a board flashed with it would go silent on the bench. One image per
+    slot for a chip whose images are linked per slot, one image in all for a
+    chip whose images are position-independent: the hub fills slot N with
+    image min(N, imageCount - 1).
     """
-    first = images[0]
     manifest = {
         "name": name,
-        "mcuId": first[OFF_MCU_ID],
-        "buildEpoch": u32(first, OFF_BUILD_EPOCH),
+        "mcuId": mcu_id,
+        "buildEpoch": build_epoch,
         "gitHash": git_hash,
         "wireHash": wire_hash,
+        "imageCount": len(images),
         "images": [
             # The manifest crc32 covers the WHOLE image, header included:
             # it is the value OtaBeginPacket announces and the value the
@@ -277,15 +294,28 @@ def read_bundle(path: str) -> tuple:
     return manifest, images
 
 
+def verify_esp_image(image: bytes) -> bool:
+    """The one check a raw ESP-IDF image allows here: it opens with the IDF magic."""
+    if len(image) == 0 or image[0] != ESP_IMAGE_MAGIC:
+        print(f"make_ota: not an ESP-IDF application image (first byte "
+              f"{image[0] if image else None})", file=sys.stderr)
+        return False
+    return True
+
+
 def verify_bundle(path: str) -> int:
     """Re-reads a bundle and re-verifies every checksum it claims."""
     manifest, images = read_bundle(path)
-    ok = len(images) == len(SLOT_NAMES)
+    expected = 1 if manifest["mcuId"] == MCU_ESP32C3 else len(SLOT_NAMES)
+    ok = len(images) == expected and manifest.get("imageCount", len(images)) == len(images)
     if not ok:
-        print(f"make_ota: bundle holds {len(images)} images, expected {len(SLOT_NAMES)}",
+        print(f"make_ota: bundle holds {len(images)} images, expected {expected}",
               file=sys.stderr)
     for slot, image in enumerate(images):
-        ok = verify_image(image, slot) and ok
+        if manifest["mcuId"] == MCU_ESP32C3:
+            ok = verify_esp_image(image) and ok
+        else:
+            ok = verify_image(image, slot) and ok
         declared = manifest["images"][slot]
         if declared["size"] != len(image) or declared["crc32"] != crc32_mpeg2(image):
             print(f"make_ota: manifest disagrees with the slot {SLOT_NAMES[slot]} image",
@@ -297,7 +327,7 @@ def verify_bundle(path: str) -> int:
     print(f"make_ota: {os.path.basename(path)} verified - {manifest['name']} "
           f"built {built:%Y-%m-%d %H:%M:%S} UTC "
           f"({manifest['gitHash']}), wire {manifest['wireHash']}, "
-          f"slots {', '.join(str(len(image)) + ' B' for image in images)}")
+          f"images {', '.join(str(len(image)) + ' B' for image in images)}")
     return 0
 
 
@@ -307,6 +337,9 @@ def main() -> int:
     )
     parser.add_argument("--slot-a", help="slot A image, elf or raw binary")
     parser.add_argument("--slot-b", help="slot B image, elf or raw binary")
+    parser.add_argument("--esp32",
+                        help="one raw ESP-IDF application image for the relay, instead of "
+                             "--slot-a / --slot-b (no header stamping)")
     parser.add_argument("--outdir", help="directory the artifacts are written to")
     parser.add_argument("--name", default="drone_firmware", help="bundle name in the manifest")
     parser.add_argument("--git-hash", help=f"{GIT_HASH_SIZE} hex characters, default: git HEAD")
@@ -322,7 +355,12 @@ def main() -> int:
 
     if args.verify:
         return verify_bundle(args.verify)
-    if not (args.slot_a and args.slot_b and args.outdir and args.wire_hash):
+    if args.esp32:
+        if args.slot_a or args.slot_b:
+            parser.error("--esp32 takes the one image, not --slot-a / --slot-b")
+        if not (args.outdir and args.wire_hash):
+            parser.error("--esp32, --outdir and --wire-hash are required")
+    elif not (args.slot_a and args.slot_b and args.outdir and args.wire_hash):
         parser.error("--slot-a, --slot-b, --outdir and --wire-hash are required")
     if len(args.wire_hash) != WIRE_HASH_SIZE:
         parser.error(f"--wire-hash must be {WIRE_HASH_SIZE} characters")
@@ -335,22 +373,36 @@ def main() -> int:
     if not 0 <= build_epoch < UNSTAMPED:
         parser.error("--build-epoch must fit an unsigned 32-bit word, below the 0xFF sentinel")
 
-    images = [
-        stamp(to_binary(args.slot_a, args.objcopy), 0, build_epoch, git_hash),
-        stamp(to_binary(args.slot_b, args.objcopy), 1, build_epoch, git_hash),
-    ]
     os.makedirs(args.outdir, exist_ok=True)
-    for slot, image in enumerate(images):
-        path = os.path.join(args.outdir, f"slot_{SLOT_NAMES[slot]}.img")
-        with open(path, "wb") as file:
-            file.write(image)
+    if args.esp32:
+        # The image is the raw .bin as the IDF build produced it: the IDF
+        # bootloader parses that format and no other, and the identity lives
+        # in the application description the build stamped, not in a header
+        # of ours. The bundle CRC is computed over the bytes as they are.
+        with open(args.esp32, "rb") as file:
+            image = file.read()
+        if not verify_esp_image(image):
+            return 1
+        mcu_id = MCU_ESP32C3
+        images = [image]
+    else:
+        mcu_id = MCU_STM32F405
+        images = [
+            stamp(to_binary(args.slot_a, args.objcopy), 0, build_epoch, git_hash),
+            stamp(to_binary(args.slot_b, args.objcopy), 1, build_epoch, git_hash),
+        ]
+        for slot, image in enumerate(images):
+            path = os.path.join(args.outdir, f"slot_{SLOT_NAMES[slot]}.img")
+            with open(path, "wb") as file:
+                file.write(image)
     bundle = os.path.join(args.outdir, f"{args.name}.ota")
     with open(bundle, "wb") as file:
-        file.write(build_bundle(args.name, images, git_hash, args.wire_hash))
+        file.write(build_bundle(args.name, images, git_hash, args.wire_hash, mcu_id, build_epoch))
 
     for slot, image in enumerate(images):
-        print(f"make_ota: slot {SLOT_NAMES[slot].upper()} {len(image)} bytes, "
-              f"crc {u32(image, OFF_IMAGE_CRC):#010x}")
+        crc = crc32_mpeg2(image) if args.esp32 else u32(image, OFF_IMAGE_CRC)
+        label = "image" if args.esp32 else f"slot {SLOT_NAMES[slot].upper()}"
+        print(f"make_ota: {label} {len(image)} bytes, crc {crc:#010x}")
     print(f"make_ota: {bundle} ({os.path.getsize(bundle)} bytes, git {git_hash})")
     return verify_bundle(bundle)
 

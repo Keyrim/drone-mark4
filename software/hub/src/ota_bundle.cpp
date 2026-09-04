@@ -6,6 +6,7 @@
 
 #include "hub/ota_bundle.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <ios>
@@ -20,6 +21,19 @@ namespace mark4
         using Json = nlohmann::json;
 
         constexpr std::size_t BITS_PER_BYTE = 8U;
+
+        /// First byte of every ESP-IDF application image, the one check a
+        /// raw relay image allows on the ground: its header is IDF's, and
+        /// the relay verifies the rest itself before staging.
+        constexpr std::uint8_t ESP_IMAGE_MAGIC = 0xE9U;
+
+        /// @param mcuId OTA_MCU_* of a bundle
+        /// @return true when that chip's images open with the OtaImageHeader
+        ///         of protocol/ota_image.hpp, one image linked per slot
+        bool headerImageFormat(std::uint8_t mcuId)
+        {
+            return mcuId == OTA_MCU_STM32F405 || mcuId == OTA_MCU_STM32F722 || mcuId == OTA_MCU_SIM;
+        }
 
         /// Bytes of the u32 length fields the container is built from.
         constexpr std::size_t LENGTH_FIELD_SIZE = 4U;
@@ -135,6 +149,11 @@ namespace mark4
                     valueOut = OTA_MCU_SIM;
                     return true;
                 }
+                if (name == "esp32c3")
+                {
+                    valueOut = OTA_MCU_ESP32C3;
+                    return true;
+                }
                 errorOut = "the manifest names an unknown mcu '" + name + "'";
                 return false;
             }
@@ -232,6 +251,40 @@ namespace mark4
                 image.slot = static_cast<std::uint8_t>(slot);
                 bundleOut.images.push_back(std::move(image));
             }
+            // A chip whose images are linked per slot ships one per slot; a
+            // chip whose image is position-independent ships one in all. The
+            // count is announced so a manifest cut short is caught here.
+            std::uint32_t announced = 0U;
+            if (manifest.contains("imageCount") &&
+                (!readManifestU32(manifest, "imageCount", "image count", announced, errorOut) ||
+                 announced != bundleOut.images.size()))
+            {
+                errorOut = "the manifest announces " + std::to_string(announced) +
+                           " images and lists " + std::to_string(bundleOut.images.size());
+                return false;
+            }
+            if (headerImageFormat(bundleOut.mcuId) && bundleOut.images.size() != OTA_SLOT_COUNT)
+            {
+                errorOut = "a bundle for this chip needs one image per slot, this one holds " +
+                           std::to_string(bundleOut.images.size());
+                return false;
+            }
+            return true;
+        }
+
+        /// @brief The one check a raw ESP-IDF image allows here: it opens
+        ///        with the IDF magic. The relay verifies the whole image
+        ///        with IDF's own code before staging it.
+        /// @param image image to check, bytes included
+        /// @param[out] errorOut receives the reason on failure
+        /// @return true when the bytes look like an IDF application image
+        bool checkEspImage(const OtaBundleImage &image, std::string &errorOut)
+        {
+            if (image.bytes.empty() || image.bytes[0] != ESP_IMAGE_MAGIC)
+            {
+                errorOut = "the image does not start with an ESP-IDF application header";
+                return false;
+            }
             return true;
         }
 
@@ -321,14 +374,14 @@ namespace mark4
 
     const OtaBundleImage *findOtaBundleImage(const OtaBundle &bundle, std::uint8_t slot)
     {
-        for (const OtaBundleImage &image : bundle.images)
+        if (slot >= OTA_SLOT_COUNT || bundle.images.empty())
         {
-            if (image.slot == slot)
-            {
-                return &image;
-            }
+            return nullptr;
         }
-        return nullptr;
+        // One image per slot fills slot N with image N; one image in all
+        // fills either slot with it.
+        const std::size_t index = std::min<std::size_t>(slot, bundle.images.size() - 1U);
+        return &bundle.images[index];
     }
 
     bool loadOtaBundle(const std::string &path, OtaBundle &bundleOut, std::string &errorOut)
@@ -437,7 +490,9 @@ namespace mark4
                                file.begin() + static_cast<std::ptrdiff_t>(cursor + stored));
             cursor += stored;
 
-            if (!checkImageHeader(bundle, image, errorOut))
+            const bool headerFormat = headerImageFormat(bundle.mcuId);
+            if (headerFormat ? !checkImageHeader(bundle, image, errorOut)
+                             : !checkEspImage(image, errorOut))
             {
                 return false;
             }
@@ -449,12 +504,15 @@ namespace mark4
             const std::uint32_t whole = crc32Mpeg2(image.bytes.data(), image.bytes.size());
             if (whole != image.crc32)
             {
-                const std::uint32_t afterHeader =
-                    crc32Mpeg2(image.bytes.data() + OTA_IMAGE_HEADER_SIZE,
-                               image.bytes.size() - OTA_IMAGE_HEADER_SIZE);
                 errorOut = "the " + which + " image announces crc32 " + hexText(image.crc32) +
-                           " but its bytes hash to " + hexText(whole) + " (" +
-                           hexText(afterHeader) + " without the header)";
+                           " but its bytes hash to " + hexText(whole);
+                if (headerFormat)
+                {
+                    const std::uint32_t afterHeader =
+                        crc32Mpeg2(image.bytes.data() + OTA_IMAGE_HEADER_SIZE,
+                                   image.bytes.size() - OTA_IMAGE_HEADER_SIZE);
+                    errorOut += " (" + hexText(afterHeader) + " without the header)";
+                }
                 return false;
             }
         }

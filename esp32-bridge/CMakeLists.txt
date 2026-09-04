@@ -33,3 +33,21 @@ set(PROJECT_VER "${BRIDGE_BUILD_EPOCH}-${BRIDGE_GIT_HASH}")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 project(esp32_bridge)
+
+# The .ota bundle the hub sends to the relay, packaged next to the image on
+# every build (scripts/make_ota.py in its esp32 mode: the raw application
+# image as it is, one for both slots, under a manifest naming the chip, the
+# wire hash of components/mark4_proto and the identity stamped above).
+idf_build_get_property(bridge_python PYTHON)
+idf_build_get_property(bridge_build_dir BUILD_DIR)
+idf_build_get_property(bridge_wire_hash DRONE_WIRE_HASH_HEX)
+add_custom_command(TARGET gen_project_binary POST_BUILD
+    COMMAND ${bridge_python} ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/make_ota.py
+            --esp32 ${bridge_build_dir}/${CMAKE_PROJECT_NAME}.bin
+            --name ${CMAKE_PROJECT_NAME}
+            --build-epoch ${BRIDGE_BUILD_EPOCH}
+            --git-hash ${BRIDGE_GIT_HASH}
+            --wire-hash ${bridge_wire_hash}
+            --outdir ${bridge_build_dir}
+    COMMENT "packaging ${CMAKE_PROJECT_NAME}.ota"
+    VERBATIM)
