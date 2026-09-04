@@ -1,9 +1,11 @@
 # OTA firmware update - design proposal
 
-Status: implemented (the Ota* messages of mark4.proto, protocol/ota_image.hpp, platform firmware stores, OtaUpdater,
-drone_boot, scripts/make_ota.py, hub OtaClient and the update panel; the
-desktop end-to-end test drives a full update and a rollback against
-drone_sim). This document remains the reference for the design decisions.
+Status: implemented (the Ota* messages of mark4.proto, protocol/ota_image.hpp,
+the components/ota brick, the stm32, sim and esp32 firmware stores,
+drone_boot, scripts/make_ota.py in both modes, hub OtaClient and the update
+panel; the desktop end-to-end test drives a full update and a rollback
+against drone_sim; the relay of section 8 updates over the air from the same
+panel). This document remains the reference for the design decisions.
 Companions: `docs/target-architecture.md` (system picture this plugs into),
 `docs/bring-up.md` (mark1 board), `docs/aio-board-spec.md` (F722 AIO board).
 
@@ -420,32 +422,32 @@ budget of section 2 does not even apply to it.
 
 ### 8.1 One OTA brick: components/ota
 
-The device-side OTA code currently lives in the platform library
+The device-side OTA code first lived in the platform library
 (`platform/firmware_store.hpp`, `platform_common/ota_updater.hpp`,
 `ota_boot_policy.hpp`, `ota_meta_log.hpp`, `crc32_mpeg2.hpp`). That
 placement was convenience, not design: the platform layer is defined as
 the abstract services of the flight loop, and OTA is not one - it is a
 node brick, like `log` and `transport`, wanted by the firmware, the
 desktop flight process, the hub (which keeps its `OtaClient` outside
-platform already, having no platform at all) and now the relay, which
+platform already, having no platform at all) and the relay, which
 links `components/` sources only and has no reason to start including
 platform headers for a non-flight concern.
 
-So the brick moves to **`software/components/ota/`**: `AbsFirmwareStore`
+So the brick lives in **`software/components/ota/`**: `AbsFirmwareStore`
 and the `OtaMetaState`/`OtaMetaRecord` types, `OtaUpdater`, the boot
-policy, the metadata log, and the CRC-32/MPEG-2 helper. Header-only
-INTERFACE target `ota`, depending on `protocol` alone; include paths
-keep the module prefix (`#include "ota/updater.hpp"`). The store
-implementations do not move: they are genuinely target-specific and
-stay with their targets (`platform_stm32`, `platform_sim`, and the new
-one inside `esp32-bridge/main/`). A mechanical move for the existing
-code paths - same headers, new address - plus the interface growth of
-section 8.2.
+policy, the metadata log, and the CRC-32/MPEG-2 helper (which the hub
+uses too, instead of a private copy). Header-only INTERFACE target
+`ota`, depending on `protocol` alone; include paths keep the module
+prefix (`#include "ota/updater.hpp"`). The store implementations did not
+move: they are genuinely target-specific and stay with their targets
+(`platform_stm32`, `platform_sim`, and `esp32-bridge/main/`). A
+mechanical move for the existing code paths - same headers, new address
+- plus the interface growth of section 8.2.
 
-### 8.2 What the generic updater must stop assuming
+### 8.2 What the generic updater stopped assuming
 
-`OtaUpdater` reads the flashed image twice today, and both reads assume
-the F405 image format of section 4.3:
+`OtaUpdater` used to read the flashed image twice, and both reads
+assumed the F405 image format of section 4.3:
 
 - **finish validation**: after the CRC pass, it reads the
   `OtaImageHeader` prefix at the slot base and checks magic, header
@@ -455,43 +457,47 @@ the F405 image format of section 4.3:
 
 An ESP32 slot holds a raw ESP-IDF image (the IDF bootloader parses
 that format and no other), so there is no `OtaImageHeader` to read.
-Both reads become `AbsFirmwareStore` virtuals - an image-validity check
-(slot, expected size) and a slot-identity read (build epoch, git hash).
-The stm32 and sim stores implement them with the exact header-prefix
-logic the updater holds today, so F405 wire behavior does not change by
-a byte; the esp32 store implements them against the IDF image format
-(magic byte, `esp_app_desc_t`). `protocol/ota_image.hpp` is untouched.
+Both reads are `AbsFirmwareStore` virtuals - `imageValid()` (slot,
+expected size) and `readIdentity()` (build epoch, git hash). The stm32
+and sim stores implement them with the exact header-prefix logic the
+updater used to hold, shared in `ota/image_header.hpp`, so F405 wire
+behavior did not change by a byte; the esp32 store implements them
+against the IDF image format (IDF's own image verification, the
+`esp_app_desc_t`). `protocol/ota_image.hpp` is untouched.
 
 ### 8.3 The esp32 store over ESP-IDF
 
-The bridge moves from the single-app partition table to the standard
-two-OTA layout: `ota_0`/`ota_1` (slots A/B) plus the `otadata` entry
-the IDF bootloader reads, and `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`
-so a new image boots exactly once as pending-verify - IDF's name for
-the one-shot trial of section 4.5. `drone_boot` and the metadata log
-are NOT compiled on the ESP32: the trial/rollback equivalence lives in
-each chip's bootloader, and `FirmwareStoreEsp32` translates between
-`OtaMetaState` and what IDF exposes:
+The bridge left the single-app partition table for a two-OTA layout
+(`esp32-bridge/partitions.csv`): `ota_0`/`ota_1` (slots A/B, 1984 KB
+each on the 4 MB flash of the module) plus the `otadata` entry the IDF
+bootloader reads, and `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` so a new
+image boots exactly once as pending-verify - IDF's name for the one-shot
+trial of section 4.5. `drone_boot` and the metadata log are NOT compiled
+on the ESP32: the trial/rollback equivalence lives in each chip's
+bootloader, and `FirmwareStoreEsp32` translates between `OtaMetaState`
+and what IDF exposes:
 
 | Store call | ESP-IDF |
 |---|---|
 | `runningSlot()` | `esp_ota_get_running_partition()` subtype |
 | `slotSize()` | the partition's size |
 | `mcuId()` | `ESP32C3` |
-| `eraseSlot()` | `esp_partition_erase_range()` (whole slot) |
+| `eraseSlot()` | `esp_partition_erase_range()` in 64 KB blocks, yielding between two so the idle task keeps feeding the task watchdog |
 | `program()` | `esp_partition_write()` |
 | `read()` | `esp_partition_read()` |
 | `crc32()` | `esp_partition_read()` + the shared software CRC |
-| `readMeta()` | synthesized: `activeSlot` from `esp_ota_get_boot_partition()`; per-slot states from `esp_ota_get_state_partition()` (VALID from img-valid, TESTING from pending-verify, BAD from invalid/aborted, EMPTY otherwise); `trialAttempted` is true while the running image is pending-verify |
-| `writeMeta()` | by diff against `readMeta()`: target newly STAGED -> `esp_ota_set_boot_partition(target)`; running slot newly VALID (the self-confirm of section 3.1) -> `esp_ota_mark_app_valid_cancel_rollback()`; `activeSlot` moved to the other valid slot (revert) -> `esp_ota_set_boot_partition(other)`; marking a slot EMPTY before its erase -> a no-op, IDF has no such state and needs none |
+| `imageValid()` | `esp_image_verify()` over the slot, then its `image_len` against the announced size |
+| `readIdentity()` | `esp_ota_get_partition_description()`, the version string parsed back |
+| `readMeta()` | synthesized: `activeSlot` from `esp_ota_get_boot_partition()`; per-slot states from `esp_ota_get_state_partition()` (VALID from img-valid, TESTING from pending-verify, BAD from invalid/aborted, STAGED from new; a slot IDF has no opinion about, the USB-flashed image or the one a rollback went back to, is VALID when it holds an application and EMPTY otherwise); `trialAttempted` is true while the running image is pending-verify |
+| `writeMeta()` | by diff against `readMeta()`: target newly STAGED -> `esp_ota_set_boot_partition(target)`; running slot newly VALID (the self-confirm of section 3.1) -> `esp_ota_mark_app_valid_cancel_rollback()`; `activeSlot` moved to the other valid slot (revert) -> `esp_ota_set_boot_partition(other)`; marking a slot EMPTY before its erase -> a no-op, unless that slot was the boot partition (a staged image nobody rebooted into), in which case the boot goes back to the running slot |
 
 Slot identity (section 8.2) comes from `esp_app_desc_t`: the build
 stamps `PROJECT_VER` as `<buildEpoch>-<gitHash>` at configure time (the
-two values `main/CMakeLists.txt` already computes for the Announce),
-and the store parses it back. 32 bytes of version field fit it with
-room to spare.
+two values the top-level `CMakeLists.txt` computes for the Announce and
+hands to the packaging step), and the store parses it back. 32 bytes of
+version field fit it with room to spare.
 
-One behavior to accept, not fix: `eraseSlot()` blocks the relay's main
+One behavior to accept, not fix: `eraseSlot()` occupies the relay's main
 task for the seconds a partition erase takes, so the relay stops
 relaying and UART bytes fall on the floor for that window. That is the
 section 3 philosophy verbatim - an accepted update session parks normal
@@ -499,35 +505,51 @@ operation - and the hub's begin timeout already allows for it. Updating
 the relay mid-flight is refused by nobody but common sense; the drone
 is on the ground when its radio gets reflashed.
 
+The first flash of the two-slot layout is a USB one (`idf.py flash`
+writes the partition table, `otadata` and `ota_0`): a relay still on the
+single-app layout has no `otadata` for the bootloader to read and no
+second slot to write, and says so at boot (`app/boot` ERROR) while
+relaying as before.
+
 ### 8.4 Bundle and ground side
 
-`scripts/make_ota.py` grows an esp32 mode: the manifest names
+`scripts/make_ota.py` has an `--esp32` mode: the manifest names
 `mcuId: ESP32C3` and carries **one image instead of two** - an IDF app
 image is position-independent across OTA partitions, so the same bytes
 program either slot, where the F405 links one binary per slot. The
 bundle container is unchanged (magic, JSON manifest, length-prefixed
-images); the manifest says how many images follow, and the hub's bundle
-reader picks the image for the target slot as
+images); the manifest says how many images follow (`imageCount`), and
+the hub's bundle reader picks the image for the target slot as
 `min(slot, imageCount - 1)`. No header stamping: the image is the raw
 `.bin` the IDF build produced, and the bundle CRC is computed over it
-as-is.
+as-is; the one check the ground makes on it is the IDF magic byte, the
+relay verifies the rest with IDF's own code before staging. The bridge
+build packages `esp32_bridge.ota` next to its image, with the build epoch
+and git hash it stamped as `PROJECT_VER`, so the identity the bundle
+announces is the one the relay will report.
 
-The hub `OtaClient` and the pages change for nothing else: the OTA
+The hub `OtaClient` and the pages changed for nothing else: the OTA
 panel targets a node id, the relay is a node, and the mcu match
-refusal already exists.
+refusal already existed. The operator types the bundle path
+(`esp32-bridge/build/esp32_bridge.ota`) in the panel's path field, the
+default being the flight controller's bundle.
 
 ### 8.5 Relay composition
 
-`relay.cpp` already decodes the unicasts addressed to the relay (the
-`LogControl` path); the updater rides the same spot: decode, offer to
+`relay.cpp` already decoded the unicasts addressed to the relay (the
+`LogControl` path); the updater rides the same spot: the body tag is
+read off the first bytes (`envelopeBodyTag()`, the `Ota*` tags do not
+fit the one-byte compare the `LogControl` check used), decode, offer to
 `OtaUpdater::handle()` first (exactly like the firmware's command
-drain), send whatever reply comes back, plus the `Reboot` envelope
-answered with `esp_restart()`. `Inputs` are simple on a radio: never
-armed, no battery floor, `esp_timer` as the clock. The updater keeps
-its defaults - self-confirm on first ground contact included, which
-the store maps onto IDF's rollback cancel.
+drain), send whatever reply comes back to the sender, plus the `Reboot`
+envelope answered with `esp_restart()`. `Inputs` are simple on a radio:
+never armed, no battery floor, `esp_timer` as the clock. The updater
+keeps its defaults - self-confirm on first ground contact included,
+which the store maps onto IDF's rollback cancel. The relay logs the
+session under `relay/ota`, the store under `ota/store`.
 
-Verification keeps the section 6 spirit: the updater's unit tests move
-with it unchanged (they run against a fake store); the new esp32 store
-is a thin translation exercised on the hardware unit; the desktop
-end-to-end CI test is untouched.
+Verification keeps the section 6 spirit: the updater's unit tests moved
+with it unchanged (they run against a fake store); the esp32 store is a
+thin translation exercised on the hardware unit; the desktop end-to-end
+CI test is untouched, and the hub's bundle tests cover the one-image
+manifest.

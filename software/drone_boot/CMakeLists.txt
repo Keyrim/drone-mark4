@@ -1,16 +1,14 @@
 # The bootloader: sectors 0-1, SWD-flashed once per board, never updated
 # over the air. It links platform_stm32 for the startup file, the LEDs and
-# the internal flash driver, and platform_common for OtaMetaLog - the one
-# metadata implementation it shares with the firmware store, so the two can
-# never read the log differently. flight_core arrives on the link line
-# through platform_common but contributes no object: nothing here references
-# it, and that is deliberate.
+# the internal flash driver, and ota for OtaMetaLog and the boot policy - the
+# one metadata implementation it shares with the firmware store, so the two
+# can never read the log differently.
 add_executable(drone_boot
     main.cpp
     boot_app.cpp)
 set_target_properties(drone_boot PROPERTIES SUFFIX ".elf")
 target_link_libraries(drone_boot
-    PRIVATE platform_common platform_stm32 protocol drone_warnings drone_strict)
+    PRIVATE ota platform_stm32 protocol drone_warnings drone_strict)
 
 drone_stm32_image_layout(drone_boot
     FLASH_ORIGIN ${DRONE_STM32_BOOT_ORIGIN}

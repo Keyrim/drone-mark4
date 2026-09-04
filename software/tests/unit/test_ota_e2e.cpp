@@ -43,6 +43,7 @@
 #include "hub/gateway_codec.hpp"
 #include "hub/ota_bundle.hpp"
 #include "hub/ota_client.hpp"
+#include "ota/crc32_mpeg2.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
 #include "transport/transport.hpp"
@@ -135,7 +136,7 @@ namespace
         header.slotId = slot;
         header.imageSize = IMAGE_SIZE;
         header.imageCrc =
-            mark4::otaImageCrc32(image.data() + mark4::OTA_IMAGE_HEADER_SIZE, IMAGE_PAYLOAD_SIZE);
+            mark4::crc32Mpeg2(image.data() + mark4::OTA_IMAGE_HEADER_SIZE, IMAGE_PAYLOAD_SIZE);
         header.buildEpoch = buildEpoch;
         header.gitHash.fill('\0');
         std::memcpy(header.gitHash.data(),
@@ -148,7 +149,7 @@ namespace
         // The header CRC covers the 508 bytes before itself and must be
         // stamped last, exactly like scripts/make_ota.py does it.
         const std::uint32_t headerCrc =
-            mark4::otaImageCrc32(image.data(), offsetof(mark4::OtaImageHeader, headerCrc));
+            mark4::crc32Mpeg2(image.data(), offsetof(mark4::OtaImageHeader, headerCrc));
         std::memcpy(image.data() + offsetof(mark4::OtaImageHeader, headerCrc),
                     &headerCrc,
                     sizeof(headerCrc));
@@ -178,11 +179,9 @@ namespace
         // compact, keys sorted, every number decimal.
         std::string manifest = R"({"buildEpoch":)" + std::to_string(buildEpoch) +
                                R"(,"gitHash":")" + gitHash + R"(","images":[)";
-        manifest += R"({"crc32":)" +
-                    std::to_string(mark4::otaImageCrc32(slotA.data(), slotA.size())) +
+        manifest += R"({"crc32":)" + std::to_string(mark4::crc32Mpeg2(slotA.data(), slotA.size())) +
                     R"(,"size":)" + std::to_string(slotA.size()) + R"(,"slot":0},)";
-        manifest += R"({"crc32":)" +
-                    std::to_string(mark4::otaImageCrc32(slotB.data(), slotB.size())) +
+        manifest += R"({"crc32":)" + std::to_string(mark4::crc32Mpeg2(slotB.data(), slotB.size())) +
                     R"(,"size":)" + std::to_string(slotB.size()) + R"(,"slot":1}],)";
         manifest += R"("mcuId":)" + std::to_string(mark4::OTA_MCU_SIM);
         std::array<char, 9U> wireHash{};

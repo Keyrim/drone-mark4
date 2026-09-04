@@ -23,8 +23,8 @@
 #include <cstdint>
 #include <cstring>
 
-#include "platform/firmware_store.hpp"
-#include "platform_common/crc32_mpeg2.hpp"
+#include "ota/crc32_mpeg2.hpp"
+#include "ota/firmware_store.hpp"
 
 namespace mark4
 {

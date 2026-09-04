@@ -9,8 +9,8 @@
 #include "flight_core/throw_detector.hpp"
 #include "log/module.hpp"
 #include "log_modules.hpp"
+#include "ota/boot_policy.hpp"
 #include "platform_common/envelope_io.hpp"
-#include "platform_common/ota_boot_policy.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
 

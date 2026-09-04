@@ -11,9 +11,10 @@
  *   and the verdict dismisses itself because the board block already tells
  *   the durable outcome.
  *
- * The target is a node: the panel lists the drones the node table holds
- * (the board, or a desktop flight process with its emulated flash) and
- * every OtaCommand names the chosen one. The gateway owns the whole state
+ * The target is a node: the panel lists the updatable nodes the node table
+ * holds (the board, a desktop flight process with its emulated flash, the
+ * ESP32 relay over its two partitions) and every OtaCommand names the
+ * chosen one. The gateway owns the whole state
  * machine and publishes it as one OtaState on every change, so this panel
  * never derives anything of its own: it paints what the last message said.
  */
@@ -23,7 +24,7 @@ import { create } from "@bufbuild/protobuf";
 import { GatewayMessageSchema, type OtaState, OtaCommand_Op } from "../gen/gateway_pb";
 import { NodeKind } from "../gen/mark4_pb";
 import type { GatewaySocket } from "../shared/gateway_socket";
-import { type NodeModel, type NodeView, isDrone, nodeLabel } from "../shared/nodes";
+import { type NodeModel, type NodeView, isUpdatable, nodeLabel } from "../shared/nodes";
 import {
     IDLE_OTA,
     TERMINAL,
@@ -175,18 +176,18 @@ export class OtaPanel {
     }
 
     private paintTargets(list: NodeView[]): void {
-        const drones = list.filter(isDrone);
-        if (this.target === 0 && drones.length > 0) {
-            this.target = (drones.find((node) => node.kind === NodeKind.FIRMWARE) ?? drones[0]!).id;
+        const targets = list.filter(isUpdatable);
+        if (this.target === 0 && targets.length > 0) {
+            this.target = (targets.find((node) => node.kind === NodeKind.FIRMWARE) ?? targets[0]!).id;
         }
         this.targetSelect.replaceChildren();
-        if (drones.length === 0) {
+        if (targets.length === 0) {
             const option = document.createElement("option");
             option.value = "0";
-            option.textContent = "no drone on the network";
+            option.textContent = "no updatable node on the network";
             this.targetSelect.appendChild(option);
         }
-        for (const node of drones) {
+        for (const node of targets) {
             const option = document.createElement("option");
             option.value = String(node.id);
             option.textContent = nodeLabel(node);

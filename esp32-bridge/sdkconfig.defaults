@@ -8,3 +8,13 @@ CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 # The relay polls its two links once per tick: 1 ms, under one frame time
 # at 921600 baud. The default 100 Hz tick would add up to 10 ms per hop.
 CONFIG_FREERTOS_HZ=1000
+
+# 4 MB module, two OTA application slots (partitions.csv) and the IDF
+# bootloader's one-shot trial of a freshly written slot: a new image boots
+# once as pending-verify and is rolled back on the next reset unless the
+# running relay confirmed it (FirmwareStoreEsp32 does, on the first ground
+# contact of the update session).
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

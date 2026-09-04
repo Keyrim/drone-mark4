@@ -65,7 +65,8 @@ namespace mark4
     /// values are those of the wire's mark4_Mcu.
     inline constexpr std::uint8_t OTA_MCU_STM32F405 = mark4_Mcu_STM32F405;
     inline constexpr std::uint8_t OTA_MCU_STM32F722 = mark4_Mcu_STM32F722;
-    inline constexpr std::uint8_t OTA_MCU_SIM = mark4_Mcu_SIM; ///< desktop flight processes
+    inline constexpr std::uint8_t OTA_MCU_ESP32C3 = mark4_Mcu_ESP32C3; ///< the relay
+    inline constexpr std::uint8_t OTA_MCU_SIM = mark4_Mcu_SIM;         ///< desktop flight processes
 
     /// Data bytes of one OtaChunk, the bound of mark4.options.
     inline constexpr std::size_t OTA_CHUNK_DATA_SIZE = sizeof(mark4_OtaChunk_data_t::bytes);

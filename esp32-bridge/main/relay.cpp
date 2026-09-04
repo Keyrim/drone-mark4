@@ -3,7 +3,10 @@
 ///        controller's UART and the WiFi LAN, relaying between them. It is a
 ///        node of its own too: it announces itself as a relay on both links,
 ///        logs through the log library over the LAN, and answers the
-///        LogControl addressed to it. Towards the UART only what the board
+///        LogControl addressed to it, and it updates itself over the air:
+///        the same OtaUpdater the flight controller runs, over a store that
+///        translates to the ESP-IDF OTA partitions, fed by the Ota*
+///        unicasts a hub sends it. Towards the UART only what the board
 ///        needs crosses: unicasts for it, the Announce broadcasts that tell
 ///        it who is on the LAN, and nothing this relay says itself.
 
@@ -18,6 +21,7 @@
 #include "driver/uart.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -27,11 +31,14 @@
 #include "log/module.hpp"
 #include "log/wire.hpp"
 #include "log_modules.hpp"
+#include "ota/updater.hpp"
 #include "protocol/envelope.hpp"
 #include "transport/node_id.hpp"
 #include "transport/transport.hpp"
 #include "transport/uart_link.hpp"
 #include "transport/udp_link.hpp"
+
+#include "firmware_store_esp32.hpp"
 
 namespace mark4
 {
@@ -41,6 +48,7 @@ namespace mark4
         LogModule WIFI{LOG_MODULE_APP_WIFI, "app/wifi"};
         LogModule CORE{LOG_MODULE_RELAY_CORE, "relay/core"};
         LogModule STATS{LOG_MODULE_RELAY_STATS, "relay/stats"};
+        LogModule OTA{LOG_MODULE_RELAY_OTA, "relay/ota"};
 
         /// The console of the module, over its USB serial port: the same line
         /// format as any desktop node of the project, over the same stdio.
@@ -79,20 +87,39 @@ namespace mark4
         /// Cadence of the statistics line [us].
         constexpr std::int64_t STATS_PERIOD_US = 5'000'000;
 
+        /// Time left to the LAN link between a reboot request and the reset,
+        /// so the log line announcing it leaves the radio.
+        constexpr std::uint32_t REBOOT_GRACE_MS = 50U;
+
         /// Bytes of a MAC address.
         constexpr std::size_t MAC_SIZE = 6U;
 
         /// Bytes of the MAC the node name carries, its low half.
         constexpr std::size_t MAC_NAME_BYTES = 3U;
 
-        /// First byte of an encoded Envelope carrying a LogControl: what a
-        /// payload must open with before this node decodes it at all (every
-        /// broadcast of the LAN and of the board crosses the delivery).
-        constexpr std::uint8_t LOG_CONTROL_TAG_BYTE = static_cast<std::uint8_t>(
-            (mark4_Envelope_log_control_tag << PB_TAG_FIELD_SHIFT) | PB_WT_STRING);
-
-        static_assert(mark4_Envelope_log_control_tag <= PB_SINGLE_BYTE_TAG_MAX,
-                      "the log_control tag must fit one byte for the delivery check");
+        /// @param tag body tag read off an encoded Envelope
+        /// @return true when this node answers that body: the LogControl, the
+        ///         Reboot and the updater messages a hub addresses to it.
+        ///         Every other payload the delivery hands over is a broadcast
+        ///         passing by (every broadcast of the LAN and of the board
+        ///         crosses the delivery) and is dropped before any decoding.
+        constexpr bool answeredHere(std::uint32_t tag)
+        {
+            switch (tag)
+            {
+                case mark4_Envelope_log_control_tag:
+                case mark4_Envelope_reboot_tag:
+                case mark4_Envelope_ota_status_request_tag:
+                case mark4_Envelope_ota_begin_tag:
+                case mark4_Envelope_ota_chunk_tag:
+                case mark4_Envelope_ota_finish_tag:
+                case mark4_Envelope_ota_revert_tag:
+                case mark4_Envelope_ota_abort_tag:
+                    return true;
+                default:
+                    return false;
+            }
+        }
 
         /// The UART behind the UartLink, over the ESP-IDF driver rings.
         class UartStream final : public AbsByteStream
@@ -138,6 +165,10 @@ namespace mark4
             UdpLink lan;                               ///< the WiFi LAN, discovery port 47820
             Transport transport;                       ///< the node, relaying between the two
             TransportSink logSink{&sendLogLine, this}; ///< its lines, onto the LAN
+            FirmwareStoreEsp32 store;                  ///< the two OTA partitions
+            OtaUpdater updater{store};                 ///< the update session over them
+            bool storeReady = false;                   ///< the partition table is the two-slot one
+            bool sessionWasOpen = false; ///< updater state at the last poll, for the log
 
             /// @param nodeId this relay's transport identity
             explicit Relay(std::uint32_t nodeId)
@@ -184,10 +215,56 @@ namespace mark4
                    envelopeIsAnnounce(payload, size);
         }
 
+        /// @brief Sends one Envelope to one node, encoded on the stack.
+        /// @param relay the composition
+        /// @param dst node to reach
+        /// @param envelope message to send
+        void sendTo(Relay &relay, std::uint32_t dst, const mark4_Envelope &envelope)
+        {
+            std::array<std::uint8_t, MAX_ENVELOPE_SIZE> bytes{};
+            std::size_t size = 0U;
+            if (encodeEnvelope(envelope, bytes.data(), bytes.size(), size))
+            {
+                static_cast<void>(relay.transport.send(dst, bytes.data(), size));
+            }
+        }
+
+        /// @brief Offers a decoded message to the updater and answers it.
+        /// @param relay the composition
+        /// @param src node that sent it, where the reply goes
+        /// @param envelope decoded message
+        /// @return true when the updater claimed it, whatever it answered
+        bool serveOta(Relay &relay, std::uint32_t src, const mark4_Envelope &envelope)
+        {
+            if (!relay.storeReady)
+            {
+                return false;
+            }
+            // A radio has nothing to arm and no battery floor to watch; the
+            // one fact that matters is the clock the session timeout runs on.
+            OtaUpdater::Inputs inputs;
+            inputs.nowUs = static_cast<std::uint64_t>(esp_timer_get_time());
+            mark4_Envelope reply;
+            const bool consumed = relay.updater.handle(envelope, inputs, reply);
+            if (reply.which_body != 0U)
+            {
+                sendTo(relay, src, reply);
+            }
+            if (reply.which_body == mark4_Envelope_ota_ack_tag &&
+                reply.body.ota_ack.result != mark4_OtaResult_OTA_OK)
+            {
+                OTA.warn("op %d refused: result %d",
+                         static_cast<int>(reply.body.ota_ack.op),
+                         static_cast<int>(reply.body.ota_ack.result));
+            }
+            return consumed;
+        }
+
         /// @brief Takes what the transport delivers to this node: the
-        ///        LogControl a client sends it, nothing else. Every other
-        ///        payload is a broadcast passing by and is dropped on its
-        ///        first byte, before any decoding.
+        ///        LogControl a client sends it, the updater messages and the
+        ///        Reboot of an update session. Every other payload is a
+        ///        broadcast passing by and is dropped on its tag, before any
+        ///        decoding.
         /// @param context the composition
         /// @param src node that sent it
         /// @param payload encoded Envelope
@@ -197,20 +274,38 @@ namespace mark4
                        const std::uint8_t *payload,
                        std::size_t size)
         {
-            static_cast<void>(src);
-            if (size == 0U || payload[0] != LOG_CONTROL_TAG_BYTE)
+            Relay &relay = *static_cast<Relay *>(context);
+            if (!answeredHere(envelopeBodyTag(payload, size)))
             {
                 return;
             }
             mark4_Envelope envelope = mark4_Envelope_init_zero;
-            if (!decodeEnvelope(payload, size, envelope) ||
-                envelope.which_body != mark4_Envelope_log_control_tag)
+            if (!decodeEnvelope(payload, size, envelope))
             {
                 return;
             }
-            if (logHandleControl(envelope.body.log_control))
+            if (serveOta(relay, src, envelope))
             {
-                publishModules(context);
+                return;
+            }
+            switch (envelope.which_body)
+            {
+                case mark4_Envelope_log_control_tag:
+                    if (logHandleControl(envelope.body.log_control))
+                    {
+                        publishModules(context);
+                    }
+                    break;
+                case mark4_Envelope_reboot_tag:
+                    // The end of an update session: a staged image boots as
+                    // the IDF bootloader's one-shot trial, anything else boots
+                    // what runs today. The line goes out before the reset.
+                    OTA.warn("reboot requested by %08" PRIx32, src);
+                    vTaskDelay(pdMS_TO_TICKS(REBOOT_GRACE_MS));
+                    esp_restart();
+                    break;
+                default:
+                    break;
             }
         }
 
@@ -349,6 +444,14 @@ extern "C" void relayRun(void)
     // the main task's stack (two frame buffers and the node table).
     static Relay relay(hashNodeId(mac.data(), mac.size()));
 
+    // A relay whose flash is not laid out for two slots still relays; it
+    // only refuses to update itself, and says so once.
+    relay.storeReady = relay.store.init();
+    if (!relay.storeReady)
+    {
+        BOOT.error("no two-slot partition table: the relay cannot update over the air");
+    }
+
     startUart();
     if (!relay.lan.init() || !relay.transport.addLink(relay.uart) ||
         !relay.transport.addLink(relay.lan) || !relay.transport.init())
@@ -383,9 +486,19 @@ extern "C" void relayRun(void)
     bool modulesPublished = false;
     for (;;)
     {
-        // The delivery takes the LogControl addressed to this node; every
-        // other payload is relayed or dropped by the transport.
+        // The delivery takes what is addressed to this node (LogControl,
+        // updater messages, Reboot); every other payload is relayed or
+        // dropped by the transport.
         relay.transport.poll(static_cast<std::uint64_t>(esp_timer_get_time()), &onPayload, &relay);
+        if (relay.storeReady)
+        {
+            relay.updater.tick(static_cast<std::uint64_t>(esp_timer_get_time()));
+            if (relay.updater.sessionActive() != relay.sessionWasOpen)
+            {
+                relay.sessionWasOpen = relay.updater.sessionActive();
+                OTA.info(relay.sessionWasOpen ? "update session open" : "update session closed");
+            }
+        }
         if (!modulesPublished)
         {
             // The first poll sent the first beacon: the table follows it.

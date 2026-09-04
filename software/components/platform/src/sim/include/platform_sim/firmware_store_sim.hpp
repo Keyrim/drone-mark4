@@ -19,7 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "platform/firmware_store.hpp"
+#include "ota/firmware_store.hpp"
 
 namespace mark4
 {
@@ -118,7 +118,7 @@ namespace mark4
                   std::uint32_t size) const override;
 
         /// @brief CRC-32/MPEG-2 of a slot range, the tail padded with 0xFF
-        ///        (see protocol/ota.hpp). Bytes outside the slot, or in a
+        ///        (see protocol/ota_image.hpp). Bytes outside the slot, or in a
         ///        file shorter than the range, count as 0xFF.
         /// @param slot slot to checksum
         /// @param offset byte offset from the slot base
@@ -140,6 +140,20 @@ namespace mark4
         /// @param state logical content to persist
         /// @return false on a file error
         bool writeMeta(const OtaMetaState &state) override;
+
+        /// @brief The slot file opens with an OtaImageHeader for the sim
+        ///        chip and this slot (ota/image_header.hpp).
+        /// @param slot slot to check
+        /// @param imageSize bytes the transfer announced
+        /// @return false when the slot must not be staged
+        [[nodiscard]] bool imageValid(std::uint8_t slot, std::uint32_t imageSize) const override;
+
+        /// @brief Build identity out of the slot's OtaImageHeader.
+        /// @param slot slot to read
+        /// @param[out] identityOut the identity, valid only on true
+        /// @return false when the slot holds no header
+        [[nodiscard]] bool readIdentity(std::uint8_t slot,
+                                        OtaImageIdentity &identityOut) const override;
 
         /// @param slot slot index
         /// @return the backing file path of a slot, empty for an unknown one

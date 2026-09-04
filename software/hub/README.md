@@ -134,11 +134,16 @@ ESP32 relay forwards them like any other unicast for the board. A
 
 `bundle_path` is optional and defaults to
 `software/build/stm32/drone_firmware/drone_firmware.ota`, resolved from the
-hub binary: the common case is one click after a build. Loading validates the
-bundle against itself (magic, wire hash, announced sizes and CRC-32,
-and each image header against the manifest entry describing it) and then
-against the board (right chip, an image for the inactive slot, an image that
-fits a slot). Only then does a byte go out.
+hub binary: the common case is one click after a build. The ESP32 relay is
+a valid target too, with `esp32-bridge/build/esp32_bridge.ota` typed as the
+path: its bundle holds one image for both slots (an ESP-IDF image is
+position-independent across the OTA partitions) and the relay runs the same
+updater over its partitions. Loading validates the bundle against itself
+(magic, wire hash, announced sizes and CRC-32, and each image against the
+manifest entry describing it: its `OtaImageHeader` for the STM32s and the
+sim, the ESP-IDF magic for the relay) and then against the board (right
+chip, an image for the inactive slot, an image that fits a slot). Only then
+does a byte go out.
 
 The session then walks one phase at a time, and every change is published as
 one `ota_state` message, which is what makes a progress bar move without

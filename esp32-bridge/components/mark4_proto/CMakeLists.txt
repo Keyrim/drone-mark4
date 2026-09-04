@@ -59,6 +59,9 @@ file(MAKE_DIRECTORY ${DRONE_PROTO_GEN_DIR}/nanopb)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${DRONE_PROTO_FILE})
 file(SHA256 ${DRONE_PROTO_FILE} DRONE_PROTO_SHA256)
 string(SUBSTRING "${DRONE_PROTO_SHA256}" 0 8 DRONE_WIRE_HASH_HEX)
+# Published as a build property: the bundle packaging of the top-level
+# CMakeLists.txt stamps the same value into the manifest.
+idf_build_set_property(DRONE_WIRE_HASH_HEX "${DRONE_WIRE_HASH_HEX}")
 configure_file(${DRONE_PROTOCOL}/wire_hash.hpp.in
                ${DRONE_PROTO_GEN_DIR}/include/protocol/wire_hash.hpp @ONLY)
 
