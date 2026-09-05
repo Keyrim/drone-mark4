@@ -130,7 +130,7 @@ func plan_swing(release_velocity_mps: Vector3, release_spin_rad_s: Vector3, swin
 	_pending_swing_s = swing_s
 
 
-## Throw now (interactive path): swing from the current held pose.
+## Throw now: swing from the current held pose.
 func start_swing(release_velocity_mps: Vector3, release_spin_rad_s: Vector3, swing_s: float) -> void:
 	if _state != State.HELD and _state != State.RAISING:
 		return
