@@ -19,11 +19,16 @@ extends Node
 ## sensor envelope, and the flight process forwards it inside its status
 ## so the ground tools compare estimate and truth sample by sample.
 ##
-## Anything that does not decode as a SimActuator or a SimScenario is
-## dropped. The echoed timestamp identifies the sensor envelope a reply
-## answers: in lockstep mode the tick waits for the reply to the exact
-## envelope it sent, and resends it when the wait times out (UDP may drop
-## packets, the handshake may not).
+## The flight process also broadcasts its Status every few frames: the
+## link reads it too, so the plant knows the phase, the throw count, the
+## sensor validity flags and the RC link state of the drone it hosts. That
+## is display only: nothing here acts on it, the plant is not the cockpit.
+## Anything else the flight process emits (log lines, telemetry) is
+## ignored without running the codec, and a payload that should decode but
+## does not is dropped. The echoed timestamp identifies the sensor envelope
+## a reply answers: in lockstep mode the tick waits for the reply to the
+## exact envelope it sent, and resends it when the wait times out (UDP may
+## drop packets, the handshake may not).
 ##
 ## A scenario arrives as its own SimScenario envelope, whenever the flight
 ## process received one from the ground. A scenario is taken once per
@@ -68,6 +73,23 @@ var packets_sent: int = 0
 var packets_received: int = 0
 ## Number of payloads rejected because they did not decode.
 var packets_dropped: int = 0
+## Number of payloads of a body the plant does not read (logs, telemetry).
+var packets_ignored: int = 0
+## Number of Status reports decoded.
+var status_received: int = 0
+## Last reported flight phase (Mark4.FlightPhase), PHASE_IDLE before any.
+var phase: int = 0
+## Last reported throw state (Mark4.ThrowState).
+var throw_state: int = 0
+## Throws the flight process detected since it started.
+var throw_count: int = 0
+## Sensor validity flags of the last reported frame.
+var imu_valid: bool = false
+var baro_valid: bool = false
+## The RC fail-safe is not active: a pilot was heard recently.
+var rc_link_ok: bool = false
+## Wall time the last Status arrived at [us], 0 before any.
+var status_wall_us: int = 0
 ## Number of physics ticks that hit the lockstep timeout.
 var lockstep_timeouts: int = 0
 ## Number of sensor envelopes resent while waiting for their echo.
@@ -154,10 +176,16 @@ func receive(payload: PackedByteArray) -> void:
 				packets_dropped += 1
 				return
 			_take_scenario(envelope.get_sim_scenario())
+		Mark4Announce.TAG_STATUS:
+			var envelope := Mark4.Envelope.new()
+			if envelope.from_bytes(payload) != Mark4.PB_ERR.NO_ERRORS:
+				packets_dropped += 1
+				return
+			_take_status(envelope.get_status())
 		Mark4Announce.TAG_ANNOUNCE:
 			pass
 		_:
-			packets_dropped += 1
+			packets_ignored += 1
 
 
 ## Take the scenario received since the last call, if any.
@@ -169,12 +197,9 @@ func take_scenario() -> Dictionary:
 	return pending
 
 
-## Format the last motor commands for the overlay.
-func motor_commands_text() -> String:
-	var parts := PackedStringArray()
-	for index: int in MOTOR_COUNT:
-		parts.append("%.3f" % motor_commands[index])
-	return " ".join(parts)
+## True while a Status has been heard within the last second.
+func status_fresh() -> bool:
+	return status_wall_us != 0 and Time.get_ticks_usec() - status_wall_us < 1_000_000
 
 
 func _send_sensor(
@@ -259,6 +284,18 @@ func _take_actuator(actuator) -> int:
 		decoded[index] = clampf(value, 0.0, 1.0)
 	motor_commands = decoded
 	return actuator.get_echo_timestamp_us()
+
+
+## Keep what the status report says about the drone, for the overlay.
+func _take_status(status) -> void:
+	phase = status.get_flight_phase()
+	throw_state = status.get_throw_state()
+	throw_count = status.get_throw_count()
+	imu_valid = status.get_imu_valid()
+	baro_valid = status.get_baro_valid()
+	rc_link_ok = status.get_rc_link_ok()
+	status_wall_us = Time.get_ticks_usec()
+	status_received += 1
 
 
 ## Latch a scenario, once per change of its sequence.
