@@ -1,10 +1,9 @@
 # Workflow 2: PR + main, parallel jobs, all INSIDE the devcontainer image.
 #
-# The image is pinned by digest so a re-run months later builds in the same
-# environment and a push racing an image rebuild cannot flip environments
-# mid-CI. After a .devcontainer/ change, bump the digest to the one pushed
-# by devcontainer-image.yml:
-#   docker manifest inspect ghcr.io/keyrim/drone-mark4-devcontainer:latest
+# The image is resolved (and built if missing) by the reusable
+# devcontainer-image.yml as the first job, then every job pins the exact digest
+# it returns. A Dockerfile change is built and tested inside the PR that makes
+# it, with no digest to bump by hand.
 name: ci
 
 on:
@@ -22,12 +21,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  image:
+    name: devcontainer image
+    uses: ./.github/workflows/devcontainer-image.yml
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
+
   desktop:
     name: desktop (build + tests)
+    needs: image
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:8e65c9a45affdaa62b4919a974cfbba8e4eca5b6a46183b58fcca4a84ca2a50a
+      image: ${{ needs.image.outputs.ref }}
       # The image runs as user "dev"; the runner's mounted workdirs belong to
       # another UID, so container jobs must run as root.
       options: --user root
@@ -58,10 +66,11 @@ jobs:
 
   stm32:
     name: stm32 (cross-compilation)
+    needs: image
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:8e65c9a45affdaa62b4919a974cfbba8e4eca5b6a46183b58fcca4a84ca2a50a
+      image: ${{ needs.image.outputs.ref }}
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -75,10 +84,11 @@ jobs:
 
   esp32:
     name: esp32 (bridge firmware)
+    needs: image
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:8e65c9a45affdaa62b4919a974cfbba8e4eca5b6a46183b58fcca4a84ca2a50a
+      image: ${{ needs.image.outputs.ref }}
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -90,10 +100,11 @@ jobs:
 
   desktop-san:
     name: desktop-san (ASan/UBSan)
+    needs: image
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:8e65c9a45affdaa62b4919a974cfbba8e4eca5b6a46183b58fcca4a84ca2a50a
+      image: ${{ needs.image.outputs.ref }}
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -111,10 +122,11 @@ jobs:
 
   pages:
     name: pages (typecheck + build + tests)
+    needs: image
     runs-on: ubuntu-latest
     timeout-minutes: 10
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:8e65c9a45affdaa62b4919a974cfbba8e4eca5b6a46183b58fcca4a84ca2a50a
+      image: ${{ needs.image.outputs.ref }}
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -131,10 +143,11 @@ jobs:
 
   mobile:
     name: mobile (gen + analyze + test + debug apk)
+    needs: image
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:8e65c9a45affdaa62b4919a974cfbba8e4eca5b6a46183b58fcca4a84ca2a50a
+      image: ${{ needs.image.outputs.ref }}
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -157,10 +170,11 @@ jobs:
 
   format:
     name: clang-format + ascii
+    needs: image
     runs-on: ubuntu-latest
     timeout-minutes: 10
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:8e65c9a45affdaa62b4919a974cfbba8e4eca5b6a46183b58fcca4a84ca2a50a
+      image: ${{ needs.image.outputs.ref }}
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -173,10 +187,11 @@ jobs:
 
   tidy:
     name: clang-tidy (desktop + stm32)
+    needs: image
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: ghcr.io/keyrim/drone-mark4-devcontainer@sha256:8e65c9a45affdaa62b4919a974cfbba8e4eca5b6a46183b58fcca4a84ca2a50a
+      image: ${{ needs.image.outputs.ref }}
       options: --user root
       credentials:
         username: ${{ github.actor }}

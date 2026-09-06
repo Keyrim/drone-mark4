@@ -124,15 +124,16 @@ preset.
 
 ## CI
 
-- `devcontainer-image.yml` - rebuilds the image and pushes it to GHCR
-  (`ghcr.io/keyrim/drone-mark4-devcontainer`) whenever `.devcontainer/` changes.
-- `ci.yml` - 8 parallel jobs inside that image: desktop+tests+batch, stm32,
-  esp32, desktop-san, pages, mobile (gen, flutter analyze, format, test, debug apk),
-  clang-format+ascii, clang-tidy.
-
-First-push bootstrap: the `ci.yml` jobs pull the GHCR image - on the very
-first push, wait for `devcontainer-image` to finish, then re-run `ci` if
-needed (and make the GHCR package public to avoid pull issues).
+- `devcontainer-image.yml` - reusable workflow that tags the image by a hash
+  of the Dockerfile, builds and pushes it to GHCR
+  (`ghcr.io/keyrim/drone-mark4-devcontainer`, public) only when that tag is
+  missing, and retags `:latest` on main.
+- `ci.yml` and `docs.yml` each call it as a first `image` job and run every
+  other job inside the digest it returns, so a Dockerfile change is built and
+  tested inside the PR that makes it, with no digest to bump by hand. `ci.yml`
+  has 8 parallel jobs: desktop+tests+batch, stm32, esp32, desktop-san, pages,
+  mobile (gen, flutter analyze, format, test, debug apk), clang-format+ascii,
+  clang-tidy.
 
 ## J-Link license note
 

@@ -1,23 +1,48 @@
-# Workflow 1: build the devcontainer image -> push to GHCR whenever the
-# Dockerfile changes. Every ci.yml job runs INSIDE this image (a single
-# source of truth for the environment).
+# Reusable workflow: resolve the devcontainer image the rest of a CI run uses.
+#
+# The image is tagged by a hash of the Dockerfile (df-<hash>). The whole image
+# content is defined by .devcontainer/Dockerfile alone (it COPYies nothing from
+# the build context), so that hash is a complete, stable cache key: an
+# unchanged Dockerfile resolves to the image already on GHCR (a few seconds, no
+# build); a changed Dockerfile builds and pushes a new tag from within the very
+# PR that changed it, then every ci.yml / docs.yml job runs against it. No
+# digest is ever pinned by hand.
+#
+# The devcontainer follows :latest, which is retagged to the resolved image on
+# every main build (see docker-compose.yml).
 name: devcontainer-image
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".devcontainer/**"
-      - ".github/workflows/devcontainer-image.yml"
+  # Called as the first job of ci.yml and docs.yml.
+  workflow_call:
+    outputs:
+      ref:
+        description: "Image ref pinned by digest, for container: jobs"
+        value: ${{ jobs.image.outputs.ref }}
+  # Manual bootstrap / forced rebuild.
   workflow_dispatch:
 
 permissions:
   contents: read
   packages: write
 
+# ci.yml and docs.yml both call this for the same commit: serialize them so the
+# image is built at most once. The second waits for the first, then finds the
+# tag already pushed and skips the build. Keyed by the commit, not cancelled,
+# so the waiting run resumes instead of dying.
+concurrency:
+  group: devcontainer-image-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/keyrim/drone-mark4-devcontainer
+
 jobs:
-  build-and-push:
+  image:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      ref: ${{ steps.resolve.outputs.ref }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -27,10 +52,41 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      # Tag = df-<first 16 hex of sha256(Dockerfile)>. Probe GHCR: skip the
+      # build when that tag already exists.
+      - id: meta
+        run: |
+          tag="df-$(sha256sum .devcontainer/Dockerfile | cut -c1-16)"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if docker buildx imagetools inspect "${IMAGE}:${tag}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Image ${IMAGE}:${tag} already present, skipping build."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Image ${IMAGE}:${tag} missing, building."
+          fi
+
+      - if: steps.meta.outputs.exists == 'false'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .devcontainer
           push: true
-          tags: |
-            ghcr.io/keyrim/drone-mark4-devcontainer:latest
-            ghcr.io/keyrim/drone-mark4-devcontainer:${{ github.sha }}
+          tags: ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
+
+      # Resolve the tag to an immutable digest so every job in the run pins the
+      # exact same image even if the tag were later moved.
+      - id: resolve
+        run: |
+          digest=$(docker buildx imagetools inspect \
+            "${IMAGE}:${{ steps.meta.outputs.tag }}" \
+            --format '{{.Manifest.Digest}}')
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "ref=${IMAGE}@${digest}" >> "$GITHUB_OUTPUT"
+
+      # Keep :latest current for the devcontainer. Retag only (no rebuild), and
+      # only on main: a PR leaves :latest untouched.
+      - if: github.ref == 'refs/heads/main'
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE}:latest" \
+            "${IMAGE}@${{ steps.resolve.outputs.digest }}"
