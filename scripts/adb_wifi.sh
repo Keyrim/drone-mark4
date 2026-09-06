@@ -5,9 +5,9 @@
 #   3. connects the chosen one.
 # The devcontainer runs with host networking, so the phone's mDNS
 # announcements reach it: no ip:port to copy from the phone screen.
-# Pairing (the "pair device with a code" popup on the phone) is needed once
-# per container; the debug port changes at every toggle of wireless
-# debugging or reboot, the pairing survives.
+# Pairing is needed once per container (by QR code when qrencode is
+# installed, by the 6-digit code popup otherwise); the debug port changes
+# at every toggle of wireless debugging or reboot, the pairing survives.
 set -euo pipefail
 
 # adb's built-in mDNS backend (no Bonjour / avahi daemon needed).
@@ -16,6 +16,7 @@ export ADB_MDNS_OPENSCREEN=1
 CONNECT_SVC=_adb-tls-connect._tcp
 PAIRING_SVC=_adb-tls-pairing._tcp
 DISCOVERY_TIMEOUT=6 # s, the time the mDNS announcements take to show up
+QR_SCAN_TIMEOUT=45  # s, the time to open the QR scanner and scan
 
 # Starts the adb server if needed, with the right mDNS backend. A server
 # started without ADB_MDNS_OPENSCREEN discovers nothing: restart it.
@@ -46,9 +47,37 @@ is_connected() {
     adb devices | awk -v addr="$1" '$1 == addr && $2 == "device" { found = 1 } END { exit !found }'
 }
 
-# Pairing: the pairing service is announced ONLY while the "pair device
+# QR pairing: the QR encodes a name and a password; once scanned, the phone
+# announces the pairing service under that name and adb pair needs no code.
+pair_device_qr() {
+    local name="mark4-$RANDOM" password
+    password=$(head -c 9 /dev/urandom | base64 | tr -d '/+=')
+    echo
+    echo "On the phone: Developer options -> Wireless debugging ->"
+    echo "  \"Pair device with QR code\", then scan:"
+    echo
+    qrencode -t ANSIUTF8 "WIFI:T:ADB;S:${name};P:${password};;"
+    echo
+    echo "Waiting for the scan (${QR_SCAN_TIMEOUT}s)..."
+
+    local addr=""
+    for _ in $(seq "$QR_SCAN_TIMEOUT"); do
+        addr=$(services_of_type "$PAIRING_SVC" |
+            awk -F'\t' -v n="$name" '$1 == n { print $2; exit }')
+        [ -n "$addr" ] && break
+        sleep 1
+    done
+    if [ -z "$addr" ]; then
+        echo "No scan detected, falling back to code pairing."
+        pair_device_code
+        return
+    fi
+    adb pair "$addr" "$password"
+}
+
+# Code pairing: the pairing service is announced ONLY while the "pair device
 # with a code" popup is open on the phone.
-pair_device() {
+pair_device_code() {
     echo
     echo "On the phone: Developer options -> Wireless debugging ->"
     echo "  \"Pair device with pairing code\" (keep the popup open)."
@@ -72,6 +101,14 @@ pair_device() {
     local code
     read -r -p "6-digit pairing code: " code
     adb pair "$addr" "$code"
+}
+
+pair_device() {
+    if command -v qrencode >/dev/null; then
+        pair_device_qr
+    else
+        pair_device_code
+    fi
 }
 
 connect_to() {

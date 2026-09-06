@@ -47,13 +47,27 @@ applies them as forces. Nothing else crosses the boundary.
    godot -e --path sim-godot     # open the project in the editor (F5 to run)
    ```
 
-The overlay in the top left corner shows this plant's node id, the wire
-hash this build speaks, how many drones it hosts, and for the followed
-drone (the first one spawned, then the oldest survivor): the node id of its
-flight process, the simulated time, the motor commands coming back, the
-accelerometer magnitude in g, the altitude and the packet counters. With no
-flight process on the LAN the world is empty and the overlay says so. The
-camera, the arena fade and the world keys follow the same drone.
+The overlay is four cards around the view. Top left, the plant: its node
+id, the wire hash this build speaks, how many drones it hosts. Top right,
+the drones, one row each (flight process node id, phase, altitude); the
+followed one is highlighted and a click on a row follows it. Along the
+bottom, the followed drone: its phase as a colored pill, the node id of
+its flight process, the simulated time, the four motor commands as bars
+(the marker on each bar is the effective speed after the motor lag), the
+altitude, the accelerometer magnitude in g, the throws detected, the IMU
+and barometer validity, the RC link state, and the packet counters of the
+link. Bottom right, the camera mode and the keys. A toast announces a
+flight process joining or leaving. With no flight process on the LAN the
+world is empty and the overlay says so.
+
+The phase, the throw count, the validity flags and the RC state come from
+the `Status` every flight process broadcasts, which the plant reads (and
+nothing else: it acts on none of it). A drone that has not reported for a
+second shows `no status`. The same phase colors the status light on the
+rear of each drone model, which blinks while the flight process reports
+its RC fail-safe active; a ring on the ground marks the followed drone,
+and every drone leaves a fading trail of the last three seconds of its
+path in the air.
 
 Every sensor frame also carries the exact state (attitude, position,
 velocity, no sensor model) as `PlantTruth`; the flight process forwards it
@@ -64,27 +78,45 @@ remap from the Godot axes happens in `sim_link.gd`.
 
 ## Controls
 
-| Key        | Effect                                                        |
+The keys and the mouse only drive the view: which drone is looked at, and
+from where.
+
+| Input      | Effect                                                        |
 | ---------- | ------------------------------------------------------------- |
-| `H`        | pick the followed drone up in the simulated hand               |
-| `SPACE`    | throw the followed drone (a hand throw when it is held)        |
-| `R`        | reset the followed drone to its start pose, at rest, motors stopped |
+| `TAB`      | follow the next drone, in spawn order                          |
+| click      | follow the drone under the cursor                              |
+| `C`        | next camera mode                                               |
+| wheel      | zoom the chase and follow cameras                              |
 | `ESC`      | quit                                                           |
 
-These are world keys, not piloting. This project is the plant, and it holds
-no pilot state at all: the kill switch, the arm switch and the throttle are
+Four camera modes, cycled with `C` and remembered per drone:
+
+- **chase**: trails the drone from a fixed world offset. The offset is in
+  world axes on purpose, so the view stays readable while the drone
+  tumbles: the mode for a throw.
+- **follow**: behind and above the drone, aligned on its heading (yaw only,
+  never its roll or pitch): the third person view of a piloted flight. A
+  drone entering a piloted phase pulls a chase camera into this mode once,
+  unless a mode was chosen by hand for it.
+- **los**: the camera stands where a pilot would (a fixed spot on the
+  ground, 7 m back at eye height) and turns to keep the drone in sight,
+  its field of view tightening with the distance: what a line of sight
+  flight actually looks like.
+- **fpv**: rides the drone, tilted up like a flight camera.
+
+Nothing here touches a drone. This project is the plant, and it holds no
+pilot state at all: the kill switch, the arm switch and the throttle are
 RC, they belong between the cockpit and the flight process, and they never
-pass through here.
+pass through here. Resets and throws are scenarios (next section) that the
+console page served by the hub and the mobile app send to the flight
+process, which forwards them to its drone here: one door for the batch,
+the console and the phone, and no key of this project on the body.
 
-Piloting therefore flows through the hub until the command console page
-lands: connect to the hub websocket endpoint and send `rc` messages aimed at
-`drone_sim`. That is the same packet, port and fail-safe a real flight uses
-(500 ms of silence trips the kill), which is exactly the path worth
-exercising. When the kill switch is engaged the flight process answers with
-four zeros and the motors spin down with their normal lag.
-
-The usual sequence is `R` then `SPACE`. Pressing `SPACE` while the drone is
-already flying simply adds another push.
+Piloting flows through the hub or the phone: an `rc` message aimed at
+`drone_sim` is the same packet and fail-safe a real flight uses (200 ms of
+silence trips the kill), which is exactly the path worth exercising. When
+the kill switch is engaged the flight process answers with four zeros and
+the motors spin down with their normal lag.
 
 ## Scenarios
 
@@ -114,13 +146,13 @@ here, since a tick is not complete until its reply arrives.
   motors at full speed give 24 N against 6.4 N of weight, about 3.7:1.
 - A linear air drag of `-0.05 N/(m/s) * v` keeps ballistic trajectories
   plausible without pretending to model a real drag polar.
-- The throw is a constant force applied for 120 ms, sized so the velocity
-  increment matches the exported `throw_delta_velocity_mps` (default
-  (1.5, 6.5, 0) m/s), plus an angular momentum impulse for the exported
-  `throw_angular_velocity_rad_s` (default (2.0, 1.0, 6.0) rad/s). Gravity keeps
-  acting during those 120 ms, so the release velocity is slightly lower than
-  the requested increment. Nothing is faked in the sensors: the thrust phase
-  and the free fall that follows are what the rigid body actually does.
+- An instant throw is a constant force applied for 120 ms (the exported
+  `throw_duration_s`), sized so the velocity increment matches the release
+  velocity of the scenario, plus an angular momentum impulse for its release
+  spin. Gravity keeps acting during those 120 ms, so the release velocity is
+  slightly lower than the requested increment. Nothing is faked in the
+  sensors: the thrust phase and the free fall that follows are what the
+  rigid body actually does.
 
 ## Sensors
 
@@ -260,13 +292,15 @@ On the host, run the Godot project, then:
    drone appears on the ground next to the first; stop it: the drone is
    removed about 6 s later (3 s of node expiry, 3 s of grace).
 2. At rest on the ground the accelerometer reads about 1.00 g.
-3. Press `SPACE`. During the throw the accelerometer jumps for about 120 ms,
-   then drops to nearly 0 g for the whole ballistic phase, and the gyro shows
-   the tumble. The plots page shows the same rates, since both tools read
-   the same flight process.
-4. Engage the kill switch from the hub and check that the motor commands
-   returned by the flight process fall to zero.
-5. Press `R` to put the drone back on the ground and start again.
+3. Send a `throw` from the console page. During the throw the
+   accelerometer jumps for about 120 ms, then drops to nearly 0 g for the
+   whole ballistic phase, and the gyro shows the tumble; the trail draws
+   the arc. The plots page shows the same rates, since both tools read the
+   same flight process.
+4. Engage the kill switch from the hub and check that the motor bars of the
+   overlay fall to zero.
+5. Send a `reset` from the console page to put the drone back on the
+   ground and start again.
 
 ## Layout
 
@@ -276,10 +310,20 @@ every meter, thicker lines every 5 m) and orange pylons of known height
 altitude can be judged by eye. Spacing, line widths and colors are uniforms
 on the ground material.
 
+The drone model is built from primitives in `scenes/drone.tscn`: an X
+frame with the front arms marked red, the stack between two plates, the
+battery strapped on top, a tilted camera, the four motors with their
+props. The props turn with the effective motor speeds and blur into
+translucent discs as they speed up; a status light on the rear takes the
+phase color of the overlay. The fonts of the overlay are vendored in
+`assets/fonts/` (JetBrains Mono and Inter, both under the OFL, see the
+README there); the folder is ignored by the editor and read at start, so
+they need no import.
+
 ```
 project.godot          engine configuration, Jolt, 500 Hz, key bindings
-scenes/main.tscn        ground, pylons, light, camera, drone manager, overlay
-scenes/drone.tscn       one virtual drone: body, meshes, sensors, sim link, hand
+scenes/main.tscn        ground, pylons, sky, light, camera rig, drone manager, overlay
+scenes/drone.tscn       one virtual drone: body, model, sensors, sim link, hand
 shaders/ground_grid.gdshader  metric grid ground material
 scripts/transport/transport.gd  the transport node: frames, node table, beacon
 scripts/transport/announce.gd   this plant's beacon, the kind of everyone else's
@@ -288,10 +332,16 @@ scripts/drone.gd        rigid body, motor model, drag, throw, tick loop
 scripts/sensors.gd      accelerometer, gyro, barometer models
 scripts/sim_link.gd     sensor frames out, actuator frames and scenarios in
 scripts/hand.gd         the simulated hand: hold, sway, swing, release
-scripts/pilot_input.gd  keyboard world keys: hold, throw, reset, quit
-scripts/camera_follow.gd  chase camera
-scripts/hud.gd          on screen overlay
+scripts/drone_view.gd   props, status light, follow ring, trail of one drone
+scripts/trail.gd        the fading ribbon of a drone's recent path
+scripts/phase_style.gd  colors and names of the flight phases
+scripts/world_input.gd  keys and mouse of the view: next drone, pick, camera, quit
+scripts/camera_rig.gd   the four camera modes
+scripts/hud/hud.gd      on screen overlay (cards, drone list, toasts)
+scripts/hud/hud_style.gd  fonts, colors and style boxes of the overlay
+scripts/hud/motor_bars.gd the four motor bars of the overlay
 scripts/sim_args.gd     command line flags after --
+assets/fonts/           JetBrains Mono and Inter, vendored, OFL
 tests/transport_check.gd   ctest smoke of the transport, no peer needed
 tests/plant_link_check.gd  cross-language check driven by the C++ unit tests
 ```

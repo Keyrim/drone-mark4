@@ -12,6 +12,7 @@ const Mark4 := preload("res://scripts/gen/mark4.gd")
 
 ## First byte of an Envelope per body: (field number << 3) | 2, the first
 ## byte of the varint tag for the fields above 15.
+const TAG_STATUS := 0x0A
 const TAG_SIM_ACTUATOR := 0x1A
 const TAG_ANNOUNCE := 0x2A
 const TAG_SIM_SCENARIO := 0x82

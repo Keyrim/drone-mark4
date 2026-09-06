@@ -26,7 +26,7 @@ extends StaticBody3D
 @export var target_path: NodePath
 
 const WALL_COLOR := Color(0.85, 0.5, 0.15)
-const WALL_ALPHA := 0.3
+const WALL_ALPHA := 0.2
 const OCCLUDED_ALPHA := 0.05
 const WALL_THICKNESS_M := 0.1
 

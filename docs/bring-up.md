@@ -157,7 +157,9 @@ Incremental, one observable win per step:
    fail-safe are exercised in every simulated flight, not only on the
    bench. The simulator holds no pilot state of
    its own - it is the plant, not the cockpit - and its keyboard only
-   drives the world (H hold, SPACE throw, R reset). A `reboot` message
+   drives the view (which drone is followed, from which camera); resets
+   and throws are scenarios sent to the flight process by the console
+   page or the phone. A `reboot` message
    reboots the board (NVIC
    system reset), forwarded by the hub like any other uplink packet;
    no simulator key is wired to it.

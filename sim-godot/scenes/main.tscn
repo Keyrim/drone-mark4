@@ -1,15 +1,20 @@
 [gd_scene format=3 uid="uid://ckgf3pdtf031g"]
 
-[ext_resource type="Script" uid="uid://dei3n62bysoyq" path="res://scripts/pilot_input.gd" id="4_pilot"]
-[ext_resource type="Script" uid="uid://cbvnjkijf21mx" path="res://scripts/camera_follow.gd" id="5_camera"]
-[ext_resource type="Script" uid="uid://dy04qmk16a81u" path="res://scripts/hud.gd" id="6_hud"]
+[ext_resource type="Script" path="res://scripts/world_input.gd" id="4_input"]
+[ext_resource type="Script" path="res://scripts/camera_rig.gd" id="5_camera"]
+[ext_resource type="Script" path="res://scripts/hud/hud.gd" id="6_hud"]
 [ext_resource type="Shader" uid="uid://c5twv73xgqfvg" path="res://shaders/ground_grid.gdshader" id="7_grid"]
 [ext_resource type="Script" uid="uid://d2i3x0xebgka7" path="res://scripts/arena.gd" id="11_arena"]
 [ext_resource type="Script" path="res://scripts/drone_manager.gd" id="13_drones"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_world"]
-sky_horizon_color = Color(0.65, 0.68, 0.71, 1)
-ground_horizon_color = Color(0.65, 0.68, 0.71, 1)
+sky_top_color = Color(0.2, 0.34, 0.56, 1)
+sky_horizon_color = Color(0.62, 0.7, 0.78, 1)
+sky_curve = 0.12
+ground_bottom_color = Color(0.12, 0.13, 0.15, 1)
+ground_horizon_color = Color(0.62, 0.7, 0.78, 1)
+sun_angle_max = 20.0
+sun_curve = 0.2
 
 [sub_resource type="Sky" id="Sky_world"]
 sky_material = SubResource("ProceduralSkyMaterial_world")
@@ -17,7 +22,20 @@ sky_material = SubResource("ProceduralSkyMaterial_world")
 [sub_resource type="Environment" id="Environment_world"]
 background_mode = 2
 sky = SubResource("Sky_world")
-tonemap_mode = 2
+ambient_light_source = 3
+ambient_light_sky_contribution = 0.8
+tonemap_mode = 4
+ssao_enabled = true
+ssao_radius = 0.5
+ssao_intensity = 1.5
+glow_enabled = true
+glow_intensity = 0.5
+glow_bloom = 0.05
+glow_hdr_threshold = 1.2
+fog_enabled = true
+fog_light_color = Color(0.62, 0.7, 0.78, 1)
+fog_density = 0.004
+fog_sky_affect = 0.3
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(80, 1, 80)
@@ -25,10 +43,10 @@ size = Vector3(80, 1, 80)
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_ground"]
 render_priority = 0
 shader = ExtResource("7_grid")
-shader_parameter/base_color = Color(0.24, 0.27, 0.25, 1)
-shader_parameter/checker_color = Color(0.21, 0.24, 0.22, 1)
-shader_parameter/minor_line_color = Color(0.36, 0.39, 0.37, 1)
-shader_parameter/major_line_color = Color(0.58, 0.6, 0.52, 1)
+shader_parameter/base_color = Color(0.22, 0.24, 0.26, 1)
+shader_parameter/checker_color = Color(0.19, 0.21, 0.23, 1)
+shader_parameter/minor_line_color = Color(0.32, 0.35, 0.38, 1)
+shader_parameter/major_line_color = Color(0.55, 0.58, 0.55, 1)
 shader_parameter/minor_spacing_m = 1.0
 shader_parameter/major_spacing_m = 5.0
 shader_parameter/minor_width_m = 0.015
@@ -62,8 +80,12 @@ size = Vector3(0.2, 2, 0.2)
 environment = SubResource("Environment_world")
 
 [node name="Sun" type="DirectionalLight3D" parent="." unique_id=666611614]
-transform = Transform3D(1, 0, 0, 0, 0.5736, -0.8192, 0, 0.8192, 0.5736, 0, 10, 0)
+transform = Transform3D(0.866, -0.2868, 0.4096, 0, 0.8192, 0.5736, -0.5, -0.4967, 0.7094, 0, 10, 0)
+light_color = Color(1, 0.96, 0.9, 1)
+light_energy = 1.2
 shadow_enabled = true
+shadow_blur = 1.5
+directional_shadow_max_distance = 60.0
 
 [node name="Ground" type="StaticBody3D" parent="." unique_id=1802579241]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
@@ -129,12 +151,12 @@ script = ExtResource("11_arena")
 radius_m = 10.0
 camera_path = NodePath("../Camera3D")
 
-[node name="PilotInput" type="Node" parent="." unique_id=743785965]
-script = ExtResource("4_pilot")
+[node name="WorldInput" type="Node" parent="."]
+script = ExtResource("4_input")
 
 [node name="Drones" type="Node3D" parent="."]
 script = ExtResource("13_drones")
-pilot_path = NodePath("../PilotInput")
+input_path = NodePath("../WorldInput")
 camera_path = NodePath("../Camera3D")
 arena_path = NodePath("../Arena")
 
@@ -142,16 +164,9 @@ arena_path = NodePath("../Arena")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 3)
 current = true
 script = ExtResource("5_camera")
+input_path = NodePath("../WorldInput")
 
 [node name="Hud" type="CanvasLayer" parent="." unique_id=188000430]
-
-[node name="Label" type="Label" parent="Hud" unique_id=173309444]
-offset_left = 16.0
-offset_top = 12.0
-offset_right = 640.0
-offset_bottom = 260.0
-theme_override_colors/font_color = Color(1, 1, 1, 1)
-theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
-theme_override_constants/outline_size = 6
 script = ExtResource("6_hud")
-drones_path = NodePath("../../Drones")
+drones_path = NodePath("../Drones")
+camera_path = NodePath("../Camera3D")

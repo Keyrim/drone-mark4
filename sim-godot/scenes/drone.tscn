@@ -4,40 +4,174 @@
 [ext_resource type="Script" uid="uid://cf36xsm0lp6s8" path="res://scripts/sensors.gd" id="2_sensors"]
 [ext_resource type="Script" uid="uid://ccw6ntdwiuw1g" path="res://scripts/sim_link.gd" id="3_sim_link"]
 [ext_resource type="Script" path="res://scripts/hand.gd" id="4_hand"]
+[ext_resource type="Script" path="res://scripts/drone_view.gd" id="5_view"]
+[ext_resource type="Script" path="res://scripts/trail.gd" id="6_trail"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_frame"]
 size = Vector3(0.17, 0.05, 0.17)
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_frame"]
-albedo_color = Color(0.12, 0.13, 0.15, 1)
-metallic = 0.3
+[sub_resource type="StandardMaterial3D" id="Material_carbon"]
+albedo_color = Color(0.09, 0.095, 0.105, 1)
+metallic = 0.25
 roughness = 0.5
 
-[sub_resource type="BoxMesh" id="BoxMesh_frame"]
-material = SubResource("StandardMaterial3D_frame")
-size = Vector3(0.16, 0.03, 0.16)
+[sub_resource type="StandardMaterial3D" id="Material_plastic"]
+albedo_color = Color(0.05, 0.05, 0.06, 1)
+roughness = 0.45
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_motor_rear"]
-albedo_color = Color(0.9, 0.9, 0.9, 1)
+[sub_resource type="StandardMaterial3D" id="Material_alu"]
+albedo_color = Color(0.7, 0.72, 0.75, 1)
+metallic = 0.8
+roughness = 0.35
 
-[sub_resource type="CylinderMesh" id="CylinderMesh_motor_rear"]
-material = SubResource("StandardMaterial3D_motor_rear")
-top_radius = 0.012
-bottom_radius = 0.012
-height = 0.02
-radial_segments = 12
-rings = 1
+[sub_resource type="StandardMaterial3D" id="Material_battery"]
+albedo_color = Color(0.14, 0.17, 0.24, 1)
+roughness = 0.7
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_motor_front"]
+[sub_resource type="StandardMaterial3D" id="Material_strap"]
+albedo_color = Color(0.6, 0.12, 0.12, 1)
+roughness = 0.8
+
+[sub_resource type="StandardMaterial3D" id="Material_accent"]
 albedo_color = Color(0.85, 0.16, 0.16, 1)
+roughness = 0.6
 
-[sub_resource type="CylinderMesh" id="CylinderMesh_motor_front"]
-material = SubResource("StandardMaterial3D_motor_front")
-top_radius = 0.012
-bottom_radius = 0.012
-height = 0.02
+[sub_resource type="StandardMaterial3D" id="Material_prop_front"]
+albedo_color = Color(0.85, 0.25, 0.25, 1)
+roughness = 0.5
+
+[sub_resource type="StandardMaterial3D" id="Material_prop_rear"]
+albedo_color = Color(0.35, 0.36, 0.38, 1)
+roughness = 0.5
+
+[sub_resource type="StandardMaterial3D" id="Material_led"]
+albedo_color = Color(0.45, 0.48, 0.52, 1)
+emission_enabled = true
+emission = Color(0.45, 0.48, 0.52, 1)
+emission_energy_multiplier = 2.0
+
+[sub_resource type="StandardMaterial3D" id="Material_ring"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(0.3, 0.8, 0.98, 0.75)
+emission_enabled = true
+emission = Color(0.3, 0.8, 0.98, 1)
+emission_energy_multiplier = 1.5
+
+[sub_resource type="BoxMesh" id="BoxMesh_arm"]
+material = SubResource("Material_carbon")
+size = Vector3(0.184, 0.005, 0.012)
+
+[sub_resource type="BoxMesh" id="BoxMesh_plate"]
+material = SubResource("Material_carbon")
+size = Vector3(0.05, 0.003, 0.085)
+
+[sub_resource type="BoxMesh" id="BoxMesh_stack"]
+material = SubResource("Material_plastic")
+size = Vector3(0.034, 0.018, 0.034)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_standoff"]
+material = SubResource("Material_alu")
+top_radius = 0.0018
+bottom_radius = 0.0018
+height = 0.022
+radial_segments = 8
+rings = 1
+
+[sub_resource type="BoxMesh" id="BoxMesh_battery"]
+material = SubResource("Material_battery")
+size = Vector3(0.034, 0.028, 0.072)
+
+[sub_resource type="BoxMesh" id="BoxMesh_strap"]
+material = SubResource("Material_strap")
+size = Vector3(0.036, 0.03, 0.014)
+
+[sub_resource type="BoxMesh" id="BoxMesh_camera"]
+material = SubResource("Material_plastic")
+size = Vector3(0.019, 0.019, 0.02)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_lens"]
+material = SubResource("Material_accent")
+top_radius = 0.006
+bottom_radius = 0.006
+height = 0.004
 radial_segments = 12
 rings = 1
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_antenna"]
+material = SubResource("Material_plastic")
+top_radius = 0.0025
+bottom_radius = 0.0025
+height = 0.05
+radial_segments = 8
+rings = 1
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_bell"]
+material = SubResource("Material_plastic")
+top_radius = 0.0115
+bottom_radius = 0.0115
+height = 0.012
+radial_segments = 16
+rings = 1
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_bell_front"]
+material = SubResource("Material_accent")
+top_radius = 0.0115
+bottom_radius = 0.0115
+height = 0.012
+radial_segments = 16
+rings = 1
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_shaft"]
+material = SubResource("Material_alu")
+top_radius = 0.002
+bottom_radius = 0.002
+height = 0.008
+radial_segments = 8
+rings = 1
+
+[sub_resource type="BoxMesh" id="BoxMesh_blade_front"]
+material = SubResource("Material_prop_front")
+size = Vector3(0.1, 0.0015, 0.013)
+
+[sub_resource type="BoxMesh" id="BoxMesh_blade_rear"]
+material = SubResource("Material_prop_rear")
+size = Vector3(0.1, 0.0015, 0.013)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_hub"]
+material = SubResource("Material_plastic")
+top_radius = 0.005
+bottom_radius = 0.005
+height = 0.005
+radial_segments = 12
+rings = 1
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_disc_front"]
+material = SubResource("Material_prop_front")
+top_radius = 0.05
+bottom_radius = 0.05
+height = 0.0008
+radial_segments = 32
+rings = 1
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_disc_rear"]
+material = SubResource("Material_prop_rear")
+top_radius = 0.05
+bottom_radius = 0.05
+height = 0.0008
+radial_segments = 32
+rings = 1
+
+[sub_resource type="BoxMesh" id="BoxMesh_led"]
+material = SubResource("Material_led")
+size = Vector3(0.03, 0.004, 0.004)
+
+[sub_resource type="TorusMesh" id="TorusMesh_ring"]
+material = SubResource("Material_ring")
+inner_radius = 0.11
+outer_radius = 0.13
+rings = 12
+ring_segments = 48
 
 [node name="Drone" type="RigidBody3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.03, 0)
@@ -52,24 +186,162 @@ script = ExtResource("1_drone")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 shape = SubResource("BoxShape3D_frame")
 
-[node name="Frame" type="MeshInstance3D" parent="."]
-mesh = SubResource("BoxMesh_frame")
+[node name="View" type="Node3D" parent="."]
+script = ExtResource("5_view")
 
-[node name="Motor0" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0566, 0.02, 0.0566)
-mesh = SubResource("CylinderMesh_motor_rear")
+[node name="Body" type="Node3D" parent="View"]
 
-[node name="Motor1" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0566, 0.02, -0.0566)
-mesh = SubResource("CylinderMesh_motor_front")
+[node name="ArmA" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(0.7071, 0, -0.7071, 0, 1, 0, 0.7071, 0, 0.7071, 0, -0.01, 0)
+mesh = SubResource("BoxMesh_arm")
 
-[node name="Motor2" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0566, 0.02, 0.0566)
-mesh = SubResource("CylinderMesh_motor_rear")
+[node name="ArmB" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(0.7071, 0, 0.7071, 0, 1, 0, -0.7071, 0, 0.7071, 0, -0.01, 0)
+mesh = SubResource("BoxMesh_arm")
 
-[node name="Motor3" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0566, 0.02, -0.0566)
-mesh = SubResource("CylinderMesh_motor_front")
+[node name="BottomPlate" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.006, 0)
+mesh = SubResource("BoxMesh_plate")
+
+[node name="TopPlate" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.017, 0)
+mesh = SubResource("BoxMesh_plate")
+
+[node name="Stack" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.0055, 0)
+mesh = SubResource("BoxMesh_stack")
+
+[node name="Standoff0" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.02, 0.0055, 0.035)
+mesh = SubResource("CylinderMesh_standoff")
+
+[node name="Standoff1" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.02, 0.0055, -0.035)
+mesh = SubResource("CylinderMesh_standoff")
+
+[node name="Standoff2" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.02, 0.0055, 0.035)
+mesh = SubResource("CylinderMesh_standoff")
+
+[node name="Standoff3" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.02, 0.0055, -0.035)
+mesh = SubResource("CylinderMesh_standoff")
+
+[node name="Battery" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.0325, 0)
+mesh = SubResource("BoxMesh_battery")
+
+[node name="Strap" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.0325, 0)
+mesh = SubResource("BoxMesh_strap")
+
+[node name="Camera" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 0.9397, 0.342, 0, -0.342, 0.9397, 0, 0.007, -0.038)
+mesh = SubResource("BoxMesh_camera")
+
+[node name="Lens" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0.0105, -0.048)
+mesh = SubResource("CylinderMesh_lens")
+
+[node name="Antenna" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 0.7071, 0.7071, 0, -0.7071, 0.7071, 0, 0.033, 0.055)
+mesh = SubResource("CylinderMesh_antenna")
+
+[node name="Bell0" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0566, -0.0015, 0.0566)
+mesh = SubResource("CylinderMesh_bell")
+
+[node name="Bell1" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0566, -0.0015, -0.0566)
+mesh = SubResource("CylinderMesh_bell_front")
+
+[node name="Bell2" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0566, -0.0015, 0.0566)
+mesh = SubResource("CylinderMesh_bell")
+
+[node name="Bell3" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0566, -0.0015, -0.0566)
+mesh = SubResource("CylinderMesh_bell_front")
+
+[node name="Shaft0" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0566, 0.006, 0.0566)
+mesh = SubResource("CylinderMesh_shaft")
+
+[node name="Shaft1" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0566, 0.006, -0.0566)
+mesh = SubResource("CylinderMesh_shaft")
+
+[node name="Shaft2" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0566, 0.006, 0.0566)
+mesh = SubResource("CylinderMesh_shaft")
+
+[node name="Shaft3" type="MeshInstance3D" parent="View/Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0566, 0.006, -0.0566)
+mesh = SubResource("CylinderMesh_shaft")
+
+[node name="Prop0" type="Node3D" parent="View"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0566, 0.0085, 0.0566)
+
+[node name="Blade" type="MeshInstance3D" parent="View/Prop0"]
+mesh = SubResource("BoxMesh_blade_rear")
+
+[node name="Hub" type="MeshInstance3D" parent="View/Prop0"]
+mesh = SubResource("CylinderMesh_hub")
+
+[node name="Disc" type="MeshInstance3D" parent="View/Prop0"]
+cast_shadow = 0
+mesh = SubResource("CylinderMesh_disc_rear")
+
+[node name="Prop1" type="Node3D" parent="View"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0566, 0.0085, -0.0566)
+
+[node name="Blade" type="MeshInstance3D" parent="View/Prop1"]
+mesh = SubResource("BoxMesh_blade_front")
+
+[node name="Hub" type="MeshInstance3D" parent="View/Prop1"]
+mesh = SubResource("CylinderMesh_hub")
+
+[node name="Disc" type="MeshInstance3D" parent="View/Prop1"]
+cast_shadow = 0
+mesh = SubResource("CylinderMesh_disc_front")
+
+[node name="Prop2" type="Node3D" parent="View"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0566, 0.0085, 0.0566)
+
+[node name="Blade" type="MeshInstance3D" parent="View/Prop2"]
+mesh = SubResource("BoxMesh_blade_rear")
+
+[node name="Hub" type="MeshInstance3D" parent="View/Prop2"]
+mesh = SubResource("CylinderMesh_hub")
+
+[node name="Disc" type="MeshInstance3D" parent="View/Prop2"]
+cast_shadow = 0
+mesh = SubResource("CylinderMesh_disc_rear")
+
+[node name="Prop3" type="Node3D" parent="View"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0566, 0.0085, -0.0566)
+
+[node name="Blade" type="MeshInstance3D" parent="View/Prop3"]
+mesh = SubResource("BoxMesh_blade_front")
+
+[node name="Hub" type="MeshInstance3D" parent="View/Prop3"]
+mesh = SubResource("CylinderMesh_hub")
+
+[node name="Disc" type="MeshInstance3D" parent="View/Prop3"]
+cast_shadow = 0
+mesh = SubResource("CylinderMesh_disc_front")
+
+[node name="Led" type="MeshInstance3D" parent="View"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.006, 0.0445)
+mesh = SubResource("BoxMesh_led")
+
+[node name="Ring" type="MeshInstance3D" parent="View"]
+transform = Transform3D(1, 0, 0, 0, 0.2, 0, 0, 0, 1, 0, 0, 0)
+cast_shadow = 0
+mesh = SubResource("TorusMesh_ring")
+
+[node name="Trail" type="MeshInstance3D" parent="View"]
+script = ExtResource("6_trail")
 
 [node name="Sensors" type="Node" parent="."]
 script = ExtResource("2_sensors")

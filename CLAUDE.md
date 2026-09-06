@@ -360,15 +360,20 @@ every project target, not by FetchContent deps such as Catch2).
 
 ## CI
 
-`.github/workflows/devcontainer-image.yml` rebuilds the dev image and pushes
-it to GHCR (`ghcr.io/keyrim/drone-mark4-devcontainer`) when `.devcontainer/`
-changes; `ci.yml` runs 8 jobs (desktop+tests+batch through headless Godot, stm32,
-esp32, desktop-san, pages pnpm typecheck+build+test, mobile gen+analyze+
-format+test+apk, format+ascii, tidy desktop+stm32) inside that image, pinned
-by digest; `docs.yml` builds the Doxygen reference in the same image on every
-PR and on main, and deploys it to GitHub Pages from main only.
-After a `.devcontainer/` change, bump the digest in `ci.yml` and `docs.yml` to the one the
-image workflow pushed (`docker manifest inspect ...:latest`). Container jobs need `options: --user root` (the
-image defaults to user `dev`, the runner mounts workdirs for another UID).
-If CI needs a new tool, add it to the Dockerfile; the image is the single
-source of truth for the environment (same versions as the devcontainer).
+`.github/workflows/devcontainer-image.yml` is a reusable workflow (the image
+lives at `ghcr.io/keyrim/drone-mark4-devcontainer`, public): it tags the image
+by a hash of the Dockerfile (`df-<hash>`), builds and pushes it only when that
+tag is missing, resolves it to an immutable digest, and retags `:latest` to it
+on main. `ci.yml` and `docs.yml` each call it as their first `image` job and
+run every other job in `container.image: ${{ needs.image.outputs.ref }}`, so a
+Dockerfile change is built and tested inside the PR that makes it and there is
+no digest to bump by hand. `ci.yml` runs 8 jobs (desktop+tests+batch through
+headless Godot, stm32, esp32, desktop-san, pages pnpm typecheck+build+test,
+mobile gen+analyze+format+test+apk, format+ascii, tidy desktop+stm32); `docs.yml`
+builds the Doxygen reference and deploys it to GitHub Pages from main only. The
+devcontainer follows `:latest` (`.devcontainer/docker-compose.yml` pulls it, no
+local build). Container jobs need `options: --user root` (the image defaults to
+user `dev`, the runner mounts workdirs for another UID) and the `image` job
+needs `packages: write` to push. If CI needs a new tool, add it to the
+Dockerfile; the image is the single source of truth for the environment (same
+versions as the devcontainer).

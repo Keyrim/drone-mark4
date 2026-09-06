@@ -1,8 +1,8 @@
 class_name Drone
 extends RigidBody3D
 
-## Rigid body drone: motor model, aerodynamic drag, hand throw, and the per
-## tick exchange with the flight process.
+## Rigid body drone: motor model, aerodynamic drag, scripted throws, and the
+## per tick exchange with the flight process.
 ##
 ## Body frame: y up, -z forward, x right (the Godot convention). The four
 ## motors sit on an X layout, numbered like a 4 in 1 ESC:
@@ -34,7 +34,15 @@ extends RigidBody3D
 ## teleports the body, reseeds every generator and schedules whatever the
 ## scenario asks for on THIS plant's tick grid, counted from the reset tick.
 ## Nothing outside has to agree on which absolute tick a run began at, and
-## nothing carries over from the run before.
+## nothing carries over from the run before. The scenario is the only door:
+## the console, the phone and the batch all reset and throw through it, and
+## this project has no key of its own that touches the body.
+##
+## The View child draws the drone (props, status light, trail); it reads
+## this node in _process and never writes to it.
+
+## A run just started: the body was teleported back to its start pose.
+signal run_reset
 
 const MOTOR_COUNT := 4
 
@@ -70,12 +78,9 @@ const MICROSECONDS_PER_SECOND := 1000000.0
 @export var start_position: Vector3 = Vector3(0.0, 0.03, 0.0)
 
 @export_group("Throw")
-## Velocity increment the hand gives to the drone during the throw [m/s].
-@export var throw_delta_velocity_mps: Vector3 = Vector3(1.5, 6.5, 0.0)
-## Angular velocity the hand gives to the drone at release [rad/s].
-@export var throw_angular_velocity_rad_s: Vector3 = Vector3(2.0, 1.0, 6.0)
-## Duration of the constant force phase of the throw [s]. Gravity keeps acting
-## during that phase, so the release velocity is delta_velocity - g * duration.
+## Duration of the constant force phase of an instant throw [s]. Gravity keeps
+## acting during that phase, so the release velocity is delta_velocity - g *
+## duration. The velocity itself comes with the scenario.
 @export var throw_duration_s: float = 0.12
 
 var _motor_speeds := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
@@ -106,19 +111,10 @@ var _scheduled_held_basis: Basis = Basis.IDENTITY
 var _scheduled_held_s: float = 0.0
 var _scheduled_swing_s: float = 0.0
 
-## Generator of everything drawn by this node. Explicitly seeded by every
-## reset, so no draw of a run depends on how many runs came before it.
-var _rng := RandomNumberGenerator.new()
-
-## One-shot world key requests, set by the DroneManager on the followed drone
-## and consumed on the next physics tick, so they land on a tick boundary.
-var _throw_requested: bool = false
-var _grab_requested: bool = false
-var _reset_requested: bool = false
-
 @onready var sensors: DroneSensors = $Sensors
 @onready var sim_link: SimLink = $SimLink
 @onready var hand: SimHand = $Hand
+@onready var view: DroneView = $View
 
 
 func _ready() -> void:
@@ -127,7 +123,6 @@ func _ready() -> void:
 	_tick_rate_hz = float(Engine.physics_ticks_per_second) / Engine.time_scale
 	_previous_velocity = linear_velocity
 	_pending_seed = sensors.rng_seed
-	_rng.seed = sensors.rng_seed
 	if inertia.x <= 0.0 or inertia.y <= 0.0 or inertia.z <= 0.0:
 		push_warning("drone: inertia is not set, the engine will infer it from the shapes")
 
@@ -140,23 +135,6 @@ func _physics_process(delta: float) -> void:
 		_pending_scenario = scenario
 		_pending_seed = int(scenario["seed"])
 		_reset_pending = true
-	if _reset_requested:
-		# The keyboard goes through the same door, keeping the seed it has.
-		_reset_requested = false
-		_pending_scenario = {}
-		_pending_seed = sensors.rng_seed
-		_reset_pending = true
-	if _grab_requested:
-		_grab_requested = false
-		if not hand.is_holding():
-			hand.grab(_random_held_basis())
-	if _throw_requested:
-		_throw_requested = false
-		if hand.is_holding():
-			# The hand throw: swing arc, rotating grip, tilted release.
-			hand.start_swing(throw_delta_velocity_mps, throw_angular_velocity_rad_s, 0.35)
-		else:
-			_start_throw(throw_delta_velocity_mps, throw_angular_velocity_rad_s)
 	_fire_scheduled()
 	hand.physics_update(delta)
 
@@ -208,11 +186,11 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 		_motor_speeds[index] = 0.0
 
 	sensors.reseed(_pending_seed)
-	_rng.seed = _pending_seed
 	hand.reset()
 	_run_start_tick = _tick_count
 	_schedule(_pending_scenario)
 	_pending_scenario = {}
+	run_reset.emit()
 
 
 ## Schedule what a scenario owes after its reset, on this plant's tick grid.
@@ -245,19 +223,6 @@ func _fire_scheduled() -> void:
 	_scheduled = Scheduled.NONE
 
 
-## World keys, applied on the next physics tick.
-func request_reset() -> void:
-	_reset_requested = true
-
-
-func request_grab() -> void:
-	_grab_requested = true
-
-
-func request_throw() -> void:
-	_throw_requested = true
-
-
 ## Simulated time of the current tick [us]. It comes from the tick counter and
 ## the physics rate, never from a wall clock, so the stream stays deterministic
 ## whatever the host does with the process.
@@ -278,16 +243,6 @@ func motor_speeds() -> PackedFloat32Array:
 ## Altitude above the ground plane [m].
 func altitude_m() -> float:
 	return global_position.y
-
-
-## A plausible resting-in-hand orientation: tilted up to 60 degrees toward a
-## random azimuth, with a random heading.
-func _random_held_basis() -> Basis:
-	var tilt := _rng.randf_range(0.0, PI / 3.0)
-	var azimuth := _rng.randf_range(0.0, TAU)
-	var heading := _rng.randf_range(0.0, TAU)
-	var tilt_axis := Vector3(cos(azimuth), 0.0, sin(azimuth))
-	return Basis(Quaternion(tilt_axis, tilt)) * Basis(Quaternion(Vector3.UP, heading))
 
 
 ## Queue an instant throw. The velocity increment is applied as a constant force
