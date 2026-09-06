@@ -76,13 +76,44 @@ export function droneSimTask(instance: number): vscode.Task {
     });
 }
 
-/** The lowest instance number no running task holds. */
-export function freeSimInstance(): number {
+/** The command line pattern of one extension-started drone_sim, for pgrep / pkill. */
+function simPattern(instance: number): string {
+    return `drone_sim --node-id ${simNodeId(instance)} --ota-dir`;
+}
+
+/**
+ * The node ids of the drone_sim processes alive, whoever started them. Like
+ * godotRunning(): task executions do not survive a window reload, the
+ * processes do, and two of them on one node id make the plant flap between
+ * their addresses (each sees the other's frames as its own 500 ms silence).
+ */
+function runningSimNodeIds(): Promise<Set<number>> {
+    return new Promise((resolve) => {
+        execFile("pgrep", ["-af", "drone_sim --node-id"], (_error, stdout) => {
+            const ids = new Set<number>();
+            for (const match of stdout.matchAll(/--node-id (\d+)/g)) {
+                ids.add(Number(match[1]));
+            }
+            resolve(ids);
+        });
+    });
+}
+
+/** The lowest instance number no running task and no live process holds. */
+export async function freeSimInstance(): Promise<number> {
+    const running = await runningSimNodeIds();
     let instance = 1;
-    while (findExecution("run", simTaskName(instance)) !== undefined) {
+    while (findExecution("run", simTaskName(instance)) !== undefined || running.has(simNodeId(instance))) {
         instance += 1;
     }
     return instance;
+}
+
+/** Stops one drone_sim instance, including one orphaned by a window reload. */
+export function stopSim(instance: number): void {
+    log.info(`stopSim: terminating the task and pkilling instance ${instance}`);
+    findExecution("run", simTaskName(instance))?.terminate();
+    execFile("pkill", ["-f", simPattern(instance)], () => {});
 }
 
 export function godotTask(): vscode.Task {
