@@ -23,17 +23,23 @@ services:
     # development machine tradeoff, revisit if this compose ever leaves it.
     privileged: true
 
-    # GPU acceleration for windowed Godot (WSLg / native X). Optional:
-    # /dev/dri only exists when the host exposes a GPU (WSL vGPU, native
-    # DRI) - uncomment if so; software rendering is enough otherwise.
-    # devices:
-    #   - /dev/dri:/dev/dri
+    # NVIDIA GPU (native Linux host): the nvidia-container-toolkit injects
+    # the userspace driver libs matching the host driver. Requires the
+    # toolkit on every host (on WSL it only feeds CUDA; the graphics path
+    # there is the /usr/lib/wsl mount below).
+    gpus: all
 
     environment:
       DISPLAY: ${DISPLAY:-:0}
       WAYLAND_DISPLAY: ${WAYLAND_DISPLAY:-}
       XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-}
       XAUTHORITY: /home/dev/.Xauthority
+      # Make the toolkit inject the graphics libs too (default is compute).
+      NVIDIA_DRIVER_CAPABILITIES: all
+      # GPU acceleration for windowed Godot on WSL2: /dev/dxg comes with the
+      # /dev bind mount below, Mesa's d3d12 driver is in the image, and the
+      # WSL driver libs (libd3d12, libdxcore, libcuda) live here on the host.
+      LD_LIBRARY_PATH: /usr/lib/wsl/lib
 
     volumes:
       # The repo, mounted where the devcontainer expects it.
@@ -49,6 +55,8 @@ services:
       - gradle-cache:/home/dev/.gradle
       - pub-cache:/home/dev/.pub-cache
       - android-config:/home/dev/.android
+      # WSL GPU driver libs, see LD_LIBRARY_PATH above.
+      - /usr/lib/wsl:/usr/lib/wsl:ro
       # X11 socket (WSLg or native X) for windowed Godot.
       - /tmp/.X11-unix:/tmp/.X11-unix
       # X11 cookie exported by host-xauth.sh (initializeCommand). Empty on
