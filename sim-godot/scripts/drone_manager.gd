@@ -61,12 +61,19 @@ var _last_report_us: int = 0
 ## summed over every drone hosted: the number a batch host is sized on.
 func _print_cost() -> void:
 	var ticks := 0
+	var replies := 0
+	var dropped := 0
 	var spent_us := 0
 	for drone: Drone in drones.values():
 		ticks += drone.sim_link.packets_sent
+		replies += drone.sim_link.packets_received
+		dropped += drone.sim_link.packets_dropped
 		spent_us += drone.sim_link.exchange_us
 	if ticks > 0:
-		print("drones: %d sensor frames, %.1f us per exchange" % [ticks, float(spent_us) / ticks])
+		print(
+			"drones: %d sensor frames, %d replies, %d dropped, %.1f us per exchange"
+			% [ticks, replies, dropped, float(spent_us) / ticks]
+		)
 
 
 func _ready() -> void:

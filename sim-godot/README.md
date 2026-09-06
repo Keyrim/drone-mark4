@@ -20,7 +20,11 @@ applies them as forces. Nothing else crosses the boundary.
 
 1. Install Godot 4.4 or newer (standard build, no C# needed). The project
    already selects Jolt Physics and a 500 Hz physics tick, there is nothing to
-   configure.
+   configure. It also pins the engine's worker pool to one thread
+   (`threading/worker_pool/max_threads`): Jolt dispatches every step to that
+   pool, and at 500 steps per second the wake-ups of a dozen threads cost
+   more than the step itself (about 750 us against 85 us per step on a 12
+   core host, the difference between 30 and 60 fps with one drone).
 2. Start one flight process per drone wanted, in the container, in any
    order relative to this project (each one is a transport node on
    udp/47820 and beacons once per second):
@@ -48,9 +52,10 @@ applies them as forces. Nothing else crosses the boundary.
    ```
 
 The overlay is four cards around the view. Top left, the plant: its node
-id, the wire hash this build speaks, how many drones it hosts. Top right,
-the drones, one row each (flight process node id, phase, altitude); the
-followed one is highlighted and a click on a row follows it. Along the
+id, the wire hash this build speaks, how many drones it hosts, the frame
+rate. Top right, the drones, one row each (flight process node id, phase,
+altitude); the followed one is highlighted and a click on a row follows
+it. Along the
 bottom, the followed drone: its phase as a colored pill, the node id of
 its flight process, the simulated time, the four motor commands as bars
 (the marker on each bar is the effective speed after the motor lag), the
@@ -223,8 +228,8 @@ desktop build (target `proto_gd`, run by `cmake --build --preset desktop`;
 `godot` must be on the PATH) into `scripts/gen/mark4.gd` and
 `scripts/gen/wire_hash.gd`, both gitignored: a fresh checkout has to run the
 desktop build once before this project can talk to anything.
-`scripts/sim_link.gd` (one per virtual drone) and `announce.gd` are the
-only scripts that touch the codec. Every payload is one `Envelope`:
+`scripts/sim_link.gd` (one per virtual drone), `sim_codec.gd` and
+`announce.gd` are the only scripts that touch the wire. Every payload is one `Envelope`:
 
 - `SimSensor`, virtual drone to its flight process, unicast: timestamp in
   microseconds, gyro [rad/s], accelerometer [m/s^2], pressure [Pa], reset
@@ -243,9 +248,18 @@ Motor commands are clamped to [0, 1] on arrival. No port is configured
 anywhere: the flight process answers to the node the sensor frame came
 from, and the plant found the flight process by its beacon.
 
-Cost: one exchange (codec plus header plus send) is about 230 us of
-GDScript per drone per tick on a desktop core, the codec being nearly all
-of it; the transport header and the node table add a few microseconds.
+`scripts/sim_codec.gd` (`SimCodec`) writes the SimSensor and reads the
+SimActuator by hand, straight into bytes: the generated codec builds an
+object tree per message and costs about 200 us to encode a SimSensor and
+130 us to decode a SimActuator, which at 500 Hz per drone decided the frame
+rate of the whole simulator. The hand-written pair costs a few microseconds
+and produces the same bytes; `tests/plant_link_check.gd` sends and reads
+through it so the nanopb side of the unit tests checks it. Everything else
+(Announce, Status, SimScenario) is rare and keeps the generated codec.
+
+Cost: one exchange (codec plus header plus send) is about 45 us of GDScript
+per drone per tick on a desktop core; the reply costs about as much to
+read. The transport header and the node table add a few microseconds.
 
 The timestamp comes from the physics tick counter divided by the tick rate,
 never from a wall clock. If the host cannot keep up with 500 Hz the stream
@@ -331,6 +345,7 @@ scripts/drone_manager.gd  one virtual drone per flight process heard
 scripts/drone.gd        rigid body, motor model, drag, throw, tick loop
 scripts/sensors.gd      accelerometer, gyro, barometer models
 scripts/sim_link.gd     sensor frames out, actuator frames and scenarios in
+scripts/sim_codec.gd    hand-written codec of the two per-tick envelopes
 scripts/hand.gd         the simulated hand: hold, sway, swing, release
 scripts/drone_view.gd   props, status light, follow ring, trail of one drone
 scripts/trail.gd        the fading ribbon of a drone's recent path
