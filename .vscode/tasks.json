@@ -49,6 +49,20 @@
             }
         },
         {
+            "label": "godot import",
+            "detail": "Regenerate the GDScript codec, then import the Godot project headlessly (regenerates .godot/). Needed once in a fresh worktree before the tests.",
+            "type": "shell",
+            "command": "cmake --build --preset desktop --target proto_gd && godot --path ${workspaceFolder}/sim-godot --headless --import",
+            "options": {
+                "cwd": "${workspaceFolder}/software"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
             "label": "build app",
             "detail": "Build one app by name: the (preset, target) pair comes from apps.json.",
             "type": "shell",
