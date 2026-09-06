@@ -4,8 +4,8 @@ extends CanvasLayer
 ## On screen overlay of the plant.
 ##
 ## Four cards around the view: the plant itself (node id, wire hash, how
-## many drones it hosts) top left, the list of drones top right (click one
-## to follow it), the followed drone along the bottom (phase, motors,
+## many drones it hosts, frame rate) top left, the list of drones top right
+## (click one to follow it), the followed drone along the bottom (phase, motors,
 ## altitude, accelerometer, throws, sensor and RC state, link counters) and
 ## the camera mode with the key hints bottom right. Short toasts announce a
 ## flight process joining or leaving. Values refresh a few times per second,
@@ -38,6 +38,7 @@ var _elapsed_s: float = 0.0
 var _plant_node: Label
 var _plant_wire: Label
 var _plant_count: Label
+var _plant_fps: Label
 var _list_title: Label
 var _rows: VBoxContainer
 ## Flight process node id -> its row.
@@ -112,9 +113,11 @@ func _build() -> void:
 	_plant_node = _style.mono("node --------")
 	_plant_wire = _style.mono("wire --------", HudStyle.MUTED)
 	_plant_count = _style.text("no drone")
+	_plant_fps = _style.mono("0 fps", HudStyle.MUTED)
 	plant_box.add_child(_plant_node)
 	plant_box.add_child(_plant_wire)
 	plant_box.add_child(_plant_count)
+	plant_box.add_child(_plant_fps)
 
 	# Drone list, top right.
 	var list := _panel()
@@ -264,6 +267,7 @@ func _refresh() -> void:
 	var count := _drones.drones.size()
 	_plant_count.text = "no drone" if count == 0 else ("%d drone%s" % [count, "s" if count > 1 else ""])
 	_list_title.text = "DRONES (%d)" % count
+	_plant_fps.text = "%d fps" % Engine.get_frames_per_second()
 	_empty.visible = count == 0
 	_refresh_rows()
 	var drone := _drones.followed

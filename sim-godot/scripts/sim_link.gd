@@ -8,9 +8,11 @@ extends Node
 ## envelope to this plant's node. The DroneManager owns the transport and
 ## dispatches every payload to the drone whose node sent it (receive()).
 ##
-## The wire is software/components/protocol/mark4.proto; the codec used here
-## (scripts/gen/mark4.gd) is generated from it by the desktop build (target
-## proto_gd), never edited.
+## The wire is software/components/protocol/mark4.proto. The two envelopes
+## of the tick (SimSensor out, SimActuator in) go through SimCodec, written
+## by hand for speed; the rest (Status, SimScenario) through the codec the
+## desktop build generates from the schema (scripts/gen/mark4.gd, target
+## proto_gd, never edited).
 ##
 ## Sensors only: the pilot state is not a sensor reading and does not
 ## travel here, and this project does not hold one. It reaches the flight
@@ -159,14 +161,11 @@ func receive(payload: PackedByteArray) -> void:
 	# the plant.
 	match payload[0]:
 		Mark4Announce.TAG_SIM_ACTUATOR:
-			var envelope := Mark4.Envelope.new()
-			if envelope.from_bytes(payload) != Mark4.PB_ERR.NO_ERRORS:
+			var actuator := SimCodec.decode_actuator(payload)
+			if actuator.is_empty() or not _take_motors(actuator["motor"]):
 				packets_dropped += 1
 				return
-			var echo := _take_actuator(envelope.get_sim_actuator())
-			if echo < 0:
-				packets_dropped += 1
-				return
+			var echo: int = actuator["echo_us"]
 			packets_received += 1
 			if echo == _pending_echo_us:
 				_matched = true
@@ -212,42 +211,26 @@ func _send_sensor(
 	position: Vector3,
 	velocity: Vector3
 ) -> void:
-	var gyro_drone := GODOT_TO_DRONE * gyro_rad_s
-	var accel_drone := GODOT_TO_DRONE * accel_mps2
-	var envelope := Mark4.Envelope.new()
-	var sensor: Mark4.SimSensor = envelope.new_sim_sensor()
-	sensor.set_timestamp_us(timestamp_us)
-	_add_vector(sensor.add_gyro_rad_s, gyro_drone)
-	_add_vector(sensor.add_accel_mps2, accel_drone)
-	sensor.set_baro_pa(baro_pa)
-	sensor.set_reset_count(reset_count)
-	sensor.set_lockstep_timeouts(lockstep_timeouts)
-
 	# The exact state, in the drone convention (body x forward, y left, z up;
-	# world z up; quaternion rotating body into world, w first).
+	# world z up; quaternion rotating body into world).
 	var to_drone := Quaternion(GODOT_TO_DRONE)
 	var attitude := to_drone * body_basis.get_rotation_quaternion() * to_drone.inverse()
-	var truth: Mark4.PlantTruth = sensor.new_truth()
-	truth.add_attitude_quat(attitude.w)
-	truth.add_attitude_quat(attitude.x)
-	truth.add_attitude_quat(attitude.y)
-	truth.add_attitude_quat(attitude.z)
-	_add_vector(truth.add_position_m, GODOT_TO_DRONE * position)
-	_add_vector(truth.add_velocity_mps, GODOT_TO_DRONE * velocity)
-
-	var payload := envelope.to_bytes()
+	var payload := SimCodec.encode_sensor(
+		timestamp_us,
+		GODOT_TO_DRONE * gyro_rad_s,
+		GODOT_TO_DRONE * accel_mps2,
+		baro_pa,
+		reset_count,
+		lockstep_timeouts,
+		attitude,
+		GODOT_TO_DRONE * position,
+		GODOT_TO_DRONE * velocity
+	)
 	_pending_echo_us = timestamp_us
 	_matched = false
 	_last_payload = payload
 	if _transport.send(flight_node, payload):
 		packets_sent += 1
-
-
-## Append the three components of a vector to a repeated float field.
-func _add_vector(add: Callable, vector: Vector3) -> void:
-	add.call(vector.x)
-	add.call(vector.y)
-	add.call(vector.z)
 
 
 ## Pump the transport until the echo of the pending envelope arrives: the
@@ -271,19 +254,17 @@ func _wait_for_reply() -> bool:
 	return false
 
 
-## @return the echoed timestamp of a valid actuator message, -1 when rejected.
-func _take_actuator(actuator) -> int:
-	var motors: Array = actuator.get_motor()
-	if motors.size() != MOTOR_COUNT:
-		return -1
+## Keep four finite motor commands, clamped to [0, 1].
+## @return false when a value is not a number.
+func _take_motors(motors: PackedFloat32Array) -> bool:
 	var decoded := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
 	for index: int in MOTOR_COUNT:
-		var value: float = motors[index]
+		var value := motors[index]
 		if not is_finite(value):
-			return -1
+			return false
 		decoded[index] = clampf(value, 0.0, 1.0)
 	motor_commands = decoded
-	return actuator.get_echo_timestamp_us()
+	return true
 
 
 ## Keep what the status report says about the drone, for the overlay.

@@ -22,8 +22,8 @@ import {
     godotTask,
     log,
     runTask,
-    simTaskName,
     stopGodot,
+    stopSim,
 } from "./tasks";
 import { openPage } from "./webviews";
 
@@ -54,7 +54,7 @@ function stopNode(item: NodeItem): void {
     }
     const instance = simInstance(item.row.id);
     if (instance !== undefined) {
-        findExecution("run", simTaskName(instance))?.terminate();
+        stopSim(instance);
     }
 }
 
@@ -199,8 +199,8 @@ export function activate(context: vscode.ExtensionContext): void {
         }),
         vscode.commands.registerCommand("mark4.startGodot", startGodot),
         vscode.commands.registerCommand("mark4.stopGodot", stopGodot),
-        vscode.commands.registerCommand("mark4.addDroneSim", () => {
-            const instance = freeSimInstance();
+        vscode.commands.registerCommand("mark4.addDroneSim", async () => {
+            const instance = await freeSimInstance();
             log.info(`addDroneSim: instance ${instance}`);
             return vscode.tasks.executeTask(droneSimTask(instance));
         }),

@@ -1,11 +1,13 @@
 extends SceneTree
 
-## Wire check of the plant's codec and transport against the C++ ones,
+## Wire check of the plant's codecs and transport against the C++ ones,
 ## driven by the desktop unit tests (software/tests/unit/test_plant_link.cpp):
 ## opens a transport node on the discovery port given after `--`, waits for
 ## a node announcing itself as DRONE_SIM, sends it one SimSensor envelope
-## and expects a SimActuator echoing its timestamp and a SimScenario back,
-## decoded with the generated codec.
+## and expects a SimActuator echoing its timestamp and a SimScenario back.
+## The sensor and the actuator go through the hand-written SimCodec, the
+## path of the physics tick, the scenario through the generated codec, so
+## the nanopb side checks both.
 ##
 ##   godot --headless --path sim-godot --script tests/plant_link_check.gd -- --discovery-port N
 ##
@@ -52,24 +54,18 @@ func _init() -> void:
 		quit(1)
 		return
 
-	var envelope := Mark4.Envelope.new()
-	var sensor: Mark4.SimSensor = envelope.new_sim_sensor()
-	sensor.set_timestamp_us(TEST_TIMESTAMP_US)
-	for value in [0.25, -0.5, 1.5]:
-		sensor.add_gyro_rad_s(value)
-	for value in [0.0, 0.0, 9.80665]:
-		sensor.add_accel_mps2(value)
-	sensor.set_baro_pa(101325.0)
-	sensor.set_reset_count(3)
-	sensor.set_lockstep_timeouts(7)
-	var truth: Mark4.PlantTruth = sensor.new_truth()
-	for value in [1.0, 0.0, 0.0, 0.0]:
-		truth.add_attitude_quat(value)
-	for value in [0.0, 0.0, 1.5]:
-		truth.add_position_m(value)
-	for value in [-2.0, 0.0, 0.0]:
-		truth.add_velocity_mps(value)
-	if not transport.send(_flight_node, envelope.to_bytes()):
+	var payload := SimCodec.encode_sensor(
+		TEST_TIMESTAMP_US,
+		Vector3(0.25, -0.5, 1.5),
+		Vector3(0.0, 0.0, 9.80665),
+		101325.0,
+		3,
+		7,
+		Quaternion(0.0, 0.0, 0.0, 1.0),
+		Vector3(0.0, 0.0, 1.5),
+		Vector3(-2.0, 0.0, 0.0)
+	)
+	if not transport.send(_flight_node, payload):
 		push_error("plant_link_check: send failed")
 		quit(1)
 		return
@@ -94,23 +90,23 @@ func _on_payload(src: int, payload: PackedByteArray) -> void:
 		return
 	if src != _flight_node:
 		return
+	if payload.size() > 0 and payload[0] == Mark4Announce.TAG_SIM_ACTUATOR:
+		var actuator := SimCodec.decode_actuator(payload)
+		_got_actuator = (
+			not actuator.is_empty()
+			and actuator["echo_us"] == TEST_TIMESTAMP_US
+			and is_equal_approx(actuator["motor"][0], 0.1)
+			and is_equal_approx(actuator["motor"][3], 0.4)
+		)
+		if not _got_actuator:
+			push_error("plant_link_check: unexpected actuator %s" % str(actuator))
+		return
 	var reply := Mark4.Envelope.new()
 	if reply.from_bytes(payload) != Mark4.PB_ERR.NO_ERRORS:
 		push_error("plant_link_check: a reply did not decode")
 		_failed = true
 		return
 	match reply.get_body_case():
-		Mark4.Envelope.BodyCase.SIM_ACTUATOR:
-			var actuator: Mark4.SimActuator = reply.get_sim_actuator()
-			var motor: Array = actuator.get_motor()
-			_got_actuator = (
-				actuator.get_echo_timestamp_us() == TEST_TIMESTAMP_US
-				and motor.size() == 4
-				and is_equal_approx(motor[0], 0.1)
-				and is_equal_approx(motor[3], 0.4)
-			)
-			if not _got_actuator:
-				push_error("plant_link_check: unexpected actuator %s" % str(reply))
 		Mark4.Envelope.BodyCase.SIM_SCENARIO:
 			var scenario: Mark4.SimScenario = reply.get_sim_scenario()
 			_got_scenario = (
