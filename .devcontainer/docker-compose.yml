@@ -40,6 +40,10 @@ services:
       # /dev bind mount below, Mesa's d3d12 driver is in the image, and the
       # WSL driver libs (libd3d12, libdxcore, libcuda) live here on the host.
       LD_LIBRARY_PATH: /usr/lib/wsl/lib
+      # Without a DRM device Mesa's GLX path probes its software drivers and
+      # picks llvmpipe (CPU, about 10 fps on the sim) over d3d12 unless told
+      # otherwise. Only Mesa GL clients read this, i.e. Godot here.
+      GALLIUM_DRIVER: d3d12
 
     volumes:
       # The repo, mounted where the devcontainer expects it.

@@ -180,9 +180,11 @@ ENV PATH="/opt/SEGGER/JLink:${PATH}"
 # -----------------------------------------------------------------------------
 # X11 client libraries Godot dlopens for the windowed mode (WSLg), plus
 # fontconfig, xkbcommon and the Mesa OpenGL / EGL stack: the container exposes
-# no Vulkan surface, so Godot renders through OpenGL on llvmpipe
-# (libgl1-mesa-dri). libwayland-client0, libdbus-1-3 and libasound2t64 only
-# silence the Wayland, D-Bus and audio fallbacks.
+# no Vulkan surface, so Godot renders through OpenGL (libgl1-mesa-dri), on the
+# host GPU through Mesa's d3d12 driver on WSL2 (GALLIUM_DRIVER and the
+# /usr/lib/wsl mount in docker-compose.yml), on llvmpipe otherwise.
+# libwayland-client0, libdbus-1-3 and libasound2t64 only silence the Wayland,
+# D-Bus and audio fallbacks.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libxcursor1 \
         libxinerama1 \
