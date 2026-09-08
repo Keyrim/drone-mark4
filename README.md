@@ -19,6 +19,7 @@ Documentation:
 - [docs/plan-dev.md](docs/plan-dev.md) - development plan and reference document
 - [docs/contributing/cpp-guidelines.md](docs/contributing/cpp-guidelines.md) - C++ coding guidelines
 - [docs/mobile-app.md](docs/mobile-app.md) - phone as gateway: what the two mobile PoCs established, and the roadmap of `software/mobile`
+- [docs/comm-design.md](docs/comm-design.md) - communication stack rework: transport presence, messaging postman, pull discovery (proposal, issue #29)
 - [worktrees/README.md](worktrees/README.md) - git worktrees: where they live, how to bring one up, build it, open it, remove it
 
 ## Modules
