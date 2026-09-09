@@ -59,8 +59,8 @@ value name: `PHASE_*`, `THROW_*`, `RC_*`, `OTA_OK`, `OTA_OP_*` carry the
 prefix the clash forced, the rest stay short. The flight core's own enums
 (FlightPhase, ThrowState, PilotMode, TuningStatus) are pinned to the wire
 value by value in `platform_common/status_packer.hpp` and
-`tuning_service.hpp`, and `TelemetryUnit` is pinned to the leaf library's
-own enum in `platform_common/telemetry_service.hpp`; flight-core never
+`services/tuning_service.hpp`, and `TelemetryUnit` is pinned to the leaf
+library's own enum in `services/telemetry_service.hpp`; flight-core never
 includes this library.
 
 ## Where the messages travel

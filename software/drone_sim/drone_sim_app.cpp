@@ -10,7 +10,6 @@
 #include "log/module.hpp"
 #include "log_modules.hpp"
 #include "ota/boot_policy.hpp"
-#include "platform_common/envelope_io.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
 
@@ -206,7 +205,12 @@ namespace mark4
         const bool broken =
             m_firmwareStore->read(slot, mark4::OTA_IMAGE_HEADER_SIZE, probe.data(), probe.size()) &&
             std::memcmp(probe.data(), OTA_BROKEN_MARKER, probe.size()) == 0;
+        // The handler holds a reference to the updater: gone before it, back
+        // right after it.
+        m_otaService.reset();
         m_otaUpdater.emplace(*m_firmwareStore, !broken);
+        m_otaService.emplace(m_messenger, *m_otaUpdater, m_core);
+        m_otaConsumedSeen = m_otaService->consumed();
         refreshArmInterlock();
 
         BOOT.info("running slot %c, active slot %c, states %02x/%02x, emulated flash in %s",
@@ -229,6 +233,7 @@ namespace mark4
         {
             // Nothing bootable: the updater stops being served, which is the
             // closest a process gets to a board sitting in the bootloader.
+            m_otaService.reset();
             m_otaUpdater.reset();
         }
         // A reset is a power cycle: the flight core starts over, tuned values
@@ -294,36 +299,44 @@ namespace mark4
                          otaTrialUnconfirmed(meta, m_firmwareStore->runningSlot());
     }
 
-    bool DroneSimApp::serveOta(const mark4_Envelope &envelope, std::uint64_t nowUs)
+    DroneSimApp::Commands::Commands(mark4::Messenger &messenger, DroneSimApp &app)
+        : AbsMessageHandler(messenger, TAGS),
+          m_app(app)
     {
-        if (!m_otaUpdater.has_value())
-        {
-            return false;
-        }
+    }
 
-        mark4::OtaUpdater::Inputs inputs;
-        inputs.armed = m_core.armed();
-        // A desktop process has no battery, so the voltage floor of
-        // docs/ota-design.md section 3.2 has nothing to read here. It is not a
-        // TODO: there will never be a pack behind this store.
-        inputs.voltageOk = true;
-        inputs.nowUs = nowUs;
-
-        mark4_Envelope reply;
-        const bool consumed = m_otaUpdater->handle(envelope, inputs, reply);
-        if (reply.which_body != 0U)
+    bool DroneSimApp::Commands::onMessage(std::uint32_t src,
+                                          const mark4_Envelope &envelope,
+                                          std::uint64_t nowUs)
+    {
+        static_cast<void>(src);
+        // The poll runs on the process clock; the RC fail-safe is timed on
+        // the frames, so an RC packet is stamped with the last frame instead.
+        static_cast<void>(nowUs);
+        switch (envelope.which_body)
         {
-            // Broadcast, the same route the tuning answers take: the ground
-            // side reads every board-to-hub message off that one stream.
-            static_cast<void>(sendEnvelope(m_transport, BROADCAST_NODE, reply));
+            case mark4_Envelope_rc_tag:
+                m_app.m_rcTracker.onRc(envelope.body.rc, m_app.m_lastFrameUs);
+                return true;
+            case mark4_Envelope_reboot_tag:
+                // Acted on after the wait, by the loop that owns the reboot.
+                m_app.m_rebootRequested = true;
+                return true;
+            case mark4_Envelope_sim_scenario_tag:
+                // The plant plays it; the hash window is addressed to this
+                // process and applies to the run the reset is about to open.
+                m_app.m_motorSink.sendScenario(envelope.body.sim_scenario);
+                m_app.m_pendingHashWindowUs = envelope.body.sim_scenario.hash_window_us;
+                return true;
+            case mark4_Envelope_log_control_tag:
+                if (logHandleControl(envelope.body.log_control))
+                {
+                    m_app.publishLogModules();
+                }
+                return true;
+            default:
+                return false;
         }
-        if (consumed)
-        {
-            // A staging record may just have moved the running slot's state,
-            // which is what the arming interlock reads.
-            refreshArmInterlock();
-        }
-        return consumed;
     }
 
     void DroneSimApp::runUpdateMode()
@@ -333,36 +346,21 @@ namespace mark4
         // Nothing is pushed to the motor sink for as long as this loop runs,
         // so the plant gets no actuator frame and the motors are silent -
         // symmetrically with the firmware, which stops driving its ESCs.
-        std::array<std::uint8_t, MAX_PAYLOAD> command{};
-        bool reboot = false;
         while (m_otaUpdater.has_value() && m_otaUpdater->sessionActive())
         {
-            const std::uint64_t nowUs = m_clock.nowUs();
             // Kept up while parked: the ground side must keep finding this
             // process, and an update takes longer than the keepalive period.
+            // The poll dispatches, so the session is served from inside it.
             m_plantLink.poll();
-            for (;;)
+            if (m_otaService && m_otaService->consumed() != m_otaConsumedSeen)
             {
-                std::uint32_t src = BROADCAST_NODE;
-                const std::size_t size =
-                    m_commandReceiver.poll(command.data(), command.size(), src);
-                if (size == 0U)
-                {
-                    break;
-                }
-                mark4_Envelope envelope;
-                if (!decodeEnvelope(command.data(), size, envelope))
-                {
-                    continue;
-                }
-                if (!serveOta(envelope, nowUs) && envelope.which_body == mark4_Envelope_reboot_tag)
-                {
-                    reboot = true;
-                    break;
-                }
+                // A staging record may just have moved the running slot's
+                // state, which is what the arming interlock reads.
+                m_otaConsumedSeen = m_otaService->consumed();
+                refreshArmInterlock();
             }
             m_otaUpdater->tick(m_clock.nowUs());
-            if (reboot)
+            if (m_rebootRequested)
             {
                 break;
             }
@@ -370,81 +368,9 @@ namespace mark4
         }
 
         OTA.info("session closed, resuming the lockstep loop");
-        if (reboot)
+        if (m_rebootRequested)
         {
-            rebootFirmware();
-        }
-    }
-
-    void DroneSimApp::drainCommands(std::uint64_t nowUs)
-    {
-        m_plantLink.poll();
-        if (!m_logModulesPublished)
-        {
-            // The first poll sent the first keepalive: the table follows it.
-            m_logModulesPublished = true;
-            publishLogModules();
-        }
-        std::array<std::uint8_t, MAX_PAYLOAD> command{};
-        bool reboot = false;
-        for (;;)
-        {
-            std::uint32_t src = BROADCAST_NODE;
-            const std::size_t size = m_commandReceiver.poll(command.data(), command.size(), src);
-            if (size == 0U)
-            {
-                break;
-            }
-            mark4_Envelope envelope;
-            if (!decodeEnvelope(command.data(), size, envelope))
-            {
-                continue;
-            }
-            // The updater gets first look, then each message goes to the one
-            // service that owns it; whatever nobody owns (a message this
-            // build does not know) is dropped.
-            if (serveOta(envelope, m_clock.nowUs()))
-            {
-                continue;
-            }
-            if (m_telemetryService.handle(envelope, src, nowUs))
-            {
-                continue; // a discovery or enable request, answered to src
-            }
-            switch (envelope.which_body)
-            {
-                case mark4_Envelope_rc_tag:
-                    m_rcTracker.onRc(envelope.body.rc, nowUs);
-                    break;
-                case mark4_Envelope_reboot_tag:
-                    // Handled after the drain, and the drain stops here: what
-                    // arrived behind the reset is for the image that comes
-                    // back, exactly as on a board.
-                    reboot = true;
-                    break;
-                case mark4_Envelope_sim_scenario_tag:
-                    // The plant plays it; the hash window is addressed to this
-                    // process and applies to the run the reset is about to open.
-                    m_motorSink.sendScenario(envelope.body.sim_scenario);
-                    m_pendingHashWindowUs = envelope.body.sim_scenario.hash_window_us;
-                    break;
-                case mark4_Envelope_log_control_tag:
-                    if (logHandleControl(envelope.body.log_control))
-                    {
-                        publishLogModules();
-                    }
-                    break;
-                default:
-                    static_cast<void>(m_tuningService.handle(envelope));
-                    break;
-            }
-            if (reboot)
-            {
-                break;
-            }
-        }
-        if (reboot)
-        {
+            m_rebootRequested = false;
             rebootFirmware();
         }
     }
@@ -474,6 +400,13 @@ namespace mark4
             if (m_sensorSource.waitFrame(frame) != mark4::FrameWait::FRAME)
             {
                 continue; // the sim source always produces a frame
+            }
+            m_lastFrameUs = frame.timestampUs;
+            if (!m_logModulesPublished)
+            {
+                // The first poll sent the first keepalive: the table follows it.
+                m_logModulesPublished = true;
+                publishLogModules();
             }
             // The time base of the frames changed (the platform switched
             // between its clock and a plant's, or the plant's clock started
@@ -521,13 +454,25 @@ namespace mark4
                 resetCountSeen = true;
             }
 
-            // Drain the command uplink before the step below, so a value
-            // written from the ground is in effect for the whole of the next
-            // step and never changes one halfway through.
-            drainCommands(frame.timestampUs);
+            // The messages of this frame were dispatched inside the wait,
+            // before the step below, so a value written from the ground is in
+            // effect for the whole of the next step and never changes one
+            // halfway through. What they latched is acted on here.
+            if (m_rebootRequested)
+            {
+                m_rebootRequested = false;
+                rebootFirmware();
+            }
+            if (m_otaService && m_otaService->consumed() != m_otaConsumedSeen)
+            {
+                // A staging record may just have moved the running slot's
+                // state, which is what the arming interlock reads.
+                m_otaConsumedSeen = m_otaService->consumed();
+                refreshArmInterlock();
+            }
             if (m_otaUpdater.has_value() && m_otaUpdater->sessionActive())
             {
-                // An accepted OtaBegin arrived in that drain: this frame is
+                // An accepted OtaBegin arrived in that wait: this frame is
                 // dropped on the floor and the parked loop takes over.
                 continue;
             }

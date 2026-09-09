@@ -9,34 +9,24 @@
 
 namespace mark4
 {
-    void PlantLink::OnPayload(void *context,
-                              std::uint32_t src,
-                              const std::uint8_t *payload,
-                              std::size_t size)
+    bool PlantLink::onMessage(std::uint32_t src,
+                              const mark4_Envelope &envelope,
+                              std::uint64_t nowUs)
     {
-        auto &self = *static_cast<PlantLink *>(context);
-        mark4_Envelope envelope;
-        if (decodeEnvelope(payload, size, envelope) &&
-            envelope.which_body == mark4_Envelope_sim_sensor_tag)
+        static_cast<void>(nowUs);
+        if (m_hasPending)
         {
-            if (self.m_hasPending)
-            {
-                ++self.m_overruns;
-            }
-            self.m_pending = envelope.body.sim_sensor;
-            self.m_pendingSrc = src;
-            self.m_hasPending = true;
-            return;
+            ++m_overruns;
         }
-        // Whatever is not a sensor message is a command or a message this
-        // build does not know: the composition root sorts them out of the
-        // ring, exactly as on the board.
-        self.m_commands.push(src, payload, size);
+        m_pending = envelope.body.sim_sensor;
+        m_pendingSrc = src;
+        m_hasPending = true;
+        return true;
     }
 
     void PlantLink::poll()
     {
-        m_transport.poll(m_clock.nowUs(), &PlantLink::OnPayload, this);
+        m_messenger.poll(m_clock.nowUs());
     }
 
     bool PlantLink::waitSensor(mark4_SimSensor &sensorOut,

@@ -21,7 +21,7 @@
 /// member of the same object is the normal case). It knows names, units and
 /// where values live; it knows nothing of the wire, of ids or of periods -
 /// those belong to the adapter that freezes the list into a table
-/// (`platform_common/telemetry_service.hpp`).
+/// (`services/telemetry_service.hpp`).
 ///
 /// Not thread-safe: every node of the project registers and samples from
 /// its one loop thread.

@@ -1,24 +1,25 @@
 # platform
 
-The four abstract services the flight loop is composed from
-(`include/platform/`): `AbsSensorSource`, `AbsMotorSink`,
-`AbsCommandReceiver`, `AbsClock`. `AbsSensorSource::waitFrame()` is the
+The three abstract services the flight loop is composed from
+(`include/platform/`): `AbsSensorSource`, `AbsMotorSink`, `AbsClock`. `AbsSensorSource::waitFrame()` is the
 single wait point of the whole system; `AbsClock` serves the platform
 services between themselves and is never handed to the flight core, which
 reads the time off the frame.
 
-`AbsCommandReceiver::poll()` reports the node every payload came from
-next to the payload itself: an answer addressed to the one requester (the
-telemetry stream) needs it, and a broadcast answer simply ignores it.
+Commands do not come in through a platform service: every message
+addressed to the node is dispatched by the composition's `Messenger`
+(`software/components/messaging/`) to the handler of its body tag, and the
+request/answer services live in `software/components/services/`.
 
-There is no output service: everything a composition emits leaves through
-the `Transport` it already holds (`sendEnvelope()` in
-`src/common/include/platform_common/envelope_io.hpp`), addressed to a node
-id. Broadcast is the default route, and only the telemetry stream is
-unicast to the one node that asked for it.
+There is no output service: what a composition reports unasked (the
+`Status`, the sim's run stats, the log lines) leaves through the
+`Transport` it already holds as a broadcast (`sendEnvelope()` in
+`src/common/include/platform_common/envelope_io.hpp`); what it answers
+goes back to the requester through the messenger.
 
 Implementations live under `src/<variant>/` (`sim`, `stm32`, each with its
-own README) and the helpers shared by every variant under `src/common/`.
+own README) and the helpers shared by every variant under `src/common/`:
+the status packer and publisher, the RC tracker, the frame measures.
 
 ## Frame validity contract
 

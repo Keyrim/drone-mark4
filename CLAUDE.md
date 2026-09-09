@@ -151,7 +151,7 @@ Godot project imported once). That page has the commands and the reasons.
 
 Everything C++ lives under `software/`: the executables at its top level
 (`drone_sim`, `drone_firmware`, `hub`), the libraries in
-`software/components/`. Eight libraries, one rule of dependency flow:
+`software/components/`. Nine libraries, one rule of dependency flow:
 
 - `flight-core/` - pure static lib. Single entry point
   `FlightCore::step(const SensorFrame&, ActuatorFrame&)`: synchronous,
@@ -169,10 +169,12 @@ Everything C++ lives under `software/`: the executables at its top level
   `platform_common`). The telemetry link is names, units and pointers, not
   wire: a module declares what it computes as a `TelemetryEntry` next to
   the variable.
-- `platform/` - 4 abstract services in `software/components/platform/include/platform/`
-  (AbsSensorSource, AbsMotorSink, AbsCommandReceiver, AbsClock). There is
-  no output service: everything a composition emits leaves through its
-  `Transport` (`sendEnvelope(transport, dst, envelope)`).
+- `platform/` - 3 abstract services in `software/components/platform/include/platform/`
+  (AbsSensorSource, AbsMotorSink, AbsClock). There is no input service for
+  commands and no output service: commands reach a composition through its
+  `Messenger`, and everything it emits leaves through its `Transport`
+  (`Messenger::send()` for a message to one node, `sendEnvelope(transport,
+  dst, envelope)` for what still broadcasts).
   `AbsSensorSource::waitFrame()` is the single wait
   point of the whole system; AbsClock is internal to platform and never
   passed to FlightCore. Implementations live in `software/components/platform/src/<variant>/`
@@ -266,8 +268,8 @@ Everything C++ lives under `software/`: the executables at its top level
   more nodes (kinds `firmware` and `relay`, their own Announces, at the
   relay's address). The firmware broadcasts everything
   it emits (telemetry, answers, `Log` lines through the log library's
-  `TransportSink`) and takes commands through `CommandReceiverTransport`
-  fed by `Transport::poll()` once per flight frame.
+  `TransportSink`) and takes commands through a `Messenger` polled once
+  per flight frame, each message going to the handler of its tag.
 - `messaging/` - static lib, the one place an `Envelope` meets the transport
   in both directions (`software/components/messaging/README.md`). Links
   `transport` and `protocol`, no heap, builds for the F405. An
@@ -277,7 +279,22 @@ Everything C++ lives under `software/`: the executables at its top level
   handler per tag in a table indexed by tag (`init()` refuses a tag claimed
   twice), an optional raw-bytes tap, `poll()` as the one caller of
   `Transport::poll()` in a composition that holds one, and `send()`, the
-  one encoder, unicast only. No composition uses it yet.
+  one encoder, unicast only. Both flight compositions hold one: `PlantLink`
+  polls it in the sim (it is the `sim_sensor` handler), `pollTransport()`
+  on the board; each App keeps one nested `Commands` handler for what is
+  its own (`rc`, `reboot`, `log_control`, and `sim_scenario` in the sim).
+- `services/` - header-only INTERFACE target, the wire services of a flight
+  composition (`software/components/services/README.md`). Links
+  `messaging`, `flight_core`, `telemetry`, `log` and `ota`. Three
+  `AbsMessageHandler`s, each answering the requester (`src`), never the
+  bench: `TelemetryService` (`TelemetryListRequest` / `TelemetryEnable` in,
+  descriptor pages and acks out, then `TelemetryData` to the one subscriber,
+  timed on the frames by `sample()`), `TuningService` (`TuningSet` / `Get`
+  / `List` in, acks out, one `TuningInfo` per `pump()` to the node that
+  asked), `OtaService` (the six `Ota*` requests in, the `OtaUpdater`'s reply
+  out; `consumed()` tells the App when to re-read the arming interlock).
+  Status, run stats and log lines are not services: they broadcast through
+  the transport (`sendEnvelope()` of `platform_common/envelope_io.hpp`).
 - `ota/` - the firmware update brick every node with two firmware slots
   builds on (`software/components/ota/README.md`): header-only INTERFACE
   target `ota`, `protocol` alone underneath, builds for the F405, the ESP32
@@ -302,7 +319,7 @@ Everything C++ lives under `software/`: the executables at its top level
   hierarchical lowercase paths (`estimator/altitude`, `rate/roll/p_term`),
   at most `MAX_TELEMETRY_NAME` = 40 characters, and the name is the stable
   identity across reboots. `MAX_TELEMETRY_ENTRIES` = 128 is the size of the
-  table the wire adapter (`platform_common/telemetry_service.hpp`) freezes
+  table the wire adapter (`services/telemetry_service.hpp`) freezes
   in `init()`. Adding a measure is one line where the value is computed:
   nothing in the schema, the packer or any codec changes.
 - `log/` - the logging library of every node

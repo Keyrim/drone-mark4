@@ -27,9 +27,9 @@ Documentation:
 - `flight-core/` - pure flight core: no dynamic allocation, no
   exceptions/RTTI, no clock access. `float` everywhere
   (`-Wdouble-promotion` as an error).
-- `platform/` - 5 abstract interfaces (AbsSensorSource, AbsMotorSink,
-  AbsCommandReceiver, AbsLogSink, AbsClock) plus one implementation set per
-  variant. No singletons: each executable has an
+- `platform/` - 3 abstract services (AbsSensorSource, AbsMotorSink,
+  AbsClock) plus one implementation set per variant; commands come in
+  through the `messaging` component, not through a platform service. No singletons: each executable has an
   explicit composition root in its main.
 - `protocol/` - one protobuf schema (`mark4.proto`), codecs generated at
   build time for C/C++ (nanopb), GDScript (godobuf) and python; spoken by
