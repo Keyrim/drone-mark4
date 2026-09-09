@@ -128,7 +128,7 @@ The frame header stays `src u32, dst u32, seq u16, hops u8`, little-endian,
 11 bytes, followed by an opaque payload of at most 512 bytes. Two changes:
 
 - **The keepalive is an empty frame.** A header alone, no payload, `dst =
-  BROADCAST_NODE`, once per `BEACON_PERIOD_US` (1 s), plus one unicast to a
+  BROADCAST_NODE`, once per `KEEPALIVE_PERIOD_US` (1 s), plus one unicast to a
   node the moment it first appears so both tables converge within one poll.
   The receiver learns the sender from it as from any frame and delivers
   nothing upward: a payload of size 0 is consumed by the transport. This is
@@ -459,7 +459,9 @@ in `main()` or the App constructor).
    touches a port; section 9 does not block anything.
 2. transport v2 with its tests (keepalive, hops, variant address,
    listeners; filter and beacon tests removed).
-3. `mark4.proto`: `IdentityRequest`; `Announce` documented as an answer.
+3. `mark4.proto`: `IdentityRequest`; `Announce` documented as an answer
+   (its comment still says "beaconed every second": a comment change moves
+   `WIRE_HASH`, so it waits for this step, which moves it anyway).
 4. messaging with its tests; the wire services moved and turned into
    handlers.
 5. discovery with its tests.
@@ -467,9 +469,14 @@ in `main()` or the App constructor).
    Python node so the bench works again.
 7. The firmware and the relay.
 8. The mobile shim and the Dart side.
-9. Documentation: `transport/README.md`, `protocol/README.md`,
-   `hub/README.md`, `target-architecture.md` sections 3.3 to 3.5, this
-   document's status line.
+9. Documentation: `target-architecture.md` sections 3.3 to 3.5, this
+   document's status line, and the pages that still describe the beacon
+   and the Announce as the basis of discovery after step 2 left them
+   untouched: `README.md`, `docs/architecture.md`,
+   `docs/tooling-architecture.md`, `docs/bring-up.md`, `docs/mobile-app.md`,
+   `tools/batch/README.md`, `sim-godot/README.md`. The component READMEs
+   (transport, protocol, hub, log, esp32-bridge) are kept in step with the
+   code at every step.
 
 ## 8. Open: one design, several languages
 
