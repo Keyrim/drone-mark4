@@ -151,7 +151,6 @@ class Transport
     bool addLink(AbsLink &link);                 // index = order of calls
     bool init() const;
     bool addPresenceListener(AbsPresenceListener &l);   // up to MAX_LISTENERS
-    void setRelay(bool on);
     bool send(uint32_t dst, const uint8_t *payload, size_t size);
     void poll(uint64_t nowUs, DeliverFn deliver, void *context);
     const Node *findNode(uint32_t id) const;
@@ -160,7 +159,8 @@ class Transport
 ```
 
 Gone: `setBeacon()`, `MAX_BEACON_SIZE`, the `linkMask` parameter of
-`send()`, `setRelayFilter()`, `filtered()`, `setNodeCallbacks()`.
+`send()`, `setRelay()`, `setRelayFilter()`, `filtered()`,
+`setNodeCallbacks()`.
 
 `AbsPresenceListener` is an abstract class with `onNodeUp(const Node&)` and
 `onNodeDown(const Node&)`; listeners are held by reference in a fixed table
@@ -195,13 +195,17 @@ types, which is what a list of media is.
 
 ### 3.4 Relay
 
-`setRelay(true)` keeps its rule: a broadcast (only the empty keepalive,
-now) goes out on every link but the one it arrived on; a unicast goes out
-on the link its destination was last heard on, unless that is the arrival
-link (split horizon) or the destination is unknown. The duplicate drop by
-`(src, seq)` still breaks loops. The filter is gone: with no application
-broadcast left, an 11-byte keepalive per LAN node per second is what the
-UART carries, instead of a 45-byte `Announce` per LAN node per second.
+Every node relays; there is no switch. The rule is the present one: a
+broadcast (only the empty keepalive, now) goes out on every link but the
+one it arrived on; a unicast goes out on the link its destination was last
+heard on, unless that is the arrival link (split horizon) or the
+destination is unknown. On a node with a single link both branches are
+empty, so the hub, the drones, the phone and the plant relay nothing
+without having to say so; the ESP32 is the one node where the rule does
+work. The duplicate drop by `(src, seq)` still breaks loops. The filter is
+gone: with no application broadcast left, an 11-byte keepalive per LAN
+node per second is what the UART carries, instead of a 45-byte `Announce`
+per LAN node per second.
 
 ### 3.5 Presence and the table
 
@@ -383,7 +387,7 @@ in `main()` or the App constructor).
 | `software/hub` | `setBeacon` of an `Announce`, `m_announces`, inline decode in the deliver callback, `sendEnvelope` | `Responder` + `Directory`, `Messenger` polled by the loop, handlers for descriptors / log_modules / log_control / OTA, the raw-bytes mirror to websocket clients becomes one handler that subscribes to every tag |
 | `software/drone_sim` | `setBeacon`, `CommandReceiverTransport`, the hand-written chain | `Responder`, `Messenger` polled once per flight frame, OTA / telemetry / tuning / rc / reboot / scenario / log_control as handlers |
 | `software/drone_firmware` | same as drone_sim | same as drone_sim |
-| `esp32-bridge/main` | `setBeacon`, `linkMask` for log lines, `setRelayFilter`, `answeredHere` | `Responder`, `Messenger` with the tags it answers, `setRelay(true)` alone |
+| `esp32-bridge/main` | `setBeacon`, `linkMask` for log lines, `setRelayFilter`, `answeredHere` | `Responder`, `Messenger` with the tags it answers, nothing to configure for the relay |
 | `software/mobile/native` + `lib/back/transport` | `mark4_transport_set_beacon`, `NodeAnnounce` map in Dart | the shim exposes the `Directory` (a C ABI over `Responder` + `Directory`, ffigen as today); Dart stops building the `Announce` and reads the directory |
 | `sim-godot/scripts/transport` | `set_beacon`, per-node dictionary, GDScript transport | GDScript transport v2 (empty keepalive, hops up), plus a GDScript `Directory` |
 | `tools/batch/run_batch.py` | reads broadcast frames off the discovery socket, no beacon | a Python node that keeps alive, answers `IdentityRequest`, and subscribes to what it wants to read (section 9.3) or reads the streams the drone sends it |
@@ -409,7 +413,9 @@ in `main()` or the App constructor).
 
 ### 7.3 Order inside the branch
 
-1. Design document settled, including section 8.
+1. Design document settled for sections 3 to 6. Section 8 (one design,
+   several languages) is settled before step 6, the first step that
+   touches a port; section 9 does not block anything.
 2. transport v2 with its tests (keepalive, hops, variant address,
    listeners; filter and beacon tests removed).
 3. `mark4.proto`: `IdentityRequest`; `Announce` documented as an answer.
@@ -436,8 +442,9 @@ in this document is a change in each of them, and nothing today checks that
 the ports agree beyond the Godot smoke test and the fact that the bench
 works.
 
-This is a subject of its own, and it has to be settled before section 7
-starts. The questions:
+This is a subject of its own. It does not block the C++ steps of section
+7.3 (transport, messaging, discovery, the desktop nodes), and it has to be
+settled before the first port is touched (step 6). The questions:
 
 - **Which language is the reference?** Today C++ by default, the README
   says the GDScript port is "the same transport". Is that a rule (the C++
@@ -465,7 +472,7 @@ conformance test for whatever cannot be shared (the Python node, if it
 survives). It removes two ports and turns the Dart shim into the model for
 the others. Its cost is a new build target (the extension) in CI and a
 Godot project that depends on a compiled artifact. To be decided in this
-section before any code.
+section before step 6 of section 7.3.
 
 ## 9. Out of scope, and why
 
