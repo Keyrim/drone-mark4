@@ -151,7 +151,7 @@ Godot project imported once). That page has the commands and the reasons.
 
 Everything C++ lives under `software/`: the executables at its top level
 (`drone_sim`, `drone_firmware`, `hub`), the libraries in
-`software/components/`. Nine libraries, one rule of dependency flow:
+`software/components/`. Ten libraries, one rule of dependency flow:
 
 - `flight-core/` - pure static lib. Single entry point
   `FlightCore::step(const SensorFrame&, ActuatorFrame&)`: synchronous,
@@ -295,6 +295,22 @@ Everything C++ lives under `software/`: the executables at its top level
   out; `consumed()` tells the App when to re-read the arming interlock).
   Status, run stats and log lines are not services: they broadcast through
   the transport (`sendEnvelope()` of `platform_common/envelope_io.hpp`).
+- `discovery/` - static lib on `messaging`, who is who on the wire
+  (`software/components/discovery/README.md`). `Discovery` is the handler
+  every node carries: it answers an `IdentityRequest` with the node's
+  `Announce`, unicast to the requester (nothing is broadcast, nothing
+  unsolicited; presence stays the transport's keepalive).
+  `DiscoveryDirectory` is a `Discovery` that is also an
+  `AbsPresenceListener`: it asks every node that appears, again every
+  `IDENTITY_TIMEOUT_US` (500 ms) up to `IDENTITY_RETRIES` (5) requests, and
+  keeps one `DirectoryEntry` per node (`PENDING` asked, `KNOWN` announce
+  valid with `wireMismatch` and `hops`, `MUTE` given up on); `tick(nowUs)`
+  from the composition's loop drives the retries, it never reads a clock.
+  `nodesOfKind()` copies the `KNOWN` entries of some kinds, an
+  `AbsDirectoryListener` (fixed table of 4, attach in constructor) hears
+  `onIdentity()` / `onForgotten()`. The hub holds a directory and builds
+  its node table from it; drone_sim carries a `Discovery`; the firmware,
+  the relay, the plant, the campaign and the phone do not answer yet.
 - `ota/` - the firmware update brick every node with two firmware slots
   builds on (`software/components/ota/README.md`): header-only INTERFACE
   target `ota`, `protocol` alone underneath, builds for the F405, the ESP32

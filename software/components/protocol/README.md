@@ -80,10 +80,11 @@ includes this library.
 - `IdentityRequest` and `Announce`, the identity pair: the request is
   unicast to one node, empty, and the node's `Announce` (kind, name, mcu,
   build identity, wire hash) is the unicast answer back to the requester.
-  No node sends either one today: the two messages exist in the schema
-  and in every codec, nobody speaks them yet, and presence on the wire is
-  the transport's keepalive, a header-only frame that carries no
-  identity.
+  `drone_sim` and the hub answer (`software/components/discovery/`), the
+  hub asks every node that appears; the firmware, the relay, the plant,
+  the campaign and the phone do not speak them yet. Presence on the wire
+  stays the transport's keepalive, a header-only frame that carries no
+  identity: nothing sends an `Announce` unsolicited.
 - The telemetry family, all unicast, one active stream per drone:
   `TelemetryListRequest` (ground to node, from a cursor) is answered by one
   `TelemetryDescriptors` page back to the requester; `TelemetryEnable`

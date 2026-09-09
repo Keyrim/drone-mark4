@@ -11,6 +11,7 @@
 #include <map>
 #include <string>
 
+#include "discovery/discovery_directory.hpp"
 #include "gateway.pb.h"
 #include "hub/gateway_codec.hpp"
 #include "hub/ota_client.hpp"
@@ -18,6 +19,7 @@
 #include "hub/ws_bridge.hpp"
 #include "log/console_sink_posix.hpp"
 #include "log/wire.hpp"
+#include "messaging/messenger.hpp"
 #include "protocol/envelope.hpp"
 #include "transport/transport.hpp"
 #include "transport/udp_link.hpp"
@@ -30,12 +32,14 @@ namespace mark4
     /// manual teardown. Built by main(), passed by reference: no singleton.
     ///
     /// The gateway forwards and does not interpret: every payload the
-    /// transport delivers goes to the clients as a Frame, every Frame a
-    /// client sends goes out on the transport. It decodes envelopes for two
-    /// things only: to remember each node's last Announce and LogModules
-    /// table (the node table) and to feed the update client its answers.
-    /// It is a node too: its own log lines leave as Log envelopes on the
-    /// transport and are mirrored to the clients as frames from itself.
+    /// transport delivers goes to the clients as a Frame from the
+    /// messenger's raw tap, every Frame a client sends goes out on the
+    /// transport. What the messenger decodes for the gateway itself is a
+    /// short list: the identities its directory asks every node for (the
+    /// node table), the LogModules tables, the telemetry pages, a LogControl
+    /// addressed to this node and the update client's answers. It is a node
+    /// too: its own log lines leave as Log envelopes on the transport and
+    /// are mirrored to the clients as frames from itself.
     class HubApp
     {
       public:
@@ -128,18 +132,18 @@ namespace mark4
         }
 
       private:
-        /// @brief Handles one payload the transport delivered: forwards it
-        ///        to the clients, remembers an Announce, feeds the updater.
+        /// @brief Mirrors one payload the transport delivered to the clients,
+        ///        raw, before the messenger decodes it.
         /// @param src transport node the payload came from
         /// @param data payload bytes
         /// @param size payload size
-        void onFrame(std::uint32_t src, const std::uint8_t *data, std::size_t size);
+        void mirror(std::uint32_t src, const std::uint8_t *data, std::size_t size);
 
-        /// @brief Transport delivery callback, forwards to onFrame().
-        static void OnFrame(void *context,
-                            std::uint32_t src,
-                            const std::uint8_t *data,
-                            std::size_t size);
+        /// @brief The messenger's raw tap, forwards to mirror().
+        static void Tap(void *context,
+                        std::uint32_t src,
+                        const std::uint8_t *data,
+                        std::size_t size);
 
         /// The gateway's ear on the transport's node table: a node that
         ///        appears is asked for its module table, a node that expires
@@ -162,6 +166,59 @@ namespace mark4
             HubApp &m_app; ///< the gateway
         };
 
+        /// The gateway's ear on its directory: a node whose identity is
+        /// learnt goes into the node table, and a drone speaking this
+        /// schema has its telemetry table pulled.
+        class IdentityListener final : public AbsDirectoryListener
+        {
+          public:
+            /// @param directory directory to listen to
+            /// @param app the gateway the events act on
+            IdentityListener(DiscoveryDirectory &directory, HubApp &app)
+                : AbsDirectoryListener(directory),
+                  m_app(app)
+            {
+            }
+
+            void onIdentity(const DirectoryEntry &entry) override;
+            void onForgotten(std::uint32_t nodeId) override;
+
+          private:
+            HubApp &m_app; ///< the gateway
+        };
+
+        /// What the gateway reads off the wire for itself: the module tables
+        /// and telemetry pages of the nodes, the LogControl addressed to this
+        /// node, and the update client's answers. Everything else reaches
+        /// the clients raw and is their business.
+        class Reader final : public AbsMessageHandler
+        {
+          public:
+            /// Body tags this handler consumes.
+            static constexpr std::array<pb_size_t, 6> TAGS = {
+                mark4_Envelope_telemetry_descriptors_tag,
+                mark4_Envelope_log_modules_tag,
+                mark4_Envelope_log_control_tag,
+                mark4_Envelope_ota_status_tag,
+                mark4_Envelope_ota_ack_tag,
+                mark4_Envelope_ota_chunk_ack_tag};
+
+            /// @param messenger messenger to attach to
+            /// @param app the gateway the messages act on
+            Reader(Messenger &messenger, HubApp &app)
+                : AbsMessageHandler(messenger, TAGS),
+                  m_app(app)
+            {
+            }
+
+            bool onMessage(std::uint32_t src,
+                           const mark4_Envelope &envelope,
+                           std::uint64_t nowUs) override;
+
+          private:
+            HubApp &m_app; ///< the gateway
+        };
+
         /// @brief Route of the gateway's own log lines and module table: a
         ///        transport broadcast, mirrored to the clients as a frame
         ///        from this node (the transport never hands a node its own
@@ -174,7 +231,7 @@ namespace mark4
         /// @brief Publishes this node's module table (LogModules pages).
         void publishLogModules();
 
-        /// @brief Sends one envelope to one node as a transport unicast.
+        /// @brief Sends one envelope to one node through the messenger.
         /// @param dst node to reach
         /// @param envelope message to send
         /// @param errorOut receives the reason when it cannot go out
@@ -242,19 +299,27 @@ namespace mark4
         /// @param nowUs current time [us]
         void housekeeping(std::uint64_t nowUs);
 
-        Config m_config;                                         ///< settings of this run
-        TuningProfiles m_profiles;                               ///< stored tuning profiles
-        UdpLink m_udpLink;                                       ///< the LAN link, the only one
-        Transport m_transport;                                   ///< this hub as a transport node
-        PresenceListener m_presence{m_transport, *this};         ///< its node table events
-        ConsoleSinkPosix m_consoleSink;                          ///< log lines on stdout
-        TransportSink m_logSink{&HubApp::SendLog, this};         ///< log lines on the wire
-        WsBridge m_ws;                                           ///< websocket endpoint
-        OtaClient m_ota;                                         ///< firmware update session
-        std::uint32_t m_otaTarget = 0U;                          ///< node the updater talks to
-        mark4_Announce m_ownAnnounce = mark4_Announce_init_zero; ///< this gateway's own row
-        std::map<std::uint32_t, mark4_Announce> m_announces;     ///< last Announce per node
-        std::map<std::uint32_t, LogModuleTable> m_logModules;    ///< last module table per node
+        Config m_config;           ///< settings of this run
+        TuningProfiles m_profiles; ///< stored tuning profiles
+        UdpLink m_udpLink;         ///< the LAN link, the only one
+        /// This gateway's identity: the first row of the node table it
+        /// publishes, and what its directory answers to whoever asks.
+        /// Complete at construction, before the directory copies it.
+        mark4_Announce
+            m_ownAnnounce; ///< this gateway's identity: the directory's self, row 0 of the table
+        Transport m_transport;                           ///< this hub as a transport node
+        Messenger m_messenger{m_transport};              ///< decodes for the handlers below
+        PresenceListener m_presence{m_transport, *this}; ///< its node table events
+        /// Who is who: asks every node that appears, keeps the answers.
+        DiscoveryDirectory m_directory{m_messenger, m_transport, m_ownAnnounce}; ///< who is who
+        IdentityListener m_identities{m_directory, *this};    ///< what the directory learns
+        Reader m_reader{m_messenger, *this};                  ///< what the gateway reads
+        ConsoleSinkPosix m_consoleSink;                       ///< log lines on stdout
+        TransportSink m_logSink{&HubApp::SendLog, this};      ///< log lines on the wire
+        WsBridge m_ws;                                        ///< websocket endpoint
+        OtaClient m_ota;                                      ///< firmware update session
+        std::uint32_t m_otaTarget = 0U;                       ///< node the updater talks to
+        std::map<std::uint32_t, LogModuleTable> m_logModules; ///< last module table per node
 
         /// Where one node's telemetry table stands: the descriptors pulled
         /// so far and what the walk is still waiting on.

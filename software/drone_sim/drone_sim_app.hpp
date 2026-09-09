@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "discovery/discovery.hpp"
 #include "flight_core/flight_core.hpp"
 #include "log/console_sink_posix.hpp"
 #include "log/wire.hpp"
@@ -179,6 +180,11 @@ namespace mark4
         ///        consumed rather than once per frame.
         void refreshArmInterlock();
 
+        /// @brief What this process answers to an IdentityRequest.
+        /// @return the announce: kind DRONE_SIM, mcu SIM, this build's wire
+        ///         hash, and no build identity
+        static mark4_Announce Identity();
+
         /// @brief Route of every log line and of the module table: a
         ///        transport broadcast, like everything this process emits.
         static bool SendLog(void *context, const std::uint8_t *data, std::size_t size);
@@ -200,6 +206,8 @@ namespace mark4
         /// handler of its tag; every handler below is declared after it.
         mark4::Messenger m_messenger{m_transport};
         Commands m_commands{m_messenger, *this};
+        /// Who this process is, to whoever asks.
+        mark4::Discovery m_discovery{m_messenger, Identity()};
         mark4::ConsoleSinkPosix m_consoleSink;
         mark4::TransportSink m_transportSink{&DroneSimApp::SendLog, this};
         /// The sim link: the handler of the plant's sensor messages, and the

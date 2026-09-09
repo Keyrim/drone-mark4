@@ -94,6 +94,19 @@ namespace mark4
     {
     }
 
+    mark4_Announce DroneSimApp::Identity()
+    {
+        mark4_Announce self = mark4_Announce_init_zero;
+        self.kind = mark4_NodeKind_DRONE_SIM;
+        self.mcu = mark4_Mcu_SIM;
+        self.wire_hash = WIRE_HASH;
+        static_cast<void>(std::snprintf(self.name, sizeof(self.name), "%s", "drone_sim"));
+        // build_epoch and git_hash stay empty: a process runs from the build
+        // tree and carries no stamped image identity of its own, unlike a
+        // packaged firmware image.
+        return self;
+    }
+
     bool DroneSimApp::SendLog(void *context, const std::uint8_t *data, std::size_t size)
     {
         return static_cast<DroneSimApp *>(context)->m_transport.send(BROADCAST_NODE, data, size);
