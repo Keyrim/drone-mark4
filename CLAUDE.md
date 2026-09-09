@@ -151,7 +151,7 @@ Godot project imported once). That page has the commands and the reasons.
 
 Everything C++ lives under `software/`: the executables at its top level
 (`drone_sim`, `drone_firmware`, `hub`), the libraries in
-`software/components/`. Seven libraries, one rule of dependency flow:
+`software/components/`. Eight libraries, one rule of dependency flow:
 
 - `flight-core/` - pure static lib. Single entry point
   `FlightCore::step(const SensorFrame&, ActuatorFrame&)`: synchronous,
@@ -268,6 +268,16 @@ Everything C++ lives under `software/`: the executables at its top level
   it emits (telemetry, answers, `Log` lines through the log library's
   `TransportSink`) and takes commands through `CommandReceiverTransport`
   fed by `Transport::poll()` once per flight frame.
+- `messaging/` - static lib, the one place an `Envelope` meets the transport
+  in both directions (`software/components/messaging/README.md`). Links
+  `transport` and `protocol`, no heap, builds for the F405. An
+  `AbsMessageHandler` is self-registering like a telemetry entry: it hands
+  its body tags to the base constructor (`tags()`) and receives each decoded
+  message in `onMessage(src, envelope, nowUs)`. The `Messenger` holds one
+  handler per tag in a table indexed by tag (`init()` refuses a tag claimed
+  twice), an optional raw-bytes tap, `poll()` as the one caller of
+  `Transport::poll()` in a composition that holds one, and `send()`, the
+  one encoder, unicast only. No composition uses it yet.
 - `ota/` - the firmware update brick every node with two firmware slots
   builds on (`software/components/ota/README.md`): header-only INTERFACE
   target `ota`, `protocol` alone underneath, builds for the F405, the ESP32

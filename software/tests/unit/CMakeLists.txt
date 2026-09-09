@@ -18,6 +18,7 @@ add_executable(unit_tests
     test_hub_ota.cpp
     test_hub_tuning_profiles.cpp
     test_log.cpp
+    test_messaging.cpp
     test_motor_sink_dshot.cpp
     test_ota_boot_policy.cpp
     test_ota_e2e.cpp
@@ -41,8 +42,8 @@ add_executable(unit_tests
     test_tuning_service.cpp
     test_vertical_estimator.cpp)
 target_link_libraries(unit_tests
-    PRIVATE flight_core platform_common platform_sim protocol ota telemetry transport log log_wire
-            hub_core
+    PRIVATE flight_core platform_common platform_sim protocol ota telemetry transport messaging log
+            log_wire hub_core
             Catch2::Catch2WithMain drone_warnings)
 # The libs under test are compiled with -fno-rtti (drone_strict) and emit no
 # typeinfo, so UBSan's vptr check cannot be applied to their classes from here
