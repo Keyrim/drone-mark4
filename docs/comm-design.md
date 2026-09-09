@@ -374,11 +374,19 @@ class DiscoveryDirectory : public Discovery, public AbsPresenceListener
   public:
     DiscoveryDirectory(Messenger &m, Transport &t, const mark4_Announce &self);
     // tags(): identity_request, announce
-    // on node up: sends IdentityRequest, retries on timeout, gives up after N
-    // on announce: stores per node id; on node down: forgets
-    size_t nodesOfKind(std::span<const mark4_NodeKind> kinds, std::span<Entry> out) const;
-    const Entry *find(uint32_t id) const;
-    // Entry = node id, the Announce, distance in hops, last update
+    // on node up: a PENDING entry; tick() asks, retries on timeout, gives up
+    // on announce: stores per node id, tells the listeners; on node down: forgets
+    void tick(uint64_t nowUs);      // the directory reads no clock: the composition's loop calls it
+    size_t nodesOfKind(std::span<const mark4_NodeKind> kinds, std::span<DirectoryEntry> out) const;
+    const DirectoryEntry *find(uint32_t id) const;
+    // DirectoryEntry = node id, state PENDING | KNOWN | MUTE, the Announce,
+    // wireMismatch, distance in hops, instants of the last request and change
+};
+
+class AbsDirectoryListener   // self-registering, up to 4 per directory
+{
+    virtual void onIdentity(const DirectoryEntry &entry) = 0;   // KNOWN, or the announce changed
+    virtual void onForgotten(uint32_t nodeId) = 0;
 };
 ```
 
@@ -397,10 +405,12 @@ to handle it before deferring to the base for the request.
 
 ### 5.3 Behaviour
 
-- On `onNodeUp`, the `DiscoveryDirectory` sends one `IdentityRequest` to the new id
-  and starts a timer; without an `Announce` within `IDENTITY_TIMEOUT_US`
-  (500 ms) it sends again, up to `IDENTITY_RETRIES` (5), then marks the
-  entry unknown and stops asking. A later frame from that node does not
+- On `onNodeUp` the `DiscoveryDirectory` creates a `PENDING` entry; the
+  next `tick(nowUs)` sends one `IdentityRequest` to it (the presence
+  callback carries no instant, and the directory reads no clock). Without
+  an `Announce` within `IDENTITY_TIMEOUT_US` (500 ms) a tick sends again,
+  up to `IDENTITY_RETRIES` (5), then marks the entry `MUTE` and stops
+  asking. A later frame from that node does not
   trigger a new request: the node is present and mute about itself, which
   the ground tools show as such.
 - An `Announce` that arrives without a request pending is stored anyway
