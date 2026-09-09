@@ -86,7 +86,9 @@ receiver per call. What happens next differs per node:
   dispatch key.
 
 Adding a service means wiring it by hand in every App, in the right place
-of the chain.
+of the chain. Nothing in the project registers itself with a postman the
+way a `TelemetryEntry` or a `LogModule` registers itself with its registry
+at construction.
 
 ### 2.5 Two ways to send an envelope
 
@@ -150,7 +152,7 @@ class Transport
     Transport(uint32_t nodeId);
     bool addLink(AbsLink &link);                 // index = order of calls
     bool init() const;
-    bool addPresenceListener(AbsPresenceListener &l);   // up to MAX_LISTENERS
+    // presence listeners attach themselves (AbsPresenceListener below)
     bool send(uint32_t dst, const uint8_t *payload, size_t size);
     void poll(uint64_t nowUs, DeliverFn deliver, void *context);
     const Node *findNode(uint32_t id) const;
@@ -162,11 +164,25 @@ Gone: `setBeacon()`, `MAX_BEACON_SIZE`, the `linkMask` parameter of
 `send()`, `setRelay()`, `setRelayFilter()`, `filtered()`,
 `setNodeCallbacks()`.
 
-`AbsPresenceListener` is an abstract class with `onNodeUp(const Node&)` and
-`onNodeDown(const Node&)`; listeners are held by reference in a fixed table
-(no heap), called in registration order, from inside `poll()`. Calling
-`send()` from a listener is allowed: the transport already does it for the
-unicast keepalive (TX and RX buffers are distinct).
+```
+class AbsPresenceListener
+{
+  public:
+    explicit AbsPresenceListener(Transport &t);   // t.attach(*this)
+    virtual ~AbsPresenceListener();                // t.detach(*this)
+    virtual void onNodeUp(const Transport::Node &node) = 0;
+    virtual void onNodeDown(const Transport::Node &node) = 0;
+};
+```
+
+A listener registers itself: its constructor takes the transport and
+attaches, its destructor detaches, the way a `TelemetryEntry` links into
+the telemetry registry and a `LogModule` into the log registry. The
+transport holds up to `MAX_LISTENERS` references in a fixed table (no
+heap), calls them in attach order from inside `poll()`, and a table that
+is full is an init failure, not a silent drop. Calling `send()` from a
+listener is allowed: the transport already does it for the unicast
+keepalive (TX and RX buffers are distinct).
 
 `DeliverFn` stays an argument of `poll()`: the transport is passive, every
 byte moves during a `poll()` the application drives, and the one caller of
@@ -226,25 +242,45 @@ meets the transport.
 ```
 class AbsMessageHandler
 {
+  public:
+    explicit AbsMessageHandler(Messenger &m);   // m.attach(*this)
+    virtual ~AbsMessageHandler();                // m.detach(*this)
+    virtual std::span<const pb_size_t> tags() const = 0;   // which_body values it consumes
     virtual bool onMessage(uint32_t src, const mark4_Envelope &e, uint64_t nowUs) = 0;
 };
 
 class Messenger
 {
-    Messenger(Transport &transport);
-    bool subscribe(pb_size_t tag, AbsMessageHandler &handler);  // fixed table
-    void poll(uint64_t nowUs);      // polls the transport, decodes, dispatches
-    bool send(uint32_t dst, const mark4_Envelope &e);            // encode + transport.send
+  public:
+    explicit Messenger(Transport &transport);
+    void setTap(TapFn tap, void *context);   // optional: raw bytes of every delivered payload
+    void poll(uint64_t nowUs);               // polls the transport, decodes, dispatches
+    bool send(uint32_t dst, const mark4_Envelope &e);   // encode + transport.send
+    // attach / detach are called by AbsMessageHandler alone
 };
 ```
 
+One handler per message type. A handler declares the `which_body` values
+it consumes through `tags()`; its constructor takes the messenger and
+attaches, its destructor detaches. Attaching fills a table indexed by tag
+(one slot per `Envelope` body, about forty), so dispatch is a direct
+lookup and there is no chain and no order: a tag that is already taken is
+an init failure, reported by the App's `init()` like any other. Declaring
+the handler as a member of the App is the whole wiring:
+
+```
+OtaHandler m_ota{m_messenger, m_updater};
+TelemetryHandler m_telemetry{m_messenger, m_telemetryService};
+```
+
 `poll()` is the one caller of `Transport::poll()`. For each delivered
-payload it decodes the `Envelope` (a payload that does not decode is
-counted and dropped) and calls every handler subscribed to `which_body`,
-in subscription order, until one returns true (consumed). A tag nobody
-subscribed to is counted and dropped. Subscriptions are `(tag, handler&)`
-pairs in a fixed table sized by a constant; a handler may subscribe to
-several tags.
+payload: the tap, if set, sees the raw bytes with their `src` (this is the
+hub's mirror towards its websocket clients, which forwards frames without
+interpreting them); then the `Envelope` is decoded (a payload that does not
+decode is counted and dropped) and the handler of `which_body` is called.
+A tag without a handler is counted and dropped. The return value of
+`onMessage()` says whether the handler acted on the message; it feeds a
+counter, nothing else.
 
 The ring of `CommandReceiverTransport` disappears from the drone Apps: the
 `Messenger` is polled once per flight frame, at the point where the ring
@@ -253,9 +289,9 @@ between the transport and the handlers. If a later step threads the
 transport, the ring comes back inside the messenger as its RX queue, which
 is where it belongs.
 
-The relay's `answeredHere(tag)` becomes the set of tags it subscribes to;
-the peek without decode is no longer needed since nothing is forwarded
-through the messenger (forwarding is the transport's relay, below it).
+The relay's `answeredHere(tag)` becomes the `tags()` of its handlers; the
+peek without decode is no longer needed since nothing is forwarded through
+the messenger (forwarding is the transport's relay, below it).
 
 ### 4.2 Sending
 
@@ -306,37 +342,42 @@ Two messages in `mark4.proto`:
 ### 5.2 Two levels
 
 ```
-class Responder : public AbsMessageHandler
+class Discovery : public AbsMessageHandler
 {
-    Responder(Messenger &m, const mark4_Announce &self);
-    // subscribes to identity_request, answers with self to src
+  public:
+    Discovery(Messenger &m, const mark4_Announce &self);
+    // tags(): identity_request; answers with self to src
 };
 
-class Directory : public Responder, public AbsPresenceListener
+class DiscoveryDirectory : public Discovery, public AbsPresenceListener
 {
-    Directory(Messenger &m, Transport &t, const mark4_Announce &self);
+  public:
+    DiscoveryDirectory(Messenger &m, Transport &t, const mark4_Announce &self);
+    // tags(): identity_request, announce
     // on node up: sends IdentityRequest, retries on timeout, gives up after N
-    // subscribes to announce: stores per node id
-    // on node down: forgets
-    size_t nodesOfKind(std::span<const uint32_t> kinds, std::span<Entry> out) const;
+    // on announce: stores per node id; on node down: forgets
+    size_t nodesOfKind(std::span<const mark4_NodeKind> kinds, std::span<Entry> out) const;
     const Entry *find(uint32_t id) const;
     // Entry = node id, the Announce, distance in hops, last update
 };
 ```
 
-`Responder` is mandatory on every node: a node that cannot say who it is
-does not exist for the ground tools. `Directory` is for the nodes that
-need to know who is around: the hub, the phone, the Godot plant (one
-virtual drone per `DRONE_SIM` node), the batch tool. The drones carry the
-`Responder` alone.
+`Discovery` is mandatory on every node: a node that cannot say who it is
+does not exist for the ground tools. `DiscoveryDirectory` is for the nodes
+that need to know who is around: the hub, the phone, the Godot plant (one
+virtual drone per `DRONE_SIM` node), the batch tool. The drones carry
+`Discovery` alone.
 
-Public inheritance, no virtual method between the two: a service that
-takes a `Responder&` in its constructor can be handed a `Directory` without
-change, which is how the Apps inject dependencies today.
+The names say the relation: a `DiscoveryDirectory` is a `Discovery` that
+also keeps a directory. Public inheritance: a service that takes a
+`Discovery&` in its constructor can be handed a `DiscoveryDirectory`
+without change, which is how the Apps inject dependencies today. The
+derived class extends `tags()` with `announce` and overrides `onMessage()`
+to handle it before deferring to the base for the request.
 
 ### 5.3 Behaviour
 
-- On `onNodeUp`, the `Directory` sends one `IdentityRequest` to the new id
+- On `onNodeUp`, the `DiscoveryDirectory` sends one `IdentityRequest` to the new id
   and starts a timer; without an `Announce` within `IDENTITY_TIMEOUT_US`
   (500 ms) it sends again, up to `IDENTITY_RETRIES` (5), then marks the
   entry unknown and stops asking. A later frame from that node does not
@@ -355,7 +396,7 @@ change, which is how the Apps inject dependencies today.
 The hub's `m_announces` map and the `sameAnnounce` / `isDroneKind` logic
 around it, the `NodeAnnounce` map of the mobile `TransportManager`, the
 per-node dictionary of the Godot plant, and the `Announce` building code in
-every App (the identity is a constant handed to the `Responder`, built once
+every App (the identity is a constant handed to the `Discovery`, built once
 in `main()` or the App constructor).
 
 ## 6. Application rules
@@ -364,8 +405,8 @@ in `main()` or the App constructor).
   destination of `Messenger::send()` is a node id the transport has in its
   table, or the send is refused.
 - **Application "broadcast" is a loop over known nodes.** A service that
-  wants to reach every node of some kinds asks the `Directory` and unicasts
-  to each. A node without a `Directory` (the drones) cannot broadcast
+  wants to reach every node of some kinds asks the `DiscoveryDirectory` and unicasts
+  to each. A node without a `DiscoveryDirectory` (the drones) cannot broadcast
   anything; it can only answer, and only towards `src`.
 - **Answers go to the requester**, the `src` of the frame that carried the
   request, never to `BROADCAST_NODE`. This is already how the OTA updater
@@ -375,7 +416,7 @@ in `main()` or the App constructor).
   and log lines are streams; they leave a drone because a ground node asked
   for them, towards that node, and stop when it disappears (`onNodeDown`)
   or asks them to. This rule is stated here because it is the reason the
-  drone needs no `Directory`; the subscription protocol that implements it
+  drone needs no `DiscoveryDirectory`; the subscription protocol that implements it
   is section 9.3, not this rework.
 
 ## 7. Impact
@@ -384,18 +425,18 @@ in `main()` or the App constructor).
 
 | site | today | after |
 |------|-------|-------|
-| `software/hub` | `setBeacon` of an `Announce`, `m_announces`, inline decode in the deliver callback, `sendEnvelope` | `Responder` + `Directory`, `Messenger` polled by the loop, handlers for descriptors / log_modules / log_control / OTA, the raw-bytes mirror to websocket clients becomes one handler that subscribes to every tag |
-| `software/drone_sim` | `setBeacon`, `CommandReceiverTransport`, the hand-written chain | `Responder`, `Messenger` polled once per flight frame, OTA / telemetry / tuning / rc / reboot / scenario / log_control as handlers |
+| `software/hub` | `setBeacon` of an `Announce`, `m_announces`, inline decode in the deliver callback, `sendEnvelope` | `Discovery` + `DiscoveryDirectory`, `Messenger` polled by the loop, handlers for descriptors / log_modules / log_control / OTA, the raw-bytes mirror to websocket clients becomes one handler that subscribes to every tag |
+| `software/drone_sim` | `setBeacon`, `CommandReceiverTransport`, the hand-written chain | `Discovery`, `Messenger` polled once per flight frame, OTA / telemetry / tuning / rc / reboot / scenario / log_control as handlers |
 | `software/drone_firmware` | same as drone_sim | same as drone_sim |
-| `esp32-bridge/main` | `setBeacon`, `linkMask` for log lines, `setRelayFilter`, `answeredHere` | `Responder`, `Messenger` with the tags it answers, nothing to configure for the relay |
-| `software/mobile/native` + `lib/back/transport` | `mark4_transport_set_beacon`, `NodeAnnounce` map in Dart | the shim exposes the `Directory` (a C ABI over `Responder` + `Directory`, ffigen as today); Dart stops building the `Announce` and reads the directory |
-| `sim-godot/scripts/transport` | `set_beacon`, per-node dictionary, GDScript transport | GDScript transport v2 (empty keepalive, hops up), plus a GDScript `Directory` |
+| `esp32-bridge/main` | `setBeacon`, `linkMask` for log lines, `setRelayFilter`, `answeredHere` | `Discovery`, `Messenger` with the tags it answers, nothing to configure for the relay |
+| `software/mobile/native` + `lib/back/transport` | `mark4_transport_set_beacon`, `NodeAnnounce` map in Dart | the shim exposes the `DiscoveryDirectory` (a C ABI over `Discovery` + `DiscoveryDirectory`, ffigen as today); Dart stops building the `Announce` and reads the directory |
+| `sim-godot/scripts/transport` | `set_beacon`, per-node dictionary, GDScript transport | GDScript transport v2 (empty keepalive, hops up), plus a GDScript `DiscoveryDirectory` |
 | `tools/batch/run_batch.py` | reads broadcast frames off the discovery socket, no beacon | a Python node that keeps alive, answers `IdentityRequest`, and subscribes to what it wants to read (section 9.3) or reads the streams the drone sends it |
 
 ### 7.2 What breaks on the branch, and stays broken until migrated
 
 - The bench: no `Announce` broadcast means the hub's node table is empty
-  until the hub carries a `Directory`; Godot hosts no virtual drone until
+  until the hub carries a `DiscoveryDirectory`; Godot hosts no virtual drone until
   its port asks for identities; the phone connects to nothing.
 - The relay: without the filter and with LAN broadcasts still emitted by
   unmigrated nodes, the UART carries them. Migrating the relay after the
@@ -405,7 +446,7 @@ in `main()` or the App constructor).
   it. Section 9.3 is the missing piece; until it lands, the hub (the one
   consumer today) asks by unicast with the messages that already exist
   (`TelemetryEnable`), and status and logs go to the hub's node id when a
-  `Directory` entry of kind `GATEWAY` is known to the drone. This is a
+  `DiscoveryDirectory` entry of kind `GATEWAY` is known to the drone. This is a
   temporary asymmetry, named as such in the code, that 9.3 removes.
 - Unit tests: `test_transport.cpp` (beacon, filter, hops), `test_plant_link.cpp`,
   `test_ota_e2e.cpp`, the Godot `transport_check.gd` smoke, the pages'
