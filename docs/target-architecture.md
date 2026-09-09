@@ -101,8 +101,9 @@ standard page, and model parameters are data, not code.
   processes with consistent settings (simulated flight, real board,
   batch campaign). Batch campaigns use the same launcher as interactive
   sessions.
-- **No hand-wired ports**: flight processes announce themselves; the
-  ground side discovers whoever is alive and reconnects on its own.
+- **No hand-wired ports**: the transport's keepalive makes every node
+  visible, the ground side asks each one who it is and reconnects on its
+  own.
 - **Live monitoring**: plots of estimated state against ground truth
   (sim) or against nothing (real flight, until a reference exists),
   attitude in 3D, link health (sequence-derived loss rates).
@@ -147,7 +148,7 @@ flowchart LR
 
     subgraph hub["hub daemon - links protocol/, never flight-core"]
         TR["transports<br/>UDP / UART"]
-        DISC["discovery<br/>(announce packets)"]
+        DISC["discovery<br/>(identity on request)"]
         SVC["commands / rc / tuning profiles"]
         LAUNCH["scenario launcher CLI"]
         WS["WebSocket + JSON endpoint"]
@@ -161,7 +162,7 @@ flowchart LR
     end
 
     GODOT <-->|"binary sim link, lockstep,<br/>in-band scenario commands"| DS
-    DS <-->|"binary UDP + announce"| TR
+    DS <-->|"transport frames over UDP"| TR
     FW <-->|"binary UART"| TR
     TR -->|"streamed sensor frames (HIL)"| FWH
     LAUNCH -.->|"spawns"| DS
@@ -208,21 +209,25 @@ Wire format properties:
   frame; nothing is ever demultiplexed by size, and there is no version
   byte.
 - **Wire hash**: a 32-bit hash of the schema computed at build time
-  travels in every `Announce`; the hub flags a node built on another
-  schema instead of dropping it silently.
+  travels in every `Announce`, the answer to an `IdentityRequest`; the hub
+  flags a node built on another schema instead of dropping it silently.
 - **Source identity and sequence number** on every transport frame (the
   transport header), so multiple senders coexist and loss is measurable.
 - **CRC** on serial framing; XOR-class checksums are not enough for a
   link that carries flight data.
-- **Announce message**: node kind, name, chip, build identity, wire hash,
-  broadcast periodically; the basis of discovery.
+- **Presence and identity**: presence is the transport's own keepalive,
+  a header-only frame every second; identity is asked for, an
+  `IdentityRequest` unicast to a node that appeared, answered by its
+  `Announce` (node kind, name, chip, build identity, wire hash). Nothing
+  is broadcast on the wire but the keepalive.
 - **Command set**: reboot, RC with the mode field (2.1), tuning
   set/get/list with ack (2.3), the updater messages.
 
 ### 3.4 Command paths: two kinds, never mixed
 
 - **Interactive RC and commands** travel out-of-band, from the hub to the
-  flight process, through `AbsCommandReceiver` - in every composition,
+  flight process, as unicast messages the composition's `Messenger`
+  dispatches to the handler of their type - in every composition,
   simulator included. The fail-safe (silence means kill) is therefore
   exercised in every simulated flight.
 - **Scenario commands** (reset, throw, scripted arming for campaigns)
@@ -235,10 +240,12 @@ Wire format properties:
 
 One desktop C++ process, in this repo, linking the generated protocol/
 codec directly (zero schema duplication, a message change breaks it at
-compile time) and never linking flight-core. Roles: transports (UDP, serial), discovery,
-command/RC/tuning forwarding, profile storage, and the scenario launcher
-CLI. Human-facing surface: a single WebSocket + JSON
-endpoint serving any number of simultaneous clients.
+compile time) and never linking flight-core. Roles: one transport node on
+the LAN (the board reaches it through the ESP32 relay), the directory of
+who is who (it asks every node that appears), the updater client, profile
+storage, and the mirror of every frame to its clients. Human-facing
+surface: a single WebSocket endpoint carrying binary `gateway.proto`
+messages to any number of simultaneous clients.
 
 ### 3.6 UI pages
 

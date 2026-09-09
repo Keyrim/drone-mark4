@@ -127,8 +127,9 @@ the motors spin down with their normal lag.
 ## Scenarios
 
 A scripted run arrives as a `SimScenario` envelope, unicast by the flight
-process to this plant: it receives it on its command receiver and forwards
-it to the virtual drone that belongs to it, as its own message. One scenario is one run. It opens with a
+process to this plant: the flight process received it from the hub,
+its messenger handed it to its plant link, and the plant forwards it to
+the virtual drone that belongs to it, as its own message. One scenario is one run. It opens with a
 reset - teleport, reseed every generator, clear the hand - and everything
 it asks for afterwards
 (the throw, or the grab and the swing) is scheduled from that reset tick, on

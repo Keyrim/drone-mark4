@@ -36,7 +36,7 @@ flowchart LR
 
     subgraph hub["hub daemon - links protocol/ directly, zero duplication"]
         TR["transport node (UDP),<br/>board through<br/>the ESP32 relay"]
-        DISC["node table<br/>from the beacons the<br/>transport hears, no port wiring"]
+        DISC["node table<br/>from the transport's presence and<br/>the identities it asks for, no port wiring"]
         SVC["OTA bundle<br/>tuning profiles"]
         WS["single WebSocket endpoint<br/>binary gateway.proto: frames both ways"]
         TR --- DISC --- SVC --- WS
@@ -50,7 +50,7 @@ flowchart LR
     BROWSER["opened in a browser,<br/>VSCode Simple Browser,<br/>or a thin extension later"]
 
     GODOT <-->|"binary sim link kept direct<br/>(lockstep, latency-critical)"| DS
-    DS <-->|"transport frames over UDP<br/>(beacon, status, telemetry, commands)"| TR
+    DS <-->|"transport frames over UDP<br/>(keepalive, identity, status, telemetry, commands)"| TR
     FW <-->|"transport frames, UART then<br/>WiFi through the ESP32 relay"| TR
     WS <--> P1
     WS <--> P2
@@ -71,9 +71,9 @@ Structural improvements, one by one:
 - Human-facing surface: 6 UDP ports -> 1 WebSocket endpoint; UI pages are
   protocol-agnostic and replaceable one by one.
 - Port wiring replaced by discovery: every process is a node of the
-  shared transport (`software/components/transport/`), beacons its
-  announce packet (process kind, protocol version) once per second on the
-  one discovery port, and the hub commands it by node id; nobody
+  shared transport (`software/components/transport/`), keeps alive once
+  per second on the one discovery port, answers who it is (kind, name,
+  build, wire hash) when asked, and the hub commands it by node id; nobody
   configures an address.
 - Roles untangled: Godot is a plant model again; decoding and routing are
   hub features instead of separate processes.
@@ -102,7 +102,7 @@ per variant, one target per composition.
   consumer language and the third hand copy of every struct made the
   duplication the larger cost: one `mark4.proto`, nanopb on every C/C++
   target, godobuf for the plant, protoc for python, and a hash of the
-  schema in every announce so a stale build is visible instead of silent
+  schema in every identity answer so a stale build is visible instead of silent
   (`software/components/protocol/README.md`).
 - **Shared library + FFI instead of a hub daemon** (protocol stack built
   as a `.so` loaded by the UI host process). Removes duplication just as

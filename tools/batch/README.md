@@ -10,9 +10,9 @@ One run is one message. It opens with a reset and carries everything the
 run needs - the seed, the delay before the throw, the throw itself - so the
 whole run is scripted inside the plant, on the plant's own tick grid,
 counted from the reset tick. The campaign never has to agree with the plant
-on which absolute tick anything happened at. The message goes to the
-`drone_sim` command receiver, which forwards it to its virtual drone in
-Godot as a unicast frame; resending it is free, since the plant plays a scenario once per
+on which absolute tick anything happened at. The message goes to
+`drone_sim`, whose messenger hands it to its plant link, which forwards it
+to its virtual drone in Godot as a unicast frame; resending it is free, since the plant plays a scenario once per
 change of its sequence, and the campaign resends every 200 ms until the
 plant reports the new run.
 
@@ -23,16 +23,17 @@ so when it is missing). One pair per instance, one transport discovery port per 
 (`48000 + 10 * index`), shared by its Godot (`--discovery-port`), its
 `drone_sim` (`--discovery-port`, `--node-id 1 + index`) and the campaign,
 which is one more transport node on it (`tools/telemetry_wire.py` carries
-the frame codec). Godot hosts one virtual drone per `drone_sim` it hears,
-so the sim link of a pair is the two nodes finding each other by their
-beacons, no port passed for it. The campaign owns the pair: Godot boots
+the frame codec). Godot hosts one virtual drone per node that answers `drone_sim` when
+asked who it is, so the sim link of a pair is the two nodes finding each
+other by the transport's keepalives and one identity request, no port
+passed for it. The campaign owns the pair: Godot boots
 first (the flight process finds its plant ready), the teardown terminates
 both, and the campaign is the only ground node on that port. The hub plays
 no part in a campaign.
 
 Arming and the kill switch do not go through the simulator: they are streamed
-as `Rc` messages straight at each `drone_sim` command receiver, the same
-path a real flight uses. A background thread per instance repeats the held
+as `Rc` messages straight at each `drone_sim`, unicast to its node, the
+same path a real flight uses. A background thread per instance repeats the held
 state, fast enough that the 500 ms fail-safe never trips at any `--time-scale`
 (the window is counted in simulated time).
 
