@@ -1,7 +1,10 @@
 # Communication stack - target design
 
-Status: proposal, tracked by issue #29. Nothing below is implemented; the
-present state it describes is the code on `main` at the time of writing.
+Status: implemented on branch `refactor/comm-stack-v2` (issue #29), one
+pull request pending. Section 2 describes the code as it was on `main`
+before the rework; sections 3 to 6 describe what the branch built; section
+8 is the decision that shapes the next rework (the gateway API, the Dart
+and GDScript ports as the only ports); section 9 lists what was left out.
 Companions: `docs/target-architecture.md` (the system this plugs into,
 sections 3.3 to 3.5 describe the present protocol and hub),
 `software/components/transport/README.md` (the transport as it is),
