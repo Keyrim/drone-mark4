@@ -21,6 +21,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "discovery/discovery.hpp"
+#include "messaging/messenger.hpp"
 #include "platform_sim/clock_sim.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/wire_hash.hpp"
@@ -35,9 +37,6 @@ namespace
     constexpr std::uint64_t US_PER_MS = 1000U;
     constexpr std::uint32_t DRONE_NODE = 0xD0000002U;
 
-    /// Cadence of the Announce this test broadcasts in the plant's direction.
-    constexpr std::uint64_t ANNOUNCE_PERIOD_US = 1'000'000U;
-
     /// @return a free UDP port of this host, released again on return
     std::uint16_t pickFreePort()
     {
@@ -46,7 +45,7 @@ namespace
         return probe.dataPort();
     }
 
-    /// What the plant sent, captured by the transport delivery callback.
+    /// What the plant sent, captured by the messenger's raw tap.
     struct Delivered
     {
         std::uint32_t src = 0U;                             ///< the plant's node id
@@ -93,24 +92,22 @@ TEST_CASE("the plant's GDScript transport and codec agree with the C++ ones", "[
     }
 
     // The flight process side: a transport node on a private discovery
-    // port. The plant hosts one virtual drone per DRONE_SIM Announce it
-    // hears, so this test, standing in for the application, broadcasts one
-    // once per second from its poll loop.
+    // port, with the messenger and the Discovery of drone_sim behind it.
+    // The plant hosts one virtual drone per node whose identity says
+    // DRONE_SIM, and it asks: this node only has to answer.
     const std::uint16_t discoveryPort = pickFreePort();
     mark4::UdpLink link(discoveryPort);
     REQUIRE(link.init());
     mark4::Transport transport(DRONE_NODE);
     REQUIRE(transport.addLink(link));
     REQUIRE(transport.init());
-    mark4_Envelope announce = mark4_Envelope_init_zero;
-    announce.which_body = mark4_Envelope_announce_tag;
-    announce.body.announce.kind = mark4_NodeKind_DRONE_SIM;
-    announce.body.announce.mcu = mark4_Mcu_SIM;
-    announce.body.announce.wire_hash = mark4::WIRE_HASH;
-    std::array<std::uint8_t, mark4::MAX_ENVELOPE_SIZE> announceBytes{};
-    std::size_t announceSize = 0U;
-    REQUIRE(
-        mark4::encodeEnvelope(announce, announceBytes.data(), announceBytes.size(), announceSize));
+    mark4::Messenger messenger(transport);
+    mark4_Announce self = mark4_Announce_init_zero;
+    self.kind = mark4_NodeKind_DRONE_SIM;
+    self.mcu = mark4_Mcu_SIM;
+    self.wire_hash = mark4::WIRE_HASH;
+    mark4::Discovery discovery(messenger, self);
+    REQUIRE(messenger.init());
     mark4::ClockSim clock;
 
     const std::string port = std::to_string(discoveryPort);
@@ -133,20 +130,16 @@ TEST_CASE("the plant's GDScript transport and codec agree with the C++ ones", "[
                           const_cast<char *const *>(argv.data()),
                           nullptr) == 0);
 
-    // The plant speaks first, like on the sim link, once it has heard the
-    // Announce.
+    // The plant speaks first, like on the sim link, once this node has
+    // answered the IdentityRequest its Discovery hears. The sensor envelope
+    // is read from the messenger's raw tap: the exchange is what this test
+    // judges, not the dispatch.
     Delivered delivered;
+    messenger.setTap(&onPayload, &delivered);
     const std::uint64_t deadlineUs = clock.nowUs() + PLANT_BUDGET_MS * US_PER_MS;
-    std::uint64_t nextAnnounceUs = clock.nowUs();
     while (!delivered.sensorSeen && clock.nowUs() < deadlineUs)
     {
-        const std::uint64_t nowUs = clock.nowUs();
-        if (nowUs >= nextAnnounceUs)
-        {
-            nextAnnounceUs = nowUs + ANNOUNCE_PERIOD_US;
-            REQUIRE(transport.send(mark4::BROADCAST_NODE, announceBytes.data(), announceSize));
-        }
-        transport.poll(nowUs, &onPayload, &delivered);
+        messenger.poll(clock.nowUs());
         ::usleep(2000);
     }
     REQUIRE(delivered.sensorSeen);

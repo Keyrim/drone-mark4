@@ -187,19 +187,23 @@ a broadcast.
 
 `sim-godot/scripts/transport/transport.gd` (`Mark4Transport`) is the same
 transport for the Godot plant: the same header, the same node table and
-counters, the same expiry rules, the `(src, seq)` duplicate drop, no
-relay. Its two sockets follow the `UdpLink` layout, with one
+counters, the same keepalive and expiry rules, the `(src, seq)` duplicate
+drop, no relay. Its two sockets follow the `UdpLink` layout, with one
 substitution forced by the engine: Godot's `PacketPeerUDP.bind()` sets no
 reuse option, so the discovery socket is a `UDPServer` (`listen()` sets
 `SO_REUSEADDR`, which is enough on Linux to share the port with the
 `SO_REUSEADDR + SO_REUSEPORT` sockets of the C++ nodes). The plant hosts
-one virtual drone per `DRONE_SIM` node it hears, and the lockstep
+one virtual drone per node whose identity says `DRONE_SIM`, and the lockstep
 exchange (`SimSensor`, `SimActuator`, `SimScenario`) is unicast frames
 between the plant's node id and each `drone_sim`'s: `drone_sim` adopts as
 its plant the first node whose `SimSensor` validates, until the transport
 forgets it (`platform_sim/plant_link.hpp`). Nothing is configured, no
-port is reserved. `sim-godot/tests/transport_check.gd` is its ctest
-smoke, `test_plant_link.cpp` exchanges frames with it from C++.
+port is reserved. `sim-godot/scripts/transport/discovery.gd`
+(`Mark4Discovery`) is the port of `discovery/` next to it: it asks every
+node the transport learns who it is, with the same timeout and retries,
+and answers the plant's own identity to whoever asks.
+`sim-godot/tests/transport_check.gd` is the transport's ctest smoke,
+`test_plant_link.cpp` exchanges frames with it from C++.
 
 ## Ports
 

@@ -244,10 +244,11 @@ Everything C++ lives under `software/`: the executables at its top level
   MCU UID on a board, of the MAC on the ESP32), never configured.
   Adopted by every node: drone_sim and the hub over UDP, the batch
   campaign, the Godot plant (a GDScript port,
-  `sim-godot/scripts/transport/transport.gd`, kind `plant`: it hosts one
-  virtual drone per `drone_sim` node it hears and the lockstep sensor /
-  actuator exchange is unicast frames between the two node ids, no port
-  of its own), and the firmware as a node with one `UartLink` on USART1
+  `sim-godot/scripts/transport/transport.gd`, kind `plant`: it asks every
+  node it hears who it is (`sim-godot/scripts/transport/discovery.gd`),
+  hosts one virtual drone per `DRONE_SIM` identity it learns, and the
+  lockstep sensor / actuator exchange is unicast frames between the two
+  node ids, no port of its own), and the firmware as a node with one `UartLink` on USART1
   (`Uart1Stream` over the uart1 rings; frames travel in the serial
   framing `A5 5A len_lo len_hi payload crc16`, 512 bytes at most). The
   ESP32 riding the drone (`esp32-bridge/`) is a transport relay and a
@@ -309,8 +310,9 @@ Everything C++ lives under `software/`: the executables at its top level
   `nodesOfKind()` copies the `KNOWN` entries of some kinds, an
   `AbsDirectoryListener` (fixed table of 4, attach in constructor) hears
   `onIdentity()` / `onForgotten()`. The hub holds a directory and builds
-  its node table from it; drone_sim carries a `Discovery`; the firmware,
-  the relay, the plant, the campaign and the phone do not answer yet.
+  its node table from it; drone_sim carries a `Discovery`; the plant has
+  its own GDScript port of both; the firmware, the relay, the campaign and
+  the phone do not answer yet.
 - `ota/` - the firmware update brick every node with two firmware slots
   builds on (`software/components/ota/README.md`): header-only INTERFACE
   target `ota`, `protocol` alone underneath, builds for the F405, the ESP32
