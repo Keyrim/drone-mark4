@@ -485,8 +485,9 @@ in `main()` or the App constructor).
 ### 7.3 Order inside the branch
 
 1. Design document settled for sections 3 to 6. Section 8 (one design,
-   several languages) is settled before step 6, the first step that
-   touches a port; section 9 does not block anything.
+   several languages) is settled before step 6b, the first step that
+   touches a port; section 9 does not block anything. From 6b on, no new
+   tests (section 8.3).
 2. transport v2 with its tests (keepalive, hops, variant address,
    listeners; filter and beacon tests removed).
 3. `mark4.proto`: `IdentityRequest`; `Announce` documented as an answer
@@ -496,10 +497,12 @@ in `main()` or the App constructor).
    into handlers, the two flight compositions on the messenger (4b). The
    broadcasting senders wait for step 6.
 5. discovery with its tests.
-6. The desktop nodes: hub, drone_sim; then the GDScript port and the
-   Python node so the bench works again.
+6. The desktop nodes: hub, drone_sim (done); then (6b) the GDScript port
+   of the transport and of discovery so the bench works again. The Python
+   node is not touched (section 8.2).
 7. The firmware and the relay.
-8. The mobile shim and the Dart side.
+8. The mobile app as a full Dart node: native UDP transport, messenger,
+   discovery; the NDK build, the shim and ffigen removed.
 9. Documentation: `target-architecture.md` sections 3.3 to 3.5, this
    document's status line, and the pages that still describe the beacon
    and the Announce as the basis of discovery after step 2 left them
@@ -509,49 +512,67 @@ in `main()` or the App constructor).
    (transport, protocol, hub, log, esp32-bridge) are kept in step with the
    code at every step.
 
-## 8. Open: one design, several languages
+## 8. One design, several languages
 
-The transport exists four times: C++ (`software/components/transport`),
-GDScript (`sim-godot/scripts/transport/transport.gd`), Dart over the C ABI
-of the shim (`software/mobile/native`, which compiles the C++ as is), and
-Python (`tools/batch/run_batch.py`, a hand-written node that reads and
-writes frames). Discovery will exist at least three times (C++, GDScript,
-Python; the phone reaches the C++ one through the shim). Every wire change
-in this document is a change in each of them, and nothing today checks that
-the ports agree beyond the Godot smoke test and the fact that the bench
-works.
+Decided on 2026-09-10, after the inventory below.
 
-This is a subject of its own. It does not block the C++ steps of section
-7.3 (transport, messaging, discovery, the desktop nodes), and it has to be
-settled before the first port is touched (step 6). The questions:
+### 8.1 Where the logic of each concept lives today
 
-- **Which language is the reference?** Today C++ by default, the README
-  says the GDScript port is "the same transport". Is that a rule (the C++
-  is the specification, a port copies it), or should the specification be
-  a document (the wire, the state machines, the constants) that every port
-  implements?
-- **Can ports be avoided?** Godot loads GDExtension libraries: the C++
-  transport and discovery could be compiled into one and the GDScript port
-  deleted, the way the phone already reaches the C++ through the NDK. The
-  Python node of the batch tool could drive a small C++ helper process, or
-  the batch tool could be rewritten against the same extension. Each option
-  trades a port for a build.
-- **What is a port allowed to leave out?** The Godot transport relays
-  nothing and has 64 peers; the Python node has no beacon. A profile per
-  port (what it implements, what it does not) would make those choices
-  visible.
-- **How is agreement checked?** A conformance test that drives every port
-  against the C++ one over UDP (the Godot smoke test is the seed), a shared
-  constants file generated from one source the way the codecs are, or
-  both.
+| Concept | Server | Client logic written outside C++ |
+|---|---|---|
+| transport | C++ | GDScript (`transport.gd`); Python (a hand-written node in `run_batch.py`); Dart reaches the C++ through the NDK shim |
+| identity | C++ (hub directory, drone_sim answers) | GDScript (`announce.gd`, the plant hosts a drone per `DRONE_SIM`); Dart (`NodeAnnounce` map); the pages display the `NodeTable` without logic |
+| telemetry | C++ | the hub pulls the tables in C++, but `plots/main.ts` builds `TelemetryEnable` and its keepalive itself |
+| tuning | C++ | `console/tuning.ts` builds set and list and tracks the acks; profiles are already a gateway-local service |
+| log | C++ | the hub aggregates the tables; the pages and the VS Code extension build `LogControl` themselves |
+| OTA | C++ | none: `OtaClient` in the hub, the pages and the extension send `OtaCommand`, a gateway-local service |
+| RC | C++ | Dart (`PilotManager`, 50 Hz, latches); `console/rc.ts`; Python to arm |
+| sim link | C++ (`PlantLink`) | GDScript (`sim_link.gd`, `sim_codec.gd`); Python builds `SimScenario` |
 
-The recommendation to weigh: one C++ implementation, reached from Godot
-through a GDExtension and from the phone through the shim as today, and a
-conformance test for whatever cannot be shared (the Python node, if it
-survives). It removes two ports and turns the Dart shim into the model for
-the others. Its cost is a new build target (the extension) in CI and a
-Godot project that depends on a compiled artifact. To be decided in this
-section before step 6 of section 7.3.
+OTA is the one concept whose client logic exists once, in C++, with the
+interfaces sending high-level commands. It is also the one concept designed
+with a document first.
+
+### 8.2 Decision
+
+- **C++ is the reference** of every concept that has state: transport,
+  discovery, the clients of telemetry, tuning and OTA, the log tables.
+- **TypeScript is a client of the hub and nothing else.** The hub is the
+  backend of the pages and of the VS Code extension; `gateway.proto` is the
+  API between the two, made of interface-level messages, never raw frames.
+  The front does only front: the hub carries the state (node table,
+  telemetry tables and active streams, log tables, the OTA session, the
+  profiles), and a page that closes and reopens gets it back. Telemetry
+  enable, tuning set and list, log control, RC, reboot and scenario become
+  gateway-local services like `OtaCommand`. This is the next rework, with
+  its own issue; it absorbs section 9.3 (the hub subscribes to status and
+  logs for its clients).
+- **GDScript keeps its port**, minimal: the transport (keepalive, hops) and
+  the part of discovery the plant needs (answer who it is, ask every node
+  that appears, know the kinds). The GDExtension that would remove the port
+  stays a documented option, not taken.
+- **Dart becomes a full Dart node.** Native UDP transport
+  (`RawDatagramSocket` with `broadcastEnabled`; the Wi-Fi multicast lock the
+  app already holds is what lets Android deliver the incoming broadcasts,
+  it is process-wide and serves a Dart socket as it served the C++ one),
+  messenger dispatch by tag, discovery directory, the managers above. The
+  NDK build, the shim and ffigen go. The reason: the BLoCs bind to manager
+  streams, and a manager that mirrors C++ objects behind FFI is a binding
+  layer for no Dart logic; a pure-Dart node is also testable on the host
+  against the C++ reference the day tests resume.
+- **Python ports nothing.** The campaign's node is replaced later by a C++
+  campaign node linking the components, Python orchestrating processes only
+  or going away; its own issue. Until then the Python node keeps sending
+  and reading what still works (`Rc` and `SimScenario` unicast, `Status`
+  broadcast) and is not touched.
+
+### 8.3 Tests are frozen
+
+From step 6b of this rework on, no new test is written: the existing suite
+is kept green, adapted only where an API it exercises changed. Verification
+across languages (a C++ reference peer, one conformance driver per port in
+its language's test tool, `pnpm smoke` for the gateway API) is a subject of
+its own, to be designed on its own, not built by the way.
 
 ## 9. Out of scope, and why
 
