@@ -308,7 +308,7 @@ project encodes an envelope for the wire.
 
 `log_wire` keeps its `LogSendFn` injection (the log library must not depend
 on messaging, it is a leaf); the App binds that function pointer to
-`Messenger::send()` towards the log subscribers (section 9.3 for what
+`Messenger::send()` towards the log subscribers (section 9.4 for what
 "subscribers" means until that step lands: the hub's node id, and only when
 one is known).
 
@@ -338,7 +338,7 @@ last `sample()`, the sim's RC handler stamps a packet with the last frame
 received (one period behind at most, invisible to the fail-safe timeout).
 
 What still broadcasts stays where it is until it has a destination
-(section 5 for the directory, 9.3 for the subscriptions): `envelope_io.hpp`,
+(section 5 for the directory, 9.4 for the subscriptions): `envelope_io.hpp`,
 `status_publisher.hpp` and the sim run tracker keep `sendEnvelope(transport,
 BROADCAST_NODE, ...)`, the log sink keeps its raw broadcast. What stays in
 `platform_common` for good is what is about the platform (`RcTracker`,
@@ -447,7 +447,7 @@ in `main()` or the App constructor).
   for them, towards that node, and stop when it disappears (`onNodeDown`)
   or asks them to. This rule is stated here because it is the reason the
   drone needs no `DiscoveryDirectory`; the subscription protocol that implements it
-  is section 9.3, not this rework.
+  is section 9.4, not this rework.
 
 ## 7. Impact
 
@@ -461,7 +461,7 @@ in `main()` or the App constructor).
 | `esp32-bridge/main` | `setBeacon`, `linkMask` for log lines, `setRelayFilter`, `answeredHere` | `Discovery`, `Messenger` with the tags it answers, nothing to configure for the relay |
 | `software/mobile/native` + `lib/back/transport` | `mark4_transport_set_beacon`, `NodeAnnounce` map in Dart | the shim exposes the `DiscoveryDirectory` (a C ABI over `Discovery` + `DiscoveryDirectory`, ffigen as today); Dart stops building the `Announce` and reads the directory |
 | `sim-godot/scripts/transport` | `set_beacon`, per-node dictionary, GDScript transport | GDScript transport v2 (empty keepalive, hops up), plus a GDScript `DiscoveryDirectory` |
-| `tools/batch/run_batch.py` | reads broadcast frames off the discovery socket, no beacon | a Python node that keeps alive, answers `IdentityRequest`, and subscribes to what it wants to read (section 9.3) or reads the streams the drone sends it |
+| `tools/batch/run_batch.py` | reads broadcast frames off the discovery socket, no beacon | a Python node that keeps alive, answers `IdentityRequest`, and subscribes to what it wants to read (section 9.4) or reads the streams the drone sends it |
 
 ### 7.2 What breaks on the branch, and stays broken until migrated
 
@@ -473,11 +473,11 @@ in `main()` or the App constructor).
   desktop nodes avoids that window.
 - Every stream a drone broadcasts today (status, telemetry, logs, tuning
   answers, run stats) stops reaching the ground until the consumer asks for
-  it. Section 9.3 is the missing piece; until it lands, the hub (the one
+  it. Section 9.4 is the missing piece; until it lands, the hub (the one
   consumer today) asks by unicast with the messages that already exist
   (`TelemetryEnable`), and status and logs go to the hub's node id when a
   `DiscoveryDirectory` entry of kind `GATEWAY` is known to the drone. This is a
-  temporary asymmetry, named as such in the code, that 9.3 removes.
+  temporary asymmetry, named as such in the code, that 9.4 removes.
 - Unit tests: `test_transport.cpp` (beacon, filter, hops), `test_plant_link.cpp`,
   `test_ota_e2e.cpp`, the Godot `transport_check.gd` smoke, the pages'
   tests that assume an `Announce` per node.
@@ -545,7 +545,7 @@ with a document first.
   profiles), and a page that closes and reopens gets it back. Telemetry
   enable, tuning set and list, log control, RC, reboot and scenario become
   gateway-local services like `OtaCommand`. This is the next rework, with
-  its own issue; it absorbs section 9.3 (the hub subscribes to status and
+  its own issue; it absorbs section 9.4 (the hub subscribes to status and
   logs for its clients).
 - **GDScript keeps its port**, minimal: the transport (keepalive, hops) and
   the part of discovery the plant needs (answer who it is, ask every node
@@ -585,13 +585,24 @@ handlers) is a later step; this design keeps the shape ready for it (the
 messenger is the one caller of `poll()`, its RX side is where the queue
 goes) and does not build it.
 
-### 9.2 A port layer for the clock
+### 9.2 A peek before the decode
+
+The relay used to compare one tag byte and decode only the envelopes it
+answered; the messenger decodes every payload the transport delivers, LAN
+broadcasts included, before finding that no handler claims the tag. On the
+ESP32 this is a per-broadcast cost the tag peek did not have. The generic
+fix belongs in the messenger, not in a node: read the body tag off the
+first bytes (`envelopeBodyTag()` in `protocol/envelope.hpp` does it) and
+skip the decode when no handler holds that tag. Not done in this rework;
+`Messenger::unhandled()` counts what it would save.
+
+### 9.3 A port layer for the clock
 
 `poll(nowUs)` stays: the transport does not read a clock, like flight-core
 and log. A port layer (clock, and later sockets and UART) that platform
 independent components could depend on is a separate design.
 
-### 9.3 Subscriptions for status, logs and telemetry
+### 9.4 Subscriptions for status, logs and telemetry
 
 Telemetry already has one (`TelemetryEnable` / `TelemetryAck` /
 `TelemetryData`, one active stream per drone). Status and logs do not: they
