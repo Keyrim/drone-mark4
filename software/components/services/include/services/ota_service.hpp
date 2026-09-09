@@ -7,10 +7,10 @@
 #include <array>
 #include <cstdint>
 
-#include "flight_core/flight_core.hpp"
 #include "messaging/messenger.hpp"
 #include "ota/updater.hpp"
 #include "protocol/envelope.hpp"
+#include "services/ota_gate.hpp"
 
 namespace mark4
 {
@@ -31,13 +31,14 @@ namespace mark4
         ///        leave by; must outlive the service
         /// @param updater the session state machine served; must outlive the
         ///        service
-        /// @param core flight core, read for the arming state the updater
-        ///        refuses to start a session in
-        OtaService(Messenger &messenger, OtaUpdater &updater, const FlightCore &core)
+        /// @param gate what the node answers about itself: the arming state
+        ///        the updater refuses to start a session in, and the pack
+        ///        voltage floor; must outlive the service
+        OtaService(Messenger &messenger, OtaUpdater &updater, const AbsOtaGate &gate)
             : AbsMessageHandler(messenger, TAGS),
               m_messenger(messenger),
               m_updater(updater),
-              m_core(core)
+              m_gate(gate)
         {
         }
 
@@ -54,13 +55,8 @@ namespace mark4
                        std::uint64_t nowUs) override
         {
             OtaUpdater::Inputs inputs;
-            inputs.armed = m_core.armed();
-            // TODO(tmagne): read the real pack voltage here. mark1 has no
-            // battery sense at all, so the voltage floor of
-            // docs/ota-design.md section 3.2 cannot be enforced yet; the AIO
-            // board brings the divider that makes it measurable. A desktop
-            // process has no pack behind its store and always passes.
-            inputs.voltageOk = true;
+            inputs.armed = m_gate.armed();
+            inputs.voltageOk = m_gate.voltageOk();
             inputs.nowUs = nowUs;
 
             mark4_Envelope reply;
@@ -86,7 +82,7 @@ namespace mark4
       private:
         Messenger &m_messenger;        ///< reply route, not owned
         OtaUpdater &m_updater;         ///< the session served, not owned
-        const FlightCore &m_core;      ///< arming state read per request, not owned
+        const AbsOtaGate &m_gate;      ///< what the node answers per request, not owned
         std::uint32_t m_consumed = 0U; ///< requests the updater consumed
     };
 } // namespace mark4

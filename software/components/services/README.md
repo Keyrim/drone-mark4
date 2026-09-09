@@ -41,6 +41,14 @@ an enable may run on another clock (the sim polls its messenger from the
 sensor wait, on the process clock): `TelemetryService` stamps an enable
 with the timestamp of the last `sample()`, never with the poll's instant.
 
+`OtaService` asks the node itself for the two facts the update brick
+cannot know, through the `AbsOtaGate` of `services/ota_gate.hpp`: whether
+the motors may spin and whether the pack is above the update floor. A node
+that flies passes the `FlightOtaGate` of `services/flight_ota_gate.hpp`,
+the only header here that knows a `FlightCore` exists; a node that does not
+(the ESP32 relay) writes its own two-line gate and carries the service
+without a flight core.
+
 `OtaService::consumed()` counts the requests the updater consumed. A
 composition that caches something the updater may change (the arming
 interlock read off the boot metadata) compares it once per frame and

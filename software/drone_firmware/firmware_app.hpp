@@ -6,7 +6,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
+#include "discovery/discovery.hpp"
 #include "flight_core/flight_core.hpp"
 #include "flight_core/types.hpp"
 #include "log/wire.hpp"
@@ -27,6 +29,7 @@
 #include "platform_stm32/sensor_source_stm32.hpp"
 #include "platform_stm32/uart1_stream.hpp"
 #include "protocol/envelope.hpp"
+#include "services/flight_ota_gate.hpp"
 #include "services/ota_service.hpp"
 #include "services/telemetry_service.hpp"
 #include "services/tuning_service.hpp"
@@ -136,6 +139,11 @@ namespace mark4
         /// handler of its tag; every handler below is declared after it.
         mark4::Messenger m_messenger{m_transport};
         Commands m_commands{m_messenger, *this};
+        /// Who this board is, to whoever asks. Optional because the answer
+        /// carries the identity stamped in the running image, read from the
+        /// flash at init and not knowable before it.
+        std::optional<mark4::Discovery>
+            m_discovery; ///< who this board is, once its image identity is read
         mark4::RttSink m_rttSink;
         mark4::TransportSink m_transportSink{&FirmwareApp::SendLog, this};
         mark4::I2cBus m_bus;
@@ -156,7 +164,9 @@ namespace mark4
         /// refuses to erase or program it, whatever arrives on the wire.
         mark4::FirmwareStoreStm32 m_firmwareStore{mark4::OTA_RUNNING_SLOT};
         mark4::OtaUpdater m_otaUpdater{m_firmwareStore};
-        mark4::OtaService m_otaService{m_messenger, m_otaUpdater, m_core};
+        /// What the updater asks this node about itself before a session.
+        mark4::FlightOtaGate m_otaGate{m_core};
+        mark4::OtaService m_otaService{m_messenger, m_otaUpdater, m_otaGate};
         /// Last of the services: init() freezes the registry, so every
         /// object holding a measure must exist before it runs.
         mark4::TelemetryService m_telemetryService{m_messenger, MIN_TELEMETRY_PERIOD_MS};

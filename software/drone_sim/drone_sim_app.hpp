@@ -25,6 +25,7 @@
 #include "platform_sim/sim_run_tracker.hpp"
 #include "platform_sim/truth_telemetry.hpp"
 #include "protocol/envelope.hpp"
+#include "services/flight_ota_gate.hpp"
 #include "services/ota_service.hpp"
 #include "services/telemetry_service.hpp"
 #include "services/tuning_service.hpp"
@@ -223,6 +224,8 @@ namespace mark4
         /// of the ids (see components/telemetry/README.md).
         mark4::FrameTelemetry m_frameTelemetry;
         mark4::FlightCore m_core;
+        /// What the updater asks this node about itself before a session.
+        mark4::FlightOtaGate m_otaGate{m_core};
         mark4::TruthTelemetry m_truthTelemetry;
         mark4::TuningService m_tuningService{m_messenger, m_core};
         mark4::SimRunTracker m_runTracker{m_transport};

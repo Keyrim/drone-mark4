@@ -255,8 +255,10 @@ Everything C++ lives under `software/`: the executables at its top level
   node: two links (`UartLink` to the board, the shared `UdpLink` on lwIP),
   so it relays between them as every transport node with several links
   does (every node relays, there is no switch and no filter), with its
-  own keepalives on both links; it logs through the log library, answers
-  the `LogControl` addressed to it, and
+  own keepalives on both links; nothing relayed is decoded and what is
+  addressed to it goes through its own `Messenger` to the handler of its
+  tag, so it says who it is when asked, it logs through the log library,
+  it takes the `LogControl` addressed to it, and it
   updates itself over the air (the shared `OtaUpdater` over
   `FirmwareStoreEsp32`, which
   maps the metadata onto the IDF bootloader's `otadata` and rollback; two
@@ -310,9 +312,9 @@ Everything C++ lives under `software/`: the executables at its top level
   `nodesOfKind()` copies the `KNOWN` entries of some kinds, an
   `AbsDirectoryListener` (fixed table of 4, attach in constructor) hears
   `onIdentity()` / `onForgotten()`. The hub holds a directory and builds
-  its node table from it; drone_sim carries a `Discovery`; the plant has
-  its own GDScript port of both; the firmware, the relay, the campaign and
-  the phone do not answer yet.
+  its node table from it; drone_sim, the firmware and the relay carry a
+  `Discovery`; the plant has its own GDScript port of both; the campaign
+  and the phone do not answer yet.
 - `ota/` - the firmware update brick every node with two firmware slots
   builds on (`software/components/ota/README.md`): header-only INTERFACE
   target `ota`, `protocol` alone underneath, builds for the F405, the ESP32

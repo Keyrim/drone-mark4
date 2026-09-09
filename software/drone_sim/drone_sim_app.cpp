@@ -222,7 +222,7 @@ namespace mark4
         // right after it.
         m_otaService.reset();
         m_otaUpdater.emplace(*m_firmwareStore, !broken);
-        m_otaService.emplace(m_messenger, *m_otaUpdater, m_core);
+        m_otaService.emplace(m_messenger, *m_otaUpdater, m_otaGate);
         m_otaConsumedSeen = m_otaService->consumed();
         refreshArmInterlock();
 

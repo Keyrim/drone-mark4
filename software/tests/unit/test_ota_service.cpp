@@ -18,6 +18,7 @@
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
 #include "recording_link.hpp"
+#include "services/flight_ota_gate.hpp"
 #include "services/ota_service.hpp"
 #include "transport/frame.hpp"
 #include "transport/transport.hpp"
@@ -89,9 +90,10 @@ namespace
         mark4::Transport m_transport{NODE_SELF};
         mark4::Messenger m_messenger{m_transport};
         mark4::FlightCore m_core;
+        mark4::FlightOtaGate m_gate{m_core};
         mark4::FirmwareStoreSim m_store;
         mark4::OtaUpdater m_updater{m_store};
-        mark4::OtaService m_service{m_messenger, m_updater, m_core};
+        mark4::OtaService m_service{m_messenger, m_updater, m_gate};
     };
 
     /// @param tag body tag of an empty-bodied message

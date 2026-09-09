@@ -2,18 +2,22 @@
 /// @brief The relay: one transport node with two links, the flight
 ///        controller's UART and the WiFi LAN, relaying between them. It is a
 ///        node of its own too, present on both links through the transport's
-///        keepalive: it logs through the log library, answers the LogControl
-///        addressed to it, and it updates itself over the air: the same
-///        OtaUpdater the flight controller runs, over a store that translates
-///        to the ESP-IDF OTA partitions, fed by the Ota* unicasts a hub sends
-///        it.
+///        keepalive: everything addressed to it goes through its messenger to
+///        the handler of its tag, so it answers who it is when asked, it
+///        logs through the log library, it takes the LogControl and the
+///        Reboot addressed to it, and it updates itself over the air: the
+///        same OtaUpdater the flight controller runs, over a store that
+///        translates to the ESP-IDF OTA partitions, fed by the Ota* unicasts
+///        a hub sends it.
 
 #include <array>
 #include <cinttypes>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <variant>
 
 #include "driver/uart.h"
@@ -25,12 +29,16 @@
 #include "freertos/task.h"
 #include "lwip/inet.h"
 
+#include "discovery/discovery.hpp"
 #include "log/console_sink_posix.hpp"
 #include "log/module.hpp"
 #include "log/wire.hpp"
 #include "log_modules.hpp"
+#include "messaging/messenger.hpp"
 #include "ota/updater.hpp"
-#include "protocol/envelope.hpp"
+#include "protocol/wire_hash.hpp"
+#include "services/ota_gate.hpp"
+#include "services/ota_service.hpp"
 #include "transport/node_id.hpp"
 #include "transport/transport.hpp"
 #include "transport/uart_link.hpp"
@@ -86,28 +94,28 @@ namespace mark4
         /// Bytes of a MAC address.
         constexpr std::size_t MAC_SIZE = 6U;
 
-        /// @param tag body tag read off an encoded Envelope
-        /// @return true when this node answers that body: the LogControl, the
-        ///         Reboot and the updater messages a hub addresses to it.
-        ///         Every other payload the delivery hands over is a broadcast
-        ///         passing by (every broadcast of the LAN and of the board
-        ///         crosses the delivery) and is dropped before any decoding.
-        constexpr bool answeredHere(std::uint32_t tag)
+        /// Bytes of the MAC the node name carries, its low half.
+        constexpr std::size_t MAC_NAME_BYTES = 3U;
+
+        /// @param mac the WiFi MAC, the node name's low half
+        /// @return what this node answers when asked who it is: what it is,
+        ///         what it was built from and the schema it speaks
+        mark4_Announce relayIdentity(const std::array<std::uint8_t, MAC_SIZE> &mac)
         {
-            switch (tag)
-            {
-                case mark4_Envelope_log_control_tag:
-                case mark4_Envelope_reboot_tag:
-                case mark4_Envelope_ota_status_request_tag:
-                case mark4_Envelope_ota_begin_tag:
-                case mark4_Envelope_ota_chunk_tag:
-                case mark4_Envelope_ota_finish_tag:
-                case mark4_Envelope_ota_revert_tag:
-                case mark4_Envelope_ota_abort_tag:
-                    return true;
-                default:
-                    return false;
-            }
+            mark4_Announce self = mark4_Announce_init_zero;
+            self.kind = mark4_NodeKind_RELAY;
+            static_cast<void>(std::snprintf(self.name,
+                                            sizeof(self.name),
+                                            "relay-%02x%02x%02x",
+                                            mac[MAC_SIZE - MAC_NAME_BYTES],
+                                            mac[MAC_SIZE - 2U],
+                                            mac[MAC_SIZE - 1U]));
+            self.mcu = mark4_Mcu_ESP32C3;
+            self.build_epoch = BRIDGE_BUILD_EPOCH;
+            static_cast<void>(
+                std::snprintf(self.git_hash, sizeof(self.git_hash), "%s", BRIDGE_GIT_HASH));
+            self.wire_hash = WIRE_HASH;
+            return self;
         }
 
         /// The UART behind the UartLink, over the ESP-IDF driver rings.
@@ -141,9 +149,60 @@ namespace mark4
             std::uint32_t m_txFull = 0U; ///< frames refused for lack of room
         };
 
+        struct Relay;
+
         /// @brief Route of this node's own log lines and module table, defined
         ///        below the composition it reads.
         bool sendLogLine(void *context, const std::uint8_t *data, std::size_t size);
+
+        /// @brief Publishes this node's module table, defined below the
+        ///        composition it reads.
+        /// @param relay the composition
+        void publishModules(Relay &relay);
+
+        /// The node's own commands: what is neither the updater's business
+        /// nor a frame passing through.
+        class Commands final : public AbsMessageHandler
+        {
+          public:
+            /// Body tags this handler consumes.
+            static constexpr std::array<pb_size_t, 2> TAGS = {mark4_Envelope_log_control_tag,
+                                                              mark4_Envelope_reboot_tag};
+
+            /// @param messenger messenger to attach to
+            /// @param relay composition the commands act on
+            Commands(Messenger &messenger, Relay &relay)
+                : AbsMessageHandler(messenger, TAGS),
+                  m_relay(relay)
+            {
+            }
+
+            bool onMessage(std::uint32_t src,
+                           const mark4_Envelope &envelope,
+                           std::uint64_t nowUs) override;
+
+          private:
+            Relay &m_relay; ///< the composition, not owned
+        };
+
+        /// The gate of a node that does not fly.
+        class RelayOtaGate final : public AbsOtaGate
+        {
+          public:
+            /// A radio has nothing to arm and no battery floor to watch; the
+            /// one fact that matters is the clock the session timeout runs on.
+            /// @return false, always
+            [[nodiscard]] bool armed() const override
+            {
+                return false;
+            }
+
+            /// @return true, always
+            [[nodiscard]] bool voltageOk() const override
+            {
+                return true;
+            }
+        };
 
         /// Logs every node the transport hears for the first time or forgets.
         class PresenceLog final : public AbsPresenceListener
@@ -178,20 +237,33 @@ namespace mark4
         /// construction order, dependencies by reference.
         struct Relay
         {
-            UartStream stream;                         ///< the UART driver rings
-            UartLink uart{stream};                     ///< the board's link, serial framing
-            UdpLink lan;                               ///< the WiFi LAN, discovery port 47820
-            Transport transport;                       ///< the node, relaying between the two
+            UartStream stream;     ///< the UART driver rings
+            UartLink uart{stream}; ///< the board's link, serial framing
+            UdpLink lan;           ///< the WiFi LAN, discovery port 47820
+            Transport transport;   ///< the node, relaying between the two
+            /// Every message addressed to this node goes through it to the one
+            /// handler of its tag; every handler below is declared after it.
+            Messenger messenger{transport};            ///< decodes for the handlers below
             PresenceLog presence{transport};           ///< one line per node up or gone
             TransportSink logSink{&sendLogLine, this}; ///< its lines, as broadcasts
+            Commands commands{messenger, *this};       ///< the LogControl and the Reboot
+            Discovery discovery;                       ///< who this node is, on request
+            RelayOtaGate otaGate;                      ///< what the updater asks of a radio
             FirmwareStoreEsp32 store;                  ///< the two OTA partitions
             OtaUpdater updater{store};                 ///< the update session over them
-            bool storeReady = false;                   ///< the partition table is the two-slot one
+            /// The updater on the wire, absent until the store is ready: a
+            /// node whose flash is not laid out for two slots claims no
+            /// updater tag at all, which is the refusal it used to answer.
+            std::optional<OtaService>
+                ota;                     ///< the updater on the wire, once the store is known good
+            bool storeReady = false;     ///< the partition table is the two-slot one
             bool sessionWasOpen = false; ///< updater state at the last poll, for the log
 
             /// @param nodeId this relay's transport identity
-            explicit Relay(std::uint32_t nodeId)
-                : transport(nodeId)
+            /// @param identity what it answers when asked who it is
+            Relay(std::uint32_t nodeId, const mark4_Announce &identity)
+                : transport(nodeId),
+                  discovery(messenger, identity)
             {
             }
         };
@@ -203,99 +275,23 @@ namespace mark4
 
         /// @brief Publishes this node's module table, as any node does after
         ///        its first keepalive and on every level change.
-        /// @param context the composition
-        void publishModules(void *context)
-        {
-            static_cast<void>(logPublishModules(&sendLogLine, context));
-        }
-
-        /// @param context unused
-        /// @return the instant the log records are stamped with [us]
-        std::uint64_t logClock(void *context)
-        {
-            static_cast<void>(context);
-            return static_cast<std::uint64_t>(esp_timer_get_time());
-        }
-
-        /// @brief Sends one Envelope to one node, encoded on the stack.
         /// @param relay the composition
-        /// @param dst node to reach
-        /// @param envelope message to send
-        void sendTo(Relay &relay, std::uint32_t dst, const mark4_Envelope &envelope)
+        void publishModules(Relay &relay)
         {
-            std::array<std::uint8_t, MAX_ENVELOPE_SIZE> bytes{};
-            std::size_t size = 0U;
-            if (encodeEnvelope(envelope, bytes.data(), bytes.size(), size))
-            {
-                static_cast<void>(relay.transport.send(dst, bytes.data(), size));
-            }
+            static_cast<void>(logPublishModules(&sendLogLine, &relay));
         }
 
-        /// @brief Offers a decoded message to the updater and answers it.
-        /// @param relay the composition
-        /// @param src node that sent it, where the reply goes
-        /// @param envelope decoded message
-        /// @return true when the updater claimed it, whatever it answered
-        bool serveOta(Relay &relay, std::uint32_t src, const mark4_Envelope &envelope)
+        bool Commands::onMessage(std::uint32_t src,
+                                 const mark4_Envelope &envelope,
+                                 std::uint64_t nowUs)
         {
-            if (!relay.storeReady)
-            {
-                return false;
-            }
-            // A radio has nothing to arm and no battery floor to watch; the
-            // one fact that matters is the clock the session timeout runs on.
-            OtaUpdater::Inputs inputs;
-            inputs.nowUs = static_cast<std::uint64_t>(esp_timer_get_time());
-            mark4_Envelope reply;
-            const bool consumed = relay.updater.handle(envelope, inputs, reply);
-            if (reply.which_body != 0U)
-            {
-                sendTo(relay, src, reply);
-            }
-            if (reply.which_body == mark4_Envelope_ota_ack_tag &&
-                reply.body.ota_ack.result != mark4_OtaResult_OTA_OK)
-            {
-                OTA.warn("op %d refused: result %d",
-                         static_cast<int>(reply.body.ota_ack.op),
-                         static_cast<int>(reply.body.ota_ack.result));
-            }
-            return consumed;
-        }
-
-        /// @brief Takes what the transport delivers to this node: the
-        ///        LogControl a client sends it, the updater messages and the
-        ///        Reboot of an update session. Every other payload is a
-        ///        broadcast passing by and is dropped on its tag, before any
-        ///        decoding.
-        /// @param context the composition
-        /// @param src node that sent it
-        /// @param payload encoded Envelope
-        /// @param size its size
-        void onPayload(void *context,
-                       std::uint32_t src,
-                       const std::uint8_t *payload,
-                       std::size_t size)
-        {
-            Relay &relay = *static_cast<Relay *>(context);
-            if (!answeredHere(envelopeBodyTag(payload, size)))
-            {
-                return;
-            }
-            mark4_Envelope envelope = mark4_Envelope_init_zero;
-            if (!decodeEnvelope(payload, size, envelope))
-            {
-                return;
-            }
-            if (serveOta(relay, src, envelope))
-            {
-                return;
-            }
+            static_cast<void>(nowUs);
             switch (envelope.which_body)
             {
                 case mark4_Envelope_log_control_tag:
                     if (logHandleControl(envelope.body.log_control))
                     {
-                        publishModules(context);
+                        publishModules(m_relay);
                     }
                     break;
                 case mark4_Envelope_reboot_tag:
@@ -309,6 +305,15 @@ namespace mark4
                 default:
                     break;
             }
+            return true;
+        }
+
+        /// @param context unused
+        /// @return the instant the log records are stamped with [us]
+        std::uint64_t logClock(void *context)
+        {
+            static_cast<void>(context);
+            return static_cast<std::uint64_t>(esp_timer_get_time());
         }
 
         /// @brief Opens the UART the flight controller is wired to.
@@ -385,12 +390,17 @@ extern "C" void relayRun(void)
     ESP_ERROR_CHECK(esp_read_mac(mac.data(), ESP_MAC_WIFI_STA));
     // Static: the composition lives for the whole run and is too large for
     // the main task's stack (two frame buffers and the node table).
-    static Relay relay(hashNodeId(mac.data(), mac.size()));
+    static Relay relay(hashNodeId(mac.data(), mac.size()), relayIdentity(mac));
 
     // A relay whose flash is not laid out for two slots still relays; it
-    // only refuses to update itself, and says so once.
+    // only refuses to update itself, and says so once. Without the service
+    // no handler claims the updater tags, which is that refusal.
     relay.storeReady = relay.store.init();
-    if (!relay.storeReady)
+    if (relay.storeReady)
+    {
+        relay.ota.emplace(relay.messenger, relay.updater, relay.otaGate);
+    }
+    else
     {
         BOOT.error("no two-slot partition table: the relay cannot update over the air");
     }
@@ -400,6 +410,11 @@ extern "C" void relayRun(void)
         !relay.transport.addLink(relay.lan) || !relay.transport.init())
     {
         BOOT.error("cannot start the transport");
+        std::abort();
+    }
+    if (!relay.messenger.init())
+    {
+        BOOT.error("two handlers claim the same message");
         std::abort();
     }
     // lwIP has no getifaddrs(): the LAN link is told the one address a
@@ -421,10 +436,10 @@ extern "C" void relayRun(void)
     bool modulesPublished = false;
     for (;;)
     {
-        // The delivery takes what is addressed to this node (LogControl,
-        // updater messages, Reboot); every other payload is relayed or
-        // dropped by the transport.
-        relay.transport.poll(static_cast<std::uint64_t>(esp_timer_get_time()), &onPayload, &relay);
+        // The messenger polls the transport and hands what is addressed to
+        // this node to the handler of its tag; every other payload is
+        // relayed or dropped by the transport.
+        relay.messenger.poll(static_cast<std::uint64_t>(esp_timer_get_time()));
         if (relay.storeReady)
         {
             relay.updater.tick(static_cast<std::uint64_t>(esp_timer_get_time()));
@@ -438,7 +453,7 @@ extern "C" void relayRun(void)
         {
             // The first poll sent the first keepalive: the table follows it.
             modulesPublished = true;
-            publishModules(&relay);
+            publishModules(relay);
         }
         const std::int64_t nowUs = esp_timer_get_time();
         if (nowUs >= nextStatsUs)

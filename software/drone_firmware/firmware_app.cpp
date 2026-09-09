@@ -1,6 +1,7 @@
 #include "firmware_app.hpp"
 
 #include <cstdint>
+#include <cstring>
 
 #include "flight_core/types.hpp"
 #include "log/module.hpp"
@@ -109,6 +110,15 @@ namespace mark4
         {
             otaGitHashToWire(identity.gitHash, gitHash);
         }
+        // The same identity is what this node answers when asked who it is.
+        mark4_Announce self = mark4_Announce_init_zero;
+        self.kind = mark4_NodeKind_FIRMWARE;
+        std::strncpy(self.name, "mark4-fc", sizeof(self.name) - 1U);
+        self.mcu = static_cast<mark4_Mcu>(m_firmwareStore.mcuId());
+        self.build_epoch = identity.buildEpoch;
+        std::strncpy(self.git_hash, gitHash, sizeof(self.git_hash) - 1U);
+        self.wire_hash = WIRE_HASH;
+        m_discovery.emplace(m_messenger, self);
         BOOT.info("boot: node %08lx slot %c build %lu %s wire %08lx",
                   static_cast<unsigned long>(m_transport.nodeId()),
                   m_firmwareStore.runningSlot() == OTA_SLOT_B ? 'B' : 'A',
