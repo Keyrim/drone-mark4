@@ -44,6 +44,8 @@ source of truth.
   - [Discriminating failure reasons](#discriminating-failure-reasons)
 - [Logging](#logging)
 - [Polymorphism](#polymorphism)
+  - [Abstract classes across the RTTI boundary](#abstract-classes-across-the-rtti-boundary)
+  - [Self-registration in constructors](#self-registration-in-constructors)
   - [Diamond inheritance](#diamond-inheritance)
   - [Multiple inheritance as capability mixins](#multiple-inheritance-as-capability-mixins)
   - [`equals()` vs `operator==`](#equals-vs-operator)
@@ -307,6 +309,32 @@ Abstract base classes (`Abs`-prefixed) must declare a virtual destructor:
 
 2. **Polymorphic value type** - for small, copyable parameter objects that share a base and need
    value semantics. Provide a virtual `cloneUniquePtr()` and store as `std::unique_ptr<Base>`.
+
+### Abstract classes across the RTTI boundary
+
+The component libraries are built with `-fno-rtti` (`drone_strict`); the desktop
+executables and the tests are not. An abstract class defined in a component and
+derived from in an executable must keep its virtual destructor (and any other
+virtual it defines) inline in the header, `= default` or with a body. An
+out-of-line virtual destructor makes the component's translation unit the key
+function, the one that emits the vtable and the typeinfo, and a library built
+without RTTI emits no typeinfo: the executable then fails to link with
+`undefined reference to typeinfo for mark4::AbsSomething`. `AbsPresenceListener`
+(`transport/transport.hpp`) and `AbsMessageHandler` (`messaging/messenger.hpp`)
+follow this and say why in a comment.
+
+### Self-registration in constructors
+
+A class that registers itself with a registry in its constructor and unregisters
+in its destructor (`TelemetryEntry`, `LogModule`, `AbsPresenceListener`,
+`AbsMessageHandler`) must not call a virtual method of its own during either.
+Inside the base constructor or destructor the object's dynamic type is the base,
+so a pure virtual resolves to nothing (`pure virtual method called`, then
+`std::terminate`) and an overridden one runs the base version. Whatever the
+registry needs to know at registration time travels as a constructor argument
+instead: `AbsMessageHandler` takes its tag list as a `std::span` over a
+`static constexpr std::array` of the derived class and stores it for the
+destructor to read.
 
 ### Diamond inheritance
 

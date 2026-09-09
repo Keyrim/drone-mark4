@@ -243,9 +243,12 @@ meets the transport.
 class AbsMessageHandler
 {
   public:
-    explicit AbsMessageHandler(Messenger &m);   // m.attach(*this)
-    virtual ~AbsMessageHandler();                // m.detach(*this)
-    virtual std::span<const pb_size_t> tags() const = 0;   // which_body values it consumes
+    // tags: the which_body values it consumes, a span over a static constexpr
+    // array of the derived class. It travels through the constructor because
+    // a virtual call there would run before the derived vtable exists.
+    explicit AbsMessageHandler(Messenger &m, std::span<const pb_size_t> tags);  // m.attach(*this)
+    virtual ~AbsMessageHandler();                                               // m.detach(*this)
+    std::span<const pb_size_t> tags() const;
     virtual bool onMessage(uint32_t src, const mark4_Envelope &e, uint64_t nowUs) = 0;
 };
 
@@ -260,9 +263,11 @@ class Messenger
 };
 ```
 
-One handler per message type. A handler declares the `which_body` values
-it consumes through `tags()`; its constructor takes the messenger and
-attaches, its destructor detaches. Attaching fills a table indexed by tag
+One handler per message type. A handler hands the `which_body` values it
+consumes to the base constructor, which attaches it; its destructor
+detaches. A claim is made once, at construction: a handler whose tag was
+already taken owns no slot, hears nothing on it, never takes it over, and
+`init()` reports it for as long as it lives. Attaching fills a table indexed by tag
 (one slot per `Envelope` body, about forty), so dispatch is a direct
 lookup and there is no chain and no order: a tag that is already taken is
 an init failure, reported by the App's `init()` like any other. Declaring
