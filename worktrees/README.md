@@ -75,8 +75,7 @@ for everyone; run the step of the area you touch.
   --frozen-lockfile` then `pnpm build` (`node_modules/`, `dist/`, `src/gen/`
   and the `.vsix` are gitignored).
 - **Mobile app** (`software/mobile`): `flutter pub get && ./tool/gen.sh`
-  writes `.dart_tool/` and `lib/gen/` (Dart codec, wire hash, ffigen
-  binding). Without it `flutter analyze` reports a `uri_does_not_exist`
+  writes `.dart_tool/` and `lib/gen/` (Dart codec, wire hash). Without it `flutter analyze` reports a `uri_does_not_exist`
   error for every generated import and says nothing about your changes.
 - **Godot plant** (`sim-godot`): the codec comes from the desktop build
   above, the import cache from the same `--import` run, or from the editor

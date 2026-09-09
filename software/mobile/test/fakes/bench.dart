@@ -24,7 +24,7 @@ class Bench {
     SharedPreferences.setMockInitialValues({});
     backend = Backend(
       platform: this.platform,
-      openNode: (_, _) => node,
+      openNode: (_, _) async => node,
       drawNodeId: () => phoneNodeId,
       clockUs: () => nowUs,
       pollPeriod: null,

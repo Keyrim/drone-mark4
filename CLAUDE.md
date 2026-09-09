@@ -98,17 +98,17 @@ cd software/hub/pages && pnpm install --frozen-lockfile && pnpm build
 cd tools/vscode-mark4 && pnpm install --frozen-lockfile && pnpm build && pnpm package
 
 # Mobile app (Flutter, Android; software/mobile is the Flutter project root,
-# docs/contributing/dart-guidelines.md the conventions). tool/gen.sh writes
-# lib/gen/ (gitignored): the Dart codec of mark4.proto, wire_hash.dart and the
-# ffigen binding of native/include/mark4/transport_shim.h; every analyze /
-# test / build needs it first (the "mobile gen" VS Code task runs it, and the
+# docs/contributing/dart-guidelines.md the conventions). Pure Dart, no
+# native code. tool/gen.sh writes lib/gen/ (gitignored): the Dart codec of
+# mark4.proto and wire_hash.dart; every analyze / test / build needs it
+# first (the "mobile gen" VS Code task runs it, and the
 # "mobile (flutter debug)" launch config runs it before debugging; a build
 # error right after a schema change is a stale lib/gen). The phone is
 # reached over Wi-Fi:
 # ./scripts/adb_wifi.sh discovers, pairs and connects it (wireless debugging
 # on, same Wi-Fi). Never run flutter on the host.
 cd software/mobile && flutter pub get && ./tool/gen.sh && flutter analyze && dart format --set-exit-if-changed lib test && flutter test
-flutter build apk --debug --target-platform android-arm64   # compiles the transport with the NDK too
+flutter build apk --debug --target-platform android-arm64
 
 # Monte Carlo throw campaign through headless Godot (see tools/batch/README.md;
 # needs the desktop build for drone_sim and the generated python codec)
@@ -313,8 +313,8 @@ Everything C++ lives under `software/`: the executables at its top level
   `AbsDirectoryListener` (fixed table of 4, attach in constructor) hears
   `onIdentity()` / `onForgotten()`. The hub holds a directory and builds
   its node table from it; drone_sim, the firmware and the relay carry a
-  `Discovery`; the plant has its own GDScript port of both; the campaign
-  and the phone do not answer yet.
+  `Discovery`; the plant has its own GDScript port of both and the phone
+  its Dart one; only the campaign does not answer yet.
 - `ota/` - the firmware update brick every node with two firmware slots
   builds on (`software/components/ota/README.md`): header-only INTERFACE
   target `ota`, `protocol` alone underneath, builds for the F405, the ESP32
@@ -363,18 +363,24 @@ Everything C++ lives under `software/`: the executables at its top level
   the table.
 
 The mobile app (`software/mobile`, Flutter, Android) is one more node, kind
-`PHONE`: the C++ transport compiled by the NDK from `software/components`
-as it is (`native/CMakeLists.txt` adds the component with `DRONE_PLATFORM`
-`android`; the shared warning targets come from
-`software/cmake/drone_targets.cmake`) behind the C ABI of
-`native/include/mark4/transport_shim.h`, bound by ffigen, never by hand.
+`PHONE`: the whole communication stack is Dart, mirroring the components
+constant for constant, and the app compiles no native code.
+`lib/back/transport/` holds the frame codec, the `UdpLink` over two
+`RawDatagramSocket`s (the shared discovery port and an ephemeral data
+socket) and the `TransportNode` (node table, keepalive, expiry, duplicate
+and loss accounting, no relay: one link); `lib/back/messaging/` the
+`Messenger` (decode once, dispatch by `Envelope` body case, unicast
+`send`); `lib/back/discovery/` the `Discovery` that answers an
+`IdentityRequest` with the phone's `Announce` and the `DiscoveryDirectory`
+that asks every node that appears and publishes who is around.
 `lib/back/` is the managers (`Backend` boots them in declaration order like
-an App class; `TransportManager` owns the node and polls it, `DroneManager`
-follows the connected drone and decodes its `Status`, `GamepadManager` the
-controller read at the Android activity (`GamepadBridge.kt`, one event
-channel), `PilotManager` the transmitter (the `Rc` stream at 50 Hz, the
-kill and arm latches, the gestures, the haptic cues), `SettingsManager`
-the theme), each exposing its state as a `ValueStream` of an `Equatable`
+an App class; `TransportManager` owns that stack and polls it,
+`DroneManager` follows the connected drone and reads its `Status` through
+a handler, `GamepadManager` the controller read at the Android activity
+(`GamepadBridge.kt`, one event channel), `PilotManager` the transmitter
+(the `Rc` stream at 50 Hz, the kill and arm latches, the gestures, the
+haptic cues), `SettingsManager` the theme), each exposing its state as a
+`ValueStream` of an `Equatable`
 and its commands as methods returning a `Future`; `lib/pages/` is one BLoC
 per page (the drone page is the cockpit); `lib/theme/` every size and
 color through `flutter_screenutil`. `docs/mobile-app.md` has the structure

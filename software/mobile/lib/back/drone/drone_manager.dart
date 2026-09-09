@@ -1,19 +1,24 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:logging/logging.dart';
 import 'package:mark4/back/drone/drone_models.dart';
 import 'package:mark4/back/manager.dart';
+import 'package:mark4/back/messaging/messenger.dart';
+import 'package:mark4/back/transport/frame.dart';
 import 'package:mark4/back/transport/node_id.dart';
 import 'package:mark4/back/transport/node_kind.dart';
 import 'package:mark4/back/transport/transport_manager.dart';
 import 'package:mark4/back/transport/transport_snapshot.dart';
+import 'package:mark4/gen/mark4.pb.dart';
 import 'package:rxdart/rxdart.dart';
 
 final Logger _log = Logger('back/drone');
 
 /// The drones of the network, the one the user connected to, and what that
-/// one reports. Reads the transport's node table and the Status broadcasts
-/// of the connected drone; the pilot service addresses [connection].
+/// one reports. Reads the discovery directory and the transport's node
+/// table, and the Status broadcasts of the connected drone; the pilot
+/// service addresses [connection].
 class DroneManager extends AbsManager {
   DroneManager(
     this._transport, {
@@ -35,7 +40,7 @@ class DroneManager extends AbsManager {
   );
   final BehaviorSubject<DroneStatus?> _status = BehaviorSubject.seeded(null);
   StreamSubscription<TransportSnapshot>? _subscription;
-  StreamSubscription<InboundEnvelope>? _envelopes;
+  late final _StatusHandler _statusHandler = _StatusHandler(_onStatus);
   int _targetId = broadcastNode;
   int _lastStatusUs = 0;
 
@@ -52,15 +57,18 @@ class DroneManager extends AbsManager {
 
   @override
   Future<bool> init() async {
+    final messenger = _transport.messenger;
+    if (messenger == null || !messenger.register(_statusHandler)) {
+      _log.severe('the dispatch table refused the Status handler');
+      return false;
+    }
     _subscription = _transport.snapshots.listen(_onSnapshot);
-    _envelopes = _transport.envelopes.listen(_onEnvelope);
     return true;
   }
 
   @override
   Future<void> dispose() async {
-    await _envelopes?.cancel();
-    _envelopes = null;
+    _transport.messenger?.unregister(_statusHandler);
     await _subscription?.cancel();
     _subscription = null;
     await _status.close();
@@ -93,42 +101,40 @@ class DroneManager extends AbsManager {
     _emit(DroneConnection.none);
   }
 
-  void _onEnvelope(InboundEnvelope inbound) {
-    if (inbound.src != _targetId || !inbound.envelope.hasStatus()) {
-      return;
+  /// One Status of the drone the user connected to; anything else is not
+  /// this manager's business.
+  bool _onStatus(int src, Status wire, int nowUs) {
+    if (src != _targetId) {
+      return false;
     }
-    final nowUs = _transport.nowUs();
-    final status = DroneStatus.fromWire(inbound.envelope.status, nowUs);
+    final status = DroneStatus.fromWire(wire, nowUs);
     final previous = _status.value;
     final phaseChanged = previous == null || previous.phase != status.phase;
     if (phaseChanged) {
       _log.info('drone ${formatNodeId(_targetId)}: phase ${status.phase.name}');
     }
     if (!phaseChanged && nowUs - _lastStatusUs < statusPeriod.inMicroseconds) {
-      return;
+      return true;
     }
     _lastStatusUs = nowUs;
     _status.add(status);
+    return true;
   }
 
   void _onSnapshot(TransportSnapshot snapshot) {
-    final drones = <DroneSummary>[];
-    var others = 0;
-    for (final node in snapshot.nodes) {
-      final announce = node.announce;
-      if (announce != null && isDroneKind(announce.kind)) {
-        drones.add(
-          DroneSummary(
-            nodeId: node.id,
-            name: announce.name,
-            kind: announce.kind,
-          ),
-        );
-      } else {
-        ++others;
-      }
-    }
+    final directory = _transport.directory.value;
+    final drones = [
+      for (final entry in directory.nodesOfKind(droneKinds))
+        DroneSummary(
+          nodeId: entry.id,
+          name: entry.announce!.name,
+          kind: entry.announce!.kind,
+        ),
+    ];
     drones.sort((a, b) => a.nodeId.compareTo(b.nodeId));
+    // Everything else on the network: another kind, or a node that has not
+    // said who it is yet.
+    final others = math.max(0, snapshot.nodes.length - drones.length);
     final roster = DroneRoster(drones: drones, otherNodeCount: others);
     if (roster != _roster.value) {
       _roster.add(roster);
@@ -138,7 +144,7 @@ class DroneManager extends AbsManager {
     }
     final current = _connection.value;
     final node = snapshot.node(_targetId);
-    final announce = node?.announce;
+    final announce = directory.find(_targetId)?.announce;
     if (node == null || announce == null) {
       // Silent, or heard but not announced yet: what was known stays.
       _emit(
@@ -169,4 +175,20 @@ class DroneManager extends AbsManager {
       _connection.add(connection);
     }
   }
+}
+
+/// The Status case of the Envelope, routed to the manager. A handler is one
+/// object per case (docs of `back/messaging`), so the manager registers this
+/// one rather than being a handler itself.
+class _StatusHandler implements AbsMessageHandler {
+  _StatusHandler(this._onStatus);
+
+  final bool Function(int src, Status status, int nowUs) _onStatus;
+
+  @override
+  List<Envelope_Body> get bodyCases => const [Envelope_Body.status];
+
+  @override
+  bool onMessage(int src, Envelope envelope, int nowUs) =>
+      _onStatus(src, envelope.status, nowUs);
 }

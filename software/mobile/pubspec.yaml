@@ -23,8 +23,6 @@ dependencies:
   # 64-bit integers its messages carry.
   protobuf: ^6.0.0
   fixnum: ^1.1.1
-  # The transport: generated dart:ffi binding of native/transport_shim.h.
-  ffi: ^2.2.0
 
 dev_dependencies:
   flutter_test:
@@ -34,7 +32,6 @@ dev_dependencies:
   # Code generators driven by tool/gen.sh; pinned by pubspec.lock like every
   # other dependency, nothing installed globally.
   protoc_plugin: ^25.0.0
-  ffigen: ^21.0.0
 
 flutter:
   uses-material-design: true

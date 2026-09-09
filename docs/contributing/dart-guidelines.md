@@ -24,10 +24,10 @@ lib/
     manager.dart AbsManager
     backend.dart the composition root
     <area>/      one directory per manager: transport/, drone/, gamepad/, settings/, platform/
+                 plus the two layers over the transport: messaging/, discovery/
   pages/<page>/  one directory per page: <page>_page.dart, _bloc, _event, _state
   widgets/       widgets shared by several pages
-  gen/           generated (gitignored): protobuf codec, wire hash, ffigen binding
-native/          the C++ side: the C ABI shim and the CMake project Gradle drives
+  gen/           generated (gitignored): protobuf codec, wire hash
 tool/            gen.sh and its helpers
 test/            mirrors lib/ (back/, pages/), fakes in test/fakes/
 ```
@@ -95,18 +95,16 @@ test/            mirrors lib/ (back/, pages/), fakes in test/fakes/
 
 - `lib/gen/` is written by `tool/gen.sh` and gitignored: the Dart codec of
   `mark4.proto` (protoc from `grpcio-tools`, `protoc_plugin` from the
-  pubspec), `wire_hash.dart` (the same first 8 hex characters of the SHA-256
-  of the schema as CMake bakes into every C++ node), and the ffigen binding
-  of `native/include/mark4/transport_shim.h`. Never write `dart:ffi`
-  bindings by hand; a new native function is a line in the C header and a
-  rerun of the script. A stale `lib/gen/` is the first thing to suspect
-  when the app stops building after a schema change: the `mobile gen`
-  VS Code task reruns the script (after `flutter pub get`), and the
-  `mobile (flutter debug)` launch configuration of the workspace runs it
-  before every debug session.
-- The native side lists no source of the transport: `native/CMakeLists.txt`
-  adds `software/components/transport` as it is, with `DRONE_PLATFORM`
-  `android`.
+  pubspec) and `wire_hash.dart` (the same first 8 hex characters of the
+  SHA-256 of the schema as CMake bakes into every C++ node). A stale
+  `lib/gen/` is the first thing to suspect when the app stops building
+  after a schema change: the `mobile gen` VS Code task reruns the script
+  (after `flutter pub get`), and the `mobile (flutter debug)` launch
+  configuration of the workspace runs it before every debug session.
+- The app compiles no native code. What the phone needs from the wire
+  (the transport, the dispatch, the discovery) is written in Dart under
+  `lib/back/`, mirroring `software/components` constant for constant: a
+  rule that changes there changes here, in the same words.
 
 ## Naming
 

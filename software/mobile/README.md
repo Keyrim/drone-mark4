@@ -13,14 +13,17 @@ longer heard while staying on its page. The phone is one more node: kind
 
 ```sh
 flutter pub get
-./tool/gen.sh               # lib/gen/: protobuf codec, wire hash, ffigen binding
+./tool/gen.sh               # lib/gen/: protobuf codec, wire hash
 flutter analyze && dart format --set-exit-if-changed lib test && flutter test
 ../../scripts/adb_wifi.sh   # phone in wireless debugging, same Wi-Fi
 flutter run                 # or: flutter build apk --debug --target-platform android-arm64
 ```
 
-`native/` is the C++ side: `software/components/transport` compiled by the
-NDK as it is (no copy, no source list) behind the C ABI of
-`native/include/mark4/transport_shim.h`, which ffigen binds. Built by the
-`mobile` CI job from the devcontainer image (Flutter, Android SDK, NDK,
-libclang pinned in `.devcontainer/Dockerfile`).
+The app is pure Dart: it compiles no native code, and the communication
+stack of the phone is written here, mirroring `software/components`
+constant for constant. `lib/back/transport/` is the frame codec, the UDP
+link and the node itself; `lib/back/messaging/` decodes one payload once
+and dispatches it by `Envelope` body case; `lib/back/discovery/` answers
+who the phone is and keeps a directory of who is around. Built by the
+`mobile` CI job from the devcontainer image (Flutter and the Android SDK
+pinned in `.devcontainer/Dockerfile`).

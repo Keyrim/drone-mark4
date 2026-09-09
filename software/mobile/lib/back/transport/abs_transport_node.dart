@@ -1,8 +1,9 @@
 import 'dart:typed_data';
 
 import 'package:equatable/equatable.dart';
+import 'package:mark4/back/transport/udp_link.dart';
 
-/// One live node of the transport's table, as the C++ transport keeps it.
+/// One live node of the transport's table.
 class NodeInfo extends Equatable {
   const NodeInfo({
     required this.id,
@@ -12,6 +13,7 @@ class NodeInfo extends Equatable {
     required this.received,
     required this.lost,
     required this.duplicates,
+    required this.hops,
   });
 
   /// Node id, never 0.
@@ -35,9 +37,11 @@ class NodeInfo extends Equatable {
   /// Frames carrying an already seen number.
   final int duplicates;
 
+  /// Relays the last frame from it crossed; 0 for a direct neighbour.
+  final int hops;
+
   /// Dotted IPv4 and port, `192.168.4.1:47821`.
-  String get address =>
-      '${(host >> 24) & 0xFF}.${(host >> 16) & 0xFF}.${(host >> 8) & 0xFF}.${host & 0xFF}:$port';
+  String get address => '${UdpLink.hostText(host)}:$port';
 
   @override
   List<Object?> get props => [
@@ -48,10 +52,11 @@ class NodeInfo extends Equatable {
     received,
     lost,
     duplicates,
+    hops,
   ];
 }
 
-/// Counters of the node, transport and shim together.
+/// Counters of the node and its link.
 class TransportStats extends Equatable {
   const TransportStats({
     this.sent = 0,
@@ -107,11 +112,27 @@ class InboundPayload {
   final Uint8List bytes;
 }
 
-/// One transport node with one UDP link: the C ABI shim behind dart:ffi, or a
-/// fake in tests. Everything is non-blocking; poll() is where frames flow.
+/// A node appeared on the link, or was forgotten after its silence.
+class PresenceEvent {
+  const PresenceEvent({required this.up, required this.node});
+
+  /// True when the node was heard for the first time, false when it expired.
+  final bool up;
+
+  /// The node, as the table holds it (as it was, for a node going down).
+  final NodeInfo node;
+}
+
+/// One transport node with one UDP link: the Dart node, or a fake in tests.
+/// Everything is non-blocking; [poll] is where frames flow, and the instant
+/// comes from the caller because a node reads no clock.
 abstract class AbsTransportNode {
   /// Identity of this node, never 0.
   int get nodeId;
+
+  /// Every node appearing and expiring, told during [poll]. Listeners are
+  /// called synchronously, so what they send leaves within the same poll.
+  Stream<PresenceEvent> get presence;
 
   /// Sends one payload to a node id, [broadcastNode] for every node. True
   /// when the frame left on the link; an empty payload is refused.
@@ -119,8 +140,8 @@ abstract class AbsTransportNode {
 
   /// Drains the link at [nowUs] (a monotonic instant of the caller's clock):
   /// learns nodes, queues the payloads for this node, expires the silent
-  /// nodes, emits the keepalive when due. Returns the payloads waiting.
-  int poll(int nowUs);
+  /// nodes, emits the keepalive when due.
+  void poll(int nowUs);
 
   /// Takes the oldest received payload, null when none is waiting.
   InboundPayload? nextPayload();
@@ -128,9 +149,12 @@ abstract class AbsTransportNode {
   /// The live nodes, as of the last poll().
   List<NodeInfo> nodes();
 
+  /// One live node, null when unknown or expired.
+  NodeInfo? findNode(int nodeId);
+
   /// The counters.
   TransportStats stats();
 
-  /// Closes the sockets.
+  /// Closes the link.
   void dispose();
 }
