@@ -76,9 +76,14 @@ includes this library.
   flags of the frame that was stepped (a fresh measurement acquired for
   that frame, see `software/components/platform/README.md`);
   `PHASE_FAULT` is the flight core's latched motors-off state after the IMU
-  was lost with the motors running. No node sends an `Announce` today:
-  presence on the wire is the transport's keepalive, a header-only frame
-  that carries no identity.
+  was lost with the motors running.
+- `IdentityRequest` and `Announce`, the identity pair: the request is
+  unicast to one node, empty, and the node's `Announce` (kind, name, mcu,
+  build identity, wire hash) is the unicast answer back to the requester.
+  No node sends either one today: the two messages exist in the schema
+  and in every codec, nobody speaks them yet, and presence on the wire is
+  the transport's keepalive, a header-only frame that carries no
+  identity.
 - The telemetry family, all unicast, one active stream per drone:
   `TelemetryListRequest` (ground to node, from a cursor) is answered by one
   `TelemetryDescriptors` page back to the requester; `TelemetryEnable`
