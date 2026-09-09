@@ -17,9 +17,9 @@ campaign (`tools/batch/run_batch.py`, through the frame codec of
 the board over its UART (the firmware is a node
 with one `UartLink` on USART1), and the ESP32 riding the drone
 (`esp32-bridge/`), which is a relay: a node with a `UartLink` to the board
-and a `UdpLink` on the WiFi LAN, and a beacon of kind `RELAY`. The hub
-holds one `UdpLink`, so it relays nothing: the board reaches it as one more
-node of the LAN, at the relay's address. The mobile app (`software/mobile`, kind
+and a `UdpLink` on the WiFi LAN. The hub holds one `UdpLink`, so it relays
+nothing: the board reaches it as one more node of the LAN, at the relay's
+address. The mobile app (`software/mobile`, kind
 `PHONE`) compiles this directory as it is with the Android NDK (bionic has
 the BSD sockets; `DRONE_PLATFORM` `android` selects the POSIX sources) and
 drives it from Dart through the C ABI of its `native/` shim.
@@ -33,9 +33,11 @@ Every frame opens with an 11-byte little-endian header (`transport/frame.hpp`):
 | `src` | u32 | node that produced the payload |
 | `dst` | u32 | node it is for, `0` = every node (`BROADCAST_NODE`) |
 | `seq` | u16 | per-sender counter, wraps |
-| `hops` | u8 | relays left; a relay decrements and drops at 0 (`INITIAL_HOPS` = 4) |
+| `hops` | u8 | relays crossed so far; a sender writes 0, a relay adds one and drops a frame already at `MAX_HOPS` = 4 |
 
-The payload follows, at most `MAX_PAYLOAD` = 512 bytes. A medium that keeps
+The payload follows, at most `MAX_PAYLOAD` = 512 bytes; a frame carrying
+none is the transport's own keepalive (see Presence), and an application
+`send()` of an empty payload is refused. A medium that keeps
 datagram boundaries (UDP) adds nothing; the UART link wraps the frame in
 the serial framing (`transport/serial_framing.hpp`: `A5 5A len_lo len_hi
 payload crc16`, CRC-16/CCITT-FALSE over the two length bytes and the
@@ -57,9 +59,8 @@ the ESP32 relay its WiFi MAC.
 Transport transport(nodeId);           // explicit, value member of the App
 transport.addLink(udpLink);            // up to MAX_LINKS = 4, AbsLink&
 transport.init();                      // false without a node id or a link
-transport.setBeacon(bytes, size);      // optional, at most MAX_BEACON_SIZE = 64
-transport.send(dst, payload, size);    // dst 0 = broadcast on every link
-transport.poll(nowUs, deliver, context); // drain, learn, deliver, relay, expire, beacon
+transport.send(dst, payload, size);    // dst 0 = broadcast on every link, 1..MAX_PAYLOAD bytes
+transport.poll(nowUs, deliver, context); // drain, learn, deliver, relay, expire, keepalive
 transport.isAlive(id); transport.findNode(id); transport.nodeCount(); transport.node(i);
 transport.dropped(); transport.relayed();
 transport.sent(); transport.sentBytes(); transport.refused(); // this node's own sends
@@ -73,23 +74,24 @@ class Presence final : public AbsPresenceListener // up to MAX_LISTENERS = 4
 Presence presence{transport};          // a member declared after the transport
 ```
 
-The send-side counters describe this node's own `send()` calls, the
-periodic beacon included, and nothing else (a relayed frame is somebody
-else's send: `relayed()` is for those). `sent()` counts the calls that
-reached every link they were meant for and `sentBytes()` their payloads;
-`refused()` counts the rest: a payload longer than `MAX_PAYLOAD`, no link
-declared, an unknown destination, or a medium that would not take the
-frame (a full UART ring). They are what a
+The send-side counters describe this node's own `send()` calls and its
+keepalives, and nothing else (a relayed frame is somebody else's send:
+`relayed()` is for those). `sent()` counts the frames that reached every
+link they were meant for and `sentBytes()` their payloads (a keepalive
+adds one frame and no byte); `refused()` counts the rest: an empty
+payload or one longer than `MAX_PAYLOAD`, no link declared, an unknown
+destination, or a medium that would not take the frame (a full UART
+ring). They are what a
 composition reports as its own output health, which is why they live here
 rather than in a wrapper around `send()`.
 
 `poll()` is the only place anything happens, and `nowUs` comes from the
 caller: the transport never reads a clock. Every frame received, whatever
 its payload, refreshes the node table (`nodeId -> link, address,
-lastSeenUs, lastSeq, received, lost, duplicates`, `MAX_NODES` = 32); a
-payload addressed to this node or to everyone is handed to `deliver`. A
-frame whose `src` is this node (its own broadcast coming back on a shared
-medium) is ignored.
+lastSeenUs, lastSeq, received, lost, duplicates, hops`, `MAX_NODES` = 32);
+a payload addressed to this node or to everyone is handed to `deliver`,
+and a frame carrying none (a keepalive) is not. A frame whose `src` is
+this node (its own broadcast coming back on a shared medium) is ignored.
 
 A broadcast leaves on every declared link; a unicast leaves on the link
 its destination was last heard on, and is refused while the destination is
@@ -103,34 +105,38 @@ nothing. The hub publishes these counters per node in its `NodeTable`
 
 ## Presence
 
-`setBeacon()` registers an application payload (the `Announce` envelope of
-a node) that the transport broadcasts every `BEACON_PERIOD_US`
-(1 s, the first one on the first `poll()`), and additionally unicasts once
-to a node the moment it first appears, so a newcomer learns everyone at
-once. A node silent for `NODE_EXPIRY_US` (3 s) is forgotten and every
-`AbsPresenceListener::onNodeDown()` fires; `onNodeUp()` fires when a node
-is heard for the first time. A listener attaches itself to the transport in
-its constructor and detaches in its destructor, so declaring one as a
-member right after the transport is the whole wiring; a transport takes at
-most `MAX_LISTENERS` (4) and `init()` fails past that. A listener may
-`send()` from inside its callbacks. The hub beacons too, as kind
-`gateway`.
+Presence is the keepalive, a frame that is the header alone (11 bytes, no
+payload), owned by the transport: every node broadcasts one every
+`KEEPALIVE_PERIOD_US` (1 s, the first one on the first `poll()`), and
+additionally unicasts one to a node the moment it first appears, so a
+newcomer learns everyone at once. A keepalive is learnt from, counted in
+the sequence accounting and relayed like any broadcast, and never
+delivered: it carries no identity and no application sees it. A node
+silent for `NODE_EXPIRY_US` (3 s, three missed keepalives) is forgotten
+and every `AbsPresenceListener::onNodeDown()` fires; `onNodeUp()` fires
+when a node is heard for the first time. A listener attaches itself to the
+transport in its constructor and detaches in its destructor, so declaring
+one as a member right after the transport is the whole wiring; a transport
+takes at most `MAX_LISTENERS` (4) and `init()` fails past that. A listener
+may `send()` from inside its callbacks.
 
 ## Relay
 
 Always on, nothing to switch: a frame not for this node is forwarded with
-`hops - 1` (dropped when that reaches 0): a broadcast goes out on every
-link but the one it arrived on; a unicast goes out on the link its
-destination was last heard on, unless that is the arrival link (split
-horizon) or the destination is unknown (dropped). A node with one link
-therefore relays nothing, which is why no switch is needed. The duplicate
-drop by `(src, seq)` is what keeps a triangle of relays from looping.
+`hops + 1`, and a frame that already carries `MAX_HOPS` is dropped: a
+broadcast goes out on every link but the one it arrived on; a unicast goes
+out on the link its destination was last heard on, unless that is the
+arrival link (split horizon) or the destination is unknown (dropped). A
+node with one link therefore relays nothing, which is why no switch is
+needed. The duplicate drop by `(src, seq)` is what keeps a triangle of
+relays from looping. `Node::hops` keeps the count the last frame from a
+node carried: 0 for a direct neighbour, 1 for a node behind one relay.
 
-The hub learns the board from the board's own Announce, relayed by the
-ESP32, at the relay's IP and data port, and its unicasts to the board land
-there and are relayed down the UART; the relay's own Announce travels
-beside it, from its own node id. `relayed()` counts the frames forwarded,
-one per link for a broadcast.
+The hub learns the board from its keepalives, relayed by the ESP32, at the
+relay's IP and data port, and its unicasts to the board land there and are
+relayed down the UART; the relay's own keepalives travel beside them, from
+its own node id. `relayed()` counts the frames forwarded, one per link for
+a broadcast.
 
 ## Links
 
@@ -181,8 +187,8 @@ one per link for a broadcast.
 
 `sim-godot/scripts/transport/transport.gd` (`Mark4Transport`) is the same
 transport for the Godot plant: the same header, the same node table and
-counters, the same beacon and expiry rules, the `(src, seq)` duplicate
-drop, no relay. Its two sockets follow the `UdpLink` layout, with one
+counters, the same expiry rules, the `(src, seq)` duplicate drop, no
+relay. Its two sockets follow the `UdpLink` layout, with one
 substitution forced by the engine: Godot's `PacketPeerUDP.bind()` sets no
 reuse option, so the discovery socket is a `UDPServer` (`listen()` sets
 `SO_REUSEADDR`, which is enough on Linux to share the port with the
@@ -199,8 +205,8 @@ smoke, `test_plant_link.cpp` exchanges frames with it from C++.
 
 | port | who | what |
 |------|-----|------|
-| udp/47820 | every transport node | discovery: broadcast frames (beacons, telemetry, answers) |
-| ephemeral | every transport node | data socket: unicast frames (commands, lockstep sim link, beacon on first sight) |
+| udp/47820 | every transport node | discovery: broadcast frames (keepalives, telemetry, answers) |
+| ephemeral | every transport node | data socket: unicast frames (commands, lockstep sim link, keepalive on first sight) |
 | udp/47810 | hub | HTTP + WebSocket for the pages |
 
 The ESP32 relay owns no port of its own: it is one more node on udp/47820
@@ -211,11 +217,10 @@ two node ids, one IP and one data port.
 `drone_sim` and the firmware send telemetry, log lines and every answer
 (tuning, OTA, run stats) as broadcast frames, so the hub, a batch campaign
 and any other node read the same stream; commands reach them as unicasts to
-their node. Their beacon is the `Announce` envelope (kind, name, mcu, build
-identity, wire hash). The board's node id is `hashNodeId()` of the 96-bit
-MCU unique id (`boardNodeId()`), so it survives resets and reflashes; the
-hub knows a board is a board from the `kind` of its Announce, not from the
-link it arrived on.
+their node. Presence is the keepalive and carries no identity: no node
+announces itself on the wire today, a node id is all the transport knows
+of a peer. The board's node id is `hashNodeId()` of the 96-bit MCU unique
+id (`boardNodeId()`), so it survives resets and reflashes.
 
 ## Open points
 

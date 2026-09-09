@@ -35,6 +35,9 @@ namespace
     constexpr std::uint64_t US_PER_MS = 1000U;
     constexpr std::uint32_t DRONE_NODE = 0xD0000002U;
 
+    /// Cadence of the Announce this test broadcasts in the plant's direction.
+    constexpr std::uint64_t ANNOUNCE_PERIOD_US = 1'000'000U;
+
     /// @return a free UDP port of this host, released again on return
     std::uint16_t pickFreePort()
     {
@@ -89,9 +92,10 @@ TEST_CASE("the plant's GDScript transport and codec agree with the C++ ones", "[
         SKIP("sim-godot/scripts/gen/mark4.gd was not generated (proto_gd target)");
     }
 
-    // The flight process side: a transport node announcing itself as a
-    // DRONE_SIM on a private discovery port, so the plant finds it by its
-    // beacon like it finds drone_sim.
+    // The flight process side: a transport node on a private discovery
+    // port. The plant hosts one virtual drone per DRONE_SIM Announce it
+    // hears, so this test, standing in for the application, broadcasts one
+    // once per second from its poll loop.
     const std::uint16_t discoveryPort = pickFreePort();
     mark4::UdpLink link(discoveryPort);
     REQUIRE(link.init());
@@ -103,10 +107,10 @@ TEST_CASE("the plant's GDScript transport and codec agree with the C++ ones", "[
     announce.body.announce.kind = mark4_NodeKind_DRONE_SIM;
     announce.body.announce.mcu = mark4_Mcu_SIM;
     announce.body.announce.wire_hash = mark4::WIRE_HASH;
-    std::array<std::uint8_t, mark4::Transport::MAX_BEACON_SIZE> beacon{};
-    std::size_t beaconSize = 0U;
-    REQUIRE(mark4::encodeEnvelope(announce, beacon.data(), beacon.size(), beaconSize));
-    transport.setBeacon(beacon.data(), beaconSize);
+    std::array<std::uint8_t, mark4::MAX_ENVELOPE_SIZE> announceBytes{};
+    std::size_t announceSize = 0U;
+    REQUIRE(
+        mark4::encodeEnvelope(announce, announceBytes.data(), announceBytes.size(), announceSize));
     mark4::ClockSim clock;
 
     const std::string port = std::to_string(discoveryPort);
@@ -129,12 +133,20 @@ TEST_CASE("the plant's GDScript transport and codec agree with the C++ ones", "[
                           const_cast<char *const *>(argv.data()),
                           nullptr) == 0);
 
-    // The plant speaks first, like on the sim link.
+    // The plant speaks first, like on the sim link, once it has heard the
+    // Announce.
     Delivered delivered;
     const std::uint64_t deadlineUs = clock.nowUs() + PLANT_BUDGET_MS * US_PER_MS;
+    std::uint64_t nextAnnounceUs = clock.nowUs();
     while (!delivered.sensorSeen && clock.nowUs() < deadlineUs)
     {
-        transport.poll(clock.nowUs(), &onPayload, &delivered);
+        const std::uint64_t nowUs = clock.nowUs();
+        if (nowUs >= nextAnnounceUs)
+        {
+            nextAnnounceUs = nowUs + ANNOUNCE_PERIOD_US;
+            REQUIRE(transport.send(mark4::BROADCAST_NODE, announceBytes.data(), announceSize));
+        }
+        transport.poll(nowUs, &onPayload, &delivered);
         ::usleep(2000);
     }
     REQUIRE(delivered.sensorSeen);

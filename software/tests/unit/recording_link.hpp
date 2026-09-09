@@ -139,8 +139,8 @@ namespace mark4
             m_frames.push_back(frame);
         }
 
-        /// Hops a queued frame carries: enough that a relay would forward it.
-        static constexpr std::uint8_t INBOUND_HOPS = 4U;
+        /// Hops a queued frame carries: what a direct sender writes.
+        static constexpr std::uint8_t INBOUND_HOPS = 0U;
 
         std::vector<RecordedFrame> m_frames;             ///< everything handed over
         std::deque<std::vector<std::uint8_t>> m_inbound; ///< frames queued for receive()

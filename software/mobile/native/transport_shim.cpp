@@ -11,8 +11,6 @@
 #include "transport/udp_link.hpp"
 
 static_assert(MARK4_MAX_PAYLOAD == mark4::MAX_PAYLOAD, "the C ABI repeats the frame limit");
-static_assert(MARK4_MAX_BEACON_SIZE == mark4::Transport::MAX_BEACON_SIZE,
-              "the C ABI repeats the beacon limit");
 
 namespace mark4
 {
@@ -155,16 +153,6 @@ extern "C"
     uint32_t mark4_transport_node_id(const Mark4Transport *transport)
     {
         return transport->transport.nodeId();
-    }
-
-    bool mark4_transport_set_beacon(Mark4Transport *transport, const uint8_t *payload, size_t size)
-    {
-        if (size > MARK4_MAX_BEACON_SIZE)
-        {
-            return false;
-        }
-        transport->transport.setBeacon(payload, size);
-        return true;
     }
 
     bool mark4_transport_send(Mark4Transport *transport,

@@ -47,19 +47,6 @@ class FfiTransportNode implements AbsTransportNode {
   int get nodeId => _bindings.mark4_transport_node_id(_handle);
 
   @override
-  bool setBeacon(Uint8List payload) {
-    if (payload.length > MARK4_MAX_BEACON_SIZE) {
-      return false;
-    }
-    _txBuffer.asTypedList(MARK4_MAX_PAYLOAD).setAll(0, payload);
-    return _bindings.mark4_transport_set_beacon(
-      _handle,
-      _txBuffer,
-      payload.length,
-    );
-  }
-
-  @override
   bool send(int dst, Uint8List payload) {
     if (payload.length > MARK4_MAX_PAYLOAD) {
       return false;

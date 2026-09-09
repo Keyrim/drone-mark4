@@ -120,23 +120,6 @@ namespace mark4
             return false;
         }
         static_cast<void>(logAddSink(m_transportSink));
-        // The announce is the beacon: the transport broadcasts it once per
-        // second and hands it to every node the moment it appears.
-        mark4_Envelope announce = mark4_Envelope_init_zero;
-        announce.which_body = mark4_Envelope_announce_tag;
-        announce.body.announce.kind = mark4_NodeKind_DRONE_SIM;
-        static_cast<void>(std::snprintf(
-            announce.body.announce.name, sizeof(announce.body.announce.name), "drone_sim"));
-        announce.body.announce.mcu = mark4_Mcu_SIM;
-        announce.body.announce.wire_hash = WIRE_HASH;
-        std::array<std::uint8_t, Transport::MAX_BEACON_SIZE> beacon{};
-        std::size_t beaconSize = 0U;
-        if (!encodeEnvelope(announce, beacon.data(), beacon.size(), beaconSize))
-        {
-            BOOT.error("the announce does not fit a beacon");
-            return false;
-        }
-        m_transport.setBeacon(beacon.data(), beaconSize);
         BOOT.info("boot: node %08x on discovery udp/%u, wire %08x",
                   m_transport.nodeId(),
                   static_cast<unsigned>(m_udpLink.discoveryPort()),
@@ -356,7 +339,7 @@ namespace mark4
         {
             const std::uint64_t nowUs = m_clock.nowUs();
             // Kept up while parked: the ground side must keep finding this
-            // process, and an update takes longer than the beacon period.
+            // process, and an update takes longer than the keepalive period.
             m_plantLink.poll();
             for (;;)
             {
@@ -398,7 +381,7 @@ namespace mark4
         m_plantLink.poll();
         if (!m_logModulesPublished)
         {
-            // The first poll sent the first beacon: the table follows it.
+            // The first poll sent the first keepalive: the table follows it.
             m_logModulesPublished = true;
             publishLogModules();
         }
@@ -418,8 +401,8 @@ namespace mark4
                 continue;
             }
             // The updater gets first look, then each message goes to the one
-            // service that owns it; whatever nobody owns (a beacon of the
-            // ground side, a message this build does not know) is dropped.
+            // service that owns it; whatever nobody owns (a message this
+            // build does not know) is dropped.
             if (serveOta(envelope, m_clock.nowUs()))
             {
                 continue;

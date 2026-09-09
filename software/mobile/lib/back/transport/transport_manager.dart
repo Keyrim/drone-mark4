@@ -18,7 +18,7 @@ typedef TransportNodeFactory =
     AbsTransportNode? Function(int nodeId, int discoveryPort);
 
 /// The phone as a node of the system: one UDP link on the shared discovery
-/// port, the Announce beacon, and a poll of the C++ transport on a timer.
+/// port and a poll of the C++ transport on a timer.
 /// Exposes the node table as [snapshots] and every Envelope addressed to
 /// this node as [envelopes]; the services of the other managers speak the
 /// wire through [send].
@@ -101,16 +101,6 @@ class TransportManager extends AbsManager {
     }
     _node = node;
     final name = announceName(await _platform.deviceName());
-    final beacon = Envelope()
-      ..announce = (Announce()
-        ..kind = NodeKind.PHONE
-        ..name = name
-        ..mcu = Mcu.MCU_UNSPECIFIED
-        ..wireHash = wireHash);
-    if (!node.setBeacon(beacon.writeToBuffer())) {
-      _log.severe('the announce does not fit a beacon');
-      return false;
-    }
     _identity.add(TransportIdentity(nodeId: nodeId, name: name));
     final period = pollPeriod;
     if (period != null) {

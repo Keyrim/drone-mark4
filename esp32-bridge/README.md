@@ -4,9 +4,8 @@ Firmware for the ESP32-C3 SuperMini (IPEX variant) riding the drone, wired
 to the flight controller's UART. It is a transport relay
 (`software/components/transport/`): one transport node with two links, the
 board's UART and the WiFi LAN, forwarding frames between them. It is a node
-of the system like any other: it beacons its own `Announce` (kind `relay`,
-name `relay-<last three bytes of its MAC>`, mcu `ESP32C3`, the build epoch
-and short commit hash of its build, the wire hash), and it logs through the
+of the system like any other: present on both links through the
+transport's keepalive, and it logs through the
 project's log library. From the LAN's point of view the board and the relay
 are two nodes on udp/47820 sharing one address, exactly like `drone_sim` is
 one; the hub has no path, port or click specific to either. It updates
@@ -20,7 +19,7 @@ horizon, one hop less per relay, duplicate drop by `(src, seq)`); every
 transport node relays, and this one is the only node with two links:
 
 - towards the LAN: everything the board emits (telemetry, answers, log
-  lines, its Announce), as broadcasts;
+  lines, its keepalives), as broadcasts;
 - towards the UART: every unicast the transport routes there (the board is
   the only node on that link, so a unicast routed there is for it: RC,
   tuning, updater messages), and every LAN broadcast. The line is 921600
@@ -28,8 +27,8 @@ transport node relays, and this one is the only node with two links:
   whole, so a LAN that broadcasts more than the line carries degrades by
   dropping, never by blocking.
 
-What the relay says itself (its log lines, its module table, its beacon)
-is a broadcast on both links like any node's.
+What the relay says itself (its log lines, its module table, its
+keepalives) is a broadcast on both links like any node's.
 
 Nothing relayed is decoded; what the delivery hands to the relay itself is
 decoded only when its tag (`envelopeBodyTag()`, `protocol/envelope.hpp`,
@@ -53,9 +52,8 @@ without an address) then hands over to `relayRun()` in `main/relay.cpp`:
   `getifaddrs()`; the relay hands its own address to
   `UdpLink::addLocalHost()` so its broadcasts coming back are dropped as
   echoes;
-- `Transport` with node id `hashNodeId()` of the WiFi MAC and the
-  `Announce` beacon; it relays between its two links as any transport node
-  with several links does;
+- `Transport` with node id `hashNodeId()` of the WiFi MAC; it relays
+  between its two links as any transport node with several links does;
 - `FirmwareStoreEsp32` (`main/firmware_store_esp32.cpp`) over the two OTA
   partitions and the shared `OtaUpdater` (`ota/updater.hpp`) on top of it:
   the update session, fed by the `Ota*` unicasts a hub addresses to the
@@ -160,7 +158,7 @@ idf.py -C esp32-bridge -p /dev/ttyACM0 flash monitor
 idf.py -C esp32-bridge fullclean                   # wipe build/
 ```
 
-The build identity the `Announce` carries (build epoch, short commit hash)
+The build identity the boot line reports (build epoch, short commit hash)
 is read by CMake at configure time, so a plain rebuild keeps the previous
 pair; `idf.py -C esp32-bridge reconfigure` refreshes it. The same pair is
 stamped into the image as `PROJECT_VER` (`<buildEpoch>-<gitHash>`, the
@@ -223,8 +221,8 @@ stays quiet; the relay relays nothing meanwhile, which the design accepts
 (the drone is on the ground when its radio gets reflashed). The transfer
 runs over UDP directly, so the UART budget does not apply: a 870 KB image
 is on the far side in seconds. The relay then answers the `Reboot`,
-`relay/ota` logs the request, and the new image announces itself; the
-first `OtaStatusRequest` it serves confirms it.
+`relay/ota` logs the request, and the new image comes up; the first
+`OtaStatusRequest` it serves confirms it.
 
 A relay still on the old single-app layout logs `no two-slot partition
 table` at boot and relays as before; it needs the USB flash above once.

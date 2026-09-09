@@ -28,9 +28,9 @@ namespace mark4
             self.m_hasPending = true;
             return;
         }
-        // Whatever is not a sensor message is a command, a beacon or a
-        // message this build does not know: the composition root sorts
-        // them out of the ring, exactly as on the board.
+        // Whatever is not a sensor message is a command or a message this
+        // build does not know: the composition root sorts them out of the
+        // ring, exactly as on the board.
         self.m_commands.push(src, payload, size);
     }
 
@@ -59,7 +59,7 @@ namespace mark4
                 return false;
             }
             // Sleep on both sockets: the plant's unicasts land on the data
-            // socket, the beacons of the LAN on the discovery one.
+            // socket, the broadcasts of the LAN on the discovery one.
             std::array<pollfd, 2> fds = {pollfd{m_link.dataFd(), POLLIN, 0},
                                          pollfd{m_link.discoveryFd(), POLLIN, 0}};
             const auto remainingMs =

@@ -1,19 +1,18 @@
 /// @file
 /// @brief The relay: one transport node with two links, the flight
 ///        controller's UART and the WiFi LAN, relaying between them. It is a
-///        node of its own too: it announces itself as a relay on both links,
-///        logs through the log library, answers the LogControl addressed to
-///        it, and it updates itself over the air:
-///        the same OtaUpdater the flight controller runs, over a store that
-///        translates to the ESP-IDF OTA partitions, fed by the Ota*
-///        unicasts a hub sends it.
+///        node of its own too, present on both links through the transport's
+///        keepalive: it logs through the log library, answers the LogControl
+///        addressed to it, and it updates itself over the air: the same
+///        OtaUpdater the flight controller runs, over a store that translates
+///        to the ESP-IDF OTA partitions, fed by the Ota* unicasts a hub sends
+///        it.
 
 #include <array>
 #include <cinttypes>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <variant>
 
@@ -86,9 +85,6 @@ namespace mark4
 
         /// Bytes of a MAC address.
         constexpr std::size_t MAC_SIZE = 6U;
-
-        /// Bytes of the MAC the node name carries, its low half.
-        constexpr std::size_t MAC_NAME_BYTES = 3U;
 
         /// @param tag body tag read off an encoded Envelope
         /// @return true when this node answers that body: the LogControl, the
@@ -206,7 +202,7 @@ namespace mark4
         }
 
         /// @brief Publishes this node's module table, as any node does after
-        ///        its first beacon and on every level change.
+        ///        its first keepalive and on every level change.
         /// @param context the composition
         void publishModules(void *context)
         {
@@ -344,40 +340,6 @@ namespace mark4
             }
             return ntohl(info.ip.addr);
         }
-
-        /// @brief Registers this node's beacon: what it is, what it was built
-        ///        from and the schema it speaks. It goes out on both links,
-        ///        so the board learns this node like the LAN does.
-        /// @param relay the composition
-        /// @param mac the WiFi MAC, the node name's low half
-        /// @return false when the announce does not fit a beacon
-        bool setBeacon(Relay &relay, const std::array<std::uint8_t, MAC_SIZE> &mac)
-        {
-            mark4_Envelope announce = mark4_Envelope_init_zero;
-            announce.which_body = mark4_Envelope_announce_tag;
-            mark4_Announce &body = announce.body.announce;
-            body.kind = mark4_NodeKind_RELAY;
-            static_cast<void>(std::snprintf(body.name,
-                                            sizeof(body.name),
-                                            "relay-%02x%02x%02x",
-                                            mac[MAC_SIZE - MAC_NAME_BYTES],
-                                            mac[MAC_SIZE - 2U],
-                                            mac[MAC_SIZE - 1U]));
-            body.mcu = mark4_Mcu_ESP32C3;
-            body.build_epoch = BRIDGE_BUILD_EPOCH;
-            static_cast<void>(
-                std::snprintf(body.git_hash, sizeof(body.git_hash), "%s", BRIDGE_GIT_HASH));
-            body.wire_hash = WIRE_HASH;
-
-            std::array<std::uint8_t, Transport::MAX_BEACON_SIZE> beacon{};
-            std::size_t beaconSize = 0U;
-            if (!encodeEnvelope(announce, beacon.data(), beacon.size(), beaconSize))
-            {
-                return false;
-            }
-            relay.transport.setBeacon(beacon.data(), beaconSize);
-            return true;
-        }
     } // namespace
 } // namespace mark4
 
@@ -444,11 +406,6 @@ extern "C" void relayRun(void)
     // broadcast of ours can come back from, so the echo is dropped instead
     // of counted as a duplicate of every frame relayed.
     relay.lan.addLocalHost(ownAddress());
-    if (!setBeacon(relay, mac))
-    {
-        BOOT.error("the announce does not fit a beacon");
-        std::abort();
-    }
     static_cast<void>(logAddSink(relay.logSink));
     BOOT.info("boot: node %08" PRIx32 " relay build %lu %s wire %08lx",
               relay.transport.nodeId(),
@@ -479,7 +436,7 @@ extern "C" void relayRun(void)
         }
         if (!modulesPublished)
         {
-            // The first poll sent the first beacon: the table follows it.
+            // The first poll sent the first keepalive: the table follows it.
             modulesPublished = true;
             publishModules(&relay);
         }

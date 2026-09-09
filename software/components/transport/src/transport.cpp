@@ -66,23 +66,9 @@ namespace mark4
         }
     }
 
-    void Transport::setBeacon(const std::uint8_t *payload, std::size_t size)
-    {
-        if (payload == nullptr || size > MAX_BEACON_SIZE)
-        {
-            size = 0U;
-        }
-        if (size > 0U)
-        {
-            std::memcpy(m_beacon.data(), payload, size);
-        }
-        m_beaconSize = size;
-        m_beaconSent = false;
-    }
-
     bool Transport::send(std::uint32_t dst, const std::uint8_t *payload, std::size_t size)
     {
-        if (payload == nullptr || size > MAX_PAYLOAD || m_linkCount == 0U)
+        if (payload == nullptr || size == 0U || size > MAX_PAYLOAD || m_linkCount == 0U)
         {
             ++m_refused;
             return false;
@@ -91,7 +77,7 @@ namespace mark4
         header.src = m_nodeId;
         header.dst = dst;
         header.seq = m_nextSeq;
-        header.hops = INITIAL_HOPS;
+        header.hops = 0U;
         ++m_nextSeq;
 
         encodeFrameHeader(header, m_txBuffer.data());
@@ -116,6 +102,33 @@ namespace mark4
         }
         return countSend(m_links[target->link]->send(m_txBuffer.data(), frameSize, target->address),
                          size);
+    }
+
+    void Transport::sendKeepalive(std::uint32_t dst)
+    {
+        FrameHeader header;
+        header.src = m_nodeId;
+        header.dst = dst;
+        header.seq = m_nextSeq;
+        header.hops = 0U;
+        ++m_nextSeq;
+        encodeFrameHeader(header, m_txBuffer.data());
+
+        if (dst == BROADCAST_NODE)
+        {
+            bool all = true;
+            for (std::size_t index = 0U; index < m_linkCount; ++index)
+            {
+                all = m_links[index]->broadcast(m_txBuffer.data(), FRAME_HEADER_SIZE) && all;
+            }
+            static_cast<void>(countSend(all, 0U));
+            return;
+        }
+        const Node *target = findNode(dst);
+        static_cast<void>(countSend(
+            target != nullptr &&
+                m_links[target->link]->send(m_txBuffer.data(), FRAME_HEADER_SIZE, target->address),
+            0U));
     }
 
     bool Transport::countSend(bool ok, std::size_t size)
@@ -147,11 +160,11 @@ namespace mark4
             }
         }
         expire(nowUs);
-        if (m_beaconSize > 0U && (!m_beaconSent || nowUs - m_lastBeaconUs >= BEACON_PERIOD_US))
+        if (!m_keepaliveSent || nowUs - m_lastKeepaliveUs >= KEEPALIVE_PERIOD_US)
         {
-            m_lastBeaconUs = nowUs;
-            m_beaconSent = true;
-            static_cast<void>(send(BROADCAST_NODE, m_beacon.data(), m_beaconSize));
+            m_lastKeepaliveUs = nowUs;
+            m_keepaliveSent = true;
+            sendKeepalive(BROADCAST_NODE);
         }
     }
 
@@ -182,18 +195,17 @@ namespace mark4
         if (isNew)
         {
             notifyUp(*findNode(header.src));
-            if (m_beaconSize > 0U)
-            {
-                // The newcomer learns this node at once instead of waiting
-                // for the next periodic beacon.
-                static_cast<void>(send(header.src, m_beacon.data(), m_beaconSize));
-            }
+            // The newcomer learns this node at once instead of waiting for
+            // the next periodic keepalive.
+            sendKeepalive(header.src);
         }
 
         const std::uint8_t *payload = m_rxBuffer.data() + FRAME_HEADER_SIZE;
         const std::size_t payloadSize = size - FRAME_HEADER_SIZE;
-        if (header.dst == m_nodeId || header.dst == BROADCAST_NODE)
+        if (payloadSize > 0U && (header.dst == m_nodeId || header.dst == BROADCAST_NODE))
         {
+            // A header alone is a keepalive: it was learnt from above and
+            // carries nothing for the application.
             if (deliver != nullptr)
             {
                 deliver(context, header.src, payload, payloadSize);
@@ -253,18 +265,19 @@ namespace mark4
         node->link = linkIndex;
         node->address = from;
         node->lastSeenUs = nowUs;
+        node->hops = header.hops;
         return true;
     }
 
     void Transport::relay(const FrameHeader &header, std::size_t arrivalLink, std::size_t size)
     {
-        if (header.hops <= 1U)
+        if (header.hops >= MAX_HOPS)
         {
-            // Decrementing would reach 0: the frame has travelled far enough.
+            // The frame has crossed as many relays as allowed.
             ++m_dropped;
             return;
         }
-        m_rxBuffer[FRAME_HEADER_SIZE - 1U] = static_cast<std::uint8_t>(header.hops - 1U);
+        m_rxBuffer[FRAME_HEADER_SIZE - 1U] = static_cast<std::uint8_t>(header.hops + 1U);
         if (header.dst == BROADCAST_NODE)
         {
             for (std::size_t index = 0U; index < m_linkCount; ++index)

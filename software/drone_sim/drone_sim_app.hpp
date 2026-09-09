@@ -232,7 +232,7 @@ namespace mark4
         /// that scenario opens [us]; 0 means the tracker default.
         std::uint32_t m_pendingHashWindowUs = 0U;
 
-        /// The module table goes out once the first beacon did.
+        /// The module table goes out once the first keepalive did.
         bool m_logModulesPublished = false;
     };
 } // namespace mark4

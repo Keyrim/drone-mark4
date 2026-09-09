@@ -76,7 +76,7 @@ namespace mark4
                 std::chrono::duration_cast<std::chrono::microseconds>(now).count());
         }
 
-        /// @return true when two beacons say the same thing
+        /// @return true when two announces say the same thing
         bool sameAnnounce(const mark4_Announce &a, const mark4_Announce &b)
         {
             return a.kind == b.kind && a.mcu == b.mcu && a.build_epoch == b.build_epoch &&
@@ -157,24 +157,12 @@ namespace mark4
                     hexNodeId(m_transport.nodeId()).c_str(),
                     static_cast<unsigned>(m_udpLink.discoveryPort()),
                     WIRE_HASH);
-        // The gateway's own beacon: every node learns the gateway and the
-        // schema it speaks, and the flight processes learn where to unicast.
+        // The gateway's own identity: the first row of the node table it
+        // publishes to its clients. It is not sent on the wire.
         m_ownAnnounce.kind = mark4_NodeKind_GATEWAY;
         m_ownAnnounce.mcu = mark4_Mcu_SIM;
         m_ownAnnounce.wire_hash = WIRE_HASH;
         copyWireString(gatewayName(), m_ownAnnounce.name, sizeof(m_ownAnnounce.name));
-        mark4_Envelope announce = mark4_Envelope_init_zero;
-        announce.which_body = mark4_Envelope_announce_tag;
-        announce.body.announce = m_ownAnnounce;
-        std::array<std::uint8_t, MAX_ENVELOPE_SIZE> beacon{};
-        std::size_t beaconSize = 0U;
-        if (!encodeEnvelope(announce, beacon.data(), beacon.size(), beaconSize) ||
-            beaconSize > Transport::MAX_BEACON_SIZE)
-        {
-            MODULE.error("the announce does not fit a beacon");
-            return false;
-        }
-        m_transport.setBeacon(beacon.data(), beaconSize);
         if (m_config.pagesDir.empty())
         {
             m_config.pagesDir = defaultProjectPath(DEFAULT_PAGES_DIR);
@@ -245,7 +233,7 @@ namespace mark4
             m_transport.poll(monotonicUs(), &HubApp::OnFrame, this);
             if (!m_logModulesPublished)
             {
-                // The first poll sent the first beacon: the table follows it.
+                // The first poll sent the first keepalive: the table follows it.
                 m_logModulesPublished = true;
                 publishLogModules();
             }
@@ -334,7 +322,7 @@ namespace mark4
                                     WIRE_HASH);
                     }
                 }
-                // The kind and the schema are only known from the beacon, so
+                // The kind and the schema are only known from the Announce, so
                 // this is where a drone's telemetry table starts being
                 // pulled rather than at node-up: a node speaking another
                 // schema is not asked at all, its answers would not decode.

@@ -12,7 +12,6 @@ class FakeTransportNode implements AbsTransportNode {
   @override
   final int nodeId;
 
-  Uint8List? beacon;
   final List<(int dst, Uint8List payload)> sent = [];
   final Map<int, NodeInfo> table = {};
   final Queue<InboundPayload> queue = Queue();
@@ -58,12 +57,6 @@ class FakeTransportNode implements AbsTransportNode {
           ..mcu = Mcu.SIM
           ..wireHash = wireHash),
     );
-  }
-
-  @override
-  bool setBeacon(Uint8List payload) {
-    beacon = payload;
-    return true;
   }
 
   @override

@@ -57,13 +57,13 @@ class NodeAnnounce extends Equatable {
 }
 
 /// One node heard on the link: the transport's view, plus its Announce once
-/// it beaconed.
+/// one arrived from it.
 class TransportNode extends Equatable {
   const TransportNode({required this.info, this.announce});
 
   final NodeInfo info;
 
-  /// Null until the node beaconed.
+  /// Null until an Announce arrived from the node.
   final NodeAnnounce? announce;
 
   int get id => info.id;

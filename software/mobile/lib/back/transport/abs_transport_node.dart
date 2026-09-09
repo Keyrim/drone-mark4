@@ -63,7 +63,7 @@ class TransportStats extends Equatable {
     this.loopbackFallback = false,
   });
 
-  /// Frames handed to the link, beacons included.
+  /// Frames handed to the link, keepalives included.
   final int sent;
 
   /// Payload bytes of those frames.
@@ -113,17 +113,13 @@ abstract class AbsTransportNode {
   /// Identity of this node, never 0.
   int get nodeId;
 
-  /// Registers the beacon broadcast every second and unicast to every node
-  /// the moment it appears. False when the payload is too long.
-  bool setBeacon(Uint8List payload);
-
   /// Sends one payload to a node id, [broadcastNode] for every node. True
-  /// when the frame left on the link.
+  /// when the frame left on the link; an empty payload is refused.
   bool send(int dst, Uint8List payload);
 
   /// Drains the link at [nowUs] (a monotonic instant of the caller's clock):
   /// learns nodes, queues the payloads for this node, expires the silent
-  /// nodes, emits the beacon when due. Returns the payloads waiting.
+  /// nodes, emits the keepalive when due. Returns the payloads waiting.
   int poll(int nowUs);
 
   /// Takes the oldest received payload, null when none is waiting.

@@ -109,7 +109,7 @@ Three messages of `mark4.proto`, one `Envelope` body each:
 - `LogModules { start_index, total, modules (8 at most) }` with
   `LogModuleInfo { id, name (32), level }`: the node's table, in pages of
   at most 8 modules because 48 names of 32 characters do not fit one
-  512-byte frame. A node publishes it once after its first beacon, again on
+  512-byte frame. A node publishes it once after its first poll, again on
   every level change, and on request. A page opening at `start_index` 0
   restarts the table on the receiving side.
 - `LogControl { oneof { bool query; LogModuleLevel set { module_id, level } } }`,

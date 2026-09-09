@@ -4,9 +4,9 @@
 /// @brief The transport: an interface manager. The application declares its
 ///        physical links, then sends payloads to node ids; the transport
 ///        remembers on which link and at which address every node was last
-///        heard, keeps them alive with a periodic beacon and relays frames
-///        between its links. It never reads a clock: every instant comes
-///        from the caller.
+///        heard, keeps them alive with a periodic keepalive and relays
+///        frames between its links. It never reads a clock: every instant
+///        comes from the caller.
 
 #include <array>
 #include <cstddef>
@@ -31,17 +31,14 @@ namespace mark4
         /// Nodes remembered at once; a frame from a further one is dropped.
         static constexpr std::size_t MAX_NODES = 32U;
 
-        /// Largest beacon payload.
-        static constexpr std::size_t MAX_BEACON_SIZE = 64U;
+        /// Keepalive cadence [us].
+        static constexpr std::uint64_t KEEPALIVE_PERIOD_US = 1'000'000U;
 
-        /// Beacon cadence [us].
-        static constexpr std::uint64_t BEACON_PERIOD_US = 1'000'000U;
-
-        /// Silence after which a node is forgotten [us]: three missed beacons.
+        /// Silence after which a node is forgotten [us]: three missed keepalives.
         static constexpr std::uint64_t NODE_EXPIRY_US = 3'000'000U;
 
-        /// Relays a frame may cross before being dropped.
-        static constexpr std::uint8_t INITIAL_HOPS = 4U;
+        /// Relays a frame may cross; a relay drops what already carries this many.
+        static constexpr std::uint8_t MAX_HOPS = 4U;
 
         /// A forward jump of the sequence larger than this is a sender that
         /// restarted, not a burst of losses, and counts as nothing.
@@ -58,6 +55,7 @@ namespace mark4
             std::uint32_t received = 0U;   ///< frames accepted from it
             std::uint32_t lost = 0U;       ///< frames the numbering says never arrived
             std::uint32_t duplicates = 0U; ///< frames carrying an already seen number
+            std::uint8_t hops = 0U; ///< relays the last frame from it crossed (0: direct neighbour)
         };
 
         /// Receives one payload addressed to this node or to everyone.
@@ -83,17 +81,14 @@ namespace mark4
         /// @return true when frames can flow
         [[nodiscard]] bool init() const;
 
-        /// @brief Registers the payload broadcast every BEACON_PERIOD_US and
-        ///        unicast to every node the moment it first appears. Copied.
-        /// @param payload beacon bytes, at most MAX_BEACON_SIZE
-        /// @param size beacon size, 0 to stop beaconing
-        void setBeacon(const std::uint8_t *payload, std::size_t size);
-
         /// @brief Sends one payload: a broadcast leaves on every link, a
-        ///        unicast on the link its destination was last heard on.
+        ///        unicast on the link its destination was last heard on. An
+        ///        application always sends a message: an empty payload is
+        ///        refused, the header-only frame is the transport's own
+        ///        keepalive.
         /// @param dst node to reach, BROADCAST_NODE for every node on every link
-        /// @param payload payload bytes
-        /// @param size payload size, at most MAX_PAYLOAD
+        /// @param payload payload bytes, never nullptr
+        /// @param size payload size, 1 to MAX_PAYLOAD
         /// @return true when the frame left on a link (unicast: the node is
         ///         known and its link took the frame; broadcast: every link
         ///         did)
@@ -101,7 +96,7 @@ namespace mark4
 
         /// @brief Drains every link: learns nodes from every frame, delivers
         ///        what is for this node, relays the rest, expires the silent
-        ///        nodes and emits the beacon when due.
+        ///        nodes and emits the keepalive when due.
         /// @param nowUs current instant [us], from the caller's clock
         /// @param deliver receives every payload for this node
         /// @param context handed back to deliver, unchanged
@@ -143,8 +138,8 @@ namespace mark4
             return m_dropped;
         }
 
-        /// @return frames this node's own send() handed to a link, the
-        ///         periodic beacon included
+        /// @return frames this node handed to a link: its own send() calls
+        ///         and its keepalives
         [[nodiscard]] std::uint32_t sent() const
         {
             return m_sent;
@@ -156,9 +151,9 @@ namespace mark4
             return m_sentBytes;
         }
 
-        /// @return send() calls that reached no link: a payload too long, no
-        ///         link declared, an unknown destination, or a medium that
-        ///         refused the frame (a full UART ring)
+        /// @return send() calls that reached no link: an empty or too long
+        ///         payload, no link declared, an unknown destination, or a
+        ///         medium that refused the frame (a full UART ring)
         [[nodiscard]] std::uint32_t refused() const
         {
             return m_refused;
@@ -221,7 +216,8 @@ namespace mark4
                    std::uint64_t nowUs,
                    bool &isNewOut);
 
-        /// @brief Forwards the frame in m_rxBuffer with one hop less.
+        /// @brief Forwards the frame in m_rxBuffer with one hop more, or
+        ///        drops it when it already crossed MAX_HOPS relays.
         /// @param header its header
         /// @param arrivalLink link it must not go back on
         /// @param size frame size
@@ -235,22 +231,26 @@ namespace mark4
         /// @return mutable node, nullptr when unknown
         Node *lookup(std::uint32_t nodeId);
 
+        /// @brief Emits one keepalive, a header alone: this node's presence,
+        ///        broadcast every KEEPALIVE_PERIOD_US and unicast once to a
+        ///        node the moment it first appears. Counted like any send.
+        /// @param dst node to reach, BROADCAST_NODE for every link
+        void sendKeepalive(std::uint32_t dst);
+
         /// @brief Folds the outcome of one send into the send-side counters.
         /// @param ok true when every link the frame was meant for took it
-        /// @param size payload size of the frame [bytes]
+        /// @param size payload size of the frame [bytes], 0 for a keepalive
         /// @return ok, so a caller returns it straight away
         bool countSend(bool ok, std::size_t size);
 
-        std::uint32_t m_nodeId;                               ///< this node
-        std::array<AbsLink *, MAX_LINKS> m_links{};           ///< declared links
-        std::size_t m_linkCount = 0U;                         ///< links declared
-        std::array<Node, MAX_NODES> m_nodes{};                ///< live nodes, dense prefix
-        std::size_t m_nodeCount = 0U;                         ///< nodes in m_nodes
-        std::uint16_t m_nextSeq = 0U;                         ///< sequence of the next frame sent
-        std::array<std::uint8_t, MAX_BEACON_SIZE> m_beacon{}; ///< beacon payload
-        std::size_t m_beaconSize = 0U;                        ///< 0 = no beacon
-        std::uint64_t m_lastBeaconUs = 0U;                    ///< instant of the last beacon
-        bool m_beaconSent = false;                            ///< true once one went out
+        std::uint32_t m_nodeId;                     ///< this node
+        std::array<AbsLink *, MAX_LINKS> m_links{}; ///< declared links
+        std::size_t m_linkCount = 0U;               ///< links declared
+        std::array<Node, MAX_NODES> m_nodes{};      ///< live nodes, dense prefix
+        std::size_t m_nodeCount = 0U;               ///< nodes in m_nodes
+        std::uint16_t m_nextSeq = 0U;               ///< sequence of the next frame sent
+        std::uint64_t m_lastKeepaliveUs = 0U;       ///< instant of the last keepalive
+        bool m_keepaliveSent = false;               ///< true once one went out
         std::array<AbsPresenceListener *, MAX_LISTENERS> m_listeners{}; ///< attached, in order
         std::size_t m_listenerCount = 0U;                               ///< listeners attached
         bool m_listenersOverflow = false;                      ///< a fifth one tried to attach

@@ -23,7 +23,7 @@ namespace mark4
     /// is stashed for the sensor source, everything else goes to the command
     /// ring. waitSensor() is the one blocking point of the flight loop: a
     /// poll(2) on the link's sockets bounded by the caller's deadline, so
-    /// the beacon and the node expiry keep running while the plant is
+    /// the keepalive and the node expiry keep running while the plant is
     /// silent.
     ///
     /// The plant is the node the sensor source adopted, and the sensor
@@ -37,7 +37,7 @@ namespace mark4
 
         /// @param transport this node's transport, initialized by the root
         /// @param link its UDP link, for the descriptors waitSensor() sleeps on
-        /// @param clock wall clock the transport is polled on (the beacon
+        /// @param clock wall clock the transport is polled on (the keepalive
         ///        cadence is a real-time contract whatever the sim time scale)
         /// @param commands ring every non-sensor payload is queued in
         PlantLink(Transport &transport,

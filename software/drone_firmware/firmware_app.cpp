@@ -1,8 +1,6 @@
 #include "firmware_app.hpp"
 
-#include <array>
 #include <cstdint>
-#include <cstring>
 
 #include "flight_core/types.hpp"
 #include "log/module.hpp"
@@ -103,16 +101,20 @@ namespace mark4
             return false;
         }
         static_cast<void>(logAddSink(m_transportSink));
-        if (!setAnnounceBeacon())
+        // The identity is whatever the packaging script stamped into this
+        // slot's image header: unstamped (SWD-flashed) images carry erased
+        // bytes, reported as 0xFFFFFFFF and an empty hash.
+        OtaImageIdentity identity{};
+        char gitHash[OTA_GIT_HASH_SIZE + 1U] = {};
+        if (m_firmwareStore.readIdentity(m_firmwareStore.runningSlot(), identity))
         {
-            BOOT.error("transport: the announce does not fit a beacon");
-            return false;
+            otaGitHashToWire(identity.gitHash, gitHash);
         }
         BOOT.info("boot: node %08lx slot %c build %lu %s wire %08lx",
                   static_cast<unsigned long>(m_transport.nodeId()),
                   m_firmwareStore.runningSlot() == OTA_SLOT_B ? 'B' : 'A',
-                  static_cast<unsigned long>(m_announce.build_epoch),
-                  m_announce.git_hash,
+                  static_cast<unsigned long>(identity.buildEpoch),
+                  gitHash,
                   static_cast<unsigned long>(WIRE_HASH));
         BOOT.info("transport: uart %lu baud", static_cast<unsigned long>(UART1_BAUD_RATE));
         if (!m_bus.init())
@@ -172,43 +174,12 @@ namespace mark4
                          otaTrialUnconfirmed(meta, m_firmwareStore.runningSlot());
     }
 
-    bool FirmwareApp::setAnnounceBeacon()
-    {
-        mark4_Envelope envelope = mark4_Envelope_init_zero;
-        envelope.which_body = mark4_Envelope_announce_tag;
-        mark4_Announce &announce = envelope.body.announce;
-        announce.kind = mark4_NodeKind_FIRMWARE;
-        std::strncpy(announce.name, "mark4-fc", sizeof(announce.name) - 1U);
-        announce.mcu = static_cast<mark4_Mcu>(m_firmwareStore.mcuId());
-        announce.wire_hash = WIRE_HASH;
-        // The identity is whatever the packaging script stamped into this
-        // slot's image header: unstamped (SWD-flashed) images carry erased
-        // bytes, reported as 0xFFFFFFFF and an empty hash.
-        OtaImageIdentity identity;
-        if (m_firmwareStore.readIdentity(m_firmwareStore.runningSlot(), identity))
-        {
-            announce.build_epoch = identity.buildEpoch;
-            otaGitHashToWire(identity.gitHash, announce.git_hash);
-        }
-        // The announce is the beacon: the transport broadcasts it once per
-        // second and unicasts it to every node the moment it appears.
-        std::array<std::uint8_t, Transport::MAX_BEACON_SIZE> beacon{};
-        std::size_t beaconSize = 0U;
-        if (!encodeEnvelope(envelope, beacon.data(), beacon.size(), beaconSize))
-        {
-            return false;
-        }
-        m_transport.setBeacon(beacon.data(), beaconSize);
-        m_announce = announce;
-        return true;
-    }
-
     void FirmwareApp::pollTransport(std::uint64_t nowUs)
     {
         m_transport.poll(nowUs, &FirmwareApp::OnPayload, this);
         if (!m_logModulesPublished)
         {
-            // The first poll sent the first beacon: the table follows it.
+            // The first poll sent the first keepalive: the table follows it.
             m_logModulesPublished = true;
             publishLogModules();
         }

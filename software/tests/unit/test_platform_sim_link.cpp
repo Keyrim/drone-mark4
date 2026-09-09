@@ -100,7 +100,7 @@ namespace
             header.src = m_nodeId;
             header.dst = dst;
             header.seq = m_seq;
-            header.hops = mark4::Transport::INITIAL_HOPS;
+            header.hops = 0U;
             ++m_seq;
             mark4::encodeFrameHeader(header, frame.data());
             std::size_t size = 0U;
@@ -111,7 +111,10 @@ namespace
             REQUIRE(m_link.send(frame.data(), mark4::FRAME_HEADER_SIZE + size, m_drone));
         }
 
-        /// @brief Waits for one frame, up to the test timeout.
+        /// @brief Waits for one frame carrying a payload, up to the test
+        ///        timeout. The drone's keepalives (a header alone, one to a
+        ///        newcomer and one per second) are what a plant learns the
+        ///        drone from and never delivers: they are skipped here too.
         /// @return what came, size 0 when nothing did
         Received receive()
         {
@@ -121,7 +124,7 @@ namespace
             {
                 mark4::LinkAddress from;
                 const std::size_t size = m_link.receive(frame.data(), frame.size(), from);
-                if (size > 0U)
+                if (size > mark4::FRAME_HEADER_SIZE)
                 {
                     REQUIRE(mark4::decodeFrameHeader(frame.data(), size, received.header));
                     received.size = size - mark4::FRAME_HEADER_SIZE;
@@ -130,7 +133,10 @@ namespace
                                 received.size);
                     return received;
                 }
-                ::usleep(1000);
+                if (size == 0U)
+                {
+                    ::usleep(1000);
+                }
             }
             return received;
         }

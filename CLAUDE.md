@@ -73,7 +73,7 @@ idf.py -C esp32-bridge -p /dev/ttyACM0 flash monitor
 ./software/build/desktop/drone_sim/drone_sim [--discovery-port N] [--node-id N]
 
 # Start a bench session: no port to pass anywhere, every process is a
-# transport node on udp/47820 and finds the others by their beacons. The hub
+# transport node on udp/47820 and finds the others by their keepalives. The hub
 # takes no arguments, serves the pages and websocket on http://127.0.0.1:47810
 # and stays up; everything operational (board link, tuning profiles) is driven
 # from the pages. Godot (own terminal or the "godot sim" VS Code task) hosts
@@ -231,7 +231,7 @@ Everything C++ lives under `software/`: the executables at its top level
 - `transport/` - static lib, the interface manager between processes and
   boards (`software/components/transport/README.md`). Frames an opaque
   payload with `src u32, dst u32, seq u16, hops u8`, learns every node from
-  any frame heard, beacons once per second, expires silent nodes, relays
+  any frame heard, keeps alive once per second, expires silent nodes, relays
   between links when asked. Depends on nothing but `drone_warnings`
   (`transport/serial_framing.hpp` lives here, the one CRC-16 of the
   project). The core and `UartLink` build for stm32 (no heap, fixed
@@ -251,9 +251,9 @@ Everything C++ lives under `software/`: the executables at its top level
   ESP32 riding the drone (`esp32-bridge/`) is a transport relay and a
   node: two links (`UartLink` to the board, the shared `UdpLink` on lwIP),
   so it relays between them as every transport node with several links
-  does (every node relays, there is no switch and no filter), with a
-  beacon of its own (kind `RELAY`, mcu `ESP32C3`) on both links; it logs
-  through the log library, answers the `LogControl` addressed to it, and
+  does (every node relays, there is no switch and no filter), with its
+  own keepalives on both links; it logs through the log library, answers
+  the `LogControl` addressed to it, and
   updates itself over the air (the shared `OtaUpdater` over
   `FirmwareStoreEsp32`, which
   maps the metadata onto the IDF bootloader's `otadata` and rollback; two

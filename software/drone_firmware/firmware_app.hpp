@@ -41,8 +41,8 @@ namespace mark4
     ///
     /// The board is one transport node with one link, USART1 to the ESP32
     /// relay. Everything it emits (telemetry, tuning and updater answers,
-    /// log lines, its Announce beacon) is a broadcast, like drone_sim: the
-    /// relay puts it on the LAN and nobody has to know who asked.
+    /// log lines) is a broadcast, like drone_sim: the relay puts it on the
+    /// LAN and nobody has to know who asked.
     /// Commands reach it as unicasts to its node id, or as broadcasts.
     class FirmwareApp
     {
@@ -95,13 +95,7 @@ namespace mark4
         ///        and nothing else can move the running slot's state.
         void refreshArmInterlock();
 
-        /// @brief Registers the Announce naming this board (kind, chip and
-        ///        the identity stamped in the running slot's image header)
-        ///        as the transport beacon.
-        /// @return false when it does not fit a beacon
-        bool setAnnounceBeacon();
-
-        /// @brief Pumps the transport: frames in, beacon and expiry out.
+        /// @brief Pumps the transport: frames in, keepalive and expiry out.
         ///        Every payload delivered lands in the command receiver.
         /// @param nowUs current instant [us]
         void pollTransport(std::uint64_t nowUs);
@@ -168,14 +162,11 @@ namespace mark4
         mark4::TelemetryEntry m_stepDurationEntry{
             "loop/step_duration", mark4::TelemetryUnit::US, m_stepDurationUs};
 
-        /// The beacon as registered: the identity the boot line reports.
-        mark4_Announce m_announce = mark4_Announce_init_zero;
-
         /// True while the running slot is on trial: arming is refused until
         /// the image confirms itself (docs/ota-design.md section 3.2).
         bool m_armInhibited = false;
 
-        /// The module table goes out once the first beacon did.
+        /// The module table goes out once the first keepalive did.
         bool m_logModulesPublished = false;
     };
 } // namespace mark4

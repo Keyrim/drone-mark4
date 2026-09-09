@@ -19,9 +19,6 @@ extern "C"
 /// Largest payload a frame carries; a longer send is refused.
 #define MARK4_MAX_PAYLOAD 512
 
-/// Largest beacon payload accepted by mark4_transport_set_beacon().
-#define MARK4_MAX_BEACON_SIZE 64
-
 /// Payloads kept between two polls; the oldest is dropped past that.
 #define MARK4_RX_QUEUE_SIZE 64
 
@@ -43,7 +40,7 @@ extern "C"
     /// Counters of one node, transport and shim together.
     typedef struct
     {
-        uint32_t sent;          ///< frames handed to the link, beacons included
+        uint32_t sent;          ///< frames handed to the link, keepalives included
         uint64_t sent_bytes;    ///< payload bytes of those frames
         uint32_t refused;       ///< sends that reached no link
         uint32_t dropped;       ///< frames the transport dropped
@@ -70,19 +67,11 @@ extern "C"
     /// @return identity of the node
     uint32_t mark4_transport_node_id(const Mark4Transport *transport);
 
-    /// @brief Registers the beacon broadcast every second and unicast to
-    ///        every node the moment it appears. Copied.
-    /// @param transport node
-    /// @param payload beacon bytes
-    /// @param size beacon size, at most MARK4_MAX_BEACON_SIZE, 0 to stop
-    /// @return false when the payload is too long
-    bool mark4_transport_set_beacon(Mark4Transport *transport, const uint8_t *payload, size_t size);
-
     /// @brief Sends one payload.
     /// @param transport node
     /// @param dst node to reach, 0 for every node
     /// @param payload payload bytes
-    /// @param size payload size, at most MARK4_MAX_PAYLOAD
+    /// @param size payload size, 1 to MARK4_MAX_PAYLOAD
     /// @return true when the frame left on the link
     bool mark4_transport_send(Mark4Transport *transport,
                               uint32_t dst,
@@ -90,7 +79,7 @@ extern "C"
                               size_t size);
 
     /// @brief Drains the link: learns nodes, queues the payloads for this
-    ///        node, expires the silent nodes and emits the beacon when due.
+    ///        node, expires the silent nodes and emits the keepalive when due.
     /// @param transport node
     /// @param now_us current instant [us], from the caller's monotonic clock
     /// @return payloads waiting in the receive queue after the poll

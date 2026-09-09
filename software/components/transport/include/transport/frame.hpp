@@ -37,7 +37,8 @@ namespace mark4
         std::uint32_t src = 0U; ///< node that produced the payload
         std::uint32_t dst = 0U; ///< node it is for, BROADCAST_NODE for all
         std::uint16_t seq = 0U; ///< per-sender counter, wraps
-        std::uint8_t hops = 0U; ///< relays left; a relay decrements and drops at 0
+        std::uint8_t hops = 0U; ///< relays crossed so far; a sender writes 0, a relay adds
+                                ///< one and drops a frame already at MAX_HOPS
     };
 
     /// @brief Writes one header, little-endian whatever the host order.

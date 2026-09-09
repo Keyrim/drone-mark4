@@ -173,7 +173,7 @@ class _PhaseBand extends StatelessWidget {
 }
 
 /// The two links of this drone, each an icon in the link's color: the phone
-/// hearing the drone (its beacons arrive) and the drone hearing the phone
+/// hearing the drone (its frames arrive) and the drone hearing the phone
 /// (its Status says the RC fail-safe is not active). The controller is the
 /// app's, in the app bar.
 class _Links extends StatelessWidget {

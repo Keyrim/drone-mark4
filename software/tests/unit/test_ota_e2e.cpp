@@ -212,7 +212,7 @@ namespace
     constexpr std::uint32_t GROUND_NODE = 0x6E0D0001U;
 
     /// Transport identity the sim is started with, so the ground side can
-    /// address it before it ever announced anything but its beacon.
+    /// address it before it has said anything.
     constexpr std::uint32_t SIM_NODE = 0x51300001U;
 
     /// The ground side of the link, exactly what the hub is: one transport
@@ -220,7 +220,7 @@ namespace
     /// shapes: straight on the LAN (one UDP link on a private discovery
     /// port), or through a relay: the ground node stays on its LAN, an
     /// ESP32-like relay (UDP link on that LAN, UartLink on an in-memory
-    /// wire, no beacon) stands where the ESP32 stands, and a second relay on
+    /// wire) stands where the ESP32 stands, and a second relay on
     /// the far end of the wire (UartLink, UDP link on a second private LAN)
     /// stands where the board's transport stands with the sim behind it, so
     /// every updater message crosses the serial framing and two relays both
@@ -256,18 +256,8 @@ namespace
             {
                 return true;
             }
-            // The ground beacons like the hub does, a real Announce, so the
-            // sim learns it across the wire. The relays beacon nothing.
-            mark4_Envelope announce = mark4_Envelope_init_zero;
-            announce.which_body = mark4_Envelope_announce_tag;
-            announce.body.announce.kind = mark4_NodeKind_GATEWAY;
-            std::array<std::uint8_t, mark4::MAX_ENVELOPE_SIZE> beacon{};
-            std::size_t beaconSize = 0U;
-            if (!mark4::encodeEnvelope(announce, beacon.data(), beacon.size(), beaconSize))
-            {
-                return false;
-            }
-            m_transport.setBeacon(beacon.data(), beaconSize);
+            // The sim learns the ground from its keepalives and unicasts,
+            // relayed across the wire like the hub's are.
             return m_relay.addLink(m_relayUart) && m_relay.addLink(m_relayUdp) &&
                    m_relayUdp.init() && m_relay.init() && m_farRelay.addLink(m_farUart) &&
                    m_farUdp.init() && m_farRelay.addLink(m_farUdp) && m_farRelay.init();
@@ -736,7 +726,7 @@ TEST_CASE("a hub-driven update crosses the esp32 relay and the serial framing", 
     REQUIRE(sim.alive());
 
     // The whole transfer went down the wire: what the ground unicast to the
-    // sim plus its own beacons.
+    // sim plus the keepalives.
     CHECK(link.wireBytesToBoard() > IMAGE_SIZE);
 
     sim.stop();
@@ -950,7 +940,7 @@ TEST_CASE("a live drone_sim publishes its log modules and takes a level from the
     SimProcess sim;
     REQUIRE(sim.start(runDirectory, (runDirectory / "flash").string(), discoveryPort, SIM_NODE));
 
-    // The table follows the first beacon, unasked, and names the boot line's
+    // The table follows the first keepalive, unasked, and names the boot line's
     // module; the boot line itself is a Log carrying that module's id.
     REQUIRE(ground.waitFor(isLogModules));
     const std::uint32_t bootId = moduleIdOf(ground.heard, "app/boot");

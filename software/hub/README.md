@@ -1,7 +1,7 @@
 # hub
 
 The gateway between the transport and the browser: one transport node
-(kind `gateway`, one `UdpLink`, it beacons like the others and relays
+(kind `gateway`, one `UdpLink`, it keeps alive like the others and relays
 nothing) whose websocket clients see every frame the node hears and can
 send frames back. It decodes nothing on their behalf: the pages carry
 their own generated codec of `mark4.proto` and read the same `Envelope`
@@ -29,9 +29,10 @@ cmake --preset desktop && cmake --build --preset desktop
 The hub takes **no arguments**. It serves with its built-in defaults
 (endpoint on 127.0.0.1:47810, transport discovery port 47820, profiles in
 `profiles/`, pages in `software/hub/pages/dist` resolved from the binary
-location, beacon name `hub-<hostname>`). A flight process reaches it by
-beaconing on the discovery port; nothing is wired by hand, nothing is
-"connected": every node the transport hears is in the table, and a page
+location, own name `hub-<hostname>` in the node table). A flight process
+reaches it by its keepalives on the discovery port; nothing is wired by
+hand, nothing is "connected": every node the transport hears is in the
+table, and a page
 commands whichever node id it wants. A default worth changing is a
 compile-time change in `transport/udp_link.hpp` or `HubApp::Config`, not a
 flag.
@@ -94,7 +95,7 @@ Gateway to client:
 | body | when | what |
 |------|------|------|
 | `frame` | every payload the transport delivers | `src` node id, `payload` = one encoded `Envelope` (telemetry, tuning answers, log lines, OTA answers, announces: whatever the node sent). `dst` is left 0: the transport does not report it, and a delivered frame was for the gateway or for everyone anyway. |
-| `nodes` | every second, on every table change, on connect | `NodeTable`: the gateway itself first (address empty), then every node the transport hears: id, IPv4 `address`, `port`, `last_seen_ms_ago`, `received` / `lost` / `duplicates` frame counters, its last `Announce` when it has beaconed, and its `log_modules` (the last `LogModules` table it published, whole; the gateway queries a node the moment it appears, so a client connecting late still knows every module and level). |
+| `nodes` | every second, on every table change, on connect | `NodeTable`: the gateway itself first (address empty), then every node the transport hears: id, IPv4 `address`, `port`, `last_seen_ms_ago`, `received` / `lost` / `duplicates` frame counters, its last `Announce` when one arrived from it (no node sends one today), and its `log_modules` (the last `LogModules` table it published, whole; the gateway queries a node the moment it appears, so a client connecting late still knows every module and level). |
 | `node_telemetry` | on every change of one node's table, on connect | `NodeTelemetry`: one drone node's whole telemetry table, `{id, name, unit}` per measure, as the gateway pulled it page by page (`TelemetryListRequest` / `TelemetryDescriptors`, unicast). The pull starts on the node's first `Announce`, because that is where its kind and its schema are known: only `DRONE_SIM` and `FIRMWARE` are asked, and never a node whose `wire_hash` differs. A page that goes unanswered is asked again every 500 ms, six times, then given up on with one WARN. A node that goes down publishes an empty table: the ids of a table are only stable while the node runs, so a client must drop its curves rather than rebind them to whatever the next boot numbers the same way. Its own message and not a `Node` field: every body of the `GatewayMessage` oneof shares one nanopb struct, and a table per node inside `NodeTable` would cost every message, the per-frame one included, a few hundred kB. |
 | `status` | every second, on connect | `GatewayStatus`: the gateway's node id, `wire_hash` (of `mark4.proto` as built), `clients`, `rc_clients` (clients that sent an Rc frame within 2 s), `frames_in`, `frames_out`, `dropped`, `bad_frames`. |
 | `ota_state` | on every change of the update client, on connect | phase, verdict and its sentence, `target_node`, `target_slot`, the loaded bundle's identity, what the board last said (slots, running / active slot), transfer progress in bytes. |
@@ -115,8 +116,8 @@ The wire mismatch of a node is not a field: a page compares
 `Node.announce.wire_hash` with `GatewayStatus.wire_hash`; the hub also
 logs the mismatch once (a `gateway/core` WARN) when the announce arrives.
 
-Simplifications, deliberate: the gateway's own beacon is not replayed as a
-`frame` (the gateway is the first entry of `nodes`, with its Announce);
+Simplifications, deliberate: the gateway's own Announce is never on the
+wire (the gateway is the first entry of `nodes`, with it);
 `Frame.dst` is 0 on delivered frames; the Ack carries its id on the
 enclosing message only; there is no gateway-level log message (field 31 of
 `GatewayMessage` was one and stays reserved): the gateway's lines are
@@ -195,8 +196,8 @@ code, never as the code.
 - The endpoint has no authentication. It binds the loopback interface, and
   it is a bench tool on a trusted network.
 - The hub relays nothing: with one link there is nothing to relay between.
-  Two hubs on one LAN both hear every broadcast and both beacon; the board
-  learns both through its relay.
+  Two hubs on one LAN both hear every broadcast and both keep alive; the
+  board learns both through its relay.
 - Tuned values do not survive a simulator reset: `drone_sim` rebuilds its
   flight core on the reset (there is no state a teleport could keep) and
   does not re-announce, so the hub has no event to push a profile on. Push

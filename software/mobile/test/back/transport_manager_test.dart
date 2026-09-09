@@ -13,22 +13,18 @@ void main() {
   setUp(() => bench = Bench());
   tearDown(() => bench.dispose());
 
-  test('boot takes the multicast lock and beacons a PHONE announce', () async {
+  test('boot takes the multicast lock and names the node', () async {
     await bench.boot();
     expect(bench.platform.lockAcquired, 1);
-    final beacon = Envelope.fromBuffer(bench.node.beacon!);
-    expect(beacon.hasAnnounce(), isTrue);
-    expect(beacon.announce.kind, NodeKind.PHONE);
-    expect(beacon.announce.name, 'Theo phone');
-    expect(beacon.announce.wireHash, wireHash);
     expect(bench.backend.transport.identity.value.nodeId, phoneNodeId);
     expect(bench.backend.transport.identity.value.name, 'Theo phone');
+    expect(bench.node.sent, isEmpty);
   });
 
   test('a refused multicast lock is not fatal', () async {
     bench = Bench(platform: FakePlatform(lockGranted: false));
     await bench.boot();
-    expect(bench.node.beacon, isNotNull);
+    expect(bench.backend.transport.identity.value.nodeId, phoneNodeId);
   });
 
   test('the announce name is ASCII and at most 16 characters', () async {

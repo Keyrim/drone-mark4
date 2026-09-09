@@ -252,8 +252,8 @@ namespace mark4
         WsBridge m_ws;                                           ///< websocket endpoint
         OtaClient m_ota;                                         ///< firmware update session
         std::uint32_t m_otaTarget = 0U;                          ///< node the updater talks to
-        mark4_Announce m_ownAnnounce = mark4_Announce_init_zero; ///< this gateway's beacon
-        std::map<std::uint32_t, mark4_Announce> m_announces;     ///< last beacon per node
+        mark4_Announce m_ownAnnounce = mark4_Announce_init_zero; ///< this gateway's own row
+        std::map<std::uint32_t, mark4_Announce> m_announces;     ///< last Announce per node
         std::map<std::uint32_t, LogModuleTable> m_logModules;    ///< last module table per node
 
         /// Where one node's telemetry table stands: the descriptors pulled
@@ -272,10 +272,10 @@ namespace mark4
         std::atomic_bool m_stopRequested{false};            ///< set by a signal handler
         std::uint64_t m_nextStatusUs = 0U;                  ///< next periodic publish [us]
         bool m_nodesDirty = false;                          ///< table changed since published
-        bool m_logModulesPublished = false; ///< own table sent after the first beacon
-        bool m_loopbackWarned = false;      ///< the link's fallback was logged
-        std::uint32_t m_framesIn = 0U;      ///< payloads delivered by the transport
-        std::uint32_t m_framesOut = 0U;     ///< frames sent for clients
-        std::uint32_t m_badFrames = 0U;     ///< client frames refused
+        bool m_logModulesPublished = false;                 ///< own table sent after the first poll
+        bool m_loopbackWarned = false;                      ///< the link's fallback was logged
+        std::uint32_t m_framesIn = 0U;                      ///< payloads delivered by the transport
+        std::uint32_t m_framesOut = 0U;                     ///< frames sent for clients
+        std::uint32_t m_badFrames = 0U;                     ///< client frames refused
     };
 } // namespace mark4
