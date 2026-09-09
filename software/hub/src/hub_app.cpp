@@ -157,7 +157,6 @@ namespace mark4
                     hexNodeId(m_transport.nodeId()).c_str(),
                     static_cast<unsigned>(m_udpLink.discoveryPort()),
                     WIRE_HASH);
-        m_transport.setNodeCallbacks(&HubApp::OnNodeUp, &HubApp::OnNodeDown, this);
         // The gateway's own beacon: every node learns the gateway and the
         // schema it speaks, and the flight processes learn where to unicast.
         m_ownAnnounce.kind = mark4_NodeKind_GATEWAY;
@@ -264,9 +263,9 @@ namespace mark4
         static_cast<HubApp *>(context)->onFrame(src, data, size);
     }
 
-    void HubApp::OnNodeUp(void *context, const Transport::Node &node)
+    void HubApp::PresenceListener::onNodeUp(const Transport::Node &node)
     {
-        auto *self = static_cast<HubApp *>(context);
+        HubApp *const self = &m_app;
         MODULE.info("node %s appeared", hexNodeId(node.id).c_str());
         self->m_nodesDirty = true;
         // A node that booted before this gateway published its table into
@@ -279,9 +278,9 @@ namespace mark4
         static_cast<void>(self->sendEnvelope(node.id, query, ignored));
     }
 
-    void HubApp::OnNodeDown(void *context, const Transport::Node &node)
+    void HubApp::PresenceListener::onNodeDown(const Transport::Node &node)
     {
-        auto *self = static_cast<HubApp *>(context);
+        HubApp *const self = &m_app;
         MODULE.info("node %s disappeared", hexNodeId(node.id).c_str());
         self->m_announces.erase(node.id);
         self->m_logModules.erase(node.id);

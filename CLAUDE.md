@@ -250,13 +250,12 @@ Everything C++ lives under `software/`: the executables at its top level
   framing `A5 5A len_lo len_hi payload crc16`, 512 bytes at most). The
   ESP32 riding the drone (`esp32-bridge/`) is a transport relay and a
   node: two links (`UartLink` to the board, the shared `UdpLink` on lwIP),
-  `setRelay(true)`, a beacon of its own (kind `RELAY`, mcu `ESP32C3`) on
-  both links, and a `setRelayFilter()` towards the UART that lets unicasts
-  and `Announce` broadcasts through and keeps every other LAN broadcast
-  off the line; it logs through the log library, its lines and module
-  table going out on the LAN link alone (the optional link mask of
-  `send()`), answers the `LogControl` addressed to it, and updates itself
-  over the air (the shared `OtaUpdater` over `FirmwareStoreEsp32`, which
+  so it relays between them as every transport node with several links
+  does (every node relays, there is no switch and no filter), with a
+  beacon of its own (kind `RELAY`, mcu `ESP32C3`) on both links; it logs
+  through the log library, answers the `LogControl` addressed to it, and
+  updates itself over the air (the shared `OtaUpdater` over
+  `FirmwareStoreEsp32`, which
   maps the metadata onto the IDF bootloader's `otadata` and rollback; two
   OTA partitions in `esp32-bridge/partitions.csv`, one USB flash per
   module to lay them out, `esp32_bridge.ota` packaged by every build). It

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <initializer_list>
+#include <variant>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -117,7 +118,12 @@ namespace mark4
 
     bool UdpLink::send(const std::uint8_t *data, std::size_t size, const LinkAddress &address)
     {
-        return sendTo(data, size, address.host, address.port);
+        const auto *udp = std::get_if<UdpAddress>(&address);
+        if (udp == nullptr)
+        {
+            return false; // not an address of this link
+        }
+        return sendTo(data, size, udp->host, udp->port);
     }
 
     bool UdpLink::broadcast(const std::uint8_t *data, std::size_t size)
@@ -158,12 +164,13 @@ namespace mark4
 
     bool UdpLink::isOwnEcho(const LinkAddress &from) const
     {
-        if (from.port != m_dataPort)
+        const auto *udp = std::get_if<UdpAddress>(&from);
+        if (udp == nullptr || udp->port != m_dataPort)
         {
             return false;
         }
         return std::ranges::any_of(m_localHosts,
-                                   [&from](std::uint32_t host) { return host == from.host; });
+                                   [udp](std::uint32_t host) { return host == udp->host; });
     }
 
     bool UdpLink::sendTo(const std::uint8_t *data,
@@ -210,8 +217,7 @@ namespace mark4
             {
                 continue; // oversized: not one of ours, take the next
             }
-            fromOut.host = ntohl(from.sin_addr.s_addr);
-            fromOut.port = ntohs(from.sin_port);
+            fromOut = UdpAddress{ntohl(from.sin_addr.s_addr), ntohs(from.sin_port)};
             return static_cast<std::size_t>(received);
         }
     }

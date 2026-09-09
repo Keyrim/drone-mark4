@@ -3,6 +3,7 @@
 #include <array>
 #include <cstring>
 #include <new>
+#include <variant>
 
 #include "transport/frame.hpp"
 #include "transport/node_id.hpp"
@@ -203,8 +204,11 @@ extern "C"
         }
         const mark4::Transport::Node &node = transport->transport.node(index);
         node_out->id = node.id;
-        node_out->host = node.address.host;
-        node_out->port = node.address.port;
+        // A phone has one UDP link: every node it knows has a UDP address.
+        // Anything else reads as no address at all.
+        const auto *udp = std::get_if<mark4::UdpAddress>(&node.address);
+        node_out->host = udp != nullptr ? udp->host : 0U;
+        node_out->port = udp != nullptr ? udp->port : 0U;
         node_out->last_seen_us = node.lastSeenUs;
         node_out->received = node.received;
         node_out->lost = node.lost;

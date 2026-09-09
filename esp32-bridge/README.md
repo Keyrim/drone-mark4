@@ -15,31 +15,26 @@ controller does (see "Over-the-air update" below).
 
 ## What crosses, and what does not
 
-The relay forwards with the transport's generic rules (split horizon, one
-hop less per relay, duplicate drop by `(src, seq)`), plus one outbound
-filter on the UART link, `uartFilter()` in `main/relay.cpp`:
+The relay forwards with the transport's generic rules alone (split
+horizon, one hop less per relay, duplicate drop by `(src, seq)`); every
+transport node relays, and this one is the only node with two links:
 
 - towards the LAN: everything the board emits (telemetry, answers, log
   lines, its Announce), as broadcasts;
 - towards the UART: every unicast the transport routes there (the board is
   the only node on that link, so a unicast routed there is for it: RC,
-  tuning, updater messages), and the broadcasts whose envelope body is an
-  `Announce` (the board learns the LAN nodes from those, this relay
-  included). Every other LAN broadcast, `drone_sim`'s telemetry and run
-  stats first, stays on the LAN: a 921600 baud line does not carry the
-  whole LAN.
+  tuning, updater messages), and every LAN broadcast. The line is 921600
+  baud and `UartStream::write` refuses a frame the TX ring cannot hold
+  whole, so a LAN that broadcasts more than the line carries degrades by
+  dropping, never by blocking.
 
-The filter judges relayed frames only. What the relay says itself is a
-`send`, and a `send` names the links it leaves on (`Transport::send`'s link
-mask): its log lines and its module table take the LAN bit alone, its
-beacon takes both links.
+What the relay says itself (its log lines, its module table, its beacon)
+is a broadcast on both links like any node's.
 
-The announce check reads one byte of the envelope
-(`envelopeIsAnnounce()`, `protocol/envelope.hpp`): the Envelope has a single
-field, its oneof, so the body's tag opens the bytes. Nothing relayed is
-decoded; what the delivery hands to the relay itself is decoded only when
-its tag (`envelopeBodyTag()`, the same first bytes) is one the relay
-answers: `LogControl`, `Reboot`, the `Ota*` requests.
+Nothing relayed is decoded; what the delivery hands to the relay itself is
+decoded only when its tag (`envelopeBodyTag()`, `protocol/envelope.hpp`,
+the first bytes of the envelope) is one the relay answers: `LogControl`,
+`Reboot`, the `Ota*` requests.
 
 ## Composition
 
@@ -58,8 +53,9 @@ without an address) then hands over to `relayRun()` in `main/relay.cpp`:
   `getifaddrs()`; the relay hands its own address to
   `UdpLink::addLocalHost()` so its broadcasts coming back are dropped as
   echoes;
-- `Transport` with node id `hashNodeId()` of the WiFi MAC, `setRelay(true)`,
-  the filter, and the `Announce` beacon;
+- `Transport` with node id `hashNodeId()` of the WiFi MAC and the
+  `Announce` beacon; it relays between its two links as any transport node
+  with several links does;
 - `FirmwareStoreEsp32` (`main/firmware_store_esp32.cpp`) over the two OTA
   partitions and the shared `OtaUpdater` (`ota/updater.hpp`) on top of it:
   the update session, fed by the `Ota*` unicasts a hub addresses to the
@@ -115,13 +111,12 @@ addressed to the relay's node id (the hub's pages list its modules like any
 node's) and it starts arriving as `Log` frames:
 
 ```
-00:00:20.000 DEBG relay/stats: nodes 2, relayed 1063, filtered 250, dropped 0, uart tx full 0
+00:00:20.000 DEBG relay/stats: nodes 2, relayed 1063, dropped 0, uart tx full 0
 ```
 
-`relayed` counts frames forwarded (one per link for a broadcast), `filtered`
-the LAN broadcasts the filter kept off the UART, `dropped` the transport's
-drops (unknown destination, hops exhausted), `uart tx full` the frames the
-UART ring could not take whole. The timestamps are the module's uptime.
+`relayed` counts frames forwarded (one per link for a broadcast),
+`dropped` the transport's drops (unknown destination, hops exhausted),
+`uart tx full` the frames the UART ring could not take whole. The timestamps are the module's uptime.
 
 ## Network
 

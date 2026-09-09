@@ -89,8 +89,7 @@ namespace
               m_link(discoveryPort)
         {
             REQUIRE(m_link.init());
-            m_drone.host = INADDR_LOOPBACK;
-            m_drone.port = dronePort;
+            m_drone = mark4::UdpAddress{INADDR_LOOPBACK, dronePort};
         }
 
         /// @brief Frames one envelope for the drone node and sends it.

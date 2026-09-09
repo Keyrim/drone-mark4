@@ -7,17 +7,26 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <variant>
 
 namespace mark4
 {
-    /// Where a frame came from or goes to, on one link. A UDP link fills
-    /// both fields (IPv4 host and port, host byte order); a point-to-point
-    /// link such as a UART has nothing to say and leaves them at zero.
-    struct LinkAddress
+    /// Address of a peer on a point-to-point link: there is only one peer.
+    struct UartAddress
     {
-        std::uint32_t host = 0U; ///< IPv4 address, host byte order, 0 = none
-        std::uint16_t port = 0U; ///< UDP port, 0 = none
     };
+
+    /// Address of a peer on a UDP link.
+    struct UdpAddress
+    {
+        std::uint32_t host = 0U; ///< IPv4 address, host byte order
+        std::uint16_t port = 0U; ///< UDP port
+    };
+
+    /// Where a node is on its link. The transport stores it and hands it back
+    /// to the link that produced it, and never looks inside; each link reads
+    /// its own alternative with std::get_if and refuses the other.
+    using LinkAddress = std::variant<UartAddress, UdpAddress>;
 
     /// Frame mover over one medium. Every method is non-blocking.
     class AbsLink

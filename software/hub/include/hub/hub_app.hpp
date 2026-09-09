@@ -141,9 +141,26 @@ namespace mark4
                             const std::uint8_t *data,
                             std::size_t size);
 
-        /// @brief Transport presence callbacks: the table changed.
-        static void OnNodeUp(void *context, const Transport::Node &node);
-        static void OnNodeDown(void *context, const Transport::Node &node);
+        /// The gateway's ear on the transport's node table: a node that
+        ///        appears is asked for its module table, a node that expires
+        ///        takes its announce, modules and telemetry table with it.
+        class PresenceListener final : public AbsPresenceListener
+        {
+          public:
+            /// @param transport transport to listen to
+            /// @param app the gateway the events act on
+            PresenceListener(Transport &transport, HubApp &app)
+                : AbsPresenceListener(transport),
+                  m_app(app)
+            {
+            }
+
+            void onNodeUp(const Transport::Node &node) override;
+            void onNodeDown(const Transport::Node &node) override;
+
+          private:
+            HubApp &m_app; ///< the gateway
+        };
 
         /// @brief Route of the gateway's own log lines and module table: a
         ///        transport broadcast, mirrored to the clients as a frame
@@ -229,6 +246,7 @@ namespace mark4
         TuningProfiles m_profiles;                               ///< stored tuning profiles
         UdpLink m_udpLink;                                       ///< the LAN link, the only one
         Transport m_transport;                                   ///< this hub as a transport node
+        PresenceListener m_presence{m_transport, *this};         ///< its node table events
         ConsoleSinkPosix m_consoleSink;                          ///< log lines on stdout
         TransportSink m_logSink{&HubApp::SendLog, this};         ///< log lines on the wire
         WsBridge m_ws;                                           ///< websocket endpoint

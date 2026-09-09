@@ -103,8 +103,7 @@ TEST_CASE("the node table carries the transport record and the last announce")
 {
     mark4::Transport::Node node;
     node.id = 0xABCDU;
-    node.address.host = 0xC0A80105U; // 192.168.1.5
-    node.address.port = 4711U;
+    node.address = mark4::UdpAddress{0xC0A80105U, 4711U}; // 192.168.1.5
     node.lastSeenUs = 1'000'000U;
     node.received = 10U;
     node.lost = 2U;

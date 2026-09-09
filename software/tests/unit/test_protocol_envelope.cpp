@@ -530,8 +530,6 @@ TEST_CASE("the body tag is read off the first bytes without decoding")
         const mark4_Envelope envelope = withBody(tag);
         REQUIRE(mark4::encodeEnvelope(envelope, bytes.data(), bytes.size(), size));
         CHECK(mark4::envelopeBodyTag(bytes.data(), size) == tag);
-        CHECK(mark4::envelopeIsAnnounce(bytes.data(), size) ==
-              (tag == mark4_Envelope_announce_tag));
     }
 
     // Nothing, garbage, a varint tag cut short, a tag of another wire type.

@@ -17,10 +17,9 @@ campaign (`tools/batch/run_batch.py`, through the frame codec of
 the board over its UART (the firmware is a node
 with one `UartLink` on USART1), and the ESP32 riding the drone
 (`esp32-bridge/`), which is a relay: a node with a `UartLink` to the board
-and a `UdpLink` on the WiFi LAN, `setRelay(true)`, a beacon of kind
-`RELAY`, and a filter on what goes down the UART. The hub holds one
-`UdpLink` and relays nothing: the board reaches it as one more node of the
-LAN, at the relay's address. The mobile app (`software/mobile`, kind
+and a `UdpLink` on the WiFi LAN, and a beacon of kind `RELAY`. The hub
+holds one `UdpLink`, so it relays nothing: the board reaches it as one more
+node of the LAN, at the relay's address. The mobile app (`software/mobile`, kind
 `PHONE`) compiles this directory as it is with the Android NDK (bionic has
 the BSD sockets; `DRONE_PLATFORM` `android` selects the POSIX sources) and
 drives it from Dart through the C ABI of its `native/` shim.
@@ -59,23 +58,28 @@ Transport transport(nodeId);           // explicit, value member of the App
 transport.addLink(udpLink);            // up to MAX_LINKS = 4, AbsLink&
 transport.init();                      // false without a node id or a link
 transport.setBeacon(bytes, size);      // optional, at most MAX_BEACON_SIZE = 64
-transport.setRelay(true);              // off by default
-transport.setRelayFilter(filter, context); // optional, relayed frames only
-transport.setNodeCallbacks(onUp, onDown, context); // function pointer + context
-transport.send(dst, payload, size, linkMask); // dst 0 = broadcast, mask optional
+transport.send(dst, payload, size);    // dst 0 = broadcast on every link
 transport.poll(nowUs, deliver, context); // drain, learn, deliver, relay, expire, beacon
 transport.isAlive(id); transport.findNode(id); transport.nodeCount(); transport.node(i);
-transport.dropped(); transport.relayed(); transport.filtered();
+transport.dropped(); transport.relayed();
 transport.sent(); transport.sentBytes(); transport.refused(); // this node's own sends
+
+class Presence final : public AbsPresenceListener // up to MAX_LISTENERS = 4
+{
+    using AbsPresenceListener::AbsPresenceListener; // attaches to the transport
+    void onNodeUp(const Transport::Node &node) override;
+    void onNodeDown(const Transport::Node &node) override;
+};
+Presence presence{transport};          // a member declared after the transport
 ```
 
 The send-side counters describe this node's own `send()` calls, the
 periodic beacon included, and nothing else (a relayed frame is somebody
-else's send: `relayed()` and `filtered()` are for those). `sent()` counts
-the calls that reached every link they were meant for and `sentBytes()`
-their payloads; `refused()` counts the rest: a payload longer than
-`MAX_PAYLOAD`, no link declared, a destination unknown or masked out, or a
-medium that would not take the frame (a full UART ring). They are what a
+else's send: `relayed()` is for those). `sent()` counts the calls that
+reached every link they were meant for and `sentBytes()` their payloads;
+`refused()` counts the rest: a payload longer than `MAX_PAYLOAD`, no link
+declared, an unknown destination, or a medium that would not take the
+frame (a full UART ring). They are what a
 composition reports as its own output health, which is why they live here
 rather than in a wrapper around `send()`.
 
@@ -87,12 +91,9 @@ payload addressed to this node or to everyone is handed to `deliver`. A
 frame whose `src` is this node (its own broadcast coming back on a shared
 medium) is ignored.
 
-`send()` takes an optional `linkMask`, one bit per link index, `ALL_LINKS`
-by default: the links the frame may leave on. It is how a node keeps a
-chatty broadcast of its own off a slow link, the relay filter being for
-relayed frames alone; the ESP32 relay sends its log lines and its module
-table with the LAN bit only, while its beacon takes both links. A unicast
-whose node sits on an excluded link does not go out.
+A broadcast leaves on every declared link; a unicast leaves on the link
+its destination was last heard on, and is refused while the destination is
+unknown.
 
 Sequence accounting per node: an exact repeat of the last sequence is a
 duplicate and is dropped; a forward gap below `RESYNC_THRESHOLD` (1024) is
@@ -106,39 +107,40 @@ nothing. The hub publishes these counters per node in its `NodeTable`
 a node) that the transport broadcasts every `BEACON_PERIOD_US`
 (1 s, the first one on the first `poll()`), and additionally unicasts once
 to a node the moment it first appears, so a newcomer learns everyone at
-once. A node silent for `NODE_EXPIRY_US` (3 s) is forgotten and `onDown`
-fires; `onUp` fires when a node is heard for the first time. The hub
-beacons too, as kind `gateway`.
+once. A node silent for `NODE_EXPIRY_US` (3 s) is forgotten and every
+`AbsPresenceListener::onNodeDown()` fires; `onNodeUp()` fires when a node
+is heard for the first time. A listener attaches itself to the transport in
+its constructor and detaches in its destructor, so declaring one as a
+member right after the transport is the whole wiring; a transport takes at
+most `MAX_LISTENERS` (4) and `init()` fails past that. A listener may
+`send()` from inside its callbacks. The hub beacons too, as kind
+`gateway`.
 
 ## Relay
 
-Off by default. With `setRelay(true)`, a frame not for this node is
-forwarded with `hops - 1` (dropped when that reaches 0): a broadcast goes
-out on every link but the one it arrived on; a unicast goes out on the link
-its destination was last heard on, unless that is the arrival link (split
-horizon) or the destination is unknown (dropped). The duplicate drop by
-`(src, seq)` is what keeps a triangle of relays from looping.
+Always on, nothing to switch: a frame not for this node is forwarded with
+`hops - 1` (dropped when that reaches 0): a broadcast goes out on every
+link but the one it arrived on; a unicast goes out on the link its
+destination was last heard on, unless that is the arrival link (split
+horizon) or the destination is unknown (dropped). A node with one link
+therefore relays nothing, which is why no switch is needed. The duplicate
+drop by `(src, seq)` is what keeps a triangle of relays from looping.
 
-`setRelayFilter(fn, context)` installs one outbound predicate,
-`bool fn(context, linkIndex, const FrameHeader&, payload, size)`, consulted
-for every relayed frame on every link it would leave on, never for the
-node's own sends; a refusal is counted in `filtered()`, not `dropped()`.
-The ESP32 relay is the one user: on its UART link it lets unicasts through
-(routed there, they are for the board) and, of the broadcasts, only those
-whose envelope is an `Announce` (`envelopeIsAnnounce()` in
-`protocol/envelope.hpp`: one byte compared, the body's tag), so the LAN's
-telemetry never costs the 921600 baud line anything. The hub learns the
-board from the board's own Announce, relayed, at the relay's IP and data
-port, and its unicasts to the board land there and are relayed down the
-UART; the relay's own Announce travels beside it, from its own node id.
-`relayed()` counts the frames forwarded, one per link for a broadcast.
+The hub learns the board from the board's own Announce, relayed by the
+ESP32, at the relay's IP and data port, and its unicasts to the board land
+there and are relayed down the UART; the relay's own Announce travels
+beside it, from its own node id. `relayed()` counts the frames forwarded,
+one per link for a broadcast.
 
 ## Links
 
 - `AbsLink` (`transport/link.hpp`): `send(frame, size, address)`,
   `broadcast(frame, size)`, `receive(buffer, capacity, addressOut)`, all
-  non-blocking. `LinkAddress` is opaque to everyone but the link: an IPv4
-  host and port for UDP, zeros for a UART.
+  non-blocking. `LinkAddress` is a `std::variant<UartAddress, UdpAddress>`
+  (an IPv4 host and port for UDP, an empty struct for a UART): the
+  transport stores it per node and hands it back to the link the node was
+  heard on without ever looking inside; a link reads its own alternative
+  with `std::get_if` and refuses a `send()` to the other one.
 - `UdpLink` (`transport/udp_link.hpp`, BSD sockets): one shared
   **discovery port** every node binds with `SO_REUSEADDR + SO_REUSEPORT`
   and only ever receives broadcasts on, and one ephemeral **data socket**
@@ -222,9 +224,6 @@ link it arrived on.
 - Unicast replies are not used by `drone_sim` nor by the firmware: every
   answer is a broadcast, which is the simpler option and what the ground
   tools expect today (the ESP32 relays the board's onto the LAN).
-- The relay filter is one predicate and one rule: no routing table, no
-  per-node policy. A second kind of node behind a UART would share the
-  same rule.
 - The board's transport keeps the full `MAX_NODES` = 32 table (about
   1.3 KB) although it only ever sees a handful of nodes; RAM is not tight
   on the F405 so nothing shrinks it.

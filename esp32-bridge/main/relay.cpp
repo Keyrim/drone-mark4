@@ -2,13 +2,11 @@
 /// @brief The relay: one transport node with two links, the flight
 ///        controller's UART and the WiFi LAN, relaying between them. It is a
 ///        node of its own too: it announces itself as a relay on both links,
-///        logs through the log library over the LAN, and answers the
-///        LogControl addressed to it, and it updates itself over the air:
+///        logs through the log library, answers the LogControl addressed to
+///        it, and it updates itself over the air:
 ///        the same OtaUpdater the flight controller runs, over a store that
 ///        translates to the ESP-IDF OTA partitions, fed by the Ota*
-///        unicasts a hub sends it. Towards the UART only what the board
-///        needs crosses: unicasts for it, the Announce broadcasts that tell
-///        it who is on the LAN, and nothing this relay says itself.
+///        unicasts a hub sends it.
 
 #include <array>
 #include <cinttypes>
@@ -17,6 +15,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <variant>
 
 #include "driver/uart.h"
 #include "esp_mac.h"
@@ -70,14 +69,8 @@ namespace mark4
         /// transport counts a drop and the poll loop keeps its cadence.
         constexpr int UART_TX_BUFFER = 1024;
 
-        /// Index of the UART link in the transport: the one the filter guards.
+        /// Index of the UART link in the transport: where the board is.
         constexpr std::size_t UART_LINK = 0U;
-
-        /// Index of the LAN link, and the send mask naming it alone: what
-        /// this node says itself (its log lines, its module table) is for the
-        /// LAN and never for the board's line. Its beacon takes both links.
-        constexpr std::size_t LAN_LINK = 1U;
-        constexpr std::uint32_t LAN_ONLY = 1U << LAN_LINK;
 
         /// Poll cadence: one FreeRTOS tick, 1 ms with CONFIG_FREERTOS_HZ=1000.
         /// A 160-byte frame takes 1.7 ms on the line, so the added latency
@@ -156,6 +149,35 @@ namespace mark4
         ///        below the composition it reads.
         bool sendLogLine(void *context, const std::uint8_t *data, std::size_t size);
 
+        /// Logs every node the transport hears for the first time or forgets.
+        class PresenceLog final : public AbsPresenceListener
+        {
+          public:
+            using AbsPresenceListener::AbsPresenceListener;
+
+            void onNodeUp(const Transport::Node &node) override
+            {
+                const auto *udp = std::get_if<UdpAddress>(&node.address);
+                if (node.link == UART_LINK || udp == nullptr)
+                {
+                    CORE.info("node %08" PRIx32 " up on the uart", node.id);
+                    return;
+                }
+                CORE.info("node %08" PRIx32 " up on the lan at %u.%u.%u.%u:%u",
+                          node.id,
+                          static_cast<unsigned>(udp->host >> 24U),
+                          static_cast<unsigned>((udp->host >> 16U) & 0xFFU),
+                          static_cast<unsigned>((udp->host >> 8U) & 0xFFU),
+                          static_cast<unsigned>(udp->host & 0xFFU),
+                          static_cast<unsigned>(udp->port));
+            }
+
+            void onNodeDown(const Transport::Node &node) override
+            {
+                CORE.info("node %08" PRIx32 " gone", node.id);
+            }
+        };
+
         /// The composition: services as members, declaration order is
         /// construction order, dependencies by reference.
         struct Relay
@@ -164,7 +186,8 @@ namespace mark4
             UartLink uart{stream};                     ///< the board's link, serial framing
             UdpLink lan;                               ///< the WiFi LAN, discovery port 47820
             Transport transport;                       ///< the node, relaying between the two
-            TransportSink logSink{&sendLogLine, this}; ///< its lines, onto the LAN
+            PresenceLog presence{transport};           ///< one line per node up or gone
+            TransportSink logSink{&sendLogLine, this}; ///< its lines, as broadcasts
             FirmwareStoreEsp32 store;                  ///< the two OTA partitions
             OtaUpdater updater{store};                 ///< the update session over them
             bool storeReady = false;                   ///< the partition table is the two-slot one
@@ -179,8 +202,7 @@ namespace mark4
 
         bool sendLogLine(void *context, const std::uint8_t *data, std::size_t size)
         {
-            return static_cast<Relay *>(context)->transport.send(
-                BROADCAST_NODE, data, size, LAN_ONLY);
+            return static_cast<Relay *>(context)->transport.send(BROADCAST_NODE, data, size);
         }
 
         /// @brief Publishes this node's module table, as any node does after
@@ -197,22 +219,6 @@ namespace mark4
         {
             static_cast<void>(context);
             return static_cast<std::uint64_t>(esp_timer_get_time());
-        }
-
-        /// The one rule of the relay: a broadcast only goes down the UART
-        /// when it is an Announce (the board learns the LAN nodes from
-        /// those); a unicast routed there is for the board by construction.
-        /// Everything else the LAN broadcasts (drone_sim telemetry, run
-        /// stats, logs) stays on the LAN.
-        bool uartFilter(void *context,
-                        std::size_t linkIndex,
-                        const FrameHeader &header,
-                        const std::uint8_t *payload,
-                        std::size_t size)
-        {
-            static_cast<void>(context);
-            return linkIndex != UART_LINK || header.dst != BROADCAST_NODE ||
-                   envelopeIsAnnounce(payload, size);
         }
 
         /// @brief Sends one Envelope to one node, encoded on the stack.
@@ -307,31 +313,6 @@ namespace mark4
                 default:
                     break;
             }
-        }
-
-        /// @brief Logs a node the transport just heard for the first time.
-        void onNodeUp(void *context, const Transport::Node &node)
-        {
-            static_cast<void>(context);
-            if (node.link == UART_LINK)
-            {
-                CORE.info("node %08" PRIx32 " up on the uart", node.id);
-                return;
-            }
-            CORE.info("node %08" PRIx32 " up on the lan at %u.%u.%u.%u:%u",
-                      node.id,
-                      static_cast<unsigned>(node.address.host >> 24U),
-                      static_cast<unsigned>((node.address.host >> 16U) & 0xFFU),
-                      static_cast<unsigned>((node.address.host >> 8U) & 0xFFU),
-                      static_cast<unsigned>(node.address.host & 0xFFU),
-                      static_cast<unsigned>(node.address.port));
-        }
-
-        /// @brief Logs a node the transport just forgot.
-        void onNodeDown(void *context, const Transport::Node &node)
-        {
-            static_cast<void>(context);
-            CORE.info("node %08" PRIx32 " gone", node.id);
         }
 
         /// @brief Opens the UART the flight controller is wired to.
@@ -463,9 +444,6 @@ extern "C" void relayRun(void)
     // broadcast of ours can come back from, so the echo is dropped instead
     // of counted as a duplicate of every frame relayed.
     relay.lan.addLocalHost(ownAddress());
-    relay.transport.setRelay(true);
-    relay.transport.setRelayFilter(&uartFilter, nullptr);
-    relay.transport.setNodeCallbacks(&onNodeUp, &onNodeDown, nullptr);
     if (!setBeacon(relay, mac))
     {
         BOOT.error("the announce does not fit a beacon");
@@ -509,11 +487,9 @@ extern "C" void relayRun(void)
         if (nowUs >= nextStatsUs)
         {
             nextStatsUs = nowUs + STATS_PERIOD_US;
-            STATS.debug("nodes %u, relayed %" PRIu32 ", filtered %" PRIu32 ", dropped %" PRIu32
-                        ", uart tx full %" PRIu32,
+            STATS.debug("nodes %u, relayed %" PRIu32 ", dropped %" PRIu32 ", uart tx full %" PRIu32,
                         static_cast<unsigned>(relay.transport.nodeCount()),
                         relay.transport.relayed(),
-                        relay.transport.filtered(),
                         relay.transport.dropped(),
                         relay.stream.txFull());
         }

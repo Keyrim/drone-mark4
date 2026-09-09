@@ -7,6 +7,8 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <variant>
+
 #include <pb_decode.h>
 #include <pb_encode.h>
 
@@ -215,17 +217,20 @@ namespace mark4
     {
         nodeOut = mark4_Node_init_zero;
         nodeOut.id = node.id;
-        if (node.address.host != 0U)
+        // Only a UDP address has anything to show; a node behind a serial
+        // line leaves both fields empty.
+        if (const auto *udp = std::get_if<UdpAddress>(&node.address);
+            udp != nullptr && udp->host != 0U)
         {
             static_cast<void>(std::snprintf(nodeOut.address,
                                             sizeof(nodeOut.address),
                                             "%u.%u.%u.%u",
-                                            (node.address.host >> (3U * BITS_PER_BYTE)) & BYTE_MASK,
-                                            (node.address.host >> (2U * BITS_PER_BYTE)) & BYTE_MASK,
-                                            (node.address.host >> BITS_PER_BYTE) & BYTE_MASK,
-                                            node.address.host & BYTE_MASK));
+                                            (udp->host >> (3U * BITS_PER_BYTE)) & BYTE_MASK,
+                                            (udp->host >> (2U * BITS_PER_BYTE)) & BYTE_MASK,
+                                            (udp->host >> BITS_PER_BYTE) & BYTE_MASK,
+                                            udp->host & BYTE_MASK));
+            nodeOut.port = udp->port;
         }
-        nodeOut.port = node.address.port;
         nodeOut.last_seen_ms_ago =
             static_cast<std::uint32_t>((nowUs - std::min(nowUs, node.lastSeenUs)) / US_PER_MS);
         nodeOut.received = node.received;

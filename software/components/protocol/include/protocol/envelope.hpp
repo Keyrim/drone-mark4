@@ -31,28 +31,6 @@ namespace mark4
     /// Bits a field number is shifted by in a protobuf tag byte.
     inline constexpr unsigned PB_TAG_FIELD_SHIFT = 3U;
 
-    /// Highest field number whose tag is a single byte.
-    inline constexpr unsigned PB_SINGLE_BYTE_TAG_MAX = 15U;
-
-    static_assert(mark4_Envelope_announce_tag <= PB_SINGLE_BYTE_TAG_MAX,
-                  "the announce tag must fit one byte for the relay filter");
-
-    /// First byte of every encoded Envelope carrying an Announce: the
-    /// Envelope has one field, its oneof, so the body's tag opens the bytes.
-    inline constexpr std::uint8_t ANNOUNCE_TAG_BYTE = static_cast<std::uint8_t>(
-        (mark4_Envelope_announce_tag << PB_TAG_FIELD_SHIFT) | PB_WT_STRING);
-
-    /// @brief Says whether encoded bytes carry an Announce, without decoding
-    ///        them: one byte compared. What a relay asks of every broadcast
-    ///        before letting it onto a slow link.
-    /// @param data encoded Envelope
-    /// @param size byte count
-    /// @return true when the body is an Announce
-    constexpr bool envelopeIsAnnounce(const std::uint8_t *data, std::size_t size)
-    {
-        return data != nullptr && size > 0U && data[0] == ANNOUNCE_TAG_BYTE;
-    }
-
     /// Bytes a protobuf varint spans at most; the tag of a field number
     /// under 2^28 fits four, one more than any field of the Envelope needs.
     inline constexpr std::size_t PB_TAG_MAX_BYTES = 5U;
