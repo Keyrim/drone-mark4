@@ -321,13 +321,28 @@ those nodes are comes from discovery (section 5).
 
 ### 4.4 What moves out of `platform_common`
 
-`envelope_io.hpp`, `telemetry_service.hpp`, `tuning_service.hpp`,
-`status_publisher.hpp` are wire services, not platform. They become
-handlers or senders of the messaging component, in a `services/` sibling
-(name to be settled at implementation), each declaring the tags it
-consumes. `command_receiver_transport.hpp` is deleted. What stays in
-`platform_common` is what is about the platform (`TelemetryPublisher`,
-`packTelemetry`, the clock helpers).
+`telemetry_service.hpp` and `tuning_service.hpp` are wire services, not
+platform: they move to a `services/` component (header-only, linking
+messaging, flight_core, telemetry, log and ota) as handlers of the
+messenger, joined by an `OtaService` that replaces the two identical
+`serveOta()` of the Apps. `command_receiver_transport.hpp` and the
+`AbsCommandReceiver` interface are deleted: commands are not a platform
+service. `PlantLink` (platform_sim) is the handler of `sim_sensor` and the
+caller of `Messenger::poll()` in the sim, from the sensor wait.
+
+Two time bases meet in the sim: the messenger is polled on the process
+clock from the sensor wait, the flight frames carry the plant's time. A
+handler that times something against the frames must not use the poll's
+instant: the telemetry service stamps an enable with the timestamp of its
+last `sample()`, the sim's RC handler stamps a packet with the last frame
+received (one period behind at most, invisible to the fail-safe timeout).
+
+What still broadcasts stays where it is until it has a destination
+(section 5 for the directory, 9.3 for the subscriptions): `envelope_io.hpp`,
+`status_publisher.hpp` and the sim run tracker keep `sendEnvelope(transport,
+BROADCAST_NODE, ...)`, the log sink keeps its raw broadcast. What stays in
+`platform_common` for good is what is about the platform (`RcTracker`,
+`packStatus`, `FrameTelemetry`).
 
 ## 5. Discovery
 
@@ -414,9 +429,9 @@ in `main()` or the App constructor).
   to each. A node without a `DiscoveryDirectory` (the drones) cannot broadcast
   anything; it can only answer, and only towards `src`.
 - **Answers go to the requester**, the `src` of the frame that carried the
-  request, never to `BROADCAST_NODE`. This is already how the OTA updater
-  and the telemetry service address their replies; tuning answers, run
-  stats and the reboot path follow.
+  request, never to `BROADCAST_NODE`. The OTA updater, the telemetry
+  service and the tuning service address their replies so; run stats and
+  the status report follow once they have a subscriber.
 - **The initiator of a stream is the consumer.** Status, telemetry samples
   and log lines are streams; they leave a drone because a ground node asked
   for them, towards that node, and stop when it disappears (`onNodeDown`)
@@ -467,8 +482,9 @@ in `main()` or the App constructor).
 3. `mark4.proto`: `IdentityRequest`; `Announce` documented as an answer
    (its comment still says "beaconed every second": a comment change moves
    `WIRE_HASH`, so it waits for this step, which moves it anyway).
-4. messaging with its tests; the wire services moved and turned into
-   handlers.
+4. messaging with its tests (4a); then the wire services moved and turned
+   into handlers, the two flight compositions on the messenger (4b). The
+   broadcasting senders wait for step 6.
 5. discovery with its tests.
 6. The desktop nodes: hub, drone_sim; then the GDScript port and the
    Python node so the bench works again.
