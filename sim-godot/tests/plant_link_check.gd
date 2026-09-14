@@ -2,9 +2,10 @@ extends SceneTree
 
 ## Wire check of the plant's codecs and transport against the C++ ones,
 ## driven by the desktop unit tests (software/tests/unit/test_plant_link.cpp):
-## opens a transport node on the discovery port given after `--`, waits for
-## a node announcing itself as DRONE_SIM, sends it one SimSensor envelope
-## and expects a SimActuator echoing its timestamp and a SimScenario back.
+## opens a transport node on the discovery port given after `--`, asks the
+## node it hears who it is and waits for an identity of kind DRONE_SIM,
+## sends it one SimSensor envelope and expects a SimActuator echoing its
+## timestamp and a SimScenario back.
 ## The sensor and the actuator go through the hand-written SimCodec, the
 ## path of the physics tick, the scenario through the generated codec, so
 ## the nanopb side checks both.
@@ -40,17 +41,20 @@ func _init() -> void:
 	if not transport.open(0, port):
 		quit(1)
 		return
-	transport.set_beacon(Mark4Announce.build())
+	var discovery := Mark4Discovery.new()
+	discovery.setup(transport, Mark4Announce.build())
+	discovery.identity.connect(_on_identity)
 	transport.payload_received.connect(_on_payload)
 
-	# The flight process is found by its beacon, then spoken to first, like
-	# on the sim link.
+	# The flight process is asked who it is, then spoken to first, like on
+	# the sim link.
 	var deadline := Time.get_ticks_msec() + REPLY_TIMEOUT_MS
 	while _flight_node == 0 and Time.get_ticks_msec() < deadline:
 		transport.poll(Time.get_ticks_usec())
+		discovery.tick(Time.get_ticks_usec())
 		OS.delay_msec(5)
 	if _flight_node == 0:
-		push_error("plant_link_check: no DRONE_SIM node announced itself")
+		push_error("plant_link_check: no DRONE_SIM node said who it is")
 		quit(1)
 		return
 
@@ -73,6 +77,7 @@ func _init() -> void:
 	deadline = Time.get_ticks_msec() + REPLY_TIMEOUT_MS
 	while Time.get_ticks_msec() < deadline and not (_got_actuator and _got_scenario) and not _failed:
 		transport.poll(Time.get_ticks_usec())
+		discovery.tick(Time.get_ticks_usec())
 		OS.delay_msec(5)
 	transport.close()
 	if _got_actuator and _got_scenario:
@@ -83,11 +88,13 @@ func _init() -> void:
 		quit(1)
 
 
+## One node said who it is: the flight process is the DRONE_SIM one.
+func _on_identity(node_id: int, kind: int, _name: String) -> void:
+	if kind == Mark4.NodeKind.DRONE_SIM and _flight_node == 0:
+		_flight_node = node_id
+
+
 func _on_payload(src: int, payload: PackedByteArray) -> void:
-	if _flight_node == 0:
-		if Mark4Announce.kind_of(payload) == Mark4.NodeKind.DRONE_SIM:
-			_flight_node = src
-		return
 	if src != _flight_node:
 		return
 	if payload.size() > 0 and payload[0] == Mark4Announce.TAG_SIM_ACTUATOR:

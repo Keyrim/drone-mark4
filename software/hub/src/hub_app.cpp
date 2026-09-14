@@ -76,19 +76,37 @@ namespace mark4
                 std::chrono::duration_cast<std::chrono::microseconds>(now).count());
         }
 
-        /// @return true when two beacons say the same thing
-        bool sameAnnounce(const mark4_Announce &a, const mark4_Announce &b)
-        {
-            return a.kind == b.kind && a.mcu == b.mcu && a.build_epoch == b.build_epoch &&
-                   a.wire_hash == b.wire_hash && std::strcmp(a.name, b.name) == 0 &&
-                   std::strcmp(a.git_hash, b.git_hash) == 0;
-        }
-
         /// @param kind kind a node announced
         /// @return true for the kinds that expose a telemetry registry
         bool isDroneKind(mark4_NodeKind kind)
         {
             return kind == mark4_NodeKind_DRONE_SIM || kind == mark4_NodeKind_FIRMWARE;
+        }
+
+        /// @param kind kind a node announced
+        /// @return its name, for the log
+        const char *kindName(mark4_NodeKind kind)
+        {
+            switch (kind)
+            {
+                case mark4_NodeKind_FIRMWARE:
+                    return "firmware";
+                case mark4_NodeKind_DRONE_SIM:
+                    return "drone_sim";
+                case mark4_NodeKind_PLANT:
+                    return "plant";
+                case mark4_NodeKind_GATEWAY:
+                    return "gateway";
+                case mark4_NodeKind_BATCH:
+                    return "batch";
+                case mark4_NodeKind_RELAY:
+                    return "relay";
+                case mark4_NodeKind_PHONE:
+                    return "phone";
+                case mark4_NodeKind_NODE_KIND_UNSPECIFIED:
+                    break;
+            }
+            return "unknown";
         }
 
         /// @return "hub-<hostname>", cut to what an Announce name holds
@@ -102,12 +120,26 @@ namespace mark4
             }
             return name.substr(0U, sizeof(mark4_Announce::name) - 1U);
         }
+
+        /// @return the gateway's own identity: kind GATEWAY, mcu SIM, this
+        ///         build's wire hash, the host's name, and no build identity
+        ///         (a process is not a packaged image)
+        mark4_Announce gatewayAnnounce()
+        {
+            mark4_Announce announce = mark4_Announce_init_zero;
+            announce.kind = mark4_NodeKind_GATEWAY;
+            announce.mcu = mark4_Mcu_SIM;
+            announce.wire_hash = WIRE_HASH;
+            copyWireString(gatewayName(), announce.name, sizeof(announce.name));
+            return announce;
+        }
     } // namespace
 
     HubApp::HubApp(Config config)
         : m_config(std::move(config)),
           m_profiles(m_config.profilesDir),
           m_udpLink(m_config.discoveryPort),
+          m_ownAnnounce(gatewayAnnounce()),
           m_transport(m_config.nodeId != 0U ? m_config.nodeId : randomNodeId())
     {
     }
@@ -152,30 +184,24 @@ namespace mark4
             MODULE.error("cannot start the transport");
             return false;
         }
+        if (!m_messenger.init())
+        {
+            MODULE.error("a message tag is claimed twice");
+            return false;
+        }
+        if (!m_directory.init())
+        {
+            MODULE.error("too many directory listeners");
+            return false;
+        }
+        // Every payload reaches the clients raw, before the messenger
+        // decodes what the gateway reads for itself.
+        m_messenger.setTap(&HubApp::Tap, this);
         static_cast<void>(logAddSink(m_logSink));
         MODULE.info("boot: node %s on discovery udp/%u, wire %08x",
                     hexNodeId(m_transport.nodeId()).c_str(),
                     static_cast<unsigned>(m_udpLink.discoveryPort()),
                     WIRE_HASH);
-        m_transport.setNodeCallbacks(&HubApp::OnNodeUp, &HubApp::OnNodeDown, this);
-        // The gateway's own beacon: every node learns the gateway and the
-        // schema it speaks, and the flight processes learn where to unicast.
-        m_ownAnnounce.kind = mark4_NodeKind_GATEWAY;
-        m_ownAnnounce.mcu = mark4_Mcu_SIM;
-        m_ownAnnounce.wire_hash = WIRE_HASH;
-        copyWireString(gatewayName(), m_ownAnnounce.name, sizeof(m_ownAnnounce.name));
-        mark4_Envelope announce = mark4_Envelope_init_zero;
-        announce.which_body = mark4_Envelope_announce_tag;
-        announce.body.announce = m_ownAnnounce;
-        std::array<std::uint8_t, MAX_ENVELOPE_SIZE> beacon{};
-        std::size_t beaconSize = 0U;
-        if (!encodeEnvelope(announce, beacon.data(), beacon.size(), beaconSize) ||
-            beaconSize > Transport::MAX_BEACON_SIZE)
-        {
-            MODULE.error("the announce does not fit a beacon");
-            return false;
-        }
-        m_transport.setBeacon(beacon.data(), beaconSize);
         if (m_config.pagesDir.empty())
         {
             m_config.pagesDir = defaultProjectPath(DEFAULT_PAGES_DIR);
@@ -243,10 +269,11 @@ namespace mark4
             static_cast<void>(::poll(
                 fds.data(), fds.size(), m_ota.busy() ? OTA_POLL_TIMEOUT_MS : POLL_TIMEOUT_MS));
 
-            m_transport.poll(monotonicUs(), &HubApp::OnFrame, this);
+            m_messenger.poll(monotonicUs());
+            m_directory.tick(monotonicUs());
             if (!m_logModulesPublished)
             {
-                // The first poll sent the first beacon: the table follows it.
+                // The first poll sent the first keepalive: the table follows it.
                 m_logModulesPublished = true;
                 publishLogModules();
             }
@@ -256,17 +283,14 @@ namespace mark4
         return 0;
     }
 
-    void HubApp::OnFrame(void *context,
-                         std::uint32_t src,
-                         const std::uint8_t *data,
-                         std::size_t size)
+    void HubApp::Tap(void *context, std::uint32_t src, const std::uint8_t *data, std::size_t size)
     {
-        static_cast<HubApp *>(context)->onFrame(src, data, size);
+        static_cast<HubApp *>(context)->mirror(src, data, size);
     }
 
-    void HubApp::OnNodeUp(void *context, const Transport::Node &node)
+    void HubApp::PresenceListener::onNodeUp(const Transport::Node &node)
     {
-        auto *self = static_cast<HubApp *>(context);
+        HubApp *const self = &m_app;
         MODULE.info("node %s appeared", hexNodeId(node.id).c_str());
         self->m_nodesDirty = true;
         // A node that booted before this gateway published its table into
@@ -279,11 +303,10 @@ namespace mark4
         static_cast<void>(self->sendEnvelope(node.id, query, ignored));
     }
 
-    void HubApp::OnNodeDown(void *context, const Transport::Node &node)
+    void HubApp::PresenceListener::onNodeDown(const Transport::Node &node)
     {
-        auto *self = static_cast<HubApp *>(context);
+        HubApp *const self = &m_app;
         MODULE.info("node %s disappeared", hexNodeId(node.id).c_str());
-        self->m_announces.erase(node.id);
         self->m_logModules.erase(node.id);
         // The ids of a telemetry table are only stable while the node runs,
         // so a node that went down takes its table with it: the clients are
@@ -296,7 +319,40 @@ namespace mark4
         self->m_nodesDirty = true;
     }
 
-    void HubApp::onFrame(std::uint32_t src, const std::uint8_t *data, std::size_t size)
+    void HubApp::IdentityListener::onIdentity(const DirectoryEntry &entry)
+    {
+        HubApp *const self = &m_app;
+        self->m_nodesDirty = true;
+        MODULE.info("node %s is %s \"%s\"",
+                    hexNodeId(entry.id).c_str(),
+                    kindName(entry.announce.kind),
+                    entry.announce.name);
+        if (entry.wireMismatch)
+        {
+            MODULE.warn("node %s speaks wire %08x, this gateway speaks %08x: "
+                        "rebuild and reflash it",
+                        hexNodeId(entry.id).c_str(),
+                        entry.announce.wire_hash,
+                        WIRE_HASH);
+        }
+        // The kind and the schema are only known from the Announce, so this
+        // is where a drone's telemetry table starts being pulled rather than
+        // at node-up: a node speaking another schema is not asked at all,
+        // its answers would not decode.
+        if (isDroneKind(entry.announce.kind) && !entry.wireMismatch)
+        {
+            self->beginTelemetryPull(entry.id, monotonicUs());
+        }
+    }
+
+    void HubApp::IdentityListener::onForgotten(std::uint32_t nodeId)
+    {
+        // The presence listener already took the node's modules and
+        // telemetry table with it; the directory entry is what went here.
+        static_cast<void>(nodeId);
+    }
+
+    void HubApp::mirror(std::uint32_t src, const std::uint8_t *data, std::size_t size)
     {
         ++m_framesIn;
         if (size > sizeof(mark4_Frame::payload.bytes))
@@ -309,60 +365,37 @@ namespace mark4
         message.body.frame.payload.size = static_cast<pb_size_t>(size);
         std::memcpy(message.body.frame.payload.bytes, data, size);
         broadcast(message);
+    }
 
-        // The things the gateway reads: who is who, which modules a node
-        // logs with, the levels a client sets on the gateway itself, and the
-        // updater's answers. Everything else is the clients' business.
-        mark4_Envelope envelope;
-        if (!decodeEnvelope(data, size, envelope))
-        {
-            return;
-        }
+    bool HubApp::Reader::onMessage(std::uint32_t src,
+                                   const mark4_Envelope &envelope,
+                                   std::uint64_t nowUs)
+    {
+        static_cast<void>(nowUs); // the gateway's timers all read monotonicUs()
+        HubApp *const self = &m_app;
+        // The things the gateway reads: which modules a node logs with, its
+        // telemetry pages, the levels a client sets on the gateway itself,
+        // and the updater's answers. Everything else is the clients'
+        // business and reached them from the tap.
         switch (envelope.which_body)
         {
-            case mark4_Envelope_announce_tag: {
-                auto [entry, inserted] = m_announces.try_emplace(src, envelope.body.announce);
-                if (inserted || !sameAnnounce(entry->second, envelope.body.announce))
-                {
-                    entry->second = envelope.body.announce;
-                    m_nodesDirty = true;
-                    if (envelope.body.announce.wire_hash != WIRE_HASH)
-                    {
-                        MODULE.warn("node %s speaks wire %08x, this gateway speaks %08x: "
-                                    "rebuild and reflash it",
-                                    hexNodeId(src).c_str(),
-                                    envelope.body.announce.wire_hash,
-                                    WIRE_HASH);
-                    }
-                }
-                // The kind and the schema are only known from the beacon, so
-                // this is where a drone's telemetry table starts being
-                // pulled rather than at node-up: a node speaking another
-                // schema is not asked at all, its answers would not decode.
-                if (isDroneKind(entry->second.kind) && entry->second.wire_hash == WIRE_HASH)
-                {
-                    beginTelemetryPull(src, monotonicUs());
-                }
-                return;
-            }
             case mark4_Envelope_telemetry_descriptors_tag:
-                onTelemetryPage(src, envelope.body.telemetry_descriptors, monotonicUs());
-                return;
+                self->onTelemetryPage(src, envelope.body.telemetry_descriptors, monotonicUs());
+                return true;
             case mark4_Envelope_log_modules_tag:
-                applyLogModulesPage(envelope.body.log_modules, m_logModules[src]);
-                m_nodesDirty = true;
-                return;
+                applyLogModulesPage(envelope.body.log_modules, self->m_logModules[src]);
+                self->m_nodesDirty = true;
+                return true;
             case mark4_Envelope_log_control_tag:
                 // Addressed to this node: a client drives the gateway's own
                 // levels like any other node's.
                 if (logHandleControl(envelope.body.log_control))
                 {
-                    publishLogModules();
+                    self->publishLogModules();
                 }
-                return;
+                return true;
             default:
-                static_cast<void>(m_ota.onEnvelope(envelope, monotonicUs()));
-                return;
+                return self->m_ota.onEnvelope(envelope, monotonicUs());
         }
     }
 
@@ -370,16 +403,13 @@ namespace mark4
                               const mark4_Envelope &envelope,
                               std::string &errorOut)
     {
-        std::array<std::uint8_t, MAX_ENVELOPE_SIZE> bytes{};
-        std::size_t size = 0U;
-        if (!encodeEnvelope(envelope, bytes.data(), bytes.size(), size))
+        if (!m_messenger.send(dst, envelope))
         {
-            errorOut = "the message does not encode";
-            return false;
-        }
-        if (!m_transport.send(dst, bytes.data(), size))
-        {
-            errorOut = "node " + hexNodeId(dst) + " is not reachable";
+            // The messenger refuses a broadcast destination, a message that
+            // does not encode, and a node the transport cannot reach.
+            errorOut = "node " + hexNodeId(dst) +
+                       " is not reachable (or the destination is the broadcast, or the "
+                       "message does not encode)";
             return false;
         }
         ++m_framesOut;
@@ -533,11 +563,14 @@ namespace mark4
         for (std::size_t i = 0U; i < m_transport.nodeCount(); ++i)
         {
             const Transport::Node &node = m_transport.node(i);
-            const auto announce = m_announces.find(node.id);
+            // PENDING and MUTE show as a node without identity: asked, no
+            // answer yet or ever.
+            const DirectoryEntry *entry = m_directory.find(node.id);
+            const bool known = entry != nullptr && entry->state == DirectoryEntry::State::KNOWN;
             const auto modules = m_logModules.find(node.id);
             fillNode(node,
                      nowUs,
-                     announce == m_announces.end() ? nullptr : &announce->second,
+                     known ? &entry->announce : nullptr,
                      modules == m_logModules.end() ? NO_MODULES : modules->second,
                      table.nodes[table.nodes_count]);
             ++table.nodes_count;

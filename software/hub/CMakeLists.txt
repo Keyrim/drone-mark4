@@ -48,7 +48,7 @@ add_executable(hub
     src/hub_app.cpp
     src/main.cpp
     src/ws_bridge.cpp)
-target_link_libraries(hub PRIVATE hub_core protocol transport ixwebsocket drone_warnings)
+target_link_libraries(hub PRIVATE hub_core protocol transport messaging discovery ixwebsocket drone_warnings)
 # The transport is compiled with -fno-rtti (drone_strict) and emits no
 # typeinfo, so UBSan's vptr check cannot be applied to its classes from
 # here: it would reference symbols that are never emitted. Nothing is lost,

@@ -5,7 +5,7 @@ like `log`: static lib, `drone_warnings` alone, no heap, no iostream, no
 exceptions, no RTTI, and it builds for the F405 as it stands. It knows
 names, units and where values live; it knows nothing of the wire, of ids,
 of periods or of subscribers. Those belong to the wire adapter
-(`platform_common/telemetry_service.hpp`), which freezes the list into a
+(`services/telemetry_service.hpp`), which freezes the list into a
 table and answers the telemetry messages of `protocol/mark4.proto`.
 
 ## The model

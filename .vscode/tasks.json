@@ -99,7 +99,7 @@
         },
         {
             "label": "mobile gen",
-            "detail": "Regenerate software/mobile/lib/gen (Dart codec of mark4.proto, wire hash, ffigen binding) after a pub get. Every analyze, test, build and debug of the app needs it; the mobile launch config runs it first.",
+            "detail": "Regenerate software/mobile/lib/gen (Dart codec of mark4.proto, wire hash) after a pub get. Every analyze, test, build and debug of the app needs it; the mobile launch config runs it first.",
             "type": "shell",
             "command": "flutter pub get && ./tool/gen.sh",
             "options": {

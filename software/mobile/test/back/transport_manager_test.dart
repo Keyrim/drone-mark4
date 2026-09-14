@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mark4/back/discovery/directory_models.dart';
+import 'package:mark4/back/messaging/messenger.dart';
 import 'package:mark4/back/transport/transport_manager.dart';
 import 'package:mark4/gen/mark4.pb.dart';
 import 'package:mark4/gen/wire_hash.dart';
@@ -13,22 +15,18 @@ void main() {
   setUp(() => bench = Bench());
   tearDown(() => bench.dispose());
 
-  test('boot takes the multicast lock and beacons a PHONE announce', () async {
+  test('boot takes the multicast lock and names the node', () async {
     await bench.boot();
     expect(bench.platform.lockAcquired, 1);
-    final beacon = Envelope.fromBuffer(bench.node.beacon!);
-    expect(beacon.hasAnnounce(), isTrue);
-    expect(beacon.announce.kind, NodeKind.PHONE);
-    expect(beacon.announce.name, 'Theo phone');
-    expect(beacon.announce.wireHash, wireHash);
     expect(bench.backend.transport.identity.value.nodeId, phoneNodeId);
     expect(bench.backend.transport.identity.value.name, 'Theo phone');
+    expect(bench.node.sent, isEmpty);
   });
 
   test('a refused multicast lock is not fatal', () async {
     bench = Bench(platform: FakePlatform(lockGranted: false));
     await bench.boot();
-    expect(bench.node.beacon, isNotNull);
+    expect(bench.backend.transport.identity.value.nodeId, phoneNodeId);
   });
 
   test('the announce name is ASCII and at most 16 characters', () async {
@@ -57,14 +55,17 @@ void main() {
       );
       await bench.poll();
       final snapshot = transport.snapshots.value;
+      final entry = transport.directory.value.find(0x11111111);
       expect(snapshot.nodes, hasLength(1));
-      expect(snapshot.node(0x11111111)?.announce?.name, 'drone_sim');
-      expect(snapshot.node(0x11111111)?.announce?.wireMismatch, isFalse);
-      expect(snapshot.node(0x11111111)?.info.address, '192.168.4.1:47821');
+      expect(entry?.state, DirectoryState.known);
+      expect(entry?.announce?.name, 'drone_sim');
+      expect(entry?.announce?.wireMismatch, isFalse);
+      expect(snapshot.node(0x11111111)?.address, '192.168.4.1:47821');
 
       bench.node.forget(0x11111111);
       await bench.poll();
       expect(transport.snapshots.value.nodes, isEmpty);
+      expect(transport.directory.value.entries, isEmpty);
     },
   );
 
@@ -79,8 +80,8 @@ void main() {
     );
     await bench.poll();
     expect(
-      bench.backend.transport.snapshots.value
-          .node(0x22222222)
+      bench.backend.transport.directory.value
+          .find(0x22222222)
           ?.announce
           ?.wireMismatch,
       isTrue,
@@ -110,22 +111,22 @@ void main() {
   );
 
   test(
-    'every envelope for this node is published, garbage is counted',
+    'every envelope for this node reaches its handler, garbage is counted',
     () async {
       await bench.boot();
       final transport = bench.backend.transport;
       final received = <int>[];
-      final subscription = transport.envelopes.listen(
-        (e) => received.add(e.src),
-      );
+      final handler = RecordingHandler(received);
+      // The drone manager already claims the Status case: this one takes
+      // what nothing else consumes.
+      expect(transport.messenger?.register(handler), isTrue);
 
-      bench.node.receive(0x44444444, Envelope()..status = Status());
+      bench.node.receive(0x44444444, Envelope()..reboot = Reboot());
       bench.node.queue.add(InboundPayloadGarbage.of(0x55555555));
       await bench.poll();
-      await Future<void>.delayed(Duration.zero);
       expect(received, [0x44444444]);
       expect(transport.decodeErrors, 1);
-      await subscription.cancel();
+      transport.messenger?.unregister(handler);
     },
   );
 
@@ -148,4 +149,20 @@ void main() {
     expect(bench.platform.lockReleased, 1);
     bench = Bench(); // so tearDown disposes a live one
   });
+}
+
+/// A handler that only remembers who sent what.
+class RecordingHandler implements AbsMessageHandler {
+  RecordingHandler(this.sources);
+
+  final List<int> sources;
+
+  @override
+  List<Envelope_Body> get bodyCases => const [Envelope_Body.reboot];
+
+  @override
+  bool onMessage(int src, Envelope envelope, int nowUs) {
+    sources.add(src);
+    return true;
+  }
 }

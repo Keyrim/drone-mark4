@@ -15,7 +15,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "flight_core/types.hpp"
-#include "platform_common/command_receiver_transport.hpp"
+#include "messaging/messenger.hpp"
 #include "platform_sim/clock_sim.hpp"
 #include "platform_sim/motor_sink_sim.hpp"
 #include "platform_sim/plant_link.hpp"
@@ -89,8 +89,7 @@ namespace
               m_link(discoveryPort)
         {
             REQUIRE(m_link.init());
-            m_drone.host = INADDR_LOOPBACK;
-            m_drone.port = dronePort;
+            m_drone = mark4::UdpAddress{INADDR_LOOPBACK, dronePort};
         }
 
         /// @brief Frames one envelope for the drone node and sends it.
@@ -101,7 +100,7 @@ namespace
             header.src = m_nodeId;
             header.dst = dst;
             header.seq = m_seq;
-            header.hops = mark4::Transport::INITIAL_HOPS;
+            header.hops = 0U;
             ++m_seq;
             mark4::encodeFrameHeader(header, frame.data());
             std::size_t size = 0U;
@@ -112,7 +111,10 @@ namespace
             REQUIRE(m_link.send(frame.data(), mark4::FRAME_HEADER_SIZE + size, m_drone));
         }
 
-        /// @brief Waits for one frame, up to the test timeout.
+        /// @brief Waits for one frame carrying a payload, up to the test
+        ///        timeout. The drone's keepalives (a header alone, one to a
+        ///        newcomer and one per second) are what a plant learns the
+        ///        drone from and never delivers: they are skipped here too.
         /// @return what came, size 0 when nothing did
         Received receive()
         {
@@ -122,7 +124,7 @@ namespace
             {
                 mark4::LinkAddress from;
                 const std::size_t size = m_link.receive(frame.data(), frame.size(), from);
-                if (size > 0U)
+                if (size > mark4::FRAME_HEADER_SIZE)
                 {
                     REQUIRE(mark4::decodeFrameHeader(frame.data(), size, received.header));
                     received.size = size - mark4::FRAME_HEADER_SIZE;
@@ -131,7 +133,10 @@ namespace
                                 received.size);
                     return received;
                 }
-                ::usleep(1000);
+                if (size == 0U)
+                {
+                    ::usleep(1000);
+                }
             }
             return received;
         }
@@ -171,10 +176,54 @@ namespace
         mark4::ClockSim clock;
         mark4::UdpLink udpLink;
         mark4::Transport transport{DRONE_NODE};
-        mark4::CommandReceiverTransport commands;
-        mark4::PlantLink link{transport, udpLink, clock, commands};
+        mark4::Messenger messenger{transport};
+        mark4::PlantLink link{messenger, transport, udpLink, clock};
         mark4::SensorSourceSim source{link, clock};
         mark4::MotorSinkSim sink{link};
+    };
+
+    /// The composition's Rc handler, reduced to what a test needs: the last
+    /// Rc message and where it came from.
+    class RcProbe final : public mark4::AbsMessageHandler
+    {
+      public:
+        static constexpr std::array<pb_size_t, 1> TAGS = {mark4_Envelope_rc_tag};
+
+        explicit RcProbe(mark4::Messenger &messenger)
+            : AbsMessageHandler(messenger, TAGS)
+        {
+        }
+
+        bool onMessage(std::uint32_t src,
+                       const mark4_Envelope &envelope,
+                       std::uint64_t nowUs) override
+        {
+            static_cast<void>(nowUs);
+            m_rc = envelope.body.rc;
+            m_src = src;
+            ++m_count;
+            return true;
+        }
+
+        [[nodiscard]] const mark4_Rc &rc() const
+        {
+            return m_rc;
+        }
+
+        [[nodiscard]] std::uint32_t src() const
+        {
+            return m_src;
+        }
+
+        [[nodiscard]] std::uint32_t count() const
+        {
+            return m_count;
+        }
+
+      private:
+        mark4_Rc m_rc = mark4_Rc_init_zero; ///< last Rc received
+        std::uint32_t m_src = 0U;           ///< node it came from
+        std::uint32_t m_count = 0U;         ///< Rc messages received
     };
 
     mark4::ActuatorFrame makeActuators(std::uint64_t timestampUs)
@@ -238,36 +287,37 @@ TEST_CASE("a sensor frame from the plant node is decoded into a sensor frame")
     REQUIRE(drone.transport.isAlive(PLANT_NODE));
 }
 
-TEST_CASE("payloads that are not sensor frames go to the command ring")
+TEST_CASE("messages that are not sensor frames go to their own handler")
 {
     const std::uint16_t port = pickFreePort();
     DroneSide drone(port);
+    RcProbe rc(drone.messenger);
     FakePlant plant(PLANT_NODE, port, drone.udpLink.dataPort());
 
-    // An Rc message ahead of the sensor frame: a command, queued for the
-    // composition root, never mistaken for a sample.
+    // An Rc message ahead of the sensor frame: dispatched to its handler
+    // from inside the wait, never mistaken for a sample. A message nobody
+    // claimed is counted and dropped.
     mark4_Envelope other = mark4_Envelope_init_zero;
     other.which_body = mark4_Envelope_rc_tag;
     other.body.rc.throttle = 0.5f;
     plant.send(other);
+    mark4_Envelope unclaimed = mark4_Envelope_init_zero;
+    unclaimed.which_body = mark4_Envelope_reboot_tag;
+    plant.send(unclaimed);
     plant.send(makeSensor());
 
     mark4::SensorFrame frame;
     REQUIRE(waitPlantFrame(drone, frame));
     REQUIRE(frame.timestampUs == TEST_TIMESTAMP_US);
 
-    std::array<std::uint8_t, mark4::MAX_PAYLOAD> payload{};
-    std::uint32_t commandSrc = 0U;
-    const std::size_t size = drone.commands.poll(payload.data(), payload.size(), commandSrc);
-    REQUIRE(size > 0U);
-    mark4_Envelope queued;
-    REQUIRE(mark4::decodeEnvelope(payload.data(), size, queued));
-    REQUIRE(queued.which_body == mark4_Envelope_rc_tag);
-    REQUIRE(queued.body.rc.throttle == 0.5f);
-    // The origin travels with the payload: a service answering one requester
-    // reads it off the ring rather than broadcasting to the whole bench.
-    REQUIRE(commandSrc == PLANT_NODE);
-    REQUIRE(drone.commands.poll(payload.data(), payload.size(), commandSrc) == 0U);
+    REQUIRE(rc.count() == 1U);
+    REQUIRE(rc.rc().throttle == 0.5f);
+    // The origin travels with the message: a service answering one
+    // requester reads it there rather than broadcasting to the whole bench.
+    REQUIRE(rc.src() == PLANT_NODE);
+    REQUIRE(drone.messenger.unhandled() == 1U);
+    // The sensor message itself went to the link, not to anybody else.
+    REQUIRE(drone.messenger.handled() == 2U);
 }
 
 TEST_CASE("a second plant cannot take over the sim link while the first is alive")

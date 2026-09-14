@@ -159,7 +159,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: flutter pub get
-      # lib/gen/: protobuf codec, wire hash, ffigen binding (libclang of the image)
+      # lib/gen/: the Dart codec of mark4.proto and the wire hash
       - run: ./tool/gen.sh
       - run: flutter analyze
       - run: dart format --set-exit-if-changed lib test

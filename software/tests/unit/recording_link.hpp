@@ -25,7 +25,7 @@ namespace mark4
         FrameHeader header;                ///< src, dst, seq, hops as encoded
         std::vector<std::uint8_t> payload; ///< bytes behind the header
         bool broadcast = false;            ///< handed to broadcast(), not send()
-        LinkAddress address;               ///< peer of a unicast, empty otherwise
+        LinkAddress address;               ///< peer of a unicast, a UartAddress otherwise
     };
 
     /// Link recording everything, receiving nothing. Allocates freely: this
@@ -139,13 +139,13 @@ namespace mark4
             m_frames.push_back(frame);
         }
 
-        /// Hops a queued frame carries: enough that a relay would forward it.
-        static constexpr std::uint8_t INBOUND_HOPS = 4U;
+        /// Hops a queued frame carries: what a direct sender writes.
+        static constexpr std::uint8_t INBOUND_HOPS = 0U;
 
         std::vector<RecordedFrame> m_frames;             ///< everything handed over
         std::deque<std::vector<std::uint8_t>> m_inbound; ///< frames queued for receive()
         std::uint16_t m_inboundSeq = 1U;                 ///< sequence of the next queued frame
-        LinkAddress m_peer{1U, 2U};                      ///< where queued frames come from
+        LinkAddress m_peer{UdpAddress{1U, 2U}};          ///< where queued frames come from
         bool m_accept = true;                            ///< what the medium answers
     };
 } // namespace mark4

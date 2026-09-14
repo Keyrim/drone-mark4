@@ -8,16 +8,15 @@
 #include <cstdint>
 #include <optional>
 
+#include "discovery/discovery.hpp"
 #include "flight_core/flight_core.hpp"
 #include "log/console_sink_posix.hpp"
 #include "log/wire.hpp"
+#include "messaging/messenger.hpp"
 #include "ota/updater.hpp"
-#include "platform_common/command_receiver_transport.hpp"
 #include "platform_common/frame_telemetry.hpp"
 #include "platform_common/rc_tracker.hpp"
 #include "platform_common/status_publisher.hpp"
-#include "platform_common/telemetry_service.hpp"
-#include "platform_common/tuning_service.hpp"
 #include "platform_sim/clock_sim.hpp"
 #include "platform_sim/firmware_store_sim.hpp"
 #include "platform_sim/motor_sink_sim.hpp"
@@ -26,6 +25,10 @@
 #include "platform_sim/sim_run_tracker.hpp"
 #include "platform_sim/truth_telemetry.hpp"
 #include "protocol/envelope.hpp"
+#include "services/flight_ota_gate.hpp"
+#include "services/ota_service.hpp"
+#include "services/telemetry_service.hpp"
+#include "services/tuning_service.hpp"
 #include "transport/transport.hpp"
 #include "transport/udp_link.hpp"
 
@@ -143,14 +146,27 @@ namespace mark4
         /// @return true when the slot may be run
         [[nodiscard]] bool imageValidates(std::uint8_t slot) const;
 
-        /// @brief Hands one received message to the update session and
-        ///        broadcasts whatever answer comes back, over the same
-        ///        telemetry route the tuning answers use.
-        /// @param envelope decoded message
-        /// @param nowUs monotonic time [us]
-        /// @return true when the updater claimed the message, whatever the
-        ///         outcome: the rest of this composition must then ignore it
-        bool serveOta(const mark4_Envelope &envelope, std::uint64_t nowUs);
+        /// The composition's own commands: what is neither a service's nor the plant's.
+        class Commands final : public mark4::AbsMessageHandler
+        {
+          public:
+            /// Body tags this handler consumes.
+            static constexpr std::array<pb_size_t, 4> TAGS = {mark4_Envelope_rc_tag,
+                                                              mark4_Envelope_reboot_tag,
+                                                              mark4_Envelope_sim_scenario_tag,
+                                                              mark4_Envelope_log_control_tag};
+
+            /// @param messenger messenger to attach to
+            /// @param app composition the commands act on
+            Commands(mark4::Messenger &messenger, DroneSimApp &app);
+
+            bool onMessage(std::uint32_t src,
+                           const mark4_Envelope &envelope,
+                           std::uint64_t nowUs) override;
+
+          private:
+            DroneSimApp &m_app; ///< the composition, not owned
+        };
 
         /// @brief Parks the lockstep loop and serves the open update session,
         ///        symmetrically with the firmware: no sensor wait, no core
@@ -165,12 +181,10 @@ namespace mark4
         ///        consumed rather than once per frame.
         void refreshArmInterlock();
 
-        /// @brief Drains the command uplink: RC into the tracker, scenarios
-        ///        to the plant, tuning answered, the updater served. Runs on
-        ///        every frame, sensors or not - the command path needs no
-        ///        world, so tuning a grounded drone works without a plant.
-        /// @param nowUs instant handed to the RC fail-safe [us]
-        void drainCommands(std::uint64_t nowUs);
+        /// @brief What this process answers to an IdentityRequest.
+        /// @return the announce: kind DRONE_SIM, mcu SIM, this build's wire
+        ///         hash, and no build identity
+        static mark4_Announce Identity();
 
         /// @brief Route of every log line and of the module table: a
         ///        transport broadcast, like everything this process emits.
@@ -189,13 +203,18 @@ namespace mark4
         mark4::ClockSim m_clock;
         mark4::UdpLink m_udpLink;
         mark4::Transport m_transport;
+        /// Every message addressed to this node goes through it to the one
+        /// handler of its tag; every handler below is declared after it.
+        mark4::Messenger m_messenger{m_transport};
+        Commands m_commands{m_messenger, *this};
+        /// Who this process is, to whoever asks.
+        mark4::Discovery m_discovery{m_messenger, Identity()};
         mark4::ConsoleSinkPosix m_consoleSink;
         mark4::TransportSink m_transportSink{&DroneSimApp::SendLog, this};
-        mark4::CommandReceiverTransport m_commandReceiver;
-        /// The sim link: the plant's frames off the transport, sorted for
-        /// the sensor source and the command receiver; the wait point of
-        /// the flight loop sleeps on the link's sockets through it.
-        mark4::PlantLink m_plantLink{m_transport, m_udpLink, m_clock, m_commandReceiver};
+        /// The sim link: the handler of the plant's sensor messages, and the
+        /// one caller of the messenger's poll; the wait point of the flight
+        /// loop sleeps on the link's sockets through it.
+        mark4::PlantLink m_plantLink{m_messenger, m_transport, m_udpLink, m_clock};
         mark4::SensorSourceSim m_sensorSource{m_plantLink, m_clock};
         mark4::MotorSinkSim m_motorSink{m_plantLink};
         mark4::StatusPublisher m_statusPublisher{m_transport};
@@ -205,12 +224,14 @@ namespace mark4
         /// of the ids (see components/telemetry/README.md).
         mark4::FrameTelemetry m_frameTelemetry;
         mark4::FlightCore m_core;
+        /// What the updater asks this node about itself before a session.
+        mark4::FlightOtaGate m_otaGate{m_core};
         mark4::TruthTelemetry m_truthTelemetry;
-        mark4::TuningService m_tuningService{m_core, m_transport};
+        mark4::TuningService m_tuningService{m_messenger, m_core};
         mark4::SimRunTracker m_runTracker{m_transport};
         /// Last of the services: init() freezes the registry, so every
         /// object holding a measure must exist before it runs.
-        mark4::TelemetryService m_telemetryService{m_transport, MIN_TELEMETRY_PERIOD_MS};
+        mark4::TelemetryService m_telemetryService{m_messenger, MIN_TELEMETRY_PERIOD_MS};
 
         /// Emulated flash directory, declared before the store because the
         /// store keeps the pointer rather than a copy of the path.
@@ -223,16 +244,33 @@ namespace mark4
         /// with no allocation.
         std::optional<mark4::FirmwareStoreSim> m_firmwareStore;
         std::optional<mark4::OtaUpdater> m_otaUpdater;
+        /// The updater's handler, rebuilt with it: it holds a reference to
+        /// the updater it serves.
+        std::optional<mark4::OtaService> m_otaService;
 
         /// True while the running slot is on trial: arming is refused until
         /// the ground side confirms it (docs/ota-design.md section 3.2).
         bool m_armInhibited = false;
 
+        /// OtaService::consumed() at the last interlock refresh.
+        std::uint32_t m_otaConsumedSeen = 0U;
+
+        /// Timestamp of the last frame waitFrame() returned: the flight time
+        /// base an RC packet is stamped with. The messenger is polled inside
+        /// the wait, before the frame about to arrive is known, so the
+        /// previous frame is the freshest instant of that base; it is at
+        /// most one period behind, which the RC fail-safe timeout does not
+        /// see.
+        std::uint64_t m_lastFrameUs = 0U;
+
+        /// A Reboot arrived, acted on after the wait.
+        bool m_rebootRequested = false;
+
         /// Hash window asked for by the last scenario, applied to the run
         /// that scenario opens [us]; 0 means the tracker default.
         std::uint32_t m_pendingHashWindowUs = 0U;
 
-        /// The module table goes out once the first beacon did.
+        /// The module table goes out once the first keepalive did.
         bool m_logModulesPublished = false;
     };
 } // namespace mark4

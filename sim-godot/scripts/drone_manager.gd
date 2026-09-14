@@ -5,12 +5,13 @@ extends Node3D
 ## lifecycle of the drones it hosts.
 ##
 ## The transport is polled once per physics tick, before the drones run:
-## the beacon of a node announcing itself as DRONE_SIM creates a virtual
-## drone bound to that node, every unicast payload is dispatched to the
-## drone whose node sent it, and a node that expired is given a grace
-## period before its drone is freed (a flight process restarts with a new
-## node id, so a new drone appears next to the old one's spot). Drones
-## spawn on a small grid so several can rest on the ground at once.
+## every node it hears is asked who it is, an identity of kind DRONE_SIM
+## creates a virtual drone bound to that node, every unicast payload is
+## dispatched to the drone whose node sent it, and a node that expired is
+## given a grace period before its drone is freed (a flight process
+## restarts with a new node id, so a new drone appears next to the old
+## one's spot). Drones spawn on a small grid so several can rest on the
+## ground at once.
 ##
 ## One drone is followed: the camera, the arena fade and the overlay look
 ## at it. The first one created is followed by default, then the oldest
@@ -44,6 +45,8 @@ const REPORT_PERIOD_US := 10_000_000
 @export var arena_path: NodePath
 
 var transport := Mark4Transport.new()
+## Who is who on the wire: the plant's identity out, the flight processes in.
+var discovery := Mark4Discovery.new()
 ## Flight process node id -> Drone, in spawn order.
 var drones: Dictionary = {}
 ## Drone the camera and the overlay follow; null when none.
@@ -86,7 +89,8 @@ func _ready() -> void:
 	var port := SimArgs.get_port("discovery-port", Mark4Transport.DISCOVERY_PORT)
 	if not transport.open(0, port):
 		return
-	transport.set_beacon(Mark4Announce.build())
+	discovery.setup(transport, Mark4Announce.build())
+	discovery.identity.connect(_on_identity)
 	transport.node_down.connect(_on_node_down)
 	transport.payload_received.connect(_on_payload)
 	print("drones: plant node %08x, wire %08x, waiting for flight processes" % [transport.node_id, WireHash.VALUE])
@@ -100,6 +104,7 @@ func _exit_tree() -> void:
 func _physics_process(_delta: float) -> void:
 	var now_us := Time.get_ticks_usec()
 	transport.poll(now_us)
+	discovery.tick(now_us)
 	if now_us - _last_report_us >= REPORT_PERIOD_US:
 		_last_report_us = now_us
 		_print_cost()
@@ -149,9 +154,12 @@ func _on_payload(src: int, payload: PackedByteArray) -> void:
 		if _leaving.erase(src):
 			print("drones: node %08x is back, keeping its drone" % src)
 		drone.sim_link.receive(payload)
-		return
-	if Mark4Announce.kind_of(payload) == Mark4.NodeKind.DRONE_SIM:
-		_add_drone(src)
+
+
+## One node said who it is: a flight process gets a virtual drone.
+func _on_identity(node_id: int, kind: int, _name: String) -> void:
+	if kind == Mark4.NodeKind.DRONE_SIM and not drones.has(node_id):
+		_add_drone(node_id)
 
 
 func _on_node_down(node_id: int) -> void:

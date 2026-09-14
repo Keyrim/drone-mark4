@@ -21,6 +21,7 @@ message Envelope {
     SimActuator sim_actuator = 3;
     Rc rc = 4;
     Announce announce = 5;
+    IdentityRequest identity_request = 39;
     Log log = 6;
     LogModules log_modules = 7;
     LogControl log_control = 8;
@@ -71,7 +72,12 @@ enum Mcu {
   SIM = 200;  // desktop flight processes
 }
 
-// One node saying "here I am", beaconed every second.
+// Asks one node who it is, unicast; the node answers with its Announce.
+message IdentityRequest {
+}
+
+// Who a node is, unicast in answer to an IdentityRequest. Nothing sends
+// one unsolicited: presence on the wire is the transport's own keepalive.
 message Announce {
   NodeKind kind = 1;
   string name = 2;           // free label, at most 16 characters

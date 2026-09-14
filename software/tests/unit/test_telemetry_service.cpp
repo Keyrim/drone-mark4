@@ -1,7 +1,7 @@
 /// @file
-/// @brief The telemetry wire adapter: what it publishes of the registry,
-///        what it accepts of an enable, and how it paces and batches the
-///        samples it streams to the one node that asked.
+/// @brief The telemetry service, driven through the wire: what it publishes
+///        of the registry, what it accepts of an enable, and how it paces
+///        and batches the samples it streams to the one node that asked.
 
 #include <array>
 #include <cstddef>
@@ -13,9 +13,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "platform_common/telemetry_service.hpp"
+#include "messaging/messenger.hpp"
 #include "protocol/envelope.hpp"
 #include "recording_link.hpp"
+#include "services/telemetry_service.hpp"
 #include "telemetry/registry.hpp"
 #include "transport/frame.hpp"
 #include "transport/transport.hpp"
@@ -29,8 +30,9 @@ namespace
     constexpr std::uint64_t T0_US = 1'000'000U;
     constexpr std::uint64_t US_PER_MS = 1000U;
 
-    /// A transport over a recording link: the service answers on it and the
-    /// test reads back the payloads and where they went.
+    /// A messenger over a transport over a recording link: the requests
+    /// come in through the link, the service answers on it, and the test
+    /// reads back the payloads and where they went.
     class Wire
     {
       public:
@@ -39,10 +41,10 @@ namespace
             static_cast<void>(m_transport.addLink(m_link));
         }
 
-        /// @return transport the service under test answers on
-        mark4::Transport &transport()
+        /// @return messenger the service under test attaches to
+        mark4::Messenger &messenger()
         {
-            return m_transport;
+            return m_messenger;
         }
 
         /// @brief Makes the transport learn one node, so a unicast to it can
@@ -52,9 +54,33 @@ namespace
         void learn(std::uint32_t node)
         {
             m_link.deliver(node, NODE_SELF, {0x00U});
-            m_transport.poll(T0_US, nullptr, nullptr);
+            m_messenger.poll(T0_US);
             REQUIRE(m_transport.isAlive(node));
             m_link.clear();
+        }
+
+        /// @brief Delivers one message to this node and polls once, the way
+        ///        a flight loop does.
+        /// @param envelope message to deliver
+        /// @param src node it comes from
+        /// @param nowUs instant of the poll [us]
+        /// @return true when a handler acted on it
+        bool request(const mark4_Envelope &envelope, std::uint32_t src, std::uint64_t nowUs)
+        {
+            std::vector<std::uint8_t> bytes(mark4::MAX_ENVELOPE_SIZE, 0U);
+            std::size_t size = 0U;
+            REQUIRE(mark4::encodeEnvelope(envelope, bytes.data(), bytes.size(), size));
+            bytes.resize(size);
+            m_link.deliver(src, NODE_SELF, bytes);
+            const std::uint32_t handled = m_messenger.handled();
+            m_messenger.poll(nowUs);
+            return m_messenger.handled() == handled + 1U;
+        }
+
+        /// @return messages the messenger found no handler for
+        [[nodiscard]] std::uint32_t unhandled() const
+        {
+            return m_messenger.unhandled();
         }
 
         /// @return every frame sent so far, headers included
@@ -79,8 +105,9 @@ namespace
         }
 
       private:
-        mark4::RecordingLink m_link;             ///< the medium
-        mark4::Transport m_transport{NODE_SELF}; ///< what the service holds
+        mark4::RecordingLink m_link;               ///< the medium
+        mark4::Transport m_transport{NODE_SELF};   ///< this node
+        mark4::Messenger m_messenger{m_transport}; ///< what the service attaches to
     };
 
     /// A handful of measures with known names, so a test knows what the
@@ -151,10 +178,9 @@ namespace
     };
 
     /// @brief Pulls the whole table, page by page, the way the gateway does.
-    /// @param service service to ask
-    /// @param wire link the pages come back on
+    /// @param wire the wire the requests go in and the pages come back on
     /// @return the descriptors of the whole table, in id order
-    std::vector<mark4_TelemetryDescriptor> pullTable(mark4::TelemetryService &service, Wire &wire)
+    std::vector<mark4_TelemetryDescriptor> pullTable(Wire &wire)
     {
         std::vector<mark4_TelemetryDescriptor> all;
         std::uint32_t cursor = 0U;
@@ -165,7 +191,7 @@ namespace
             mark4_Envelope request = mark4_Envelope_init_zero;
             request.which_body = mark4_Envelope_telemetry_list_request_tag;
             request.body.telemetry_list_request.cursor = cursor;
-            REQUIRE(service.handle(request, NODE_GROUND, T0_US));
+            REQUIRE(wire.request(request, NODE_GROUND, T0_US));
             REQUIRE(wire.frames().size() == 1U);
 
             const mark4_Envelope answer = wire.envelope(0U);
@@ -224,10 +250,10 @@ TEST_CASE("the table is published page by page, the last page closing it")
     Wire wire;
     wire.learn(NODE_GROUND);
     wire.learn(NODE_OTHER);
-    mark4::TelemetryService service(wire.transport(), MIN_PERIOD_MS);
+    mark4::TelemetryService service(wire.messenger(), MIN_PERIOD_MS);
     REQUIRE(service.init());
 
-    const std::vector<mark4_TelemetryDescriptor> table = pullTable(service, wire);
+    const std::vector<mark4_TelemetryDescriptor> table = pullTable(wire);
     REQUIRE(table.size() == service.entryCount());
     REQUIRE(table.size() >= Measures::COUNT + ManyMeasures::COUNT);
     // The id of a measure is its index in the frozen table, so the ids the
@@ -254,13 +280,13 @@ TEST_CASE("a page asked past the end comes back empty, carrying the total")
     Wire wire;
     wire.learn(NODE_GROUND);
     wire.learn(NODE_OTHER);
-    mark4::TelemetryService service(wire.transport(), MIN_PERIOD_MS);
+    mark4::TelemetryService service(wire.messenger(), MIN_PERIOD_MS);
     REQUIRE(service.init());
 
     mark4_Envelope request = mark4_Envelope_init_zero;
     request.which_body = mark4_Envelope_telemetry_list_request_tag;
     request.body.telemetry_list_request.cursor = 100000U;
-    REQUIRE(service.handle(request, NODE_GROUND, T0_US));
+    REQUIRE(wire.request(request, NODE_GROUND, T0_US));
 
     const mark4_TelemetryDescriptors &page = wire.envelope(0U).body.telemetry_descriptors;
     REQUIRE(page.descriptors_count == 0U);
@@ -276,15 +302,15 @@ TEST_CASE("an enable is acknowledged with the period and the count in effect")
     Wire wire;
     wire.learn(NODE_GROUND);
     wire.learn(NODE_OTHER);
-    mark4::TelemetryService service(wire.transport(), MIN_PERIOD_MS);
+    mark4::TelemetryService service(wire.messenger(), MIN_PERIOD_MS);
     REQUIRE(service.init());
-    const std::vector<mark4_TelemetryDescriptor> table = pullTable(service, wire);
+    const std::vector<mark4_TelemetryDescriptor> table = pullTable(wire);
     const std::uint32_t idA = idOf(table, "test/svc_a");
 
     SECTION("a period under the floor is clamped up to it")
     {
         wire.clear();
-        REQUIRE(service.handle(makeEnable({idA}, 1U), NODE_GROUND, T0_US));
+        REQUIRE(wire.request(makeEnable({idA}, 1U), NODE_GROUND, T0_US));
         const mark4_TelemetryAck &ack = wire.envelope(0U).body.telemetry_ack;
         REQUIRE(ack.period_ms == MIN_PERIOD_MS);
         REQUIRE(ack.enabled == 1U);
@@ -294,7 +320,7 @@ TEST_CASE("an enable is acknowledged with the period and the count in effect")
     SECTION("a period over the ceiling is clamped down to it")
     {
         wire.clear();
-        REQUIRE(service.handle(
+        REQUIRE(wire.request(
             makeEnable({idA}, 10U * mark4::TelemetryService::MAX_PERIOD_MS), NODE_GROUND, T0_US));
         REQUIRE(wire.envelope(0U).body.telemetry_ack.period_ms ==
                 mark4::TelemetryService::MAX_PERIOD_MS);
@@ -302,7 +328,7 @@ TEST_CASE("an enable is acknowledged with the period and the count in effect")
     SECTION("unknown ids are dropped and the rest is kept")
     {
         wire.clear();
-        REQUIRE(service.handle(makeEnable({idA, 100000U, 100001U}, 50U), NODE_GROUND, T0_US));
+        REQUIRE(wire.request(makeEnable({idA, 100000U, 100001U}, 50U), NODE_GROUND, T0_US));
         const mark4_TelemetryAck &ack = wire.envelope(0U).body.telemetry_ack;
         REQUIRE(ack.enabled == 1U);
         REQUIRE(ack.period_ms == 50U);
@@ -310,10 +336,10 @@ TEST_CASE("an enable is acknowledged with the period and the count in effect")
     }
     SECTION("an enable with no known id at all stops the stream")
     {
-        REQUIRE(service.handle(makeEnable({idA}, 50U), NODE_GROUND, T0_US));
+        REQUIRE(wire.request(makeEnable({idA}, 50U), NODE_GROUND, T0_US));
         REQUIRE(service.streaming());
         wire.clear();
-        REQUIRE(service.handle(makeEnable({100000U}, 50U), NODE_GROUND, T0_US));
+        REQUIRE(wire.request(makeEnable({100000U}, 50U), NODE_GROUND, T0_US));
         const mark4_TelemetryAck &ack = wire.envelope(0U).body.telemetry_ack;
         REQUIRE(ack.period_ms == 0U);
         REQUIRE(ack.enabled == 0U);
@@ -321,10 +347,10 @@ TEST_CASE("an enable is acknowledged with the period and the count in effect")
     }
     SECTION("period 0 stops the stream")
     {
-        REQUIRE(service.handle(makeEnable({idA}, 50U), NODE_GROUND, T0_US));
+        REQUIRE(wire.request(makeEnable({idA}, 50U), NODE_GROUND, T0_US));
         REQUIRE(service.streaming());
         wire.clear();
-        REQUIRE(service.handle(makeEnable({idA}, 0U), NODE_GROUND, T0_US));
+        REQUIRE(wire.request(makeEnable({idA}, 0U), NODE_GROUND, T0_US));
         REQUIRE(wire.envelope(0U).body.telemetry_ack.period_ms == 0U);
         REQUIRE(!service.streaming());
         // And nothing goes out afterwards, whatever the frames say.
@@ -335,7 +361,7 @@ TEST_CASE("an enable is acknowledged with the period and the count in effect")
     SECTION("the same measure listed twice is one measure")
     {
         wire.clear();
-        REQUIRE(service.handle(makeEnable({idA, idA, idA}, 50U), NODE_GROUND, T0_US));
+        REQUIRE(wire.request(makeEnable({idA, idA, idA}, 50U), NODE_GROUND, T0_US));
         REQUIRE(wire.envelope(0U).body.telemetry_ack.enabled == 1U);
     }
 }
@@ -346,13 +372,13 @@ TEST_CASE("the samples follow the period, unicast to the subscriber")
     Wire wire;
     wire.learn(NODE_GROUND);
     wire.learn(NODE_OTHER);
-    mark4::TelemetryService service(wire.transport(), MIN_PERIOD_MS);
+    mark4::TelemetryService service(wire.messenger(), MIN_PERIOD_MS);
     REQUIRE(service.init());
-    const std::vector<mark4_TelemetryDescriptor> table = pullTable(service, wire);
+    const std::vector<mark4_TelemetryDescriptor> table = pullTable(wire);
     const std::uint32_t idA = idOf(table, "test/svc_a");
     const std::uint32_t idC = idOf(table, "test/svc_c");
 
-    REQUIRE(service.handle(makeEnable({idC, idA}, 50U), NODE_GROUND, T0_US));
+    REQUIRE(wire.request(makeEnable({idC, idA}, 50U), NODE_GROUND, T0_US));
     wire.clear();
 
     // The first sample goes out on the very next frame: a subscriber that
@@ -392,7 +418,7 @@ TEST_CASE("a sampling instant wider than one message is split, timestamp kept")
     Wire wire;
     wire.learn(NODE_GROUND);
     wire.learn(NODE_OTHER);
-    mark4::TelemetryService service(wire.transport(), MIN_PERIOD_MS);
+    mark4::TelemetryService service(wire.messenger(), MIN_PERIOD_MS);
     REQUIRE(service.init());
     const std::size_t perMessage = mark4::TelemetryService::VALUES_PER_MESSAGE;
     REQUIRE(service.entryCount() > perMessage);
@@ -403,7 +429,7 @@ TEST_CASE("a sampling instant wider than one message is split, timestamp kept")
     {
         ids.push_back(static_cast<std::uint32_t>(index));
     }
-    REQUIRE(service.handle(makeEnable(ids, 50U), NODE_GROUND, T0_US));
+    REQUIRE(wire.request(makeEnable(ids, 50U), NODE_GROUND, T0_US));
     wire.clear();
 
     service.sample(T0_US + 2000U);
@@ -426,12 +452,15 @@ TEST_CASE("the stream stops when the subscriber stops repeating its enable")
     Wire wire;
     wire.learn(NODE_GROUND);
     wire.learn(NODE_OTHER);
-    mark4::TelemetryService service(wire.transport(), MIN_PERIOD_MS);
+    mark4::TelemetryService service(wire.messenger(), MIN_PERIOD_MS);
     REQUIRE(service.init());
-    const std::vector<mark4_TelemetryDescriptor> table = pullTable(service, wire);
+    const std::vector<mark4_TelemetryDescriptor> table = pullTable(wire);
     const std::uint32_t idA = idOf(table, "test/svc_a");
 
-    REQUIRE(service.handle(makeEnable({idA}, MIN_PERIOD_MS), NODE_GROUND, T0_US));
+    // The enable is stamped with the last frame the service sampled, not
+    // with the instant of the poll that delivered it.
+    service.sample(T0_US);
+    REQUIRE(wire.request(makeEnable({idA}, MIN_PERIOD_MS), NODE_GROUND, T0_US));
     const std::uint64_t timeout = mark4::TelemetryService::SUBSCRIBER_TIMEOUT_US;
 
     // Just inside the window the stream still runs.
@@ -449,9 +478,38 @@ TEST_CASE("the stream stops when the subscriber stops repeating its enable")
     service.sample(T0_US + 2U * timeout);
     REQUIRE(wire.frames().empty());
 
-    // A fresh enable arms it again.
-    REQUIRE(service.handle(makeEnable({idA}, MIN_PERIOD_MS), NODE_GROUND, T0_US + 2U * timeout));
+    // A fresh enable arms it again, timed from that last sample.
+    REQUIRE(wire.request(makeEnable({idA}, MIN_PERIOD_MS), NODE_GROUND, T0_US + 2U * timeout));
     REQUIRE(service.streaming());
+}
+
+TEST_CASE("the enable instant is the last frame sampled, not the poll's clock")
+{
+    Measures measures;
+    Wire wire;
+    wire.learn(NODE_GROUND);
+    wire.learn(NODE_OTHER);
+    mark4::TelemetryService service(wire.messenger(), MIN_PERIOD_MS);
+    REQUIRE(service.init());
+    const std::vector<mark4_TelemetryDescriptor> table = pullTable(wire);
+    const std::uint32_t idA = idOf(table, "test/svc_a");
+    const std::uint64_t timeout = mark4::TelemetryService::SUBSCRIBER_TIMEOUT_US;
+
+    // The frames are on one time base, the poll on another: an enable
+    // delivered by a poll far in the future of the frames must not be
+    // timed against that clock, or the stream would stop on its first
+    // frame.
+    service.sample(T0_US);
+    REQUIRE(wire.request(makeEnable({idA}, MIN_PERIOD_MS), NODE_GROUND, T0_US + 10U * timeout));
+    wire.clear();
+
+    // Timed from the last sample: still running at the edge of the window
+    // of that instant, stopped one microsecond past it.
+    service.sample(T0_US + timeout);
+    REQUIRE(wire.frames().size() == 1U);
+    REQUIRE(service.streaming());
+    service.sample(T0_US + timeout + 1U);
+    REQUIRE(!service.streaming());
 }
 
 TEST_CASE("a keepalive keeps the stream alive without restarting the pacing")
@@ -460,13 +518,14 @@ TEST_CASE("a keepalive keeps the stream alive without restarting the pacing")
     Wire wire;
     wire.learn(NODE_GROUND);
     wire.learn(NODE_OTHER);
-    mark4::TelemetryService service(wire.transport(), MIN_PERIOD_MS);
+    mark4::TelemetryService service(wire.messenger(), MIN_PERIOD_MS);
     REQUIRE(service.init());
-    const std::vector<mark4_TelemetryDescriptor> table = pullTable(service, wire);
+    const std::vector<mark4_TelemetryDescriptor> table = pullTable(wire);
     const std::uint32_t idA = idOf(table, "test/svc_a");
     const std::uint32_t periodMs = 50U;
 
-    REQUIRE(service.handle(makeEnable({idA}, periodMs), NODE_GROUND, T0_US));
+    service.sample(T0_US);
+    REQUIRE(wire.request(makeEnable({idA}, periodMs), NODE_GROUND, T0_US));
     service.sample(T0_US);
     wire.clear();
 
@@ -476,14 +535,24 @@ TEST_CASE("a keepalive keeps the stream alive without restarting the pacing")
     {
         if (at % 1'000'000U == 0U)
         {
-            REQUIRE(service.handle(makeEnable({idA}, periodMs), NODE_GROUND, at));
+            REQUIRE(wire.request(makeEnable({idA}, periodMs), NODE_GROUND, at));
         }
         service.sample(at);
     }
     const std::size_t acks = 1U;
     const std::size_t expected = 1'000'000U / (periodMs * US_PER_MS);
-    // One ack for the keepalive, and one sample per period, no more.
-    REQUIRE(wire.frames().size() == expected + acks);
+    // One ack for the keepalive, and one sample per period, no more. The
+    // transport's own keepalive rode along with the poll one second after
+    // the first: a header alone, not a message, so it is not counted.
+    std::size_t messages = 0U;
+    for (const mark4::RecordedFrame &frame : wire.frames())
+    {
+        if (!frame.payload.empty())
+        {
+            ++messages;
+        }
+    }
+    REQUIRE(messages == expected + acks);
 }
 
 TEST_CASE("an enable from another node takes the stream over")
@@ -492,19 +561,19 @@ TEST_CASE("an enable from another node takes the stream over")
     Wire wire;
     wire.learn(NODE_GROUND);
     wire.learn(NODE_OTHER);
-    mark4::TelemetryService service(wire.transport(), MIN_PERIOD_MS);
+    mark4::TelemetryService service(wire.messenger(), MIN_PERIOD_MS);
     REQUIRE(service.init());
-    const std::vector<mark4_TelemetryDescriptor> table = pullTable(service, wire);
+    const std::vector<mark4_TelemetryDescriptor> table = pullTable(wire);
     const std::uint32_t idA = idOf(table, "test/svc_a");
     const std::uint32_t idC = idOf(table, "test/svc_c");
 
-    REQUIRE(service.handle(makeEnable({idA}, MIN_PERIOD_MS), NODE_GROUND, T0_US));
+    REQUIRE(wire.request(makeEnable({idA}, MIN_PERIOD_MS), NODE_GROUND, T0_US));
     REQUIRE(service.subscriber() == NODE_GROUND);
 
     // Last writer wins: one active stream per drone, and it is the new
     // node's set and period that apply.
     wire.clear();
-    REQUIRE(service.handle(makeEnable({idA, idC}, 100U), NODE_OTHER, T0_US + 1000U));
+    REQUIRE(wire.request(makeEnable({idA, idC}, 100U), NODE_OTHER, T0_US + 1000U));
     REQUIRE(wire.frames()[0].header.dst == NODE_OTHER);
     REQUIRE(service.subscriber() == NODE_OTHER);
     REQUIRE(service.enabledCount() == 2U);
@@ -523,11 +592,14 @@ TEST_CASE("a message that is not a telemetry request is left to its owner")
     Wire wire;
     wire.learn(NODE_GROUND);
     wire.learn(NODE_OTHER);
-    mark4::TelemetryService service(wire.transport(), MIN_PERIOD_MS);
+    mark4::TelemetryService service(wire.messenger(), MIN_PERIOD_MS);
     REQUIRE(service.init());
 
+    // Nothing claimed the tag: the messenger counts it, the service never
+    // sees it and answers nothing.
     mark4_Envelope rc = mark4_Envelope_init_zero;
     rc.which_body = mark4_Envelope_rc_tag;
-    REQUIRE(!service.handle(rc, NODE_GROUND, T0_US));
+    REQUIRE(!wire.request(rc, NODE_GROUND, T0_US));
+    REQUIRE(wire.unhandled() == 1U);
     REQUIRE(wire.frames().empty());
 }

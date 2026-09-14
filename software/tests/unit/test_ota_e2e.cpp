@@ -212,33 +212,19 @@ namespace
     constexpr std::uint32_t GROUND_NODE = 0x6E0D0001U;
 
     /// Transport identity the sim is started with, so the ground side can
-    /// address it before it ever announced anything but its beacon.
+    /// address it before it has said anything.
     constexpr std::uint32_t SIM_NODE = 0x51300001U;
-
-    /// The ESP32's outbound rule on its UART link (index 0 of its
-    /// transport): a broadcast only goes down the wire when it is an
-    /// Announce; a unicast routed there is for the board by construction.
-    bool uartFilter(void *context,
-                    std::size_t linkIndex,
-                    const mark4::FrameHeader &header,
-                    const std::uint8_t *payload,
-                    std::size_t size)
-    {
-        static_cast<void>(context);
-        return linkIndex != 0U || header.dst != mark4::BROADCAST_NODE ||
-               mark4::envelopeIsAnnounce(payload, size);
-    }
 
     /// The ground side of the link, exactly what the hub is: one transport
     /// node addressing the sim by the node id it was started with. Two
     /// shapes: straight on the LAN (one UDP link on a private discovery
     /// port), or through a relay: the ground node stays on its LAN, an
     /// ESP32-like relay (UDP link on that LAN, UartLink on an in-memory
-    /// wire, relay on, no beacon, the UART filter) stands where the ESP32
-    /// stands, and a second relay on the far end of the wire (UartLink, UDP
-    /// link on a second private LAN, no filter) stands where the board's
-    /// transport stands with the sim behind it, so every updater message
-    /// crosses the serial framing, the filter and two relays both ways.
+    /// wire) stands where the ESP32 stands, and a second relay on
+    /// the far end of the wire (UartLink, UDP link on a second private LAN)
+    /// stands where the board's transport stands with the sim behind it, so
+    /// every updater message crosses the serial framing and two relays both
+    /// ways.
     class GroundLink
     {
       public:
@@ -270,22 +256,8 @@ namespace
             {
                 return true;
             }
-            // The ground beacons like the hub does, a real Announce: the
-            // relay's filter lets that one broadcast down the wire and
-            // nothing else. The relays beacon nothing.
-            mark4_Envelope announce = mark4_Envelope_init_zero;
-            announce.which_body = mark4_Envelope_announce_tag;
-            announce.body.announce.kind = mark4_NodeKind_GATEWAY;
-            std::array<std::uint8_t, mark4::MAX_ENVELOPE_SIZE> beacon{};
-            std::size_t beaconSize = 0U;
-            if (!mark4::encodeEnvelope(announce, beacon.data(), beacon.size(), beaconSize))
-            {
-                return false;
-            }
-            m_transport.setBeacon(beacon.data(), beaconSize);
-            m_relay.setRelay(true);
-            m_relay.setRelayFilter(&uartFilter, nullptr);
-            m_farRelay.setRelay(true);
+            // The sim learns the ground from its keepalives and unicasts,
+            // relayed across the wire like the hub's are.
             return m_relay.addLink(m_relayUart) && m_relay.addLink(m_relayUdp) &&
                    m_relayUdp.init() && m_relay.init() && m_farRelay.addLink(m_farUart) &&
                    m_farUdp.init() && m_farRelay.addLink(m_farUdp) && m_farRelay.init();
@@ -295,12 +267,6 @@ namespace
         [[nodiscard]] std::size_t wireBytesToBoard() const
         {
             return m_relayEnd.written();
-        }
-
-        /// @return relayed frames the filter kept off the wire
-        [[nodiscard]] std::uint32_t filtered() const
-        {
-            return m_relay.filtered();
         }
 
         /// @brief Sends one message to the sim, by node id.
@@ -363,7 +329,7 @@ namespace
         mark4::UartLink m_relayUart{m_relayEnd};           ///< the ESP32's UART link (index 0)
         mark4::UdpLink m_relayUdp;                         ///< the ESP32's LAN link, the
                                                            ///< ground's discovery port
-        mark4::Transport m_relay{RELAY_NODE};              ///< the ESP32: relay + filter
+        mark4::Transport m_relay{RELAY_NODE};              ///< the ESP32
         mark4::UartLink m_farUart{m_farEnd};               ///< far relay's UART link
         mark4::UdpLink m_farUdp;                           ///< far relay's link to the sim
         mark4::Transport m_farRelay{FAR_RELAY_NODE};       ///< the board's side of the wire
@@ -703,12 +669,11 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     std::filesystem::remove_all(runDirectory, error);
 }
 
-TEST_CASE("a hub-driven update crosses the esp32 relay, its filter and the serial framing",
-          "[ota][e2e]")
+TEST_CASE("a hub-driven update crosses the esp32 relay and the serial framing", "[ota][e2e]")
 {
     // The happy path of the test above, with the ground node reaching the sim
-    // through the ESP32-like relay, its UART filter, the serial framing and
-    // a far relay standing for the board's transport. The transfer, its
+    // through the ESP32-like relay, the serial framing and a far relay
+    // standing for the board's transport. The transfer, its
     // acknowledgements, the reboot and the self-confirmation all have to
     // cross the framing both ways.
     std::error_code error;
@@ -761,10 +726,8 @@ TEST_CASE("a hub-driven update crosses the esp32 relay, its filter and the seria
     REQUIRE(sim.alive());
 
     // The whole transfer went down the wire: what the ground unicast to the
-    // sim plus its own beacons, and nothing the filter had to refuse (the
-    // ground never broadcast anything but its Announce).
+    // sim plus the keepalives.
     CHECK(link.wireBytesToBoard() > IMAGE_SIZE);
-    CHECK(link.filtered() == 0U);
 
     sim.stop();
     std::filesystem::remove_all(runDirectory, error);
@@ -977,7 +940,7 @@ TEST_CASE("a live drone_sim publishes its log modules and takes a level from the
     SimProcess sim;
     REQUIRE(sim.start(runDirectory, (runDirectory / "flash").string(), discoveryPort, SIM_NODE));
 
-    // The table follows the first beacon, unasked, and names the boot line's
+    // The table follows the first keepalive, unasked, and names the boot line's
     // module; the boot line itself is a Log carrying that module's id.
     REQUIRE(ground.waitFor(isLogModules));
     const std::uint32_t bootId = moduleIdOf(ground.heard, "app/boot");

@@ -59,15 +59,15 @@ value name: `PHASE_*`, `THROW_*`, `RC_*`, `OTA_OK`, `OTA_OP_*` carry the
 prefix the clash forced, the rest stay short. The flight core's own enums
 (FlightPhase, ThrowState, PilotMode, TuningStatus) are pinned to the wire
 value by value in `platform_common/status_packer.hpp` and
-`tuning_service.hpp`, and `TelemetryUnit` is pinned to the leaf library's
-own enum in `platform_common/telemetry_service.hpp`; flight-core never
+`services/tuning_service.hpp`, and `TelemetryUnit` is pinned to the leaf
+library's own enum in `services/telemetry_service.hpp`; flight-core never
 includes this library.
 
 ## Where the messages travel
 
 - `Status`, `SimRunStats`, `TuningAck`, `TuningInfo`, the `Ota*`
-  answers and the `Announce` beacon: flight process to ground, as transport
-  broadcasts (drone_sim, and the board through the ESP32 relay). `Status`
+  answers: flight process to ground, as transport broadcasts (drone_sim,
+  and the board through the ESP32 relay). `Status`
   is the small fixed report of what the drone is doing, decimated to 50 Hz
   and always on: attitude, motors, phase, throw state and count, the two
   validity flags, whether the RC uplink is heard (`rc_link_ok`, the pilot's
@@ -76,10 +76,15 @@ includes this library.
   flags of the frame that was stepped (a fresh measurement acquired for
   that frame, see `software/components/platform/README.md`);
   `PHASE_FAULT` is the flight core's latched motors-off state after the IMU
-  was lost with the motors running. The relay beacons its own `Announce`
-  too, kind `RELAY` and mcu `ESP32C3`, on both of its links, so the board
-  and the LAN see it as one more node; so does the phone (kind `PHONE`,
-  named after the device) from its Dart codec of this file.
+  was lost with the motors running.
+- `IdentityRequest` and `Announce`, the identity pair: the request is
+  unicast to one node, empty, and the node's `Announce` (kind, name, mcu,
+  build identity, wire hash) is the unicast answer back to the requester.
+  `drone_sim`, the firmware, the relay, the hub and the plant answer
+  (`software/components/discovery/`), the hub asks every node that
+  appears; only the campaign does not speak them yet. Presence on the wire
+  stays the transport's keepalive, a header-only frame that carries no
+  identity: nothing sends an `Announce` unsolicited.
 - The telemetry family, all unicast, one active stream per drone:
   `TelemetryListRequest` (ground to node, from a cursor) is answered by one
   `TelemetryDescriptors` page back to the requester; `TelemetryEnable`

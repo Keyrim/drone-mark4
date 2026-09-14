@@ -3,19 +3,20 @@
 /// @file
 /// @brief firmware composition root.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
+#include "discovery/discovery.hpp"
 #include "flight_core/flight_core.hpp"
 #include "flight_core/types.hpp"
 #include "log/wire.hpp"
+#include "messaging/messenger.hpp"
 #include "ota/updater.hpp"
-#include "platform_common/command_receiver_transport.hpp"
 #include "platform_common/frame_telemetry.hpp"
 #include "platform_common/rc_tracker.hpp"
 #include "platform_common/status_publisher.hpp"
-#include "platform_common/telemetry_service.hpp"
-#include "platform_common/tuning_service.hpp"
 #include "platform_stm32/bmp581.hpp"
 #include "platform_stm32/board.hpp"
 #include "platform_stm32/clock_stm32.hpp"
@@ -28,6 +29,10 @@
 #include "platform_stm32/sensor_source_stm32.hpp"
 #include "platform_stm32/uart1_stream.hpp"
 #include "protocol/envelope.hpp"
+#include "services/flight_ota_gate.hpp"
+#include "services/ota_service.hpp"
+#include "services/telemetry_service.hpp"
+#include "services/tuning_service.hpp"
 #include "telemetry/registry.hpp"
 #include "transport/transport.hpp"
 #include "transport/uart_link.hpp"
@@ -40,9 +45,9 @@ namespace mark4
     /// main(), passed by reference: no singleton.
     ///
     /// The board is one transport node with one link, USART1 to the ESP32
-    /// relay. Everything it emits (telemetry, tuning and updater answers,
-    /// log lines, its Announce beacon) is a broadcast, like drone_sim: the
-    /// relay puts it on the LAN and nobody has to know who asked.
+    /// relay. What it reports unasked (status, log lines) is a broadcast
+    /// the relay puts on the LAN; what it answers (telemetry, tuning and
+    /// updater replies) goes to the node that asked, through the messenger.
     /// Commands reach it as unicasts to its node id, or as broadcasts.
     class FirmwareApp
     {
@@ -74,13 +79,25 @@ namespace mark4
         [[noreturn]] void run();
 
       private:
-        /// @brief Hands one received message to the update session and sends
-        ///        whatever answer comes back.
-        /// @param envelope decoded message
-        /// @param nowUs monotonic time [us]
-        /// @return true when the updater claimed the message, whatever the
-        ///         outcome: the rest of this composition must then ignore it
-        bool serveOta(const mark4_Envelope &envelope, std::uint64_t nowUs);
+        /// The composition's own commands: what is not a service's.
+        class Commands final : public mark4::AbsMessageHandler
+        {
+          public:
+            /// Body tags this handler consumes.
+            static constexpr std::array<pb_size_t, 3> TAGS = {
+                mark4_Envelope_rc_tag, mark4_Envelope_reboot_tag, mark4_Envelope_log_control_tag};
+
+            /// @param messenger messenger to attach to
+            /// @param app composition the commands act on
+            Commands(mark4::Messenger &messenger, FirmwareApp &app);
+
+            bool onMessage(std::uint32_t src,
+                           const mark4_Envelope &envelope,
+                           std::uint64_t nowUs) override;
+
+          private:
+            FirmwareApp &m_app; ///< the composition, not owned
+        };
 
         /// @brief Parks the flight loop and serves the open update session:
         ///        no sensor read, no core step, no motor output at all, so
@@ -95,28 +112,10 @@ namespace mark4
         ///        and nothing else can move the running slot's state.
         void refreshArmInterlock();
 
-        /// @brief Registers the Announce naming this board (kind, chip and
-        ///        the identity stamped in the running slot's image header)
-        ///        as the transport beacon.
-        /// @return false when it does not fit a beacon
-        bool setAnnounceBeacon();
-
-        /// @brief Pumps the transport: frames in, beacon and expiry out.
-        ///        Every payload delivered lands in the command receiver.
+        /// @brief Polls the messenger: frames in, keepalive and expiry out,
+        ///        every message delivered dispatched to its handler.
         /// @param nowUs current instant [us]
         void pollTransport(std::uint64_t nowUs);
-
-        /// @brief Transport delivery callback: queues one payload.
-        static void OnPayload(void *context,
-                              std::uint32_t src,
-                              const std::uint8_t *payload,
-                              std::size_t size);
-
-        /// @brief Drains the command receiver into the services: RC to the
-        ///        tracker, updater messages served, tuning answered.
-        /// @param nowUs instant handed to the RC fail-safe and the updater [us]
-        /// @return true when a reboot command was drained
-        bool drainCommands(std::uint64_t nowUs);
 
         /// @brief Route of every log line and of the module table: a
         ///        transport broadcast, like everything this board emits.
@@ -136,6 +135,15 @@ namespace mark4
         mark4::Uart1Stream m_uartStream;
         mark4::UartLink m_uartLink{m_uartStream};
         mark4::Transport m_transport{boardNodeId()};
+        /// Every message addressed to this node goes through it to the one
+        /// handler of its tag; every handler below is declared after it.
+        mark4::Messenger m_messenger{m_transport};
+        Commands m_commands{m_messenger, *this};
+        /// Who this board is, to whoever asks. Optional because the answer
+        /// carries the identity stamped in the running image, read from the
+        /// flash at init and not knowable before it.
+        std::optional<mark4::Discovery>
+            m_discovery; ///< who this board is, once its image identity is read
         mark4::RttSink m_rttSink;
         mark4::TransportSink m_transportSink{&FirmwareApp::SendLog, this};
         mark4::I2cBus m_bus;
@@ -144,22 +152,24 @@ namespace mark4
         mark4::SensorSourceStm32 m_sensorSource{m_imu, m_baro, m_clock};
         mark4::MotorSinkDshot m_motorSink;
         mark4::StatusPublisher m_statusPublisher{m_transport};
-        mark4::CommandReceiverTransport m_commandReceiver;
         mark4::RcTracker m_rcTracker;
         /// Declared before the core so the ids of the platform measures come
         /// first in the frozen table: the order of construction IS the order
         /// of the ids (see components/telemetry/README.md).
         mark4::FrameTelemetry m_frameTelemetry;
         mark4::FlightCore m_core;
-        mark4::TuningService m_tuningService{m_core, m_transport};
+        mark4::TuningService m_tuningService{m_messenger, m_core};
         /// The slot this image was linked for is a compile-time fact
         /// (ota_slots.hpp, one -DDRONE_OTA_SLOT_ID per variant); the store
         /// refuses to erase or program it, whatever arrives on the wire.
         mark4::FirmwareStoreStm32 m_firmwareStore{mark4::OTA_RUNNING_SLOT};
         mark4::OtaUpdater m_otaUpdater{m_firmwareStore};
+        /// What the updater asks this node about itself before a session.
+        mark4::FlightOtaGate m_otaGate{m_core};
+        mark4::OtaService m_otaService{m_messenger, m_otaUpdater, m_otaGate};
         /// Last of the services: init() freezes the registry, so every
         /// object holding a measure must exist before it runs.
-        mark4::TelemetryService m_telemetryService{m_transport, MIN_TELEMETRY_PERIOD_MS};
+        mark4::TelemetryService m_telemetryService{m_messenger, MIN_TELEMETRY_PERIOD_MS};
 
         /// Wall time one waitFrame -> step -> push cycle took, refreshed
         /// every frame [us]: the one number that says whether the loop still
@@ -168,14 +178,17 @@ namespace mark4
         mark4::TelemetryEntry m_stepDurationEntry{
             "loop/step_duration", mark4::TelemetryUnit::US, m_stepDurationUs};
 
-        /// The beacon as registered: the identity the boot line reports.
-        mark4_Announce m_announce = mark4_Announce_init_zero;
-
         /// True while the running slot is on trial: arming is refused until
         /// the image confirms itself (docs/ota-design.md section 3.2).
         bool m_armInhibited = false;
 
-        /// The module table goes out once the first beacon did.
+        /// OtaService::consumed() at the last interlock refresh.
+        std::uint32_t m_otaConsumedSeen = 0U;
+
+        /// A Reboot arrived, acted on after the poll.
+        bool m_rebootRequested = false;
+
+        /// The module table goes out once the first keepalive did.
         bool m_logModulesPublished = false;
     };
 } // namespace mark4

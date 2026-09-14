@@ -1,7 +1,7 @@
 class_name Mark4Announce
 extends RefCounted
 
-## The plant's beacon and the cheap reading of everyone else's.
+## The plant's identity, the answer it unicasts to whoever asks who it is.
 ##
 ## An encoded Envelope opens with the tag of its body (the Envelope has one
 ## field, its oneof), so one byte says whether a payload is worth decoding:
@@ -16,12 +16,17 @@ const TAG_STATUS := 0x0A
 const TAG_SIM_ACTUATOR := 0x1A
 const TAG_ANNOUNCE := 0x2A
 const TAG_SIM_SCENARIO := 0x82
+## Two bytes here: the varint tag of the IdentityRequest (field 39) is
+## 0xBA 0x02, and TuningAck (field 23) opens with the same first byte, so
+## one byte does not tell them apart.
+const TAG_IDENTITY_REQUEST: Array[int] = [0xBA, 0x02]
 
 const NAME := "godot-plant"
 
 
 ## The Announce of this plant, encoded: kind PLANT, mcu SIM, no build
 ## identity (nothing is packaged), the wire hash of the generated codec.
+## It leaves as the answer to an IdentityRequest, never unasked.
 static func build() -> PackedByteArray:
 	var envelope := Mark4.Envelope.new()
 	var announce: Mark4.Announce = envelope.new_announce()
@@ -32,15 +37,3 @@ static func build() -> PackedByteArray:
 	announce.set_git_hash("")
 	announce.set_wire_hash(WireHash.VALUE)
 	return envelope.to_bytes()
-
-
-## Node kind carried by a payload, or -1 when it is not an Announce.
-static func kind_of(payload: PackedByteArray) -> int:
-	if payload.is_empty() or payload[0] != TAG_ANNOUNCE:
-		return -1
-	var envelope := Mark4.Envelope.new()
-	if envelope.from_bytes(payload) != Mark4.PB_ERR.NO_ERRORS:
-		return -1
-	if envelope.get_body_case() != Mark4.Envelope.BodyCase.ANNOUNCE:
-		return -1
-	return envelope.get_announce().get_kind()

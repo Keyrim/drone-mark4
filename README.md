@@ -19,6 +19,7 @@ Documentation:
 - [docs/plan-dev.md](docs/plan-dev.md) - development plan and reference document
 - [docs/contributing/cpp-guidelines.md](docs/contributing/cpp-guidelines.md) - C++ coding guidelines
 - [docs/mobile-app.md](docs/mobile-app.md) - phone as gateway: what the two mobile PoCs established, and the roadmap of `software/mobile`
+- [docs/comm-design.md](docs/comm-design.md) - communication stack rework: transport presence, messaging postman, pull discovery (proposal, issue #29)
 - [worktrees/README.md](worktrees/README.md) - git worktrees: where they live, how to bring one up, build it, open it, remove it
 
 ## Modules
@@ -26,9 +27,9 @@ Documentation:
 - `flight-core/` - pure flight core: no dynamic allocation, no
   exceptions/RTTI, no clock access. `float` everywhere
   (`-Wdouble-promotion` as an error).
-- `platform/` - 5 abstract interfaces (AbsSensorSource, AbsMotorSink,
-  AbsCommandReceiver, AbsLogSink, AbsClock) plus one implementation set per
-  variant. No singletons: each executable has an
+- `platform/` - 3 abstract services (AbsSensorSource, AbsMotorSink,
+  AbsClock) plus one implementation set per variant; commands come in
+  through the `messaging` component, not through a platform service. No singletons: each executable has an
   explicit composition root in its main.
 - `protocol/` - one protobuf schema (`mark4.proto`), codecs generated at
   build time for C/C++ (nanopb), GDScript (godobuf) and python; spoken by
@@ -91,8 +92,9 @@ run-clang-tidy -p software/build/desktop "$(pwd)/(apps|flight-core|platform|prot
 ## Simulation chain
 
 Three processes are transport nodes on udp/47820 and find each other by
-their beacons: the Godot plant spawns one virtual drone per `drone_sim`
-it hears and feeds it sensor frames in lockstep, `drone_sim` answers with
+the transport's keepalives; the plant and the hub then ask every node that
+appears who it is. The Godot plant spawns one virtual drone per node that
+answers `drone_sim` and feeds it sensor frames in lockstep, `drone_sim` answers with
 actuator frames and broadcasts telemetry to any node, the hub decodes it
 for the pages. Nothing is configured, start them in any order.
 

@@ -6,7 +6,7 @@
 ///        messages of `protocol/mark4.proto`, and streams batched samples to
 ///        the one node that asked for them.
 ///
-/// Timing contract. handle() is called from the command drain loop, before
+/// Timing contract. onMessage() runs inside the messenger poll, before
 /// step(); sample() is called once per flight frame, right after step() and
 /// the motor push, with the frame's own timestamp. The service never reads a
 /// clock: every instant comes from the caller, exactly like the transport.
@@ -23,10 +23,9 @@
 
 #include "log/module.hpp"
 #include "log/module_ids.hpp"
-#include "platform_common/envelope_io.hpp"
+#include "messaging/messenger.hpp"
 #include "protocol/envelope.hpp"
 #include "telemetry/registry.hpp"
-#include "transport/transport.hpp"
 
 namespace mark4
 {
@@ -54,11 +53,22 @@ namespace mark4
     static_assert(MAX_TELEMETRY_NAME + 1U == sizeof(mark4_TelemetryDescriptor::name),
                   "the measure name width must match the wire");
 
-    /// Answers the telemetry messages a composition hands it, and streams
-    /// what its subscriber asked for.
-    class TelemetryService
+    /// Answers the telemetry requests the messenger hands it, to the node
+    /// that asked, and streams what its subscriber asked for.
+    ///
+    /// Two time bases meet here. The messenger is polled on the clock of the
+    /// process (the sim polls it from the sensor wait), sample() runs on the
+    /// timestamp of the flight frame, and the two differ; the stream is
+    /// timed against the frames, so an enable is stamped with the instant of
+    /// the last sample(), never with the instant of the poll that delivered
+    /// it.
+    class TelemetryService final : public AbsMessageHandler
     {
       public:
+        /// Body tags this handler consumes.
+        static constexpr std::array<pb_size_t, 2> TAGS = {mark4_Envelope_telemetry_list_request_tag,
+                                                          mark4_Envelope_telemetry_enable_tag};
+
         /// Descriptors per TelemetryDescriptors page, from the wire bound.
         static constexpr std::size_t DESCRIPTORS_PER_PAGE =
             sizeof(mark4_TelemetryDescriptors::descriptors) /
@@ -88,11 +98,13 @@ namespace mark4
         /// Microseconds in a millisecond, for the period arithmetic.
         static constexpr std::uint64_t US_PER_MS = 1000U;
 
-        /// @param transport transport the answers and the samples leave by
+        /// @param messenger messenger the requests come from and the answers
+        ///        and the samples leave by; must outlive the service
         /// @param minPeriodMs fastest period this composition accepts [ms];
         ///        what the link can carry, not what the loop can produce
-        TelemetryService(Transport &transport, std::uint32_t minPeriodMs)
-            : m_transport(transport),
+        TelemetryService(Messenger &messenger, std::uint32_t minPeriodMs)
+            : AbsMessageHandler(messenger, TAGS),
+              m_messenger(messenger),
               m_minPeriodMs(minPeriodMs == 0U ? 1U : minPeriodMs)
         {
         }
@@ -143,21 +155,26 @@ namespace mark4
             return m_count > 0U;
         }
 
-        /// @brief Answers one message, when it is a telemetry request.
-        /// @param envelope decoded message
+        /// @brief Answers one telemetry request, to the node that sent it.
         /// @param src node it came from: where the answer goes
-        /// @param nowUs instant of the frame this drain belongs to [us]
-        /// @return true when the message was a telemetry request and was
-        ///         answered, false when it belongs to someone else
-        bool handle(const mark4_Envelope &envelope, std::uint32_t src, std::uint64_t nowUs)
+        /// @param envelope decoded message
+        /// @param nowUs instant of the poll that delivered it [us]
+        /// @return true when the message was answered
+        bool onMessage(std::uint32_t src,
+                       const mark4_Envelope &envelope,
+                       std::uint64_t nowUs) override
         {
+            // The poll's instant is on the process clock while the stream is
+            // timed on the frames: an enable is stamped with the last
+            // sample() instead (see the class comment).
+            static_cast<void>(nowUs);
             switch (envelope.which_body)
             {
                 case mark4_Envelope_telemetry_list_request_tag:
                     sendPage(envelope.body.telemetry_list_request.cursor, src);
                     return true;
                 case mark4_Envelope_telemetry_enable_tag:
-                    applyEnable(envelope.body.telemetry_enable, src, nowUs);
+                    applyEnable(envelope.body.telemetry_enable, src, m_frameUs);
                     return true;
                 default:
                     return false;
@@ -170,6 +187,7 @@ namespace mark4
         /// @param nowUs timestamp of the frame just stepped [us]
         void sample(std::uint64_t nowUs)
         {
+            m_frameUs = nowUs;
             if (!m_streaming)
             {
                 return;
@@ -263,13 +281,14 @@ namespace mark4
                 descriptor.unit = static_cast<mark4_TelemetryUnit>(m_entries[index]->unit());
                 ++page.descriptors_count;
             }
-            static_cast<void>(sendEnvelope(m_transport, dst, envelope));
+            static_cast<void>(m_messenger.send(dst, envelope));
         }
 
         /// @brief Replaces the enabled set and (re)arms the stream.
         /// @param enable the request
         /// @param src node that sent it: the new subscriber
-        /// @param nowUs instant the request was drained at [us]
+        /// @param nowUs instant the request is stamped with [us], on the
+        ///        time base of the frames
         void applyEnable(const mark4_TelemetryEnable &enable,
                          std::uint32_t src,
                          std::uint64_t nowUs)
@@ -374,7 +393,7 @@ namespace mark4
             envelope.which_body = mark4_Envelope_telemetry_ack_tag;
             envelope.body.telemetry_ack.period_ms = periodMs;
             envelope.body.telemetry_ack.enabled = enabled;
-            static_cast<void>(sendEnvelope(m_transport, dst, envelope));
+            static_cast<void>(m_messenger.send(dst, envelope));
         }
 
         /// @brief Reads every enabled measure and sends it as one or more
@@ -397,9 +416,9 @@ namespace mark4
                     ++data.values_count;
                     ++at;
                 }
-                // A refused send is dropped and counted by the transport,
+                // A refused send is dropped and counted by the messenger,
                 // never retried: a sample is only worth its own instant.
-                if (sendEnvelope(m_transport, m_subscriber, envelope))
+                if (m_messenger.send(m_subscriber, envelope))
                 {
                     ++m_messageCount;
                 }
@@ -415,8 +434,10 @@ namespace mark4
             m_sampled = false;
         }
 
-        Transport &m_transport;      ///< answers and samples leave by it, not owned
+        Messenger &m_messenger;      ///< answers and samples leave by it, not owned
         std::uint32_t m_minPeriodMs; ///< fastest period this composition accepts [ms]
+        std::uint64_t m_frameUs =
+            0U; ///< timestamp of the last sample(), the time base an enable is stamped with
 
         /// The frozen table: the index of an entry IS its wire id.
         std::array<const TelemetryEntry *, MAX_TELEMETRY_ENTRIES> m_entries{};

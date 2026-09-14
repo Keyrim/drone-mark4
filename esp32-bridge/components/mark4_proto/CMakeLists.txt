@@ -2,9 +2,10 @@
 # the one schema of the project, software/components/protocol/mark4.proto,
 # by the same generator invocation as software/components/protocol/
 # CMakeLists.txt (same nanopb commit, same options, same PB_NO_MALLOC /
-# PB_BUFFER_ONLY). The relay only reads one tag byte of every envelope
-# (protocol/envelope.hpp, envelopeIsAnnounce), the codec is here so a
-# future look inside a payload is a call away, not a build change.
+# PB_BUFFER_ONLY). The relay decodes only the envelopes addressed to it
+# (protocol/envelope.hpp, envelopeBodyTag picks them); the codec is here
+# for those and so a further look inside a payload is a call away, not a
+# build change.
 # ESP-IDF reads every component file once in script mode to collect its
 # requirements; nothing below can run there, and this component needs none.
 if(CMAKE_BUILD_EARLY_EXPANSION)

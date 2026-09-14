@@ -7,7 +7,6 @@ plugins {
 android {
     namespace = "fr.mark4.mark4"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -16,21 +15,12 @@ android {
 
     defaultConfig {
         applicationId = "fr.mark4.mark4"
-        // getifaddrs(), which the UDP link uses to know its own addresses,
-        // exists from API 24.
+        // NetworkInterface.list(), which the UDP link uses to know its own
+        // addresses, needs getifaddrs(), which exists from API 24.
         minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-    }
-
-    // The C++ transport of software/components, compiled by the NDK behind
-    // the C ABI of native/transport_shim.h (libmark4_transport.so).
-    externalNativeBuild {
-        cmake {
-            path = file("../../native/CMakeLists.txt")
-            version = "3.22.1"
-        }
     }
 
     buildTypes {

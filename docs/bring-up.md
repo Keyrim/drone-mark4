@@ -132,8 +132,9 @@ Incremental, one observable win per step:
 3. **Telemetry**: SensorFrames streamed over UART1 to the PC. Done: the
    board is a transport node (`software/components/transport/`) with one
    `UartLink` on USART1 at 921600 baud, node id hashed from the MCU unique
-   id. Its beacon is the `Announce` naming the board, its chip, its build
-   and its wire hash; it broadcasts a 50 Hz `Telemetry` envelope stream,
+   id. Its keepalive makes it visible, and it answers an `IdentityRequest`
+   with the `Announce` naming the board, its chip, its build and its wire
+   hash; it broadcasts a 50 Hz `Status` stream,
    its tuning and updater answers, and `Log` lines (init failures, update
    state changes; at most 20 per second) so a bench without a probe reads
    them in the hub. Every frame is the transport header then the envelope,
@@ -141,10 +142,11 @@ Incremental, one observable win per step:
    no datagram boundaries), interrupt-driven behind a ring buffer; a frame
    the transmit ring cannot hold is dropped whole and counted. The other
    end of the UART is the ESP32 relay riding the drone (`esp32-bridge/`):
-   a transport node with no beacon that forwards the board's broadcasts
-   onto the WiFi LAN and, down the UART, the unicasts for the board plus
-   the LAN's Announces only. The `hub` sees the board as one more node of
-   the LAN (kind `firmware`, its Announce, at the relay's address) and the
+   a transport node that relays between its two links: the board's
+   broadcasts onto the WiFi LAN and, down the UART, the unicasts for the
+   board and the LAN's keepalives. The `hub` sees the board as one more
+   node of the LAN (kind `firmware` once it answered who it is, at the
+   relay's address) and the
    Connections panel of the control page connects to it with the same
    click as to `drone_sim`. The uplink carries the pilot state
    (`Rc`: kill, arm, mode, throttle and the three sticks): an `rc`

@@ -6,12 +6,13 @@ extends RefCounted
 ##
 ## Frames: an 11-byte little-endian header (src u32, dst u32, seq u16,
 ## hops u8) then an opaque payload, one Envelope of mark4.proto. Every
-## frame heard refreshes the node table (address, last sequence, counters);
-## a node silent for NODE_EXPIRY_US is forgotten. A beacon set with
-## set_beacon() is broadcast every BEACON_PERIOD_US and unicast once to a
-## node the moment it first appears. Frames repeating the last sequence of
-## their sender are duplicates and dropped. No relay: a frame for another
-## node is only used to learn its sender.
+## frame heard refreshes the node table (address, last sequence, hops,
+## counters); a node silent for NODE_EXPIRY_US is forgotten. Presence is a
+## keepalive, a frame that is the header alone: broadcast every
+## KEEPALIVE_PERIOD_US and unicast once to a node the moment it first
+## appears, carrying nothing for the application. Frames repeating the last
+## sequence of their sender are duplicates and dropped. No relay: a frame
+## for another node is only used to learn its sender.
 ##
 ## Sockets, as in the C++ UdpLink: one shared DISCOVERY socket every node
 ## of the deployment binds and receives broadcasts on, and one ephemeral
@@ -33,8 +34,10 @@ const DISCOVERY_PORT := 47820
 const BROADCAST_NODE := 0
 const HEADER_SIZE := 11
 const MAX_PAYLOAD := 512
-const INITIAL_HOPS := 4
-const BEACON_PERIOD_US := 1_000_000
+## Relays a frame may cross. This node relays nothing, so it only ever
+## writes hops 0 and keeps the ceiling for the record.
+const MAX_HOPS := 4
+const KEEPALIVE_PERIOD_US := 1_000_000
 const NODE_EXPIRY_US := 3_000_000
 ## A forward jump of the sequence beyond this is a restarted sender.
 const RESYNC_THRESHOLD := 1024
@@ -50,18 +53,19 @@ signal payload_received(src: int, payload: PackedByteArray)
 var node_id: int = 0
 var discovery_port: int = DISCOVERY_PORT
 ## Nodes heard within NODE_EXPIRY_US:
-## id -> {address, port, last_seen_us, last_seq, received, lost, duplicates}.
+## id -> {address, port, last_seen_us, last_seq, received, lost, duplicates,
+## hops}.
 var nodes: Dictionary = {}
-## Frames dropped: shorter than a header, or a unicast to an unknown node.
+## Frames dropped: shorter than a header, an empty payload handed to send(),
+## or a unicast to an unknown node.
 var dropped: int = 0
 
 var _discovery := UDPServer.new()
 var _data := PacketPeerUDP.new()
 var _peers: Array[PacketPeerUDP] = []
 var _next_seq: int = 0
-var _beacon := PackedByteArray()
-var _last_beacon_us: int = 0
-var _beacon_sent: bool = false
+var _last_keepalive_us: int = 0
+var _keepalive_sent: bool = false
 var _tx := PackedByteArray()
 var _loopback_warned: bool = false
 
@@ -101,22 +105,21 @@ func close() -> void:
 	nodes.clear()
 
 
-## Register the payload broadcast every second and unicast to every newcomer.
-func set_beacon(payload: PackedByteArray) -> void:
-	_beacon = payload
-	_beacon_sent = false
-
-
 ## Send one payload. dst BROADCAST_NODE reaches every node of the LAN.
+## An application always sends a message: an empty payload is refused, the
+## header-only frame is the transport's own keepalive.
 ## @return true when the frame was handed to the socket.
 func send(dst: int, payload: PackedByteArray) -> bool:
+	if payload.is_empty():
+		dropped += 1
+		return false
 	if payload.size() > MAX_PAYLOAD:
 		return false
 	_tx.resize(HEADER_SIZE)
 	_tx.encode_u32(0, node_id)
 	_tx.encode_u32(4, dst)
 	_tx.encode_u16(8, _next_seq)
-	_tx.encode_u8(10, INITIAL_HOPS)
+	_tx.encode_u8(10, 0)
 	_next_seq = (_next_seq + 1) & 0xFFFF
 	_tx.append_array(payload)
 	if dst == BROADCAST_NODE:
@@ -128,7 +131,7 @@ func send(dst: int, payload: PackedByteArray) -> bool:
 	return _send_to(node["address"], node["port"])
 
 
-## Drain both sockets, learn, deliver, expire, beacon when due.
+## Drain both sockets, learn, deliver, expire, keepalive when due.
 ## @param now_us caller's monotonic instant [us].
 func poll(now_us: int) -> void:
 	while _data.get_available_packet_count() > 0:
@@ -142,15 +145,34 @@ func poll(now_us: int) -> void:
 			var frame := peer.get_packet()
 			_on_frame(frame, peer.get_packet_ip(), peer.get_packet_port(), now_us)
 	_expire(now_us)
-	if not _beacon.is_empty() and (not _beacon_sent or now_us - _last_beacon_us >= BEACON_PERIOD_US):
-		_last_beacon_us = now_us
-		_beacon_sent = true
-		send(BROADCAST_NODE, _beacon)
+	if not _keepalive_sent or now_us - _last_keepalive_us >= KEEPALIVE_PERIOD_US:
+		_last_keepalive_us = now_us
+		_keepalive_sent = true
+		_send_keepalive(BROADCAST_NODE)
 
 
 ## True when the node has been heard within NODE_EXPIRY_US.
 func is_alive(id: int) -> bool:
 	return nodes.has(id)
+
+
+## Send one keepalive, a frame that is the header alone: this node's
+## presence, and nothing for the application on the other side.
+## @param dst node to reach, BROADCAST_NODE for every node of the LAN.
+func _send_keepalive(dst: int) -> void:
+	_tx.resize(HEADER_SIZE)
+	_tx.encode_u32(0, node_id)
+	_tx.encode_u32(4, dst)
+	_tx.encode_u16(8, _next_seq)
+	_tx.encode_u8(10, 0)
+	_next_seq = (_next_seq + 1) & 0xFFFF
+	if dst == BROADCAST_NODE:
+		var _broadcast_sent := _broadcast()
+		return
+	var node: Dictionary = nodes.get(dst, {})
+	if node.is_empty():
+		return
+	var _unicast_sent := _send_to(node["address"], node["port"])
 
 
 func _on_frame(frame: PackedByteArray, address: String, port: int, now_us: int) -> void:
@@ -173,6 +195,7 @@ func _on_frame(frame: PackedByteArray, address: String, port: int, now_us: int) 
 			"received": 1,
 			"lost": 0,
 			"duplicates": 0,
+			"hops": frame.decode_u8(10),
 		}
 		nodes[src] = node
 	else:
@@ -188,11 +211,15 @@ func _on_frame(frame: PackedByteArray, address: String, port: int, now_us: int) 
 		node["address"] = address
 		node["port"] = port
 		node["last_seen_us"] = now_us
+		node["hops"] = frame.decode_u8(10)
 	if is_new:
 		node_up.emit(src)
-		if not _beacon.is_empty():
-			send(src, _beacon)
-	if dst == node_id or dst == BROADCAST_NODE:
+		# The newcomer learns this node at once instead of waiting for the
+		# next periodic keepalive.
+		_send_keepalive(src)
+	# A header alone is a keepalive: it was learnt from above and carries
+	# nothing for the application.
+	if frame.size() > HEADER_SIZE and (dst == node_id or dst == BROADCAST_NODE):
 		payload_received.emit(src, frame.slice(HEADER_SIZE))
 
 

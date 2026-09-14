@@ -1,7 +1,8 @@
 import 'dart:math' as math;
 
 import 'package:equatable/equatable.dart';
-import 'package:mark4/back/transport/transport_snapshot.dart';
+import 'package:mark4/back/discovery/directory_models.dart';
+import 'package:mark4/back/transport/abs_transport_node.dart';
 import 'package:mark4/gen/mark4.pb.dart';
 
 /// One drone on the network, what the home list shows.
@@ -44,19 +45,16 @@ class DroneInfo extends Equatable {
     required this.lastSeenAgo,
   });
 
-  /// From one node of a snapshot.
-  factory DroneInfo.fromNode(
-    TransportNode node,
-    NodeAnnounce announce,
-    int nowUs,
-  ) => DroneInfo(
-    announce: announce,
-    address: node.info.address,
-    received: node.info.received,
-    lost: node.info.lost,
-    duplicates: node.info.duplicates,
-    lastSeenAgo: Duration(microseconds: nowUs - node.info.lastSeenUs),
-  );
+  /// From one node of a snapshot and what it announced.
+  factory DroneInfo.fromNode(NodeInfo node, NodeAnnounce announce, int nowUs) =>
+      DroneInfo(
+        announce: announce,
+        address: node.address,
+        received: node.received,
+        lost: node.lost,
+        duplicates: node.duplicates,
+        lastSeenAgo: Duration(microseconds: nowUs - node.lastSeenUs),
+      );
 
   final NodeAnnounce announce;
   final String address;

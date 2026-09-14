@@ -6,8 +6,6 @@
 #     plugin from the pubspec)
 #   - wire_hash.dart: the first 8 hex characters of the SHA-256 of mark4.proto,
 #     the same value CMake bakes into every C++ node
-#   - transport_bindings.dart: the dart:ffi binding of native/include/mark4/
-#     transport_shim.h, by ffigen
 # Run after `flutter pub get`; every flutter analyze / test / build needs it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -29,5 +27,3 @@ cat > "$GEN_DIR/wire_hash.dart" <<DART
 /// speaks. Every Announce carries it, the hub flags a mismatch.
 const int wireHash = 0x$hash;
 DART
-
-dart run ffigen --config ffigen.yaml

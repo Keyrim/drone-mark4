@@ -21,15 +21,20 @@ nothing, so there is nothing faster to ask for.
 
 What it broadcasts unasked is the `Status` report, one message every 10
 frames: attitude, motors, phase, throw state and count, the two validity
-flags and the plant's exact state.
+flags and the plant's exact state. Everything it answers (telemetry pages
+and samples, tuning acks and infos, updater replies) goes to the node that
+asked: the process holds one `Messenger` over its transport, polled from
+inside the sensor wait, and the services of
+`software/components/services/` plus the App's own `Commands` handler (RC,
+reboot, scenario, log control) are its handlers.
 
 ## No plant needed to start
 
 The process runs its loop at 500 Hz from the moment it starts, plant or
 not. Without a plant the frames come from the platform clock with no
 sensors (`imu_valid` and `baro_valid` false in the Status report): the flight
-core stays idle, arming is refused, motors are zero, and everything on the
-command path works (RC tracked, tuning answered, OTA against the emulated
+core stays idle, arming is refused, motors are zero, and every handler
+keeps being served (RC tracked, tuning answered, OTA against the emulated
 flash, log levels). When a Godot plant appears the platform adopts it
 (`sim/plant` INFO `plant <id> connected`), the frames switch to the plant's
 simulated time and sensors, and the flight core is restarted on the new time

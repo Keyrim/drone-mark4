@@ -1,6 +1,5 @@
 #include "firmware_app.hpp"
 
-#include <array>
 #include <cstdint>
 #include <cstring>
 
@@ -8,7 +7,6 @@
 #include "log/module.hpp"
 #include "log_modules.hpp"
 #include "ota/boot_policy.hpp"
-#include "platform_common/envelope_io.hpp"
 #include "platform_stm32/rtt.hpp"
 #include "platform_stm32/uart1.hpp"
 #include "protocol/envelope.hpp"
@@ -103,16 +101,29 @@ namespace mark4
             return false;
         }
         static_cast<void>(logAddSink(m_transportSink));
-        if (!setAnnounceBeacon())
+        // The identity is whatever the packaging script stamped into this
+        // slot's image header: unstamped (SWD-flashed) images carry erased
+        // bytes, reported as 0xFFFFFFFF and an empty hash.
+        OtaImageIdentity identity{};
+        char gitHash[OTA_GIT_HASH_SIZE + 1U] = {};
+        if (m_firmwareStore.readIdentity(m_firmwareStore.runningSlot(), identity))
         {
-            BOOT.error("transport: the announce does not fit a beacon");
-            return false;
+            otaGitHashToWire(identity.gitHash, gitHash);
         }
+        // The same identity is what this node answers when asked who it is.
+        mark4_Announce self = mark4_Announce_init_zero;
+        self.kind = mark4_NodeKind_FIRMWARE;
+        std::strncpy(self.name, "mark4-fc", sizeof(self.name) - 1U);
+        self.mcu = static_cast<mark4_Mcu>(m_firmwareStore.mcuId());
+        self.build_epoch = identity.buildEpoch;
+        std::strncpy(self.git_hash, gitHash, sizeof(self.git_hash) - 1U);
+        self.wire_hash = WIRE_HASH;
+        m_discovery.emplace(m_messenger, self);
         BOOT.info("boot: node %08lx slot %c build %lu %s wire %08lx",
                   static_cast<unsigned long>(m_transport.nodeId()),
                   m_firmwareStore.runningSlot() == OTA_SLOT_B ? 'B' : 'A',
-                  static_cast<unsigned long>(m_announce.build_epoch),
-                  m_announce.git_hash,
+                  static_cast<unsigned long>(identity.buildEpoch),
+                  gitHash,
                   static_cast<unsigned long>(WIRE_HASH));
         BOOT.info("transport: uart %lu baud", static_cast<unsigned long>(UART1_BAUD_RATE));
         if (!m_bus.init())
@@ -172,130 +183,47 @@ namespace mark4
                          otaTrialUnconfirmed(meta, m_firmwareStore.runningSlot());
     }
 
-    bool FirmwareApp::setAnnounceBeacon()
-    {
-        mark4_Envelope envelope = mark4_Envelope_init_zero;
-        envelope.which_body = mark4_Envelope_announce_tag;
-        mark4_Announce &announce = envelope.body.announce;
-        announce.kind = mark4_NodeKind_FIRMWARE;
-        std::strncpy(announce.name, "mark4-fc", sizeof(announce.name) - 1U);
-        announce.mcu = static_cast<mark4_Mcu>(m_firmwareStore.mcuId());
-        announce.wire_hash = WIRE_HASH;
-        // The identity is whatever the packaging script stamped into this
-        // slot's image header: unstamped (SWD-flashed) images carry erased
-        // bytes, reported as 0xFFFFFFFF and an empty hash.
-        OtaImageIdentity identity;
-        if (m_firmwareStore.readIdentity(m_firmwareStore.runningSlot(), identity))
-        {
-            announce.build_epoch = identity.buildEpoch;
-            otaGitHashToWire(identity.gitHash, announce.git_hash);
-        }
-        // The announce is the beacon: the transport broadcasts it once per
-        // second and unicasts it to every node the moment it appears.
-        std::array<std::uint8_t, Transport::MAX_BEACON_SIZE> beacon{};
-        std::size_t beaconSize = 0U;
-        if (!encodeEnvelope(envelope, beacon.data(), beacon.size(), beaconSize))
-        {
-            return false;
-        }
-        m_transport.setBeacon(beacon.data(), beaconSize);
-        m_announce = announce;
-        return true;
-    }
-
     void FirmwareApp::pollTransport(std::uint64_t nowUs)
     {
-        m_transport.poll(nowUs, &FirmwareApp::OnPayload, this);
+        m_messenger.poll(nowUs);
         if (!m_logModulesPublished)
         {
-            // The first poll sent the first beacon: the table follows it.
+            // The first poll sent the first keepalive: the table follows it.
             m_logModulesPublished = true;
             publishLogModules();
         }
     }
 
-    void FirmwareApp::OnPayload(void *context,
-                                std::uint32_t src,
-                                const std::uint8_t *payload,
-                                std::size_t size)
+    FirmwareApp::Commands::Commands(mark4::Messenger &messenger, FirmwareApp &app)
+        : AbsMessageHandler(messenger, TAGS),
+          m_app(app)
     {
-        static_cast<FirmwareApp *>(context)->m_commandReceiver.push(src, payload, size);
     }
 
-    bool FirmwareApp::serveOta(const mark4_Envelope &envelope, std::uint64_t nowUs)
+    bool FirmwareApp::Commands::onMessage(std::uint32_t src,
+                                          const mark4_Envelope &envelope,
+                                          std::uint64_t nowUs)
     {
-        OtaUpdater::Inputs inputs;
-        inputs.armed = m_core.armed();
-        // TODO(tmagne): read the real pack voltage here. mark1 has no battery
-        // sense at all, so the voltage floor of docs/ota-design.md section 3.2
-        // cannot be enforced yet; the AIO board brings the divider that makes
-        // it measurable.
-        inputs.voltageOk = true;
-        inputs.nowUs = nowUs;
-
-        mark4_Envelope reply;
-        const bool consumed = m_otaUpdater.handle(envelope, inputs, reply);
-        if (reply.which_body != 0U)
+        static_cast<void>(src);
+        switch (envelope.which_body)
         {
-            // The same path telemetry and the tuning answers go out by: the
-            // updater is one more message type on the one link this board has.
-            static_cast<void>(sendEnvelope(m_transport, BROADCAST_NODE, reply));
-        }
-        if (consumed)
-        {
-            // A staging record may just have moved the running slot's state,
-            // which is what the arming interlock reads.
-            refreshArmInterlock();
-        }
-        return consumed;
-    }
-
-    bool FirmwareApp::drainCommands(std::uint64_t nowUs)
-    {
-        std::uint8_t packet[MAX_PAYLOAD];
-        for (;;)
-        {
-            std::uint32_t src = BROADCAST_NODE;
-            const std::size_t size = m_commandReceiver.poll(packet, sizeof(packet), src);
-            if (size == 0U)
-            {
+            case mark4_Envelope_rc_tag:
+                // One time base on the board: the poll's instant is the
+                // frame's timestamp, which the fail-safe is timed on.
+                m_app.m_rcTracker.onRc(envelope.body.rc, nowUs);
+                return true;
+            case mark4_Envelope_reboot_tag:
+                // Acted on after the poll, by the loop that owns the reset.
+                m_app.m_rebootRequested = true;
+                return true;
+            case mark4_Envelope_log_control_tag:
+                if (logHandleControl(envelope.body.log_control))
+                {
+                    m_app.publishLogModules();
+                }
+                return true;
+            default:
                 return false;
-            }
-            mark4_Envelope envelope;
-            if (!decodeEnvelope(packet, size, envelope))
-            {
-                continue;
-            }
-            if (serveOta(envelope, nowUs))
-            {
-                continue; // the updater claimed it, whatever it answered
-            }
-            if (m_telemetryService.handle(envelope, src, nowUs))
-            {
-                continue; // a discovery or enable request, answered to src
-            }
-            switch (envelope.which_body)
-            {
-                case mark4_Envelope_rc_tag:
-                    m_rcTracker.onRc(envelope.body.rc, nowUs);
-                    break;
-                case mark4_Envelope_reboot_tag:
-                    return true;
-                case mark4_Envelope_log_control_tag:
-                    if (logHandleControl(envelope.body.log_control))
-                    {
-                        publishLogModules();
-                    }
-                    break;
-                default:
-                    // Answered here, before the step, so a value written from
-                    // the bench is in effect for the whole of the next step
-                    // and never changes one halfway through. Anything else
-                    // (another node's telemetry relayed onto this link) is
-                    // not a request and is ignored there.
-                    static_cast<void>(m_tuningService.handle(envelope));
-                    break;
-            }
         }
     }
 
@@ -313,10 +241,17 @@ namespace mark4
         {
             const std::uint64_t nowUs = m_clock.nowUs();
             pollTransport(nowUs);
-            if (drainCommands(nowUs))
+            if (m_rebootRequested)
             {
                 OTA.warn("reboot command during a session, resetting");
                 systemReset();
+            }
+            if (m_otaService.consumed() != m_otaConsumedSeen)
+            {
+                // A staging record may just have moved the running slot's
+                // state, which is what the arming interlock reads.
+                m_otaConsumedSeen = m_otaService.consumed();
+                refreshArmInterlock();
             }
             m_otaUpdater.tick(m_clock.nowUs());
             // TODO(tmagne): refresh the independent watchdog here, and before
@@ -349,12 +284,22 @@ namespace mark4
             }
 
             // Once per frame, right after the wait: the frame's timestamp is
-            // the loop's instant, and the transport never reads a clock.
+            // the loop's instant, and the transport never reads a clock. The
+            // poll dispatches every message to its handler, before the step
+            // below, so a value written from the bench is in effect for the
+            // whole of the next step and never changes one halfway through.
             pollTransport(frame.timestampUs);
-            if (drainCommands(frame.timestampUs))
+            if (m_rebootRequested)
             {
                 RC.warn("reboot command, resetting");
                 systemReset();
+            }
+            if (m_otaService.consumed() != m_otaConsumedSeen)
+            {
+                // A staging record may just have moved the running slot's
+                // state, which is what the arming interlock reads.
+                m_otaConsumedSeen = m_otaService.consumed();
+                refreshArmInterlock();
             }
             // An accepted OtaBegin parks everything below until the session
             // ends: this frame is dropped on the floor, which is exactly what
@@ -435,11 +380,12 @@ namespace mark4
                              static_cast<unsigned long>(m_telemetryService.enabledCount()),
                              static_cast<unsigned long>(m_telemetryService.periodMs()),
                              static_cast<unsigned long>(m_telemetryService.messageCount()));
-                STATUS.debug("tx: %lu sent %lu dropped  rx: %lu received, %lu nodes%s  "
-                             "tuning: %lu asked %lu answered  phase %u",
+                STATUS.debug("tx: %lu sent %lu dropped  rx: %lu received %lu handled, "
+                             "%lu nodes%s  tuning: %lu asked %lu answered  phase %u",
                              static_cast<unsigned long>(m_transport.sent()),
                              static_cast<unsigned long>(m_transport.refused()),
-                             static_cast<unsigned long>(m_commandReceiver.packetsReceived()),
+                             static_cast<unsigned long>(m_messenger.received()),
+                             static_cast<unsigned long>(m_messenger.handled()),
                              static_cast<unsigned long>(m_transport.nodeCount()),
                              m_rcTracker.failsafeActive(frame.timestampUs) ? " (failsafe)" : "",
                              static_cast<unsigned long>(m_tuningService.requestCount()),

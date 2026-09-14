@@ -92,7 +92,7 @@ namespace mark4
     /// @brief Fills one Node entry of the table from the transport's record.
     /// @param node transport record
     /// @param nowUs current time [us], turned into an age
-    /// @param announce last beacon of that node, nullptr when none
+    /// @param announce last Announce of that node, nullptr when none
     /// @param logModules the node's last module table, truncated to the
     ///        wire bound; empty when it never published one
     /// @param[out] nodeOut receives the entry

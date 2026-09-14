@@ -73,7 +73,7 @@ idf.py -C esp32-bridge -p /dev/ttyACM0 flash monitor
 ./software/build/desktop/drone_sim/drone_sim [--discovery-port N] [--node-id N]
 
 # Start a bench session: no port to pass anywhere, every process is a
-# transport node on udp/47820 and finds the others by their beacons. The hub
+# transport node on udp/47820 and finds the others by their keepalives. The hub
 # takes no arguments, serves the pages and websocket on http://127.0.0.1:47810
 # and stays up; everything operational (board link, tuning profiles) is driven
 # from the pages. Godot (own terminal or the "godot sim" VS Code task) hosts
@@ -98,17 +98,17 @@ cd software/hub/pages && pnpm install --frozen-lockfile && pnpm build
 cd tools/vscode-mark4 && pnpm install --frozen-lockfile && pnpm build && pnpm package
 
 # Mobile app (Flutter, Android; software/mobile is the Flutter project root,
-# docs/contributing/dart-guidelines.md the conventions). tool/gen.sh writes
-# lib/gen/ (gitignored): the Dart codec of mark4.proto, wire_hash.dart and the
-# ffigen binding of native/include/mark4/transport_shim.h; every analyze /
-# test / build needs it first (the "mobile gen" VS Code task runs it, and the
+# docs/contributing/dart-guidelines.md the conventions). Pure Dart, no
+# native code. tool/gen.sh writes lib/gen/ (gitignored): the Dart codec of
+# mark4.proto and wire_hash.dart; every analyze / test / build needs it
+# first (the "mobile gen" VS Code task runs it, and the
 # "mobile (flutter debug)" launch config runs it before debugging; a build
 # error right after a schema change is a stale lib/gen). The phone is
 # reached over Wi-Fi:
 # ./scripts/adb_wifi.sh discovers, pairs and connects it (wireless debugging
 # on, same Wi-Fi). Never run flutter on the host.
 cd software/mobile && flutter pub get && ./tool/gen.sh && flutter analyze && dart format --set-exit-if-changed lib test && flutter test
-flutter build apk --debug --target-platform android-arm64   # compiles the transport with the NDK too
+flutter build apk --debug --target-platform android-arm64
 
 # Monte Carlo throw campaign through headless Godot (see tools/batch/README.md;
 # needs the desktop build for drone_sim and the generated python codec)
@@ -151,7 +151,7 @@ Godot project imported once). That page has the commands and the reasons.
 
 Everything C++ lives under `software/`: the executables at its top level
 (`drone_sim`, `drone_firmware`, `hub`), the libraries in
-`software/components/`. Seven libraries, one rule of dependency flow:
+`software/components/`. Ten libraries, one rule of dependency flow:
 
 - `flight-core/` - pure static lib. Single entry point
   `FlightCore::step(const SensorFrame&, ActuatorFrame&)`: synchronous,
@@ -169,10 +169,12 @@ Everything C++ lives under `software/`: the executables at its top level
   `platform_common`). The telemetry link is names, units and pointers, not
   wire: a module declares what it computes as a `TelemetryEntry` next to
   the variable.
-- `platform/` - 4 abstract services in `software/components/platform/include/platform/`
-  (AbsSensorSource, AbsMotorSink, AbsCommandReceiver, AbsClock). There is
-  no output service: everything a composition emits leaves through its
-  `Transport` (`sendEnvelope(transport, dst, envelope)`).
+- `platform/` - 3 abstract services in `software/components/platform/include/platform/`
+  (AbsSensorSource, AbsMotorSink, AbsClock). There is no input service for
+  commands and no output service: commands reach a composition through its
+  `Messenger`, and everything it emits leaves through its `Transport`
+  (`Messenger::send()` for a message to one node, `sendEnvelope(transport,
+  dst, envelope)` for what still broadcasts).
   `AbsSensorSource::waitFrame()` is the single wait
   point of the whole system; AbsClock is internal to platform and never
   passed to FlightCore. Implementations live in `software/components/platform/src/<variant>/`
@@ -231,7 +233,7 @@ Everything C++ lives under `software/`: the executables at its top level
 - `transport/` - static lib, the interface manager between processes and
   boards (`software/components/transport/README.md`). Frames an opaque
   payload with `src u32, dst u32, seq u16, hops u8`, learns every node from
-  any frame heard, beacons once per second, expires silent nodes, relays
+  any frame heard, keeps alive once per second, expires silent nodes, relays
   between links when asked. Depends on nothing but `drone_warnings`
   (`transport/serial_framing.hpp` lives here, the one CRC-16 of the
   project). The core and `UartLink` build for stm32 (no heap, fixed
@@ -242,21 +244,23 @@ Everything C++ lives under `software/`: the executables at its top level
   MCU UID on a board, of the MAC on the ESP32), never configured.
   Adopted by every node: drone_sim and the hub over UDP, the batch
   campaign, the Godot plant (a GDScript port,
-  `sim-godot/scripts/transport/transport.gd`, kind `plant`: it hosts one
-  virtual drone per `drone_sim` node it hears and the lockstep sensor /
-  actuator exchange is unicast frames between the two node ids, no port
-  of its own), and the firmware as a node with one `UartLink` on USART1
+  `sim-godot/scripts/transport/transport.gd`, kind `plant`: it asks every
+  node it hears who it is (`sim-godot/scripts/transport/discovery.gd`),
+  hosts one virtual drone per `DRONE_SIM` identity it learns, and the
+  lockstep sensor / actuator exchange is unicast frames between the two
+  node ids, no port of its own), and the firmware as a node with one `UartLink` on USART1
   (`Uart1Stream` over the uart1 rings; frames travel in the serial
   framing `A5 5A len_lo len_hi payload crc16`, 512 bytes at most). The
   ESP32 riding the drone (`esp32-bridge/`) is a transport relay and a
   node: two links (`UartLink` to the board, the shared `UdpLink` on lwIP),
-  `setRelay(true)`, a beacon of its own (kind `RELAY`, mcu `ESP32C3`) on
-  both links, and a `setRelayFilter()` towards the UART that lets unicasts
-  and `Announce` broadcasts through and keeps every other LAN broadcast
-  off the line; it logs through the log library, its lines and module
-  table going out on the LAN link alone (the optional link mask of
-  `send()`), answers the `LogControl` addressed to it, and updates itself
-  over the air (the shared `OtaUpdater` over `FirmwareStoreEsp32`, which
+  so it relays between them as every transport node with several links
+  does (every node relays, there is no switch and no filter), with its
+  own keepalives on both links; nothing relayed is decoded and what is
+  addressed to it goes through its own `Messenger` to the handler of its
+  tag, so it says who it is when asked, it logs through the log library,
+  it takes the `LogControl` addressed to it, and it
+  updates itself over the air (the shared `OtaUpdater` over
+  `FirmwareStoreEsp32`, which
   maps the metadata onto the IDF bootloader's `otadata` and rollback; two
   OTA partitions in `esp32-bridge/partitions.csv`, one USB flash per
   module to lay them out, `esp32_bridge.ota` packaged by every build). It
@@ -267,8 +271,50 @@ Everything C++ lives under `software/`: the executables at its top level
   more nodes (kinds `firmware` and `relay`, their own Announces, at the
   relay's address). The firmware broadcasts everything
   it emits (telemetry, answers, `Log` lines through the log library's
-  `TransportSink`) and takes commands through `CommandReceiverTransport`
-  fed by `Transport::poll()` once per flight frame.
+  `TransportSink`) and takes commands through a `Messenger` polled once
+  per flight frame, each message going to the handler of its tag.
+- `messaging/` - static lib, the one place an `Envelope` meets the transport
+  in both directions (`software/components/messaging/README.md`). Links
+  `transport` and `protocol`, no heap, builds for the F405. An
+  `AbsMessageHandler` is self-registering like a telemetry entry: it hands
+  its body tags to the base constructor (`tags()`) and receives each decoded
+  message in `onMessage(src, envelope, nowUs)`. The `Messenger` holds one
+  handler per tag in a table indexed by tag (`init()` refuses a tag claimed
+  twice), an optional raw-bytes tap, `poll()` as the one caller of
+  `Transport::poll()` in a composition that holds one, and `send()`, the
+  one encoder, unicast only. Both flight compositions hold one: `PlantLink`
+  polls it in the sim (it is the `sim_sensor` handler), `pollTransport()`
+  on the board; each App keeps one nested `Commands` handler for what is
+  its own (`rc`, `reboot`, `log_control`, and `sim_scenario` in the sim).
+- `services/` - header-only INTERFACE target, the wire services of a flight
+  composition (`software/components/services/README.md`). Links
+  `messaging`, `flight_core`, `telemetry`, `log` and `ota`. Three
+  `AbsMessageHandler`s, each answering the requester (`src`), never the
+  bench: `TelemetryService` (`TelemetryListRequest` / `TelemetryEnable` in,
+  descriptor pages and acks out, then `TelemetryData` to the one subscriber,
+  timed on the frames by `sample()`), `TuningService` (`TuningSet` / `Get`
+  / `List` in, acks out, one `TuningInfo` per `pump()` to the node that
+  asked), `OtaService` (the six `Ota*` requests in, the `OtaUpdater`'s reply
+  out; `consumed()` tells the App when to re-read the arming interlock).
+  Status, run stats and log lines are not services: they broadcast through
+  the transport (`sendEnvelope()` of `platform_common/envelope_io.hpp`).
+- `discovery/` - static lib on `messaging`, who is who on the wire
+  (`software/components/discovery/README.md`). `Discovery` is the handler
+  every node carries: it answers an `IdentityRequest` with the node's
+  `Announce`, unicast to the requester (nothing is broadcast, nothing
+  unsolicited; presence stays the transport's keepalive).
+  `DiscoveryDirectory` is a `Discovery` that is also an
+  `AbsPresenceListener`: it asks every node that appears, again every
+  `IDENTITY_TIMEOUT_US` (500 ms) up to `IDENTITY_RETRIES` (5) requests, and
+  keeps one `DirectoryEntry` per node (`PENDING` asked, `KNOWN` announce
+  valid with `wireMismatch` and `hops`, `MUTE` given up on); `tick(nowUs)`
+  from the composition's loop drives the retries, it never reads a clock.
+  `nodesOfKind()` copies the `KNOWN` entries of some kinds, an
+  `AbsDirectoryListener` (fixed table of 4, attach in constructor) hears
+  `onIdentity()` / `onForgotten()`. The hub holds a directory and builds
+  its node table from it; drone_sim, the firmware and the relay carry a
+  `Discovery`; the plant has its own GDScript port of both and the phone
+  its Dart one; only the campaign does not answer yet.
 - `ota/` - the firmware update brick every node with two firmware slots
   builds on (`software/components/ota/README.md`): header-only INTERFACE
   target `ota`, `protocol` alone underneath, builds for the F405, the ESP32
@@ -293,7 +339,7 @@ Everything C++ lives under `software/`: the executables at its top level
   hierarchical lowercase paths (`estimator/altitude`, `rate/roll/p_term`),
   at most `MAX_TELEMETRY_NAME` = 40 characters, and the name is the stable
   identity across reboots. `MAX_TELEMETRY_ENTRIES` = 128 is the size of the
-  table the wire adapter (`platform_common/telemetry_service.hpp`) freezes
+  table the wire adapter (`services/telemetry_service.hpp`) freezes
   in `init()`. Adding a measure is one line where the value is computed:
   nothing in the schema, the packer or any codec changes.
 - `log/` - the logging library of every node
@@ -317,18 +363,24 @@ Everything C++ lives under `software/`: the executables at its top level
   the table.
 
 The mobile app (`software/mobile`, Flutter, Android) is one more node, kind
-`PHONE`: the C++ transport compiled by the NDK from `software/components`
-as it is (`native/CMakeLists.txt` adds the component with `DRONE_PLATFORM`
-`android`; the shared warning targets come from
-`software/cmake/drone_targets.cmake`) behind the C ABI of
-`native/include/mark4/transport_shim.h`, bound by ffigen, never by hand.
+`PHONE`: the whole communication stack is Dart, mirroring the components
+constant for constant, and the app compiles no native code.
+`lib/back/transport/` holds the frame codec, the `UdpLink` over two
+`RawDatagramSocket`s (the shared discovery port and an ephemeral data
+socket) and the `TransportNode` (node table, keepalive, expiry, duplicate
+and loss accounting, no relay: one link); `lib/back/messaging/` the
+`Messenger` (decode once, dispatch by `Envelope` body case, unicast
+`send`); `lib/back/discovery/` the `Discovery` that answers an
+`IdentityRequest` with the phone's `Announce` and the `DiscoveryDirectory`
+that asks every node that appears and publishes who is around.
 `lib/back/` is the managers (`Backend` boots them in declaration order like
-an App class; `TransportManager` owns the node and polls it, `DroneManager`
-follows the connected drone and decodes its `Status`, `GamepadManager` the
-controller read at the Android activity (`GamepadBridge.kt`, one event
-channel), `PilotManager` the transmitter (the `Rc` stream at 50 Hz, the
-kill and arm latches, the gestures, the haptic cues), `SettingsManager`
-the theme), each exposing its state as a `ValueStream` of an `Equatable`
+an App class; `TransportManager` owns that stack and polls it,
+`DroneManager` follows the connected drone and reads its `Status` through
+a handler, `GamepadManager` the controller read at the Android activity
+(`GamepadBridge.kt`, one event channel), `PilotManager` the transmitter
+(the `Rc` stream at 50 Hz, the kill and arm latches, the gestures, the
+haptic cues), `SettingsManager` the theme), each exposing its state as a
+`ValueStream` of an `Equatable`
 and its commands as methods returning a `Future`; `lib/pages/` is one BLoC
 per page (the drone page is the cockpit); `lib/theme/` every size and
 color through `flutter_screenutil`. `docs/mobile-app.md` has the structure

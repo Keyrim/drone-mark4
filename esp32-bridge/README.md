@@ -4,9 +4,9 @@ Firmware for the ESP32-C3 SuperMini (IPEX variant) riding the drone, wired
 to the flight controller's UART. It is a transport relay
 (`software/components/transport/`): one transport node with two links, the
 board's UART and the WiFi LAN, forwarding frames between them. It is a node
-of the system like any other: it beacons its own `Announce` (kind `relay`,
-name `relay-<last three bytes of its MAC>`, mcu `ESP32C3`, the build epoch
-and short commit hash of its build, the wire hash), and it logs through the
+of the system like any other: present on both links through the
+transport's keepalive, answering an `IdentityRequest` with its own
+`Announce` like every other node, and it logs through the
 project's log library. From the LAN's point of view the board and the relay
 are two nodes on udp/47820 sharing one address, exactly like `drone_sim` is
 one; the hub has no path, port or click specific to either. It updates
@@ -15,31 +15,28 @@ controller does (see "Over-the-air update" below).
 
 ## What crosses, and what does not
 
-The relay forwards with the transport's generic rules (split horizon, one
-hop less per relay, duplicate drop by `(src, seq)`), plus one outbound
-filter on the UART link, `uartFilter()` in `main/relay.cpp`:
+The relay forwards with the transport's generic rules alone (split
+horizon, one hop less per relay, duplicate drop by `(src, seq)`); every
+transport node relays, and this one is the only node with two links:
 
 - towards the LAN: everything the board emits (telemetry, answers, log
-  lines, its Announce), as broadcasts;
+  lines, its keepalives), as broadcasts;
 - towards the UART: every unicast the transport routes there (the board is
   the only node on that link, so a unicast routed there is for it: RC,
-  tuning, updater messages), and the broadcasts whose envelope body is an
-  `Announce` (the board learns the LAN nodes from those, this relay
-  included). Every other LAN broadcast, `drone_sim`'s telemetry and run
-  stats first, stays on the LAN: a 921600 baud line does not carry the
-  whole LAN.
+  tuning, updater messages), and every LAN broadcast. The line is 921600
+  baud and `UartStream::write` refuses a frame the TX ring cannot hold
+  whole, so a LAN that broadcasts more than the line carries degrades by
+  dropping, never by blocking.
 
-The filter judges relayed frames only. What the relay says itself is a
-`send`, and a `send` names the links it leaves on (`Transport::send`'s link
-mask): its log lines and its module table take the LAN bit alone, its
-beacon takes both links.
+What the relay says itself (its log lines, its module table, its
+keepalives) is a broadcast on both links like any node's.
 
-The announce check reads one byte of the envelope
-(`envelopeIsAnnounce()`, `protocol/envelope.hpp`): the Envelope has a single
-field, its oneof, so the body's tag opens the bytes. Nothing relayed is
-decoded; what the delivery hands to the relay itself is decoded only when
-its tag (`envelopeBodyTag()`, the same first bytes) is one the relay
-answers: `LogControl`, `Reboot`, the `Ota*` requests.
+Nothing relayed is decoded. What the delivery hands to the relay itself
+goes to its `Messenger` (`software/components/messaging/`), which decodes
+it once and calls the one handler that claimed its body tag; a message no
+handler claimed is counted and dropped. Three handlers claim something
+here: `Commands` (`LogControl`, `Reboot`), `Discovery`
+(`IdentityRequest`) and `OtaService` (the six `Ota*` requests).
 
 ## Composition
 
@@ -58,19 +55,34 @@ without an address) then hands over to `relayRun()` in `main/relay.cpp`:
   `getifaddrs()`; the relay hands its own address to
   `UdpLink::addLocalHost()` so its broadcasts coming back are dropped as
   echoes;
-- `Transport` with node id `hashNodeId()` of the WiFi MAC, `setRelay(true)`,
-  the filter, and the `Announce` beacon;
+- `Transport` with node id `hashNodeId()` of the WiFi MAC; it relays
+  between its two links as any transport node with several links does;
+- the shared `Messenger` over it: the one caller of `Transport::poll()`,
+  the one decoder and the one encoder of this node;
+- `Commands`, the handler of what is the node's own: a `LogControl` (the
+  module table follows a level change) and the `Reboot` that ends an
+  update session, announced on the radio before the reset;
+- `Discovery` (`software/components/discovery/`) with the identity built
+  by `relayIdentity()`: kind `RELAY`, name `relay-<the low three bytes of
+  the WiFi MAC>`, mcu `ESP32C3`, the build epoch and short commit hash the
+  top-level `CMakeLists.txt` stamped in, and the wire hash. It answers an
+  `IdentityRequest` and nothing else: this node asks nobody who they are,
+  so it carries no directory;
 - `FirmwareStoreEsp32` (`main/firmware_store_esp32.cpp`) over the two OTA
-  partitions and the shared `OtaUpdater` (`ota/updater.hpp`) on top of it:
-  the update session, fed by the `Ota*` unicasts a hub addresses to the
-  relay;
+  partitions and the shared `OtaUpdater` (`ota/updater.hpp`) on top of it,
+  served on the wire by the shared `OtaService`
+  (`software/components/services/`) over a `RelayOtaGate` that arms
+  nothing and watches no pack voltage: the update session, fed by the
+  `Ota*` unicasts a hub addresses to the relay. A flash that is not laid
+  out for two slots leaves the service unbuilt, so no handler claims the
+  `Ota*` tags at all and every request is refused;
 - the log library: the shared `ConsoleSinkPosix` (its console is plain
   stdio) and a `TransportSink` broadcasting every line onto the LAN. The
   clock is `esp_timer_get_time()`. The bring-up in `bridge_main.c` is C and
   speaks through two shims, `bridgeLogInfo()` / `bridgeLogWarn()`, rather
   than being ported to C++: the smaller diff of the two.
 
-The main task polls the transport once per FreeRTOS tick (1 ms,
+The main task polls the messenger once per FreeRTOS tick (1 ms,
 `CONFIG_FREERTOS_HZ=1000` in `sdkconfig.defaults`): one frame is one
 datagram, no aggregation. Every poll drains both links whole; a 160-byte
 telemetry frame takes 1.7 ms on the line, so the added latency is under one
@@ -80,9 +92,11 @@ lost and the framing resynchronizes) and 1024 on the way out.
 
 The shared sources are compiled by the ESP-IDF build straight from
 `software/components/`: `transport.cpp`, `uart_link.cpp`,
-`posix/udp_link.cpp`, the log library (`module.cpp`, `wire.cpp`,
-`posix/console_sink_posix.cpp`) and the header-only update brick (`ota/`)
-in the `main` component, the nanopb runtime,
+`posix/udp_link.cpp`, `messaging/src/messenger.cpp`,
+`discovery/src/discovery.cpp` (the answer alone: `discovery_directory.cpp`
+stays out, this node asks nobody), the log library (`module.cpp`,
+`wire.cpp`, `posix/console_sink_posix.cpp`) and the header-only bricks
+(`ota/`, `services/`) in the `main` component, the nanopb runtime,
 `envelope.cpp` and the codec generated from
 `software/components/protocol/mark4.proto` in `components/mark4_proto/` (same generator, same pinned nanopb commit, same
 `PB_NO_MALLOC PB_BUFFER_ONLY` as the desktop build; the generator needs a
@@ -115,13 +129,12 @@ addressed to the relay's node id (the hub's pages list its modules like any
 node's) and it starts arriving as `Log` frames:
 
 ```
-00:00:20.000 DEBG relay/stats: nodes 2, relayed 1063, filtered 250, dropped 0, uart tx full 0
+00:00:20.000 DEBG relay/stats: nodes 2, relayed 1063, dropped 0, uart tx full 0
 ```
 
-`relayed` counts frames forwarded (one per link for a broadcast), `filtered`
-the LAN broadcasts the filter kept off the UART, `dropped` the transport's
-drops (unknown destination, hops exhausted), `uart tx full` the frames the
-UART ring could not take whole. The timestamps are the module's uptime.
+`relayed` counts frames forwarded (one per link for a broadcast),
+`dropped` the transport's drops (unknown destination, hops exhausted),
+`uart tx full` the frames the UART ring could not take whole. The timestamps are the module's uptime.
 
 ## Network
 
@@ -165,7 +178,7 @@ idf.py -C esp32-bridge -p /dev/ttyACM0 flash monitor
 idf.py -C esp32-bridge fullclean                   # wipe build/
 ```
 
-The build identity the `Announce` carries (build epoch, short commit hash)
+The build identity the boot line reports (build epoch, short commit hash)
 is read by CMake at configure time, so a plain rebuild keeps the previous
 pair; `idf.py -C esp32-bridge reconfigure` refreshes it. The same pair is
 stamped into the image as `PROJECT_VER` (`<buildEpoch>-<gitHash>`, the
@@ -228,8 +241,8 @@ stays quiet; the relay relays nothing meanwhile, which the design accepts
 (the drone is on the ground when its radio gets reflashed). The transfer
 runs over UDP directly, so the UART budget does not apply: a 870 KB image
 is on the far side in seconds. The relay then answers the `Reboot`,
-`relay/ota` logs the request, and the new image announces itself; the
-first `OtaStatusRequest` it serves confirms it.
+`relay/ota` logs the request, and the new image comes up; the first
+`OtaStatusRequest` it serves confirms it.
 
 A relay still on the old single-app layout logs `no two-slot partition
 table` at boot and relays as before; it needs the USB flash above once.

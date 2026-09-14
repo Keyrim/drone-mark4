@@ -26,7 +26,6 @@ INPUT                  = README.md \
                          software/drone_firmware \
                          software/drone_boot \
                          software/hub \
-                         software/mobile/native \
                          esp32-bridge/main \
                          esp32-bridge/README.md
 RECURSIVE              = YES

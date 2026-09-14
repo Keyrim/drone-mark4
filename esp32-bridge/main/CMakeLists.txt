@@ -2,9 +2,11 @@
 # (C++, relay.cpp), its firmware store over the ESP-IDF OTA partitions
 # (firmware_store_esp32.cpp) and the shared sources it is built on, compiled
 # here as they are (no copy): the transport core, the UART link and the
-# BSD-socket UDP link, which lwIP serves like POSIX does, the log library,
-# whose console sink is plain stdio and serves the USB serial port as it
-# serves a desktop terminal, and the header-only update brick (ota/). The
+# BSD-socket UDP link, which lwIP serves like POSIX does, the messenger that
+# dispatches what is addressed to this node, the Discovery that answers who
+# it is (not the directory: this node asks nobody), the log library, whose
+# console sink is plain stdio and serves the USB serial port as it serves a
+# desktop terminal, and the header-only bricks (ota/, services/). The
 # desktop-only node_id.cpp (/dev/urandom) stays out.
 set(DRONE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../software/components")
 set(DRONE_TRANSPORT "${DRONE_ROOT}/transport")
@@ -17,10 +19,15 @@ idf_component_register(SRCS "bridge_main.c"
                             "${DRONE_TRANSPORT}/src/transport.cpp"
                             "${DRONE_TRANSPORT}/src/uart_link.cpp"
                             "${DRONE_TRANSPORT}/src/posix/udp_link.cpp"
+                            "${DRONE_ROOT}/messaging/src/messenger.cpp"
+                            "${DRONE_ROOT}/discovery/src/discovery.cpp"
                             "${DRONE_LOG}/src/module.cpp"
                             "${DRONE_LOG}/src/wire.cpp"
                             "${DRONE_LOG}/src/posix/console_sink_posix.cpp"
                        INCLUDE_DIRS "." "${DRONE_TRANSPORT}/include"
+                                    "${DRONE_ROOT}/messaging/include"
+                                    "${DRONE_ROOT}/discovery/include"
+                                    "${DRONE_ROOT}/services/include"
                                     "${DRONE_LOG}/include"
                                     "${DRONE_OTA}/include")
 

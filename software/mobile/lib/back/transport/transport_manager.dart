@@ -1,27 +1,34 @@
 import 'dart:async';
 
 import 'package:logging/logging.dart';
+import 'package:mark4/back/discovery/directory_models.dart';
+import 'package:mark4/back/discovery/discovery_directory.dart';
 import 'package:mark4/back/manager.dart';
+import 'package:mark4/back/messaging/messenger.dart';
 import 'package:mark4/back/platform/abs_platform.dart';
 import 'package:mark4/back/transport/abs_transport_node.dart';
+import 'package:mark4/back/transport/frame.dart';
 import 'package:mark4/back/transport/node_id.dart';
 import 'package:mark4/back/transport/transport_snapshot.dart';
+import 'package:mark4/back/transport/udp_link.dart';
 import 'package:mark4/gen/mark4.pb.dart';
 import 'package:mark4/gen/wire_hash.dart';
-import 'package:protobuf/protobuf.dart';
 import 'package:rxdart/rxdart.dart';
 
 final Logger _log = Logger('back/transport');
 
 /// Opens one transport node; null when it cannot.
 typedef TransportNodeFactory =
-    AbsTransportNode? Function(int nodeId, int discoveryPort);
+    Future<AbsTransportNode?> Function(int nodeId, int discoveryPort);
 
 /// The phone as a node of the system: one UDP link on the shared discovery
-/// port, the Announce beacon, and a poll of the C++ transport on a timer.
-/// Exposes the node table as [snapshots] and every Envelope addressed to
-/// this node as [envelopes]; the services of the other managers speak the
-/// wire through [send].
+/// port, the node table below and the dispatch above, polled on a timer.
+///
+/// It owns the whole communication stack of the phone and boots it in that
+/// order: the node, the messenger over it, the discovery directory over the
+/// messenger. Every manager above reads the node table as [snapshots], who
+/// is around as [directory], and speaks the wire through [send] or a handler
+/// registered on the [messenger].
 class TransportManager extends AbsManager {
   TransportManager({
     required this._platform,
@@ -33,9 +40,6 @@ class TransportManager extends AbsManager {
     this.snapshotPeriod = const Duration(milliseconds: 500),
   }) : _clockUs = clockUs ?? _stopwatchClock();
 
-  /// The one UDP port every node of a deployment agrees on.
-  static const int defaultDiscoveryPort = 47820;
-
   /// An Announce name holds this many characters.
   static const int maxAnnounceName = 16;
 
@@ -43,6 +47,8 @@ class TransportManager extends AbsManager {
   final TransportNodeFactory _openNode;
   final int Function() _drawNodeId;
   final int Function() _clockUs;
+
+  /// The one UDP port every node of a deployment agrees on.
   final int discoveryPort;
 
   /// Cadence of the transport poll; null when the owner calls [pollNow]
@@ -58,13 +64,17 @@ class TransportManager extends AbsManager {
   final BehaviorSubject<TransportSnapshot> _snapshots = BehaviorSubject.seeded(
     TransportSnapshot.empty,
   );
-  final PublishSubject<InboundEnvelope> _envelopes = PublishSubject();
-  final Map<int, NodeAnnounce> _announces = {};
 
   AbsTransportNode? _node;
+  Messenger? _messenger;
+  DiscoveryDirectory? _directory;
   Timer? _timer;
   int _lastSnapshotUs = 0;
-  int _decodeErrors = 0;
+
+  /// What [directory] answers before init() built the real one.
+  final BehaviorSubject<DirectorySnapshot> _noDirectory =
+      BehaviorSubject.seeded(DirectorySnapshot.empty);
+  DirectorySnapshot _lastDirectory = DirectorySnapshot.empty;
 
   /// This node's id and Announce name.
   ValueStream<TransportIdentity> get identity => _identity.stream;
@@ -72,11 +82,19 @@ class TransportManager extends AbsManager {
   /// The node table, refreshed when it changes and every [snapshotPeriod].
   ValueStream<TransportSnapshot> get snapshots => _snapshots.stream;
 
-  /// Every Envelope addressed to this node, Announces included.
-  Stream<InboundEnvelope> get envelopes => _envelopes.stream;
+  /// Who is around: one entry per node heard, its identity once it answered.
+  /// Empty until [init] built the directory.
+  ValueStream<DirectorySnapshot> get directory =>
+      _directory?.snapshot ?? _noDirectory.stream;
 
-  /// Envelopes that were not one; a bench running another schema shows here.
-  int get decodeErrors => _decodeErrors;
+  /// The dispatch: where a manager registers what it consumes. Null until
+  /// [init] built it, which the backend runs before every manager above
+  /// this one, and again after [dispose].
+  Messenger? get messenger => _messenger;
+
+  /// Payloads that were not an Envelope; a bench running another schema
+  /// shows here.
+  int get decodeErrors => _messenger?.undecodable ?? 0;
 
   /// The transport's clock now [us]: the base of every instant in the
   /// snapshots, for whoever stamps something against them.
@@ -94,23 +112,30 @@ class TransportManager extends AbsManager {
       _log.severe('no node id: the random source could not be read');
       return false;
     }
-    final node = _openNode(nodeId, discoveryPort);
+    final node = await _openNode(nodeId, discoveryPort);
     if (node == null) {
       _log.severe('transport initialization failed on udp/$discoveryPort');
       return false;
     }
     _node = node;
+    final messenger = Messenger(node);
+    _messenger = messenger;
     final name = announceName(await _platform.deviceName());
-    final beacon = Envelope()
-      ..announce = (Announce()
+    final directory = DiscoveryDirectory(
+      messenger: messenger,
+      node: node,
+      self: Announce()
         ..kind = NodeKind.PHONE
         ..name = name
         ..mcu = Mcu.MCU_UNSPECIFIED
-        ..wireHash = wireHash);
-    if (!node.setBeacon(beacon.writeToBuffer())) {
-      _log.severe('the announce does not fit a beacon');
+        ..wireHash = wireHash,
+      ownWireHash: wireHash,
+    );
+    if (!messenger.register(directory)) {
+      _log.severe('the dispatch table refused the discovery directory');
       return false;
     }
+    _directory = directory;
     _identity.add(TransportIdentity(nodeId: nodeId, name: name));
     final period = pollPeriod;
     if (period != null) {
@@ -127,54 +152,47 @@ class TransportManager extends AbsManager {
   Future<void> dispose() async {
     _timer?.cancel();
     _timer = null;
+    await _directory?.dispose();
+    _directory = null;
+    _messenger = null;
     _node?.dispose();
     _node = null;
     await _platform.releaseMulticastLock();
-    await _envelopes.close();
+    await _noDirectory.close();
     await _snapshots.close();
     await _identity.close();
   }
 
-  /// Sends one Envelope to [dst], [broadcastNode] for every node. False when
-  /// the frame left on no link (unknown node, payload too long).
-  Future<bool> send(int dst, Envelope envelope) async {
-    final node = _node;
-    if (node == null) {
-      return false;
-    }
-    return node.send(dst, envelope.writeToBuffer());
-  }
+  /// Sends one Envelope to [dst]. False when the frame left on no link (an
+  /// unknown node, a payload too long, a broadcast destination).
+  Future<bool> send(int dst, Envelope envelope) async =>
+      _messenger?.send(dst, envelope) ?? false;
 
-  /// One poll of the transport: what the timer does every [pollPeriod].
+  /// One poll of the whole stack: the node drains its link and the messenger
+  /// dispatches what came for this node, then the directory asks what it has
+  /// to ask, then the node table goes out as a snapshot. What the timer does
+  /// every [pollPeriod].
   void pollNow() {
     final node = _node;
-    if (node == null) {
+    final messenger = _messenger;
+    final directory = _directory;
+    if (node == null || messenger == null || directory == null) {
       return;
     }
     final nowUs = _clockUs();
-    node.poll(nowUs);
-    for (
-      var payload = node.nextPayload();
-      payload != null;
-      payload = node.nextPayload()
-    ) {
-      _deliver(payload);
-    }
-    final infos = node.nodes();
-    final liveIds = {for (final info in infos) info.id};
-    _announces.removeWhere((id, _) => !liveIds.contains(id));
+    messenger.poll(nowUs);
+    directory.tick(nowUs);
     final snapshot = TransportSnapshot(
       nowUs: nowUs,
-      nodes: [
-        for (final info in infos)
-          TransportNode(info: info, announce: _announces[info.id]),
-      ],
+      nodes: node.nodes(),
       stats: node.stats(),
     );
-    final tableChanged = !snapshot.sameTable(_snapshots.value);
-    if (tableChanged ||
-        nowUs - _lastSnapshotUs >= snapshotPeriod.inMicroseconds) {
+    final identities = directory.snapshot.value;
+    final changed =
+        !snapshot.sameTable(_snapshots.value) || identities != _lastDirectory;
+    if (changed || nowUs - _lastSnapshotUs >= snapshotPeriod.inMicroseconds) {
       _lastSnapshotUs = nowUs;
+      _lastDirectory = identities;
       _snapshots.add(snapshot);
     }
   }
@@ -186,23 +204,6 @@ class TransportManager extends AbsManager {
     return name.length <= maxAnnounceName
         ? name
         : name.substring(0, maxAnnounceName);
-  }
-
-  void _deliver(InboundPayload payload) {
-    final Envelope envelope;
-    try {
-      envelope = Envelope.fromBuffer(payload.bytes);
-    } on InvalidProtocolBufferException {
-      ++_decodeErrors;
-      return;
-    }
-    if (envelope.hasAnnounce()) {
-      _announces[payload.src] = NodeAnnounce.fromWire(
-        envelope.announce,
-        wireHash,
-      );
-    }
-    _envelopes.add(InboundEnvelope(src: payload.src, envelope: envelope));
   }
 
   static int Function() _stopwatchClock() {

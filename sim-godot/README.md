@@ -10,8 +10,9 @@ inside the frames of `software/components/transport/` (see "Transport").
 
 The plant is one node of the LAN, kind `plant`, and hosts **one virtual
 drone per `drone_sim` node it hears**: a flight process that starts is
-found by its beacon and gets a drone spawned on the ground for it, a flight
-process that dies has its drone removed once its node expires. Each virtual
+heard, asked who it is, and gets a drone spawned on the ground for it once
+its identity says `DRONE_SIM`; a flight process that dies has its drone
+removed once its node expires. Each virtual
 drone sends what an IMU and a barometer would measure to its own flight
 process, receives the four motor commands that process decides, and
 applies them as forces. Nothing else crosses the boundary.
@@ -27,7 +28,7 @@ applies them as forces. Nothing else crosses the boundary.
    core host, the difference between 30 and 60 fps with one drone).
 2. Start one flight process per drone wanted, in the container, in any
    order relative to this project (each one is a transport node on
-   udp/47820 and beacons once per second):
+   udp/47820 and keeps alive once per second):
 
    ```sh
    ./software/build/desktop/drone_sim/drone_sim
@@ -126,8 +127,9 @@ the motors spin down with their normal lag.
 ## Scenarios
 
 A scripted run arrives as a `SimScenario` envelope, unicast by the flight
-process to this plant: it receives it on its command receiver and forwards
-it to the virtual drone that belongs to it, as its own message. One scenario is one run. It opens with a
+process to this plant: the flight process received it from the hub,
+its messenger handed it to its plant link, and the plant forwards it to
+the virtual drone that belongs to it, as its own message. One scenario is one run. It opens with a
 reset - teleport, reseed every generator, clear the hand - and everything
 it asks for afterwards
 (the throw, or the grab and the swing) is scheduled from that reset tick, on
@@ -187,9 +189,12 @@ of `software/components/transport/`, the same frames and the same rules:
 an 11-byte little-endian header (`src u32, dst u32, seq u16, hops u8`)
 in front of every payload, a node table learnt from every frame heard
 (address, last sequence, received / lost / duplicate counters, 3 s
-expiry, `node_up` / `node_down` signals), a beacon broadcast every second
-and unicast once to every newcomer, duplicates dropped by `(src, seq)`.
-No relay. The node id is a random nonzero `u32` drawn at start.
+expiry, `node_up` / `node_down` signals), presence as a keepalive - a
+frame that is the header alone, broadcast every second and unicast once to
+every newcomer, delivering no payload - duplicates dropped by `(src, seq)`.
+An empty payload handed to `send()` is refused: the header-only frame is
+the transport's own. No relay, so every frame it sends carries `hops` 0.
+The node id is a random nonzero `u32` drawn at start.
 
 Sockets, as in the C++ `UdpLink`: one shared discovery socket on
 udp/47820 (`--discovery-port N` after `--` for a batch pair) that receives
@@ -205,17 +210,27 @@ transport keeps them and drains them all on every poll. Broadcasts go to
 `255.255.255.255`, and to `127.255.255.255` when the host has no route
 for the former, like the C++ link.
 
-`scripts/transport/announce.gd` builds this plant's beacon (an `Announce`
-of kind `PLANT`, name `godot-plant`, mcu `SIM`, the wire hash of the
-generated codec) and reads the kind out of everyone else's, after one look
-at the first byte: the plant hears every broadcast of the LAN, the
-telemetry of every flight process included, and never runs the codec on
-a frame it does not want.
+`scripts/transport/announce.gd` builds this plant's identity (an
+`Announce` of kind `PLANT`, name `godot-plant`, mcu `SIM`, the wire hash of
+the generated codec) and keeps the body tags a payload is told apart by,
+after one look at its first bytes: the plant hears every broadcast of the
+LAN, the telemetry of every flight process included, and never runs the
+codec on a frame it does not want.
+
+`scripts/transport/discovery.gd` (`Mark4Discovery`) is the GDScript port
+of `software/components/discovery/`, both directions of "who are you":
+every node the transport learns is asked with one `IdentityRequest`, sent
+again every 500 ms up to 5 times before the node is left mute, and the
+`Announce` that comes back is kept as that node's identity and reported on
+the `identity` signal; an `IdentityRequest` addressed to this plant is
+answered with its own `Announce`, unicast to whoever asked. Nothing is
+broadcast and nothing is unsolicited: presence is the transport's
+keepalive, identity is asked for.
 
 `scripts/drone_manager.gd` (`DroneManager`, the `Drones` node of the main
-scene) owns the transport and polls it once per physics tick, before the
-drones run. A payload announcing a `DRONE_SIM` node from an unknown
-sender spawns `scenes/drone.tscn` for that node, on a 1 m grid (four per
+scene) owns the transport and the directory and drives both once per
+physics tick, before the drones run. An identity of kind `DRONE_SIM`
+spawns `scenes/drone.tscn` for that node, on a 1 m grid (four per
 row); every payload from a known node goes to that drone's `SimLink`; a
 node that expired has its drone freed 3 s later, unless it comes back
 before. A flight process that restarts draws a new node id, so it gets a
@@ -228,8 +243,8 @@ desktop build (target `proto_gd`, run by `cmake --build --preset desktop`;
 `godot` must be on the PATH) into `scripts/gen/mark4.gd` and
 `scripts/gen/wire_hash.gd`, both gitignored: a fresh checkout has to run the
 desktop build once before this project can talk to anything.
-`scripts/sim_link.gd` (one per virtual drone), `sim_codec.gd` and
-`announce.gd` are the only scripts that touch the wire. Every payload is one `Envelope`:
+`scripts/sim_link.gd` (one per virtual drone), `sim_codec.gd`,
+`announce.gd` and `discovery.gd` are the only scripts that touch the wire. Every payload is one `Envelope`:
 
 - `SimSensor`, virtual drone to its flight process, unicast: timestamp in
   microseconds, gyro [rad/s], accelerometer [m/s^2], pressure [Pa], reset
@@ -243,10 +258,11 @@ desktop build once before this project can talk to anything.
   play, once per scenario, taken once per change of its `sequence`.
 
 Payloads that decode to anything else are counted as dropped and ignored;
-the flight process's own beacon, unicast on first contact, is not counted.
-Motor commands are clamped to [0, 1] on arrival. No port is configured
-anywhere: the flight process answers to the node the sensor frame came
-from, and the plant found the flight process by its beacon.
+the flight process's own `Announce`, unicast in answer to the plant's
+question, is not counted. Motor commands are clamped to [0, 1] on arrival.
+No port is configured anywhere: the flight process answers to the node the
+sensor frame came from, and the plant asked the flight process who it
+was.
 
 `scripts/sim_codec.gd` (`SimCodec`) writes the SimSensor and reads the
 SimActuator by hand, straight into bytes: the generated codec builds an
@@ -339,8 +355,9 @@ project.godot          engine configuration, Jolt, 500 Hz, key bindings
 scenes/main.tscn        ground, pylons, sky, light, camera rig, drone manager, overlay
 scenes/drone.tscn       one virtual drone: body, model, sensors, sim link, hand
 shaders/ground_grid.gdshader  metric grid ground material
-scripts/transport/transport.gd  the transport node: frames, node table, beacon
-scripts/transport/announce.gd   this plant's beacon, the kind of everyone else's
+scripts/transport/transport.gd  the transport node: frames, node table, keepalive
+scripts/transport/announce.gd   this plant's identity, the body tags read on the wire
+scripts/transport/discovery.gd  who is who: identity asked of every node, and answered
 scripts/drone_manager.gd  one virtual drone per flight process heard
 scripts/drone.gd        rigid body, motor model, drag, throw, tick loop
 scripts/sensors.gd      accelerometer, gyro, barometer models

@@ -8,8 +8,9 @@ import 'package:mark4/back/pilot/pilot_manager.dart';
 import 'package:mark4/back/platform/abs_platform.dart';
 import 'package:mark4/back/platform/android_platform.dart';
 import 'package:mark4/back/settings/settings_manager.dart';
-import 'package:mark4/back/transport/ffi_transport_node.dart';
+import 'package:mark4/back/transport/node_id.dart';
 import 'package:mark4/back/transport/transport_manager.dart';
+import 'package:mark4/back/transport/transport_node.dart';
 
 final Logger _log = Logger('app/boot');
 
@@ -44,8 +45,8 @@ class Backend {
     final settings = SettingsManager();
     final transport = TransportManager(
       platform: resolvedPlatform,
-      openNode: openNode ?? FfiTransportNode.open,
-      drawNodeId: drawNodeId ?? FfiTransportNode.randomNodeId,
+      openNode: openNode ?? TransportNode.open,
+      drawNodeId: drawNodeId ?? randomNodeId,
       clockUs: clockUs,
       pollPeriod: pollPeriod,
     );

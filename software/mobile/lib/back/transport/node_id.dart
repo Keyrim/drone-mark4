@@ -1,3 +1,7 @@
+import 'dart:math';
+
+import 'package:mark4/back/transport/frame.dart';
+
 /// Node ids are self-assigned 32-bit values, printed as 8 hex digits
 /// everywhere in the system.
 String formatNodeId(int nodeId) =>
@@ -11,5 +15,14 @@ int? parseNodeId(String text) {
   return int.tryParse(text, radix: 16);
 }
 
-/// The node every node hears: destination of a broadcast.
-const int broadcastNode = 0;
+/// Draws this node's id from the operating system's random source, like
+/// every desktop process of the system does: never configured, never
+/// [broadcastNode], new at every launch.
+int randomNodeId() {
+  final random = Random.secure();
+  var id = broadcastNode;
+  while (id == broadcastNode) {
+    id = random.nextInt(1 << 32);
+  }
+  return id;
+}

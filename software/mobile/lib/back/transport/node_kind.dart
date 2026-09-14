@@ -13,5 +13,4 @@ String kindName(NodeKind kind) => switch (kind) {
 };
 
 /// A drone is a node one flies: the board, or a desktop flight process.
-bool isDroneKind(NodeKind kind) =>
-    kind == NodeKind.FIRMWARE || kind == NodeKind.DRONE_SIM;
+const List<NodeKind> droneKinds = [NodeKind.FIRMWARE, NodeKind.DRONE_SIM];
