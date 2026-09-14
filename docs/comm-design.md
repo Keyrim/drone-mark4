@@ -1,10 +1,11 @@
 # Communication stack - target design
 
-Status: implemented on branch `refactor/comm-stack-v2` (issue #29), one
-pull request pending. Section 2 describes the code as it was on `main`
-before the rework; sections 3 to 6 describe what the branch built; section
-8 is the decision that shapes the next rework (the gateway API, the Dart
-and GDScript ports as the only ports); section 9 lists what was left out.
+Status: sections 3 to 6 are implemented on branch `refactor/comm-stack-v2`
+(issue #29, pull request #30 pending). Section 2 describes the code as it
+was on `main` before that rework; section 8 is the decision that shapes
+the rework after it (the gateway API, the Dart and GDScript ports as the
+only ports); section 9 lists what the first rework left out; section 10 is
+the design of the second rework, decided on 2026-09-14 and not started.
 Companions: `docs/target-architecture.md` (the system this plugs into,
 sections 3.3 to 3.5 describe the present protocol and hub),
 `software/components/transport/README.md` (the transport as it is),
@@ -547,9 +548,9 @@ with a document first.
   telemetry tables and active streams, log tables, the OTA session, the
   profiles), and a page that closes and reopens gets it back. Telemetry
   enable, tuning set and list, log control, RC, reboot and scenario become
-  gateway-local services like `OtaCommand`. This is the next rework, with
-  its own issue; it absorbs section 9.4 (the hub subscribes to status and
-  logs for its clients).
+  gateway-local services like `OtaCommand`. This is the next rework,
+  designed in section 10; it absorbs section 9.4 (the hub subscribes to
+  status and logs for its clients).
 - **GDScript keeps its port**, minimal: the transport (keepalive, hops) and
   the part of discovery the plant needs (answer who it is, ask every node
   that appears, know the kinds). The GDExtension that would remove the port
@@ -567,7 +568,8 @@ with a document first.
   campaign node linking the components, Python orchestrating processes only
   or going away; its own issue. Until then the Python node keeps sending
   and reading what still works (`Rc` and `SimScenario` unicast, `Status`
-  broadcast) and is not touched.
+  broadcast) and is not touched. Superseded by section 10.8: the Python
+  tooling is removed at the start of the second rework.
 
 ### 8.3 Tests are frozen
 
@@ -586,7 +588,9 @@ threaded, and the flight loop pace is the sensor cadence. A threaded
 transport (a TX queue drained towards the media, an RX queue dispatched to
 handlers) is a later step; this design keeps the shape ready for it (the
 messenger is the one caller of `poll()`, its RX side is where the queue
-goes) and does not build it.
+goes) and does not build it. Section 10 keeps that seam: providers and
+consumers hold a `Messenger&`, never a `Transport&`, read no clock and set
+no timer.
 
 ### 9.2 A peek before the decode
 
@@ -597,7 +601,8 @@ ESP32 this is a per-broadcast cost the tag peek did not have. The generic
 fix belongs in the messenger, not in a node: read the body tag off the
 first bytes (`envelopeBodyTag()` in `protocol/envelope.hpp` does it) and
 skip the decode when no handler holds that tag. Not done in this rework;
-`Messenger::unhandled()` counts what it would save.
+`Messenger::unhandled()` counts what it would save. Section 10 removes
+every application broadcast, so the cost it would save goes away with them.
 
 ### 9.3 A port layer for the clock
 
@@ -613,4 +618,348 @@ are broadcast. Issue #25 records the measured cost (about 39% loss on
 broadcast out of the ESP32 on the bench) and proposes subscribe messages
 for them. This rework makes those broadcasts impossible (section 4.3) and
 leaves the subscription protocol to that issue, with the temporary
-asymmetry of section 7.2 in between.
+asymmetry of section 7.2 in between. Section 10.4 is that protocol.
+
+## 10. Services on the messenger
+
+Decided on 2026-09-14. This section is the design of the rework that
+section 8.2 announced: the wire logic of every concept leaves the Apps and
+the pages for components with one shape, the streams get a subscription,
+the one-shot messages get an acknowledgement, and the gateway API becomes
+typed messages. It absorbs sections 9.2 (not the peek, the counter it
+would save), 9.4 and the temporary asymmetry of section 7.2. Sections 3 to
+6 stay as they are; what this section changes in them is named where it
+does.
+
+### 10.1 Three roles, one directory per concept
+
+Every concept that travels on the wire (log, telemetry, tuning, status,
+OTA) is written once, in C++, as three classes with fixed names:
+
+- **Provider**, on the node that owns the data. An `AbsMessageHandler`
+  that answers requests towards `src` and emits its stream towards its
+  subscribers. It holds the configuration of the concept: there is exactly
+  one configuration per node, never one per consumer (10.4).
+- **Consumer**, on a node that uses the data: the hub, the phone, the
+  plant, later the campaign node. It pulls the tables, subscribes to the
+  streams, keeps what it learnt, and drops all of it when the node goes
+  down. It holds a `Messenger&` and a table sized by the composition.
+- **Gateway**, in the hub only. It maps the commands of `gateway.proto`
+  onto one Consumer and publishes what the Consumer holds as typed messages
+  to the websocket clients (10.6).
+
+"Client" disappears from the code: it named the consumer side while the
+hub is the server of its own websocket clients, and the two readings met
+in the same file.
+
+One directory per concept under `software/components/`, holding every
+role of that concept, on the model `ota/` already follows for its updater:
+
+| directory | leaf targets, unchanged | new or moved targets |
+|---|---|---|
+| `log/` | `log` (the library), `log_wire` (codec helpers) | `log_provider` (the `TransportSink` route, the module table, `LogControl`, the line stream), `log_consumer` (tables and lines per node) |
+| `telemetry/` | `telemetry` (the registry) | `telemetry_provider` (what `services/telemetry_service.hpp` is today), `telemetry_consumer` (table pull, stream) |
+| `tuning/` | none | `tuning_provider` (links `flight_core`, what `services/tuning_service.hpp` is today), `tuning_consumer` (the parameter table per node, set and get) |
+| `status/` | none | `status_provider` (`packStatus` and the publisher, today in `platform_common`), `status_consumer` (the last report per node) |
+| `ota/` | `ota` (updater, store interface, boot policy) | `ota_provider` (what `services/ota_service.hpp` is today), `ota_consumer` (the hub's `OtaClient`, moved) |
+
+`services/` dissolves into these. A leaf stays a leaf: `log` and
+`telemetry` still link `drone_warnings` alone. Every provider builds for
+the F405 (no heap, no iostream, no exceptions). A consumer follows the same
+rules: its tables are fixed arrays whose size is a template parameter or a
+constructor argument the composition chooses (the hub sizes them at
+`MAX_NODES`, a board that consumes something one day sizes them at what it
+can afford). The gateways are hub code and stay under `software/hub/`, one
+file per concept.
+
+`discovery/` and `messaging/` are not concepts: they are the floor every
+concept stands on and keep their names.
+
+### 10.2 Requests and acknowledgements
+
+The transport's keepalive says who is reachable. It does not say whether a
+given message arrived, and UDP loses some; the answer is an application
+acknowledgement, in the messaging component, available to every node in
+every direction.
+
+**Wire.** `Envelope` gains one field outside the oneof: `uint32 request_id`
+(field 100), 0 when absent. A message carrying a non-zero id is a request;
+the message that answers it carries the same id. Every node numbers its own
+requests from its own counter, so a request is identified by the pair
+(peer node id, request id). A new body `Ack { AckStatus status }` answers a
+request that has nothing else to say back (a subscribe, a reboot, a
+scenario, a configuration notification); a request whose answer has content
+is answered by that content, with the id copied (a table page, the applied
+telemetry configuration, a `TuningAck`).
+
+**Messenger.**
+
+```
+bool request(uint32_t dst, mark4_Envelope &e);          // allocates the id, sends, tracks
+bool reply(uint32_t dst, const mark4_Envelope &request, mark4_Envelope &answer);  // copies the id, sends
+void tick(uint64_t nowUs);                              // resends, gives up
+```
+
+`request()` stores the encoded bytes (`MAX_ENVELOPE_SIZE` each) in a fixed
+`PendingRequests<N>` table, N a constructor argument of the messenger (4 on
+a board, `MAX_NODES` on the hub). `tick()` resends an unanswered request
+every `REQUEST_TIMEOUT_US` (500 ms), up to `REQUEST_RETRIES` (5), then
+drops it and tells the handler that sent it (`AbsMessageHandler::
+onRequestFailed(dst, requestId)`, a virtual with an empty default). An
+incoming message whose `(src, request_id)` matches a pending request
+completes it before the normal dispatch to the handler of its tag: the
+handler sees the answer as any message, the messenger only stops resending.
+A node that goes down (`onNodeDown`) takes its pending requests with it,
+each reported failed. A full table refuses the request and counts it.
+
+These are the constants and the retry logic `DiscoveryDirectory`
+(`IDENTITY_TIMEOUT_US`, `IDENTITY_RETRIES`) and the hub's telemetry pull
+(`TELEMETRY_RETRY_US`, `TELEMETRY_MAX_ATTEMPTS`) each wrote by hand; both
+move onto `request()`.
+
+**QoS 1, at least once.** A request lost is sent again; a request whose
+answer was lost is sent again and applied twice. So every request is an
+idempotent state: "subscribe me", "this is the configuration", "set this
+parameter to this value", "reboot". A message that would not survive being
+applied twice does not go through `request()`. The OTA session is not
+concerned: it has its own go-back-N over `OtaChunk` / `OtaChunkAck` and its
+own state machine (`docs/ota-design.md`), unchanged.
+
+**One-shots and streams.** Every one-shot message is a request, whatever
+its direction: a consumer asking a provider, a provider notifying its
+subscribers (10.4), a node asking another node's identity. Stream data
+(`Status`, `TelemetryData`, `Log` lines) carries no id, is never
+acknowledged and never resent: a sample is only worth its own instant, and
+the subscription is what guarantees the stream as a whole.
+
+### 10.3 The keepalive carries the boot id
+
+A node's id is stable across reboots (section 3 of
+`transport/README.md`), so a node that reboots in under `NODE_EXPIRY_US`
+never leaves the tables of its peers: its subscribers believe they are
+subscribed, its providers have forgotten them. The sequence number does
+not catch it reliably (a backward jump is caught, a reboot whose first
+frames are lost is not), and a field on every frame would cost every frame.
+
+The keepalive, which is the transport's own once-a-second message and today
+an 11-byte header alone, gains a 4-byte payload: `boot u32`, little-endian,
+drawn at random when the transport is constructed (the hardware RNG of the
+F405, `esp_random()` on the ESP32, the process's random source on desktop;
+never anything derived from the chip UID, which is what makes the id
+stable). The header does not change. Rules:
+
+- The transport keeps `boot` per node. A frame from an unknown node
+  creates its entry with `boot = 0` (not known yet); the first keepalive
+  sets it without an event.
+- A keepalive whose `boot` differs from a known non-zero one is a new
+  incarnation of the same id: the transport fires `onNodeDown` then
+  `onNodeUp` for it, resets its counters, and every listener does what it
+  does for a node that left and came back (consumers drop their
+  subscriptions, tables and pending requests, then start over; providers
+  drop the subscriber).
+- The first `poll()` of a node sends its keepalive, so a rebooted node
+  announces its incarnation before, or within one poll of, its first data
+  frame. A data frame that arrives in that window is delivered under the
+  old incarnation and is harmless: the down/up that follows resets
+  everything.
+- `RESYNC_THRESHOLD` keeps its one role, the loss counter.
+
+Cost: 4 bytes per node per second. Collision: one in four billion. Three
+codecs to change, all ours: `transport.cpp`, `transport.gd`, the Dart
+frame codec. `Node` gains `boot`, and the gateway's `Node` does not: the
+clients see the effect (a node that goes down and up), not the mechanism.
+
+### 10.4 Subscriptions
+
+**Binary, per stream.** A stream is subscribed or not; nothing about it is
+per subscriber. Each stream has one request, `XxxSubscribe { bool
+enabled }`, answered by `Ack`. The provider keeps a `SubscriberTable<N>`:
+N node ids, add, remove, iterate to emit, remove on `onNodeDown`. The
+stream is emitted while the table is not empty and to every entry; a full
+table refuses the subscribe (`Ack` says so). N is a constant of each
+stream, small because a board's UART pays every entry: `Status` 4, `Log`
+lines 2, `TelemetryData` 2. One emission per subscriber today; when the
+transport learns multicast, one emission, and nothing above the transport
+changes. That is the reason the subscription carries no parameter.
+
+**Configuration lives in the provider, once per node.** What a stream
+carries and how often is a state of the node, not of a consumer:
+
+- `Status`: no configuration. The node emits it every
+  `STATUS_PERIOD_FRAMES` frames, a constant of the composition.
+- Telemetry: `TelemetryConfig { repeated uint32 ids; uint32 period_ms }`,
+  a request that replaces the enabled set and the period wholesale, last
+  writer wins, answered by the configuration as applied (ids kept, period
+  clamped). `TelemetryEnable` and `TelemetryAck` disappear.
+- Log lines: the configuration is the module table, `LogControl.set`
+  moves one level; answered by the `LogModuleInfo` of that module as it
+  stands.
+- Tuning has no stream; `TuningSet` is a configuration request like any
+  other, answered by `TuningAck`.
+
+**A configuration change is told to every subscriber.** Subscribing to a
+stream means receiving its data and its configuration changes. When a
+request changes the configuration, the requester gets the applied
+configuration as its answer, and every other entry of the stream's
+`SubscriberTable` gets the same message as a request of the provider's own
+(`request()`, acknowledged with `Ack`, resent and given up on like any
+request). Two hubs on two machines watching the same drone therefore agree
+on its log levels the moment one of them moves one. A consumer that pulled
+a table without subscribing to the stream is not told: a table without its
+stream has no reason to stay exact. This is the one unsolicited emission
+in the system besides stream data, and it only ever goes to a subscriber:
+section 6's rules stand.
+
+**Who subscribes to what.**
+
+| consumer | Status | Log lines | TelemetryData |
+|---|---|---|---|
+| hub | every node of a matching wire hash, always | every node, always | while at least one websocket client holds it (10.6) |
+| phone | its drone | no | no |
+| plant | each drone it hosts (the overlay) | no | no |
+| campaign node (later) | its drones | as it needs | as it needs |
+
+**Run stats.** `SimRunStats`, a one-shot the sim emits at the end of a run,
+goes as a request to the `Status` subscribers of that sim: the same
+listeners, and no broadcast.
+
+### 10.5 Tables and pages
+
+Three tables are pulled today in three shapes (`TelemetryDescriptors`:
+total, cursor, 6 descriptors; `LogModules`: start index, total, 8
+modules; `TuningInfo`: one description per `pump()`). They become one
+shape: a page request `{ uint32 cursor }` with a `request_id`, a page
+answer `{ uint32 total; uint32 cursor; repeated T items }` sized to the
+frame (`TelemetryDescriptors`, `LogModules`, a new `TuningInfos` replacing
+`TuningInfo`; `TuningList` becomes its page request and the provider's
+`pump()` goes: the consumer paces the walk by asking one page at a time,
+which is what the UART wanted).
+
+A consumer walks a table with `TablePull<T, MAX>`: one `request()` per
+page, cursor advanced on each answer, complete when `cursor + items ==
+total`, abandoned when a request fails (five tries at 500 ms, the three
+seconds of the node expiry), restarted from zero on `onNodeUp`. The ids of
+a table are only stable while the node runs, so a reincarnation (10.3)
+drops the table and the consumer pulls it again.
+
+### 10.6 The gateway API
+
+`gateway.proto` keeps its rules (one `GatewayMessage` per websocket
+message, one nanopb union, anything per node and unbounded in a message of
+its own, `id` echoed on the `Ack`) and changes its content: **`Frame`
+disappears in both directions.** The hub decodes everything it hears
+through its consumers and publishes typed messages; a client sends typed
+commands and never an encoded `Envelope`. The pages keep the generated
+`mark4_pb.ts` for the types `gateway.proto` imports (`Status`,
+`TelemetryDescriptor`, `LogModuleInfo`, `Announce`, `Rc`, `TuningAck`) and
+nothing else.
+
+Client to gateway, every one a command the gateway carries out through one
+consumer and answers with `Ack` when `id` is set:
+
+| body | fields | what the gateway does |
+|---|---|---|
+| `TelemetryCommand` | `node`, oneof `config { ids, period_ms }` / `subscribe { bool }` | `config`: `TelemetryConfig` to the node, last writer wins between clients too. `subscribe`: marks this client; the gateway subscribes to the node while at least one client is marked, unsubscribes when the last one clears or disconnects |
+| `LogCommand` | `node`, oneof `refresh {}` / `set_level { module_id, level }` | pulls the table again, or one `LogControl.set` |
+| `TuningCommand` | `node`, oneof `refresh {}` / `set { id, value }` / `get { id }` | pulls the table again, or one request |
+| `PilotInput` | `node`, `Rc` | forwards one `Rc` to the node from the gateway's own id (10.7) |
+| `NodeCommand` | `node`, oneof `reboot {}` / `scenario { SimScenario }` | one request |
+| `OtaCommand`, `ProfileCommand` | unchanged | |
+
+Gateway to client, the state the gateway holds, on every change and whole
+to a client that connects:
+
+| body | what |
+|---|---|
+| `NodeTable` | as today, minus `Node.log_modules` (the TODO of `Node`) |
+| `NodeLogModules { node, modules }` | one node's whole module table |
+| `NodeLogLines { node, repeated Log }` | lines as they arrive, and on connect the last `LOG_RING` lines the gateway kept per node (256), oldest first |
+| `NodeStatus { node, Status }` | the last report of a node, at the node's cadence |
+| `NodeTelemetry { node, descriptors }` | as today |
+| `NodeTelemetryConfig { node, ids, period_ms, subscribed }` | the configuration as the node applied it, and whether the gateway holds the stream |
+| `TelemetrySamples { node, TelemetryData }` | the stream, to the clients marked on that node |
+| `NodeTuning { node, repeated TuningInfo }` | one node's parameter table |
+| `TuningResult { node, TuningAck }` | the answer to a set or a get, to every client (they correlate on `GatewayMessage.id`) |
+| `GatewayStatus`, `OtaState`, `ProfileList`, `Profile`, `Ack` | unchanged |
+
+The gateway's own log lines take the same route as everyone's: its
+`LogProvider` has the gateway itself as a permanent subscriber, so they
+appear as `NodeLogLines` from its own node id, and a second hub that
+subscribes to them gets them on the wire like any node's.
+
+The VS Code extension and `pnpm smoke` are two more clients of this API
+and change with it.
+
+### 10.7 RC through the gateway
+
+The gateway is the pilot node: it forwards each `PilotInput` as one `Rc`
+to the named node, from its own id, at the cadence the client sends. Two
+rules the fail-safe depends on:
+
+- **It never repeats.** A client that stops sending stops the stream, and
+  the node's RC timeout does the rest. The gateway holds no last state to
+  resend.
+- **One pilot per node at a time.** The first client to send takes the
+  seat; another client's input is refused (`Ack`) while the seat is held;
+  the seat is released when the holder disconnects or has sent nothing for
+  `RC_PILOT_WINDOW_US`. `GatewayStatus.rc_clients` counts the seats held.
+
+### 10.8 Scope, removals, the other languages
+
+- **What stops broadcasting, for good**: `status_publisher.hpp`, the
+  `TransportSink` route of every node, the `LogModules` pages published at
+  boot, `SimRunStats`. `platform_common/envelope_io.hpp` and its
+  `sendEnvelope()` are deleted; the drone Apps no longer hold a
+  `GATEWAY`-kind destination, and the asymmetry of section 7.2 is gone.
+  `BROADCAST_NODE` is refused by the messenger as section 4.3 says, and
+  nothing asks for it any more.
+- **Python goes.** `tools/batch/`, `tools/telemetry_wire.py`, the
+  `proto_py` target of `protocol/CMakeLists.txt`, the two batch steps of
+  `ci.yml`, and every mention of the campaign in the documentation. The
+  build scripts under `scripts/` (`build_app.py`, `run_app.py`,
+  `make_ota.py`, `gen_godobuf.py`) import nothing from it and stay. What
+  goes with it: the determinism check (`--verify-repro`) CI ran on every
+  push; it comes back with the test harness of section 8.3, which starts
+  the real processes (hub, drone_sim, Godot, the phone's host build) and is
+  designed on its own.
+- **GDScript** ports the minimum: the keepalive boot id in `transport.gd`,
+  a request helper (`request_id`, resend, give up: what `discovery.gd`
+  does by hand today, once), and a `StatusConsumer` (subscribe to each
+  hosted drone, read the stream). The plant stops reading `Status` off
+  broadcasts.
+- **Dart** mirrors the same three, constant for constant: the boot id in
+  the frame codec, `PendingRequests` in its messenger, `StatusConsumer` in
+  `DroneManager`. `PilotManager` does not change: `Rc` is a stream.
+- **Firmware and relay** carry the providers of what they have (the relay:
+  `LogProvider` and its `Discovery`); nothing else changes for them.
+- **Tests stay frozen** (section 8.3): the existing suite is adapted where
+  an API it exercises changed, nothing new is written.
+
+### 10.9 Order
+
+The Python removal comes first so CI is green at every step after it.
+
+1. Python removal: `tools/`, `proto_py`, `ci.yml`, documentation.
+2. messaging: `request_id`, `request()` / `reply()` / `tick()`,
+   `PendingRequests`, `Ack`, `onRequestFailed()`; `DiscoveryDirectory` on
+   it. transport: the boot id in the keepalive, the reincarnation event.
+   The GDScript and Dart frame codecs take the 4-byte keepalive in the same
+   step (they only have to accept it to keep hearing the C++ nodes).
+3. `mark4.proto`: the subscribes, `TelemetryConfig`, the unified pages,
+   `TuningInfos`. `WIRE_HASH` moves once.
+4. The concept directories with their providers; `services/` and
+   `platform_common`'s wire files dissolve; drone_sim, the firmware and the
+   relay on them. From here the hub hears nothing until step 5.
+5. The consumers and `TablePull`; the hub on them (the `Reader` and the
+   pull maps of `HubApp` go).
+6. `gateway.proto` v2 and the gateways in the hub; the pages, the
+   extension and `pnpm smoke` on the typed API; `Frame` gone.
+7. GDScript: request helper, `StatusConsumer`.
+8. Dart: `PendingRequests`, `StatusConsumer`.
+9. Documentation: this document's status line, `target-architecture.md`,
+   the component READMEs, `docs/mobile-app.md`, `sim-godot/README.md`,
+   `CLAUDE.md`.
+
+What is unusable between steps: the bench pages from step 4 to step 6, the
+plant's overlay from step 3 to step 7 (the lockstep link itself is not
+touched), the phone's cockpit from step 3 to step 8.
