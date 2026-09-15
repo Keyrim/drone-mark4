@@ -35,6 +35,11 @@ target_link_libraries(hub_core PRIVATE drone_warnings)
 # and deliberately not linked against flight_core or platform - the hub speaks
 # protocol/ and nothing else.
 add_executable(hub
+    src/gateway_log.cpp
+    src/gateway_pilot.cpp
+    src/gateway_status.cpp
+    src/gateway_telemetry.cpp
+    src/gateway_tuning.cpp
     src/hub_app.cpp
     src/main.cpp
     src/ws_bridge.cpp)

@@ -210,7 +210,6 @@ namespace mark4
     void fillNode(const Transport::Node &node,
                   std::uint64_t nowUs,
                   const mark4_Announce *announce,
-                  std::span<const mark4_LogModuleInfo> logModules,
                   mark4_Node &nodeOut)
     {
         nodeOut = mark4_Node_init_zero;
@@ -239,9 +238,17 @@ namespace mark4
             nodeOut.has_announce = true;
             nodeOut.announce = *announce;
         }
-        const std::size_t count = std::min(logModules.size(), std::size(nodeOut.log_modules));
-        std::copy_n(logModules.begin(), count, nodeOut.log_modules);
-        nodeOut.log_modules_count = static_cast<pb_size_t>(count);
+    }
+
+    void fillNodeLogModules(std::uint32_t node,
+                            std::span<const mark4_LogModuleInfo> modules,
+                            mark4_NodeLogModules &out)
+    {
+        out = mark4_NodeLogModules_init_zero;
+        out.node = node;
+        const std::size_t count = std::min(modules.size(), std::size(out.modules));
+        std::copy_n(modules.begin(), count, out.modules);
+        out.modules_count = static_cast<pb_size_t>(count);
     }
 
     void fillNodeTelemetry(std::uint32_t node,

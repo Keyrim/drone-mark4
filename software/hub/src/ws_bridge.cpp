@@ -82,12 +82,20 @@ namespace mark4
             [this](const std::shared_ptr<ix::ConnectionState> &state,
                    ix::WebSocket &socket,
                    const ix::WebSocketMessagePtr &message) {
-                static_cast<void>(socket);
                 switch (message->type)
                 {
-                    case ix::WebSocketMessageType::Open:
-                        m_connected.store(true);
+                    case ix::WebSocketMessageType::Open: {
+                        const std::lock_guard<std::mutex> guard(m_clientsMutex);
+                        m_clients[state->getId()] = &socket;
+                        m_connected.push_back(state->getId());
                         break;
+                    }
+                    case ix::WebSocketMessageType::Close: {
+                        const std::lock_guard<std::mutex> guard(m_clientsMutex);
+                        m_clients.erase(state->getId());
+                        m_closed.push_back(state->getId());
+                        break;
+                    }
                     case ix::WebSocketMessageType::Message: {
                         if (!message->binary)
                         {
@@ -148,11 +156,38 @@ namespace mark4
         }
     }
 
+    bool WsBridge::sendBinary(const std::string &clientId, const std::string &bytes)
+    {
+        const std::lock_guard<std::mutex> guard(m_clientsMutex);
+        const auto found = m_clients.find(clientId);
+        if (found == m_clients.end())
+        {
+            return false;
+        }
+        return found->second->sendBinary(bytes).success;
+    }
+
     std::vector<InboundMessage> WsBridge::drainInbound()
     {
         std::vector<InboundMessage> taken;
         const std::lock_guard<std::mutex> guard(m_inboundMutex);
         taken.swap(m_inbound);
+        return taken;
+    }
+
+    std::vector<std::string> WsBridge::drainConnected()
+    {
+        std::vector<std::string> taken;
+        const std::lock_guard<std::mutex> guard(m_clientsMutex);
+        taken.swap(m_connected);
+        return taken;
+    }
+
+    std::vector<std::string> WsBridge::drainClosed()
+    {
+        std::vector<std::string> taken;
+        const std::lock_guard<std::mutex> guard(m_clientsMutex);
+        taken.swap(m_closed);
         return taken;
     }
 } // namespace mark4

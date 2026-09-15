@@ -86,23 +86,31 @@ namespace mark4
     /// @param[out] profileOut receives them, truncated to the wire bound
     void fillProfile(std::string_view name, const TuningValues &values, mark4_Profile &profileOut);
 
-    /// Modules one Node entry of the node table carries, from the wire
-    /// bound of gateway.options.
+    /// Modules one NodeLogModules message carries, from the wire bound of
+    /// gateway.options.
     inline constexpr std::size_t NODE_LOG_MODULES =
-        sizeof(mark4_Node::log_modules) / sizeof(mark4_LogModuleInfo);
+        sizeof(mark4_NodeLogModules::modules) / sizeof(mark4_LogModuleInfo);
 
     /// @brief Fills one Node entry of the table from the transport's record.
     /// @param node transport record
     /// @param nowUs current time [us], turned into an age
     /// @param announce last Announce of that node, nullptr when none
-    /// @param logModules the node's module table, truncated to the wire
-    ///        bound; empty when the gateway holds none
     /// @param[out] nodeOut receives the entry
     void fillNode(const Transport::Node &node,
                   std::uint64_t nowUs,
                   const mark4_Announce *announce,
-                  std::span<const mark4_LogModuleInfo> logModules,
                   mark4_Node &nodeOut);
+
+    /// @brief Fills the message that publishes one node's log module table.
+    ///        Its own message and not a Node field for the reason
+    ///        NodeTelemetry is one: every body of the GatewayMessage oneof
+    ///        shares one nanopb struct.
+    /// @param node node the table belongs to
+    /// @param modules the table, truncated to the wire bound
+    /// @param[out] out receives the message
+    void fillNodeLogModules(std::uint32_t node,
+                            std::span<const mark4_LogModuleInfo> modules,
+                            mark4_NodeLogModules &out);
 
     /// @brief Fills the message that publishes one node's telemetry table.
     ///        Its own message rather than a Node field: every body of the

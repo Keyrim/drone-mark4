@@ -2,13 +2,13 @@
 
 The gateway between the transport and the browser: one transport node
 (kind `gateway`, one `UdpLink`, it keeps alive like the others and relays
-nothing) whose websocket clients see every frame the node hears and can
-send frames back. It decodes nothing on their behalf: the pages carry
-their own generated codec of `mark4.proto` and read the same `Envelope`
-the drones emit. What the hub owns is what a browser cannot: the `.ota`
-bundle on disk, the tuning profiles on disk, and the node table with its
-frame counters, every node's identity (asked for, kept in a
-`DiscoveryDirectory`) and every node's log module table.
+nothing) that decodes everything it hears and publishes it to its websocket
+clients as typed messages. Nothing raw crosses: a client never sees an
+`Envelope` and never sends one, it sends typed commands the gateway carries
+out through one consumer. What the hub owns besides that is what a browser
+cannot: the `.ota` bundle on disk, the tuning profiles on disk, and the node
+table with its counters and every node's identity (asked for, kept in a
+`DiscoveryDirectory`).
 
 That same TCP port also serves the static pages: the library dispatches on
 the `Upgrade` header, so a page loaded from the hub reaches it back with
@@ -17,22 +17,33 @@ the `Upgrade` header, so a page loaded from the hub reaches it back with
 It links the `protocol` (both schemas), `transport`, `messaging`,
 `discovery`, `log`, the four consumers, `ota_consumer` and `hub_core` and
 nothing else: never `flight-core`, never `platform`. Desktop only. The
-transport is polled through a `Messenger`: its raw tap mirrors every
-delivered payload to the clients before anything is decoded, and what the
-gateway knows for itself it knows through one consumer per concept
-(`StatusConsumer`, `LogConsumer`, `TelemetryConsumer`, `TuningConsumer`,
-each sized at `Transport::MAX_NODES`). A consumer names the kinds that
-carry its provider, so the gateway names none: it opens a node when the
-directory learns its identity, subscribes, pulls the tables one page at a
-time and drops everything of a node that goes down. The gateway listens to
-them through four small nested classes and republishes what changed. One
-handler of its own, `OtaReader`, feeds the update consumer the `OtaStatus`
-/ `OtaAck` / `OtaChunkAck` it waits for, because that consumer was moved as
-it was and is not a handler itself; the directory is the handler of
-`IdentityRequest` and `Announce`. It logs like every node (`gateway/core`,
-`gateway/ws`, `app/main` modules): on its stdout, and as `Log` envelopes on
-the transport from its own node id, mirrored to its clients as frames from
-itself.
+transport is polled through a `Messenger`, and what the gateway knows it
+knows through one consumer per concept (`StatusConsumer`, `LogConsumer`,
+`TelemetryConsumer`, `TuningConsumer`, each sized at
+`Transport::MAX_NODES`). A consumer names the kinds that carry its
+provider, so the gateway names none: it opens a node when the directory
+learns its identity, subscribes, pulls the tables one page at a time and
+drops everything of a node that goes down.
+
+One gateway per concept sits on each consumer, one file per concept
+(`gateway_status`, `gateway_log`, `gateway_telemetry`, `gateway_tuning`,
+plus `gateway_pilot`, which has no consumer behind it because `Rc` is a
+stream and not a state). Each listens to its consumer, publishes what it
+holds through the composition (`AbsGatewayPublisher`: `broadcast()` and
+`sendTo()`), and carries out the commands of its own concept. Two handlers
+of the composition complete them: `OtaReader`, which feeds the update
+consumer the `OtaStatus` / `OtaAck` / `OtaChunkAck` it waits for (that
+consumer was moved as it was and is not a handler itself), and
+`HubRequester`, which claims no tag and exists to own the requests a node
+command sends (a reboot, a scenario). The directory is the handler of
+`IdentityRequest` and `Announce`.
+
+It logs like every node (`gateway/core`, `gateway/ws`, `app/main`
+modules): on its stdout, and as `Log` lines to whoever subscribed to it. A
+messenger refuses this node as a destination, so its own lines reach its
+clients through the local sink of its `LogProvider`, which is the log
+gateway: they appear as `NodeLogLines` from its own node id, exactly like
+every other node's.
 
 ## Building and running
 
@@ -103,43 +114,73 @@ was given no telemetry directory.
 Every websocket message, both directions, is one binary
 `mark4.GatewayMessage` of `software/components/protocol/gateway.proto`
 (nanopb on the hub side, `hub/gateway_codec.hpp`; protoc-gen-es on the
-page side). Text frames are ignored. There is no JSON anywhere.
+page side). Text frames are ignored. There is no JSON anywhere, and no
+encoded `Envelope`: the types a client needs of `mark4.proto` are the ones
+`gateway.proto` imports (`Status`, `TelemetryDescriptor`, `TelemetryData`,
+`LogModuleInfo`, `Log`, `Announce`, `Rc`, `TuningInfo`, `TuningAck`,
+`SimScenario`).
 
-Gateway to client:
+Gateway to client, the state the gateway holds: on every change, and whole
+to a client that connects.
 
-| body | when | what |
-|------|------|------|
-| `frame` | every payload the transport delivers | `src` node id, `payload` = one encoded `Envelope` (telemetry, tuning answers, log lines, OTA answers, the `Announce` a node answered the gateway with: whatever the node sent). Mirrored raw from the messenger's tap, before anything is decoded. `dst` is left 0: the transport does not report it, and a delivered frame was for the gateway or for everyone anyway. |
-| `nodes` | every second, on every table change, on connect | `NodeTable`: the gateway itself first (address empty), then every node the transport hears: id, IPv4 `address`, `port`, `last_seen_ms_ago`, `received` / `lost` / `duplicates` frame counters, its `Announce` once the directory has it (the gateway sends every node that appears an `IdentityRequest`, again every 500 ms up to five times; a node that never answers, or answered nothing yet, shows without identity), and its `log_modules` (the table its `LogConsumer` pulled, whole; a node carrying a log provider is asked the moment its identity is known, so a client connecting late still knows every module and level). |
-| `node_telemetry` | on every change of one node's table, on connect | `NodeTelemetry`: one drone node's whole telemetry table, `{id, name, unit}` per measure, as its `TelemetryConsumer` pulled it page by page (`TelemetryListRequest` / `TelemetryDescriptors`, unicast). The pull starts when the directory learns the node's identity, because the `Announce` is where its kind and its schema are known: only `DRONE_SIM` and `FIRMWARE` are asked, and never a node whose `wire_hash` differs. Every page request is a request of the messenger's, resent on its own policy and given up on with one WARN when it runs out of sends. A node that goes down publishes an empty table: the ids of a table are only stable while the node runs, so a client must drop its curves rather than rebind them to whatever the next boot numbers the same way. Its own message and not a `Node` field: every body of the `GatewayMessage` oneof shares one nanopb struct, and a table per node inside `NodeTable` would cost every message, the per-frame one included, a few hundred kB. |
-| `status` | every second, on connect | `GatewayStatus`: the gateway's node id, `wire_hash` (of `mark4.proto` as built), `clients`, `rc_clients` (clients that sent an Rc frame within 2 s), `frames_in`, `frames_out`, `dropped`, `bad_frames`. |
-| `ota_state` | on every change of the update client, on connect | phase, verdict and its sentence, `target_node`, `target_slot`, the loaded bundle's identity, what the board last said (slots, running / active slot), transfer progress in bytes. |
-| `profiles` | answering `LIST` and `SAVE` | the profile names on disk. |
-| `profile` | answering `LOAD` | one profile: name and `TuningSet` pairs. |
-| `ack` | answering any client message whose `id` is not 0 | `ok`, `error`; `GatewayMessage.id` echoes the client's. Acks are broadcast to every client: a client correlates on the id it drew and ignores the rest. |
+| body | what |
+|------|------|
+| `nodes` | `NodeTable`: the gateway itself first (address empty), then every node the transport hears: id, IPv4 `address`, `port`, `last_seen_ms_ago`, `received` / `lost` / `duplicates` counters, and its `Announce` once the directory has it (every node that appears is sent an `IdentityRequest`, again every 500 ms up to five times; a node that never answers shows without identity). Every second and on every change. |
+| `node_log_modules` | `NodeLogModules`: one node's whole module table with the level of each, as its `LogConsumer` pulled it; empty for a node that went down. The gateway's own table is published the same way, from its own registry. |
+| `node_log_lines` | `NodeLogLines`: the lines of one node as they arrive, one per message, and on connect the last 256 lines the gateway kept per node, oldest first. The gateway's own lines come from its own node id. |
+| `node_status` | `NodeStatus`: one node's last report, at that node's own cadence. |
+| `node_telemetry` | `NodeTelemetry`: one node's whole measure table, `{id, name, unit}` per measure, as its `TelemetryConsumer` pulled it page by page. A node that goes down publishes an empty table: the ids of a table are only stable while the node runs, so a client must drop its curves rather than rebind them to whatever the next boot numbers the same way. |
+| `node_telemetry_config` | `NodeTelemetryConfig`: the configuration as the node applied it (the ids it kept, the period it clamped) and whether the gateway holds its sample stream. |
+| `telemetry_samples` | `TelemetrySamples`: one sampling instant, to the clients marked on that node and to them alone. |
+| `node_tuning` | `NodeTuning`: one node's whole parameter table. |
+| `tuning_result` | `TuningResult`: the answer to a write or a read, to every client; a client correlates on the id of its own command and on the parameter id. |
+| `status` | `GatewayStatus`: node id, `wire_hash` (of `mark4.proto` as built), `clients`, `rc_clients` (pilot seats held), `messages_in` (payloads the transport delivered), `commands` and `refused` (client commands carried out and refused), `dropped`. Every second. |
+| `ota_state` | phase, verdict and its sentence, `target_node`, `target_slot`, the loaded bundle's identity, what the board last said (slots, running / active slot), transfer progress in bytes. |
+| `profiles` | answering `LIST` and `SAVE`: the profile names on disk. |
+| `profile` | answering `LOAD`: one profile, name and `TuningSet` pairs. |
+| `ack` | answering any client message whose `id` is not 0: `ok`, `error`; `GatewayMessage.id` echoes the client's. Acks are broadcast to every client: a client correlates on the id it drew and ignores the rest. |
 
-Client to gateway:
+Client to gateway, every one a command the gateway carries out through one
+consumer and answers with an `Ack` when `id` is set.
 
 | body | what the gateway does |
 |------|-----------------------|
-| `frame` | `Transport::send(dst, payload)`: a unicast to that node id, or a broadcast when `dst` is 0. The payload is not decoded (its first byte is compared with the `Rc` tag to count pilots). Refused when the node is unknown. This is how RC, tuning, scenarios, reboots and `LogControl` travel; a `LogControl` addressed to the gateway's own node id is handled by the gateway (it does not forward to itself). |
+| `telemetry_command` | `config { ids, period_ms }`: the configuration to the node, last writer wins between clients too (there is one configuration per node). `subscribe { bool }`: marks this client; the gateway holds the node's stream while at least one client is marked and gives it back when the last one clears or disconnects. |
+| `log_command` | `refresh {}`: the module table pulled again. `set_level { module_id, level }`: one level moved, on the node named or, when that is the gateway's own id, in its own registry. |
+| `tuning_command` | `refresh {}`: the parameter table pulled again. `set { id, value }` / `get { id }`: one request, answered by a `tuning_result`. |
+| `pilot_input` | one `Rc` forwarded to the node named, from the gateway's own id (see below). |
+| `node_command` | `reboot {}` or `scenario { SimScenario }`: one request to the node named. |
 | `ota_command` | `START` (bundle path, empty = the build output), `ABORT`, `REVERT`, `STATUS_REQUEST`, each naming `target_node`. The target is fixed for the whole session: while a session runs, a command naming another node is refused; `ABORT` always works. |
-| `profile_command` | `LIST`, `SAVE` (name + values), `LOAD` (name), `PUSH` (name + `target_node`: one `TuningSet` frame per value). Names are letters, digits, `_` and `-`. |
+| `profile_command` | `LIST`, `SAVE` (name + values), `LOAD` (name), `PUSH` (name + `target_node`: one parameter write per value). Names are letters, digits, `_` and `-`. |
 
-A client that connects gets `nodes`, `status` and `ota_state` immediately.
-The wire mismatch of a node is not a field: a page compares
-`Node.announce.wire_hash` with `GatewayStatus.wire_hash`; the hub also
-logs the mismatch once (a `gateway/core` WARN) when the directory learns
-the identity.
+A client that connects gets everything: the counters, the update state,
+every node's status, module table and log ring, every measure and
+parameter table, and the node table. The wire mismatch of a node is not a
+field: a page compares `Node.announce.wire_hash` with
+`GatewayStatus.wire_hash`; the hub also logs the mismatch once (a
+`gateway/core` WARN) when the directory learns the identity.
+
+### Piloting
+
+The gateway is the pilot node: it forwards each `pilot_input` as one `Rc`
+to the node named, from its own id, at the cadence the client sends. Two
+rules the fail-safe depends on:
+
+- **It never repeats.** A client that stops sending stops the stream, and
+  the node's own RC timeout does the rest. The gateway holds no last state
+  to resend.
+- **One pilot per node at a time.** The first client to send takes the
+  seat; another client's input is refused (`Ack`) while the seat is held;
+  the seat is released when the holder disconnects or has sent nothing for
+  `RC_PILOT_WINDOW_US` (2 s). `GatewayStatus.rc_clients` counts the seats
+  held.
 
 Simplifications, deliberate: the gateway's own Announce is sent only to a
-node that asks for it (the gateway is the first entry of `nodes`, with it);
-`Frame.dst` is 0 on delivered frames; the Ack carries its id on the
-enclosing message only; there is no gateway-level log message (field 31 of
-`GatewayMessage` was one and stays reserved): the gateway's lines are
-`Log` envelopes in frames from its own node id, like everyone else's.
-`gateway.proto` is not part of `WIRE_HASH`: the pages are built from the
-same tree as the hub that serves them.
+node that asks for it (the gateway is the first entry of `nodes`, with
+it); the Ack carries its id on the enclosing message only; field 1 of
+`GatewayMessage` was the raw `Frame` and field 31 a gateway-level `Log`,
+both reserved for good. `gateway.proto` is not part of `WIRE_HASH`: the
+pages are built from the same tree as the hub that serves them.
 
 ## Firmware update
 
@@ -207,8 +248,9 @@ code, never as the code.
 
 - Acks are broadcast to every connected client rather than sent back to the
   one that asked: a client correlates the answer with the `id` it sent and
-  ignores the rest. This keeps the endpoint free of any per-client state
-  shared between the library threads and the poll loop.
+  ignores the rest. The snapshots and the sample streams do go to one
+  client, so the endpoint knows its connections; the ack simply never
+  needed it.
 - The endpoint has no authentication. It binds the loopback interface, and
   it is a bench tool on a trusted network.
 - The hub relays nothing: with one link there is nothing to relay between.

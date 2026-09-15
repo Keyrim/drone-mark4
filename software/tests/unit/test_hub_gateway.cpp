@@ -1,8 +1,8 @@
 /// @file
-/// @brief The gateway side of gateway.proto: messages round trip through the
-///        codec, the update client snapshot reads like the client, an update
-///        command fixes its target for the session, a profile push is one
-///        TuningSet per value to the node named.
+/// @brief The gateway side of gateway.proto: typed messages round trip
+///        through the codec in both directions, the update client snapshot
+///        reads like the client, an update command fixes its target for the
+///        session, a profile push is one write per value to the node named.
 
 #include <cstdint>
 #include <cstring>
@@ -68,33 +68,47 @@ namespace
     }
 } // namespace
 
-TEST_CASE("a frame and its correlation id round trip through the gateway codec")
+TEST_CASE("a typed message and its correlation id round trip through the gateway codec")
 {
-    mark4_GatewayMessage message = mark4_GatewayMessage_init_zero;
-    message.which_body = mark4_GatewayMessage_frame_tag;
-    message.id = 0x12345U;
-    message.body.frame.src = 7U;
-    message.body.frame.dst = 9U;
-    mark4_Envelope rc = mark4_Envelope_init_zero;
-    rc.which_body = mark4_Envelope_rc_tag;
-    rc.body.rc.arm = true;
-    rc.body.rc.throttle = 0.5F;
-    std::size_t size = 0U;
-    REQUIRE(mark4::encodeEnvelope(
-        rc, message.body.frame.payload.bytes, sizeof(message.body.frame.payload.bytes), size));
-    message.body.frame.payload.size = static_cast<pb_size_t>(size);
+    // Both directions through the one codec: what the gateway publishes of
+    // a node it hears, and what a client commands of a node it names.
+    mark4_GatewayMessage published = mark4_GatewayMessage_init_zero;
+    published.which_body = mark4_GatewayMessage_node_status_tag;
+    published.id = 0x12345U;
+    published.body.node_status.node = 7U;
+    published.body.node_status.has_status = true;
+    published.body.node_status.status.flight_phase = mark4_FlightPhase_PHASE_HOVER;
+    published.body.node_status.status.throw_count = 3U;
+    published.body.node_status.status.imu_valid = true;
 
-    const mark4_GatewayMessage decoded = roundTrip(message);
-    CHECK(decoded.which_body == mark4_GatewayMessage_frame_tag);
+    const mark4_GatewayMessage decoded = roundTrip(published);
+    CHECK(decoded.which_body == mark4_GatewayMessage_node_status_tag);
     CHECK(decoded.id == 0x12345U);
-    CHECK(decoded.body.frame.src == 7U);
-    CHECK(decoded.body.frame.dst == 9U);
-    mark4_Envelope back;
-    REQUIRE(mark4::decodeEnvelope(
-        decoded.body.frame.payload.bytes, decoded.body.frame.payload.size, back));
-    CHECK(back.which_body == mark4_Envelope_rc_tag);
-    CHECK(back.body.rc.arm);
-    CHECK(back.body.rc.throttle == 0.5F);
+    CHECK(decoded.body.node_status.node == 7U);
+    REQUIRE(decoded.body.node_status.has_status);
+    CHECK(decoded.body.node_status.status.flight_phase == mark4_FlightPhase_PHASE_HOVER);
+    CHECK(decoded.body.node_status.status.throw_count == 3U);
+    CHECK(decoded.body.node_status.status.imu_valid);
+
+    mark4_GatewayMessage command = mark4_GatewayMessage_init_zero;
+    command.which_body = mark4_GatewayMessage_telemetry_command_tag;
+    command.id = 0x777U;
+    command.body.telemetry_command.node = 9U;
+    command.body.telemetry_command.which_action = mark4_TelemetryCommand_config_tag;
+    mark4_TelemetryConfigRequest &config = command.body.telemetry_command.action.config;
+    config.ids_count = 2U;
+    config.ids[0] = 4U;
+    config.ids[1] = 7U;
+    config.period_ms = 50U;
+
+    const mark4_GatewayMessage commanded = roundTrip(command);
+    CHECK(commanded.which_body == mark4_GatewayMessage_telemetry_command_tag);
+    CHECK(commanded.id == 0x777U);
+    CHECK(commanded.body.telemetry_command.node == 9U);
+    REQUIRE(commanded.body.telemetry_command.which_action == mark4_TelemetryCommand_config_tag);
+    REQUIRE(commanded.body.telemetry_command.action.config.ids_count == 2U);
+    CHECK(commanded.body.telemetry_command.action.config.ids[1] == 7U);
+    CHECK(commanded.body.telemetry_command.action.config.period_ms == 50U);
 
     mark4_GatewayMessage empty = mark4_GatewayMessage_init_zero;
     std::string bytes;
@@ -144,8 +158,8 @@ TEST_CASE("the node table carries the transport record and the last announce")
 
     mark4_GatewayMessage message = mark4_GatewayMessage_init_zero;
     message.which_body = mark4_GatewayMessage_nodes_tag;
-    mark4::fillNode(node, 1'250'000U, &announce, modules.items(), message.body.nodes.nodes[0]);
-    mark4::fillNode(node, 1'250'000U, nullptr, {}, message.body.nodes.nodes[1]);
+    mark4::fillNode(node, 1'250'000U, &announce, message.body.nodes.nodes[0]);
+    mark4::fillNode(node, 1'250'000U, nullptr, message.body.nodes.nodes[1]);
     message.body.nodes.nodes_count = 2U;
 
     const mark4_GatewayMessage decoded = roundTrip(message);
@@ -162,13 +176,24 @@ TEST_CASE("the node table carries the transport record and the last announce")
     CHECK(first.announce.kind == mark4_NodeKind_DRONE_SIM);
     CHECK(first.announce.wire_hash == 0xDEADBEEFU);
     CHECK(std::string(first.announce.name) == "sim");
-    REQUIRE(first.log_modules_count == 2U);
-    CHECK(first.log_modules[0].id == 16U);
-    CHECK(std::string(first.log_modules[0].name) == "platform/imu");
-    CHECK(first.log_modules[1].id == 17U);
-    CHECK(first.log_modules[1].level == mark4_LogLevel_DEBUG);
     CHECK(!decoded.body.nodes.nodes[1].has_announce);
-    CHECK(decoded.body.nodes.nodes[1].log_modules_count == 0U);
+
+    // The table the walk filled is published on its own, out of Node: the
+    // clients read the modules of one node there.
+    mark4_GatewayMessage lines = mark4_GatewayMessage_init_zero;
+    lines.which_body = mark4_GatewayMessage_node_log_modules_tag;
+    mark4::fillNodeLogModules(node.id, modules.items(), lines.body.node_log_modules);
+    const mark4_NodeLogModules &tableOut = roundTrip(lines).body.node_log_modules;
+    CHECK(tableOut.node == 0xABCDU);
+    REQUIRE(tableOut.modules_count == 2U);
+    CHECK(tableOut.modules[0].id == 16U);
+    CHECK(std::string(tableOut.modules[0].name) == "platform/imu");
+    CHECK(tableOut.modules[1].id == 17U);
+    CHECK(tableOut.modules[1].level == mark4_LogLevel_DEBUG);
+    // A node the gateway holds nothing of publishes an empty table, which
+    // is also what a node going down publishes.
+    mark4::fillNodeLogModules(node.id, {}, lines.body.node_log_modules);
+    CHECK(roundTrip(lines).body.node_log_modules.modules_count == 0U);
 
     // A walk started again opens at cursor 0 and the page there restarts
     // the table: a rebooted node with fewer modules keeps no stale entry.

@@ -14,9 +14,9 @@
 ///        single-threaded. HTTP requests are answered on the connection
 ///        thread from the filesystem alone, touching no hub state.
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -27,6 +27,7 @@
 namespace ix
 {
     class HttpServer;
+    class WebSocket;
 } // namespace ix
 
 namespace mark4
@@ -73,6 +74,13 @@ namespace mark4
         /// @param bytes message to send
         void broadcastBinary(const std::string &bytes);
 
+        /// @brief Sends one binary message to one client. Called from the
+        ///        poll loop only, like the broadcast.
+        /// @param clientId library id of the connection
+        /// @param bytes message to send
+        /// @return true when the client is still connected and took it
+        bool sendBinary(const std::string &clientId, const std::string &bytes);
+
         /// @brief Takes everything clients have sent since the last call.
         /// @return the messages, oldest first
         std::vector<InboundMessage> drainInbound();
@@ -82,20 +90,27 @@ namespace mark4
         /// @return number of connected clients
         [[nodiscard]] std::size_t clientCount() const;
 
-        /// @brief Reports whether a client connected since the last call, so
-        ///        the poll loop knows it owes the world a fresh snapshot of
-        ///        the discovery table and the counters.
-        /// @return true when at least one client connected since last asked
-        bool takeConnectedFlag()
-        {
-            return m_connected.exchange(false);
-        }
+        /// @brief Takes the clients that connected since the last call: each
+        ///        of them owes a snapshot of everything the gateway holds,
+        ///        and it goes to that client alone rather than to everyone.
+        /// @return their connection ids, oldest first
+        std::vector<std::string> drainConnected();
+
+        /// @brief Takes the clients whose connection closed since the last
+        ///        call, so whatever was kept per client goes with them.
+        /// @return their connection ids, oldest first
+        std::vector<std::string> drainClosed();
 
       private:
         std::unique_ptr<ix::HttpServer> m_server; ///< the library server, null until start()
         HttpConfig m_http;                        ///< what the HTTP side reads from
         std::mutex m_inboundMutex;                ///< guards the inbound queue
         std::vector<InboundMessage> m_inbound;    ///< messages waiting for the poll loop
-        std::atomic_bool m_connected{false};      ///< a client connected since last asked
+        std::mutex m_clientsMutex;                ///< guards the three members below
+        /// The live connections, by library id: what a message to one client
+        /// alone is sent through.
+        std::map<std::string, ix::WebSocket *> m_clients;
+        std::vector<std::string> m_connected; ///< connected since last drained
+        std::vector<std::string> m_closed;    ///< closed since last drained
     };
 } // namespace mark4
