@@ -4,10 +4,11 @@ services:
     # Pulled from GHCR, never built here: the image CI publishes (from
     # Dockerfile, tagged :latest on every main build) is the one every machine
     # runs, a single source of truth. pull_policy: missing means compose pulls
-    # it once and then reuses the local copy, so to move to a newer image run
-    #   docker pull ghcr.io/keyrim/drone-mark4-devcontainer:latest
-    # then rebuild the container. To iterate on the Dockerfile locally, build
-    # it under the same tag and rebuild (compose then finds it already local):
+    # it once and then reuses the local copy; host-pull.sh (initializeCommand)
+    # refreshes that copy at every start of the devcontainer, and a "Rebuild
+    # Container" moves to it. To iterate on the Dockerfile locally, build it
+    # under the same tag and rebuild (compose then finds it already local;
+    # the pull at the next start replaces it with CI's image again):
     #   docker build -t ghcr.io/keyrim/drone-mark4-devcontainer:latest .devcontainer
     image: ghcr.io/keyrim/drone-mark4-devcontainer:latest
     pull_policy: missing
