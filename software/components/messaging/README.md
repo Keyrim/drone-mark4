@@ -61,6 +61,17 @@ over its tags. `BOARD_PENDING_REQUESTS` (4) is what a board affords,
 `HUB_PENDING_REQUESTS` (256) what a gateway needs, where one node
 appearing costs several requests at once.
 
+## Subscribers
+
+`messaging/subscriber_table.hpp` is the set of node ids a stream goes to:
+`SubscriberTable<N>`, a fixed array with `add()`, `remove()`,
+`contains()`, `size()` and `id(index)`, no heap and no order (a removal
+moves the last entry into the freed slot). A provider holds one per stream
+it emits: it adds the node that subscribed, answers `false` when `add()`
+finds the table full, removes the node on `onNodeDown()`, and walks the
+table to emit. `N` is a constant of each stream, small because a board's
+link pays every entry.
+
 ## Dispatch
 
 `poll(nowUs)` drains the transport once. For each payload delivered to this

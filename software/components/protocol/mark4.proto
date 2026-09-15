@@ -1,8 +1,8 @@
 // The one wire of the project. Every datagram and every serial frame
 // between the flight processes, the board, the plant and the ground tools
 // carries exactly one Envelope. The codecs are generated at build time:
-// nanopb for C/C++ (mark4.options bounds every field so nothing allocates),
-// godobuf for the Godot plant, protoc --python_out for the batch tool.
+// nanopb for C/C++ (mark4.options bounds every field so nothing allocates)
+// and godobuf for the Godot plant.
 //
 // Frames follow the project convention: body x forward, y left, z up,
 // right-handed; world z up; quaternions rotate body into world, w first.
@@ -24,20 +24,14 @@ message Envelope {
     IdentityRequest identity_request = 39;
     Log log = 6;
     LogModules log_modules = 7;
-    LogControl log_control = 8;
     TelemetryListRequest telemetry_list_request = 9;
     TelemetryDescriptors telemetry_descriptors = 10;
-    TelemetryEnable telemetry_enable = 11;
-    TelemetryAck telemetry_ack = 12;
     TelemetryData telemetry_data = 13;
     SimScenario sim_scenario = 16;
-    SimRunStats sim_run_stats = 17;
     Reboot reboot = 18;
     TuningSet tuning_set = 20;
     TuningGet tuning_get = 21;
-    TuningList tuning_list = 22;
     TuningAck tuning_ack = 23;
-    TuningInfo tuning_info = 24;
     OtaStatusRequest ota_status_request = 30;
     OtaStatus ota_status = 31;
     OtaBegin ota_begin = 32;
@@ -48,7 +42,20 @@ message Envelope {
     OtaAbort ota_abort = 37;
     OtaAck ota_ack = 38;
     RequestAck ack = 40;
+    StatusSubscribe status_subscribe = 41;
+    LogSubscribe log_subscribe = 42;
+    TelemetrySubscribe telemetry_subscribe = 43;
+    TelemetryConfig telemetry_config = 44;
+    LogModulesRequest log_modules_request = 45;
+    LogSetLevel log_set_level = 46;
+    LogModuleInfo log_module_info = 47;
+    TuningListRequest tuning_list_request = 48;
+    TuningInfos tuning_infos = 49;
   }
+
+  // Numbers never reused: 8 was LogControl, 11 TelemetryEnable, 12
+  // TelemetryAck, 17 SimRunStats, 22 TuningList, 24 TuningInfo.
+  reserved 8, 11, 12, 17, 22, 24;
 
   // 0 when absent. A message carrying a non-zero id is a request: its
   // sender resends it on its own policy until an Ack carrying the same id
@@ -134,12 +141,20 @@ message PlantTruth {
   repeated float velocity_mps = 3;   // 3, world [m/s]
 }
 
-// What the drone is doing: a small fixed report, always on, broadcast,
-// decimated from the loop. It answers "where is it and is it healthy",
-// which is what a control page, an attitude view and a campaign verdict
-// need on every frame they paint. Everything that is a measurement rather
-// than a state lives in the telemetry registry below instead: a field is
-// added here only when every consumer of Status needs it.
+// What the drone is doing: a small fixed report, decimated from the loop
+// and sent to the nodes that subscribed to it. It answers "where is it and
+// is it healthy", which is what a control page and an attitude view need on
+// every frame they paint. Everything that is a measurement rather than a
+// state lives in the telemetry registry below instead: a field is added
+// here only when every consumer of Status needs it.
+// Consumer to node, unicast: take this node's Status stream, or stop it.
+// Answered by the same message as applied; enabled comes back false when
+// the node has no room for one more subscriber. There is nothing to
+// configure: the node emits at a cadence of its own.
+message StatusSubscribe {
+  bool enabled = 1;
+}
+
 message Status {
   uint64 timestamp_us = 1;           // acquisition time [us]
   repeated float attitude_quat = 2;  // 4, estimated attitude, w x y z
@@ -193,20 +208,23 @@ message TelemetryDescriptors {
   repeated TelemetryDescriptor descriptors = 3;  // at most 6 per page
 }
 
-// Subscriber to node, unicast: replaces the enabled set wholesale and
-// (re)arms the stream. Sent again periodically as the keepalive; a node
-// stops streaming when it stops hearing them. period_ms 0, or no id, stops
-// the stream at once. One active stream per drone: an enable from another
-// node takes it over.
-message TelemetryEnable {
-  repeated uint32 ids = 1;  // at most 64
-  uint32 period_ms = 2;
+// Consumer to node, unicast: take this node's TelemetryData stream, or
+// stop it. Answered by the same message as applied; enabled comes back
+// false when the node has no room for one more subscriber. What the stream
+// carries is not part of it: the configuration is one per node, below.
+message TelemetrySubscribe {
+  bool enabled = 1;
 }
 
-// Node to subscriber, unicast, on every TelemetryEnable: what was applied.
-message TelemetryAck {
-  uint32 period_ms = 1;  // the period in effect, clamped
-  uint32 enabled = 2;    // ids the node kept
+// Consumer to node, unicast: replaces the enabled set and the period
+// wholesale, last writer wins. Answered by the configuration as applied
+// (the ids the node kept, the period clamped between its own floor and
+// 60 s), to the requester and to every other subscriber of the stream. An
+// empty set, or a period of 0, stops the samples without touching the
+// subscriptions.
+message TelemetryConfig {
+  repeated uint32 ids = 1;  // at most 64
+  uint32 period_ms = 2;
 }
 
 message TelemetryValue {
@@ -214,9 +232,9 @@ message TelemetryValue {
   float value = 2;
 }
 
-// Node to subscriber, unicast: one sampling instant, split into several
-// messages when more than 32 values are enabled, all carrying the same
-// timestamp.
+// Node to its subscribers, unicast: one sampling instant, split into
+// several messages when more than 32 values are enabled, all carrying the
+// same timestamp.
 message TelemetryData {
   uint64 timestamp_us = 1;
   repeated TelemetryValue values = 2;  // at most 32
@@ -259,8 +277,8 @@ enum LogLevel {
   ERROR = 4;
 }
 
-// One line of a node's log, broadcast. The module is named by id: the
-// node's LogModules table gives the name.
+// One line of a node's log, sent to the nodes that subscribed to it. The
+// module is named by id: the node's LogModules table gives the name.
 message Log {
   uint64 timestamp_us = 1;
   LogLevel level = 2;
@@ -268,34 +286,43 @@ message Log {
   string text = 4;  // at most 96 characters
 }
 
-// One logging module of a node and its current threshold.
+// One logging module of a node and its current threshold. Also a body of
+// its own: the answer to a LogSetLevel, and the notification the other
+// subscribers of the line stream get when a level moves.
 message LogModuleInfo {
   uint32 id = 1;
   string name = 2;  // hierarchical, "area/thing", at most 32 characters
   LogLevel level = 3;
 }
 
-// The node's module table, broadcast once after boot, on every level
-// change and on a LogControl query, in pages of at most 8 modules: a
-// whole table does not fit one frame.
+// Consumer to node, unicast: take this node's log line stream, or stop it.
+// Answered by the same message as applied; enabled comes back false when
+// the node has no room for one more subscriber. A subscriber is also told
+// of every level change, as a LogModuleInfo.
+message LogSubscribe {
+  bool enabled = 1;
+}
+
+// Consumer to node, unicast: one page of the module table, from cursor.
+message LogModulesRequest {
+  uint32 cursor = 1;
+}
+
+// Node to requester, unicast: one page of at most 8 modules, because a
+// whole table does not fit one frame. The last page is the one where
+// cursor + modules_count == total.
 message LogModules {
-  uint32 start_index = 1;              // index of modules[0] in the table
+  uint32 cursor = 1;                   // index of modules[0] in the table
   uint32 total = 2;                    // modules in the whole table
   repeated LogModuleInfo modules = 3;  // 8 at most
 }
 
-message LogModuleLevel {
+// Consumer to node, unicast: move one module's threshold. A client wanting
+// a prefix ("platform/") sends one per matching id. Answered by that
+// module's LogModuleInfo as it stands.
+message LogSetLevel {
   uint32 module_id = 1;
   LogLevel level = 2;
-}
-
-// Ground to node: ask for the table, or move one module's threshold. A
-// client wanting a prefix ("platform/") sends one set per matching id.
-message LogControl {
-  oneof request {
-    bool query = 1;
-    LogModuleLevel set = 2;
-  }
 }
 
 // Sensor frame of the plant, one per physics tick, lockstep link.
@@ -340,17 +367,6 @@ message SimScenario {
   float swing_seconds = 11;                  // HAND_THROW: swing duration, 0 = hold only [s]
 }
 
-// What one simulated run amounted to, republished on every change.
-message SimRunStats {
-  uint32 run_id = 1;             // reset counter of the measured run
-  bool final = 2;                // the hash window elapsed, run_hash is final
-  bool degraded = 3;             // the link lost a tick during the run
-  uint64 run_start_us = 4;       // simulated time the run started at [us]
-  uint64 run_hash = 5;           // hash of the trajectory so far
-  uint32 duplicate_frames = 6;   // sensor resends answered again, cumulative
-  uint32 lockstep_timeouts = 7;  // lockstep timeouts reported by the plant
-}
-
 // Same values as the flight core's TuningStatus.
 enum TuningStatus {
   OK = 0;
@@ -368,8 +384,9 @@ message TuningGet {
   uint32 id = 1;
 }
 
-message TuningList {
-  uint32 start_index = 1;
+// Consumer to node, unicast: one page of the parameter table, from cursor.
+message TuningListRequest {
+  uint32 cursor = 1;
 }
 
 // Answer to a set or get: the status and the value in effect afterwards.
@@ -379,16 +396,25 @@ message TuningAck {
   TuningStatus status = 3;
 }
 
-// One parameter description, answering a list request.
+// One parameter description, as a page of the table carries it.
 message TuningInfo {
-  uint32 index = 1;
-  uint32 count = 2;
   uint32 id = 3;
   string name = 4;  // at most 16 characters
   float value = 5;
   float min_value = 6;
   float max_value = 7;
   bool armed_change = 8;
+
+  // Numbers never reused: 1 was index, 2 count; a page carries both now.
+  reserved 1, 2;
+}
+
+// Node to requester, unicast: one page of the parameter table. The last
+// page is the one where cursor + infos_count == total.
+message TuningInfos {
+  uint32 total = 1;
+  uint32 cursor = 2;
+  repeated TuningInfo infos = 3;  // at most 8 per page
 }
 
 // Slot lifecycle states. The flash keeps its own encoding (0xFF = empty);
