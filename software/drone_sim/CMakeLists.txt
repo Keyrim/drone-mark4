@@ -9,5 +9,6 @@ target_compile_definitions(drone_sim PRIVATE DRONE_SIM_FRAME_LIMIT=${DRONE_SIM_F
 # drone_strict: same regime as the libs (-fno-rtti) - also required so that
 # UBSan's vptr check does not reference typeinfo that is never emitted.
 target_link_libraries(
-    drone_sim PRIVATE flight_core platform_common platform_sim protocol messaging services discovery log log_wire drone_warnings
-                      drone_strict)
+    drone_sim PRIVATE flight_core platform_common platform_sim protocol messaging discovery
+                      status_provider telemetry_provider tuning_provider ota_provider ota_flight_gate
+                      log log_provider drone_warnings drone_strict)

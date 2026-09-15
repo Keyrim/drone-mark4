@@ -11,10 +11,6 @@
 #include <cstring>
 
 #include "flight_core/types.hpp"
-#include "platform_common/envelope_io.hpp"
-#include "protocol/envelope.hpp"
-#include "transport/frame.hpp"
-#include "transport/transport.hpp"
 
 namespace mark4
 {
@@ -28,6 +24,9 @@ namespace mark4
     /// been up, which is not a property of the run: two identical runs played
     /// at different absolute times must hash equal, and that is precisely
     /// what makes the number worth comparing.
+    ///
+    /// Nothing here reaches the wire: the number is logged when the run
+    /// seals, and whoever compares two runs reads it there.
     ///
     /// The RC state is deliberately left out of the hash. It arrives
     /// out-of-band, paced by the host wall clock rather than by the plant
@@ -50,19 +49,8 @@ namespace mark4
         /// + gyro (12) + accel (12) + baro (4) + motors (16).
         static constexpr std::size_t HASHED_BYTES_PER_FRAME = 52U;
 
-        /// Frames between two stats messages when nothing changed: a consumer
-        /// that joined late still learns where the run stands, without the
-        /// stream becoming a second telemetry.
-        static constexpr std::uint32_t PUBLISH_PERIOD_FRAMES = 50U;
-
         static_assert(std::endian::native == std::endian::little,
                       "the hash is defined over little-endian bytes");
-
-        /// @param transport transport the run stats are broadcast on
-        explicit SimRunTracker(Transport &transport)
-            : m_transport(transport)
-        {
-        }
 
         /// @brief Opens a run: everything measured from here on belongs to it.
         /// @param runId reset counter of the run being measured
@@ -137,39 +125,6 @@ namespace mark4
             m_linkSeen = true;
         }
 
-        /// @brief Broadcasts where the run stands, when it is worth saying:
-        ///        on every change of the run or of its flags, and otherwise
-        ///        once per PUBLISH_PERIOD_FRAMES. Called once per stepped
-        ///        frame; the pacing is this class's business, not the
-        ///        caller's.
-        void publish()
-        {
-            ++m_framesSincePublish;
-            const bool changed = !m_everPublished || m_sealed != m_publishedSealed ||
-                                 m_degraded != m_publishedDegraded || m_runId != m_publishedRunId;
-            if (!changed && m_framesSincePublish < PUBLISH_PERIOD_FRAMES)
-            {
-                return;
-            }
-            m_framesSincePublish = 0U;
-            m_publishedSealed = m_sealed;
-            m_publishedDegraded = m_degraded;
-            m_publishedRunId = m_runId;
-            m_everPublished = true;
-
-            mark4_Envelope envelope = mark4_Envelope_init_zero;
-            envelope.which_body = mark4_Envelope_sim_run_stats_tag;
-            mark4_SimRunStats &stats = envelope.body.sim_run_stats;
-            stats.run_id = m_runId;
-            stats.final = m_sealed;
-            stats.degraded = m_degraded;
-            stats.run_start_us = m_runStartUs;
-            stats.run_hash = m_hash;
-            stats.duplicate_frames = m_duplicateFrames;
-            stats.lockstep_timeouts = m_lockstepTimeouts;
-            static_cast<void>(sendEnvelope(m_transport, BROADCAST_NODE, envelope));
-        }
-
         /// @return reset counter of the run being measured
         [[nodiscard]] std::uint32_t runId() const
         {
@@ -219,22 +174,16 @@ namespace mark4
         }
 
       private:
-        Transport &m_transport;                                ///< output, not owned
         std::uint64_t m_hash = FNV_OFFSET_BASIS;               ///< running trajectory hash
         std::uint64_t m_runStartUs = 0U;                       ///< simulated start of the run [us]
         std::uint32_t m_hashWindowUs = DEFAULT_HASH_WINDOW_US; ///< hashed window [us]
         std::uint32_t m_hashedFrames = 0U;                     ///< frames folded in
         std::uint32_t m_lockstepTimeouts = 0U;                 ///< last plant timeout count
         std::uint32_t m_duplicateFrames = 0U;                  ///< last resend count
-        std::uint32_t m_framesSincePublish = 0U;               ///< frames since the last message
         std::uint32_t m_runId = 0U;                            ///< reset counter of the run
-        std::uint32_t m_publishedRunId = 0U;                   ///< run id of the last message
-        bool m_publishedSealed = false;                        ///< seal flag of the last message
-        bool m_publishedDegraded = false; ///< degraded flag of the last message
-        bool m_everPublished = false;     ///< a message has gone out
-        bool m_running = false;           ///< a run is open
-        bool m_sealed = false;            ///< the window elapsed
-        bool m_degraded = false;          ///< the link lost a tick
-        bool m_linkSeen = false;          ///< a link report was taken
+        bool m_running = false;                                ///< a run is open
+        bool m_sealed = false;                                 ///< the window elapsed
+        bool m_degraded = false;                               ///< the link lost a tick
+        bool m_linkSeen = false;                               ///< a link report was taken
     };
 } // namespace mark4

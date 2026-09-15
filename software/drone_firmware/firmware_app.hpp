@@ -11,12 +11,11 @@
 #include "discovery/discovery.hpp"
 #include "flight_core/flight_core.hpp"
 #include "flight_core/types.hpp"
-#include "log/wire.hpp"
+#include "log/provider.hpp"
 #include "messaging/messenger.hpp"
 #include "ota/updater.hpp"
 #include "platform_common/frame_telemetry.hpp"
 #include "platform_common/rc_tracker.hpp"
-#include "platform_common/status_publisher.hpp"
 #include "platform_stm32/bmp581.hpp"
 #include "platform_stm32/board.hpp"
 #include "platform_stm32/clock_stm32.hpp"
@@ -30,6 +29,7 @@
 #include "platform_stm32/sensor_source_stm32.hpp"
 #include "platform_stm32/uart1_stream.hpp"
 #include "protocol/envelope.hpp"
+#include "status/status_provider.hpp"
 #include "services/flight_ota_gate.hpp"
 #include "services/ota_service.hpp"
 #include "services/telemetry_service.hpp"
@@ -46,10 +46,10 @@ namespace mark4
     /// main(), passed by reference: no singleton.
     ///
     /// The board is one transport node with one link, USART1 to the ESP32
-    /// relay. What it reports unasked (status, log lines) is a broadcast
-    /// the relay puts on the LAN; what it answers (telemetry, tuning and
-    /// updater replies) goes to the node that asked, through the messenger.
-    /// Commands reach it as unicasts to its node id, or as broadcasts.
+    /// relay. What it streams (status, log lines, telemetry samples) goes to
+    /// the nodes that subscribed to it, and what it answers goes to the node
+    /// that asked: everything it emits is a unicast the relay puts on the
+    /// LAN. Commands reach it as unicasts to its node id.
     class FirmwareApp
     {
       public:
@@ -85,8 +85,8 @@ namespace mark4
         {
           public:
             /// Body tags this handler consumes.
-            static constexpr std::array<pb_size_t, 3> TAGS = {
-                mark4_Envelope_rc_tag, mark4_Envelope_reboot_tag, mark4_Envelope_log_control_tag};
+            static constexpr std::array<pb_size_t, 2> TAGS = {mark4_Envelope_rc_tag,
+                                                              mark4_Envelope_reboot_tag};
 
             /// @param messenger messenger to attach to
             /// @param app composition the commands act on
@@ -118,15 +118,8 @@ namespace mark4
         /// @param nowUs current instant [us]
         void pollTransport(std::uint64_t nowUs);
 
-        /// @brief Route of every log line and of the module table: a
-        ///        transport broadcast, like everything this board emits.
-        static bool SendLog(void *context, const std::uint8_t *data, std::size_t size);
-
         /// @brief Clock the log records are stamped with.
         static std::uint64_t LogClock(void *context);
-
-        /// @brief Broadcasts the module table (LogModules pages).
-        void publishLogModules();
 
         // Declaration order = construction order; dependencies are
         // injected by reference, so a service may only depend on those
@@ -151,13 +144,15 @@ namespace mark4
         std::optional<mark4::Discovery>
             m_discovery; ///< who this board is, once its image identity is read
         mark4::RttSink m_rttSink;
-        mark4::TransportSink m_transportSink{&FirmwareApp::SendLog, this};
+        /// This board's log on the wire: the lines to whoever subscribed, the
+        /// module table one page per request, the levels.
+        mark4::LogProvider m_logProvider{m_messenger};
         mark4::I2cBus m_bus;
         mark4::Mpu6050 m_imu{m_bus};
         mark4::Bmp581 m_baro{m_bus};
         mark4::SensorSourceStm32 m_sensorSource{m_imu, m_baro, m_clock};
         mark4::MotorSinkDshot m_motorSink;
-        mark4::StatusPublisher m_statusPublisher{m_transport};
+        mark4::StatusProvider m_statusProvider{m_messenger};
         mark4::RcTracker m_rcTracker;
         /// Declared before the core so the ids of the platform measures come
         /// first in the frozen table: the order of construction IS the order
@@ -193,8 +188,5 @@ namespace mark4
 
         /// A Reboot arrived, acted on after the poll.
         bool m_rebootRequested = false;
-
-        /// The module table goes out once the first keepalive did.
-        bool m_logModulesPublished = false;
     };
 } // namespace mark4

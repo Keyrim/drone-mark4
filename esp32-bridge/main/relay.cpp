@@ -4,8 +4,8 @@
 ///        node of its own too, present on both links through the transport's
 ///        keepalive: everything addressed to it goes through its messenger to
 ///        the handler of its tag, so it answers who it is when asked, it
-///        logs through the log library, it takes the LogControl and the
-///        Reboot addressed to it, and it updates itself over the air: the
+///        serves its log to whoever subscribes to it, it takes the Reboot
+///        addressed to it, and it updates itself over the air: the
 ///        same OtaUpdater the flight controller runs, over a store that
 ///        translates to the ESP-IDF OTA partitions, fed by the Ota* unicasts
 ///        a hub sends it.
@@ -33,7 +33,7 @@
 #include "discovery/discovery.hpp"
 #include "log/console_sink_posix.hpp"
 #include "log/module.hpp"
-#include "log/wire.hpp"
+#include "log/provider.hpp"
 #include "log_modules.hpp"
 #include "messaging/messenger.hpp"
 #include "ota/updater.hpp"
@@ -162,23 +162,13 @@ namespace mark4
 
         struct Relay;
 
-        /// @brief Route of this node's own log lines and module table, defined
-        ///        below the composition it reads.
-        bool sendLogLine(void *context, const std::uint8_t *data, std::size_t size);
-
-        /// @brief Publishes this node's module table, defined below the
-        ///        composition it reads.
-        /// @param relay the composition
-        void publishModules(Relay &relay);
-
         /// The node's own commands: what is neither the updater's business
         /// nor a frame passing through.
         class Commands final : public AbsMessageHandler
         {
           public:
             /// Body tags this handler consumes.
-            static constexpr std::array<pb_size_t, 2> TAGS = {mark4_Envelope_log_control_tag,
-                                                              mark4_Envelope_reboot_tag};
+            static constexpr std::array<pb_size_t, 1> TAGS = {mark4_Envelope_reboot_tag};
 
             /// @param messenger messenger to attach to
             /// @param relay composition the commands act on
@@ -259,8 +249,10 @@ namespace mark4
             /// handler of its tag; every handler below is declared after it.
             Messenger messenger{transport, pendingRequests}; ///< decodes for the handlers below
             PresenceLog presence{transport};                 ///< one line per node up or gone
-            TransportSink logSink{&sendLogLine, this};       ///< its lines, as broadcasts
-            Commands commands{messenger, *this};             ///< the LogControl and the Reboot
+            /// Its log on the wire: the lines to whoever subscribed, the
+            /// module table one page per request, the levels.
+            LogProvider logProvider{messenger};
+            Commands commands{messenger, *this}; ///< the Reboot
             Discovery discovery;                             ///< who this node is, on request
             RelayOtaGate otaGate;                            ///< what the updater asks of a radio
             FirmwareStoreEsp32 store;                        ///< the two OTA partitions
@@ -283,32 +275,14 @@ namespace mark4
             }
         };
 
-        bool sendLogLine(void *context, const std::uint8_t *data, std::size_t size)
-        {
-            return static_cast<Relay *>(context)->transport.send(BROADCAST_NODE, data, size);
-        }
-
-        /// @brief Publishes this node's module table, as any node does after
-        ///        its first keepalive and on every level change.
-        /// @param relay the composition
-        void publishModules(Relay &relay)
-        {
-            static_cast<void>(logPublishModules(&sendLogLine, &relay));
-        }
-
         bool Commands::onMessage(std::uint32_t src,
                                  const mark4_Envelope &envelope,
                                  std::uint64_t nowUs)
         {
             static_cast<void>(nowUs);
+            static_cast<void>(m_relay);
             switch (envelope.which_body)
             {
-                case mark4_Envelope_log_control_tag:
-                    if (logHandleControl(envelope.body.log_control))
-                    {
-                        publishModules(m_relay);
-                    }
-                    break;
                 case mark4_Envelope_reboot_tag:
                     // The end of an update session: a staged image boots as
                     // the IDF bootloader's one-shot trial, anything else boots
@@ -436,7 +410,7 @@ extern "C" void relayRun(void)
     // broadcast of ours can come back from, so the echo is dropped instead
     // of counted as a duplicate of every frame relayed.
     relay.lan.addLocalHost(ownAddress());
-    static_cast<void>(logAddSink(relay.logSink));
+    static_cast<void>(logAddSink(relay.logProvider));
     BOOT.info("boot: node %08" PRIx32 " relay build %lu %s wire %08lx",
               relay.transport.nodeId(),
               static_cast<unsigned long>(BRIDGE_BUILD_EPOCH),
@@ -448,7 +422,6 @@ extern "C" void relayRun(void)
               static_cast<unsigned>(relay.lan.discoveryPort()));
 
     std::int64_t nextStatsUs = esp_timer_get_time() + STATS_PERIOD_US;
-    bool modulesPublished = false;
     for (;;)
     {
         // The messenger polls the transport and hands what is addressed to
@@ -463,12 +436,6 @@ extern "C" void relayRun(void)
                 relay.sessionWasOpen = relay.updater.sessionActive();
                 OTA.info(relay.sessionWasOpen ? "update session open" : "update session closed");
             }
-        }
-        if (!modulesPublished)
-        {
-            // The first poll sent the first keepalive: the table follows it.
-            modulesPublished = true;
-            publishModules(relay);
         }
         const std::int64_t nowUs = esp_timer_get_time();
         if (nowUs >= nextStatsUs)

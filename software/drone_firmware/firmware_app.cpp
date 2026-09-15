@@ -58,19 +58,9 @@ namespace
 
 namespace mark4
 {
-    bool FirmwareApp::SendLog(void *context, const std::uint8_t *data, std::size_t size)
-    {
-        return static_cast<FirmwareApp *>(context)->m_transport.send(BROADCAST_NODE, data, size);
-    }
-
     std::uint64_t FirmwareApp::LogClock(void *context)
     {
         return static_cast<FirmwareApp *>(context)->m_clock.nowUs();
-    }
-
-    void FirmwareApp::publishLogModules()
-    {
-        static_cast<void>(logPublishModules(&FirmwareApp::SendLog, this));
     }
 
     bool FirmwareApp::init()
@@ -100,7 +90,7 @@ namespace mark4
             BOOT.error("transport: uart init failed");
             return false;
         }
-        static_cast<void>(logAddSink(m_transportSink));
+        static_cast<void>(logAddSink(m_logProvider));
         // The identity is whatever the packaging script stamped into this
         // slot's image header: unstamped (SWD-flashed) images carry erased
         // bytes, reported as 0xFFFFFFFF and an empty hash.
@@ -149,7 +139,7 @@ namespace mark4
         BOOT.info("loop: %lu Hz, timer paced; status: 1 message / %lu frames; "
                   "rc fail-safe %lu ms",
                   static_cast<unsigned long>(SensorSourceStm32::FRAME_RATE_HZ),
-                  static_cast<unsigned long>(StatusPublisher::DECIMATION),
+                  static_cast<unsigned long>(StatusProvider::STATUS_PERIOD_FRAMES),
                   static_cast<unsigned long>(RcTracker::RC_TIMEOUT_US / US_PER_MS));
         // Last: freezing the registry means every object holding a measure
         // must already exist.
@@ -186,12 +176,6 @@ namespace mark4
     void FirmwareApp::pollTransport(std::uint64_t nowUs)
     {
         m_messenger.poll(nowUs);
-        if (!m_logModulesPublished)
-        {
-            // The first poll sent the first keepalive: the table follows it.
-            m_logModulesPublished = true;
-            publishLogModules();
-        }
     }
 
     FirmwareApp::Commands::Commands(mark4::Messenger &messenger, FirmwareApp &app)
@@ -215,12 +199,6 @@ namespace mark4
             case mark4_Envelope_reboot_tag:
                 // Acted on after the poll, by the loop that owns the reset.
                 m_app.m_rebootRequested = true;
-                return true;
-            case mark4_Envelope_log_control_tag:
-                if (logHandleControl(envelope.body.log_control))
-                {
-                    m_app.publishLogModules();
-                }
                 return true;
             default:
                 return false;
@@ -335,7 +313,7 @@ namespace mark4
             updateStatusLeds(m_core.flightPhase(), frame.rc.killSwitch, degraded, frames);
 
             ++frames;
-            m_statusPublisher.publish(
+            m_statusProvider.publish(
                 frame, actuators, m_core, !m_rcTracker.failsafeActive(frame.timestampUs));
             // Whatever a subscriber enabled, at the period it asked for; the
             // frame's own timestamp stamps the samples, so the service never

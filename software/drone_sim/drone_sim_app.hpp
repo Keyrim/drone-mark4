@@ -11,12 +11,11 @@
 #include "discovery/discovery.hpp"
 #include "flight_core/flight_core.hpp"
 #include "log/console_sink_posix.hpp"
-#include "log/wire.hpp"
+#include "log/provider.hpp"
 #include "messaging/messenger.hpp"
 #include "ota/updater.hpp"
 #include "platform_common/frame_telemetry.hpp"
 #include "platform_common/rc_tracker.hpp"
-#include "platform_common/status_publisher.hpp"
 #include "platform_sim/clock_sim.hpp"
 #include "platform_sim/firmware_store_sim.hpp"
 #include "platform_sim/motor_sink_sim.hpp"
@@ -25,6 +24,7 @@
 #include "platform_sim/sim_run_tracker.hpp"
 #include "platform_sim/truth_telemetry.hpp"
 #include "protocol/envelope.hpp"
+#include "status/status_provider.hpp"
 #include "services/flight_ota_gate.hpp"
 #include "services/ota_service.hpp"
 #include "services/telemetry_service.hpp"
@@ -151,10 +151,9 @@ namespace mark4
         {
           public:
             /// Body tags this handler consumes.
-            static constexpr std::array<pb_size_t, 4> TAGS = {mark4_Envelope_rc_tag,
+            static constexpr std::array<pb_size_t, 3> TAGS = {mark4_Envelope_rc_tag,
                                                               mark4_Envelope_reboot_tag,
-                                                              mark4_Envelope_sim_scenario_tag,
-                                                              mark4_Envelope_log_control_tag};
+                                                              mark4_Envelope_sim_scenario_tag};
 
             /// @param messenger messenger to attach to
             /// @param app composition the commands act on
@@ -186,15 +185,8 @@ namespace mark4
         ///         hash, and no build identity
         static mark4_Announce Identity();
 
-        /// @brief Route of every log line and of the module table: a
-        ///        transport broadcast, like everything this process emits.
-        static bool SendLog(void *context, const std::uint8_t *data, std::size_t size);
-
         /// @brief Clock the log records are stamped with: simulated time.
         static std::uint64_t LogClock(void *context);
-
-        /// @brief Broadcasts the module table (LogModules pages).
-        void publishLogModules();
 
         std::uint32_t m_maxFrames; ///< frame budget for run()
 
@@ -214,14 +206,16 @@ namespace mark4
         /// Who this process is, to whoever asks.
         mark4::Discovery m_discovery{m_messenger, Identity()};
         mark4::ConsoleSinkPosix m_consoleSink;
-        mark4::TransportSink m_transportSink{&DroneSimApp::SendLog, this};
+        /// This node's log on the wire: the lines to whoever subscribed, the
+        /// module table one page per request, the levels.
+        mark4::LogProvider m_logProvider{m_messenger};
         /// The sim link: the handler of the plant's sensor messages, and the
         /// one caller of the messenger's poll; the wait point of the flight
         /// loop sleeps on the link's sockets through it.
         mark4::PlantLink m_plantLink{m_messenger, m_transport, m_udpLink, m_clock};
         mark4::SensorSourceSim m_sensorSource{m_plantLink, m_clock};
         mark4::MotorSinkSim m_motorSink{m_plantLink};
-        mark4::StatusPublisher m_statusPublisher{m_transport};
+        mark4::StatusProvider m_statusProvider{m_messenger};
         mark4::RcTracker m_rcTracker;
         /// Declared before the core so the ids of the platform measures come
         /// first in the frozen table: the order of construction IS the order
@@ -232,7 +226,7 @@ namespace mark4
         mark4::FlightOtaGate m_otaGate{m_core};
         mark4::TruthTelemetry m_truthTelemetry;
         mark4::TuningService m_tuningService{m_messenger, m_core};
-        mark4::SimRunTracker m_runTracker{m_transport};
+        mark4::SimRunTracker m_runTracker;
         /// Last of the services: init() freezes the registry, so every
         /// object holding a measure must exist before it runs.
         mark4::TelemetryService m_telemetryService{m_messenger, MIN_TELEMETRY_PERIOD_MS};
@@ -273,8 +267,5 @@ namespace mark4
         /// Hash window asked for by the last scenario, applied to the run
         /// that scenario opens [us]; 0 means the tracker default.
         std::uint32_t m_pendingHashWindowUs = 0U;
-
-        /// The module table goes out once the first keepalive did.
-        bool m_logModulesPublished = false;
     };
 } // namespace mark4

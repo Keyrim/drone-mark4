@@ -16,8 +16,12 @@ namespace mark4
     inline constexpr std::uint16_t LOG_MODULE_PLATFORM_IMU = 16U;  ///< platform/imu
     inline constexpr std::uint16_t LOG_MODULE_PLATFORM_BARO = 17U; ///< platform/baro
     inline constexpr std::uint16_t LOG_MODULE_SIM_PLANT = 18U;     ///< sim/plant
-    /// platform/telemetry
-    inline constexpr std::uint16_t LOG_MODULE_PLATFORM_TELEMETRY = 19U;
+    /// telemetry/provider
+    inline constexpr std::uint16_t LOG_MODULE_TELEMETRY_PROVIDER = 19U;
+    /// status/provider
+    inline constexpr std::uint16_t LOG_MODULE_STATUS_PROVIDER = 20U;
+    inline constexpr std::uint16_t LOG_MODULE_LOG_PROVIDER = 21U;    ///< log/provider
+    inline constexpr std::uint16_t LOG_MODULE_TUNING_PROVIDER = 22U; ///< tuning/provider
     inline constexpr std::uint16_t LOG_MODULE_OTA_STORE = 32U;   ///< ota/store
     inline constexpr std::uint16_t LOG_MODULE_OTA_UPDATER = 33U; ///< ota/updater (the apps)
 

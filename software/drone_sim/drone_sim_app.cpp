@@ -108,19 +108,9 @@ namespace mark4
         return self;
     }
 
-    bool DroneSimApp::SendLog(void *context, const std::uint8_t *data, std::size_t size)
-    {
-        return static_cast<DroneSimApp *>(context)->m_transport.send(BROADCAST_NODE, data, size);
-    }
-
     std::uint64_t DroneSimApp::LogClock(void *context)
     {
         return static_cast<DroneSimApp *>(context)->m_clock.nowUs();
-    }
-
-    void DroneSimApp::publishLogModules()
-    {
-        static_cast<void>(logPublishModules(&DroneSimApp::SendLog, this));
     }
 
     bool DroneSimApp::init()
@@ -132,7 +122,7 @@ namespace mark4
             BOOT.error("transport initialization failed");
             return false;
         }
-        static_cast<void>(logAddSink(m_transportSink));
+        static_cast<void>(logAddSink(m_logProvider));
         BOOT.info("boot: node %08x on discovery udp/%u, wire %08x",
                   m_transport.nodeId(),
                   static_cast<unsigned>(m_udpLink.discoveryPort()),
@@ -149,7 +139,7 @@ namespace mark4
             return false;
         }
         BOOT.info("status: 1 message / %u frames; telemetry: %zu measures on demand",
-                  static_cast<unsigned>(StatusPublisher::DECIMATION),
+                  static_cast<unsigned>(StatusProvider::STATUS_PERIOD_FRAMES),
                   m_telemetryService.entryCount());
         return true;
     }
@@ -342,12 +332,6 @@ namespace mark4
                 m_app.m_motorSink.sendScenario(envelope.body.sim_scenario);
                 m_app.m_pendingHashWindowUs = envelope.body.sim_scenario.hash_window_us;
                 return true;
-            case mark4_Envelope_log_control_tag:
-                if (logHandleControl(envelope.body.log_control))
-                {
-                    m_app.publishLogModules();
-                }
-                return true;
             default:
                 return false;
         }
@@ -416,12 +400,6 @@ namespace mark4
                 continue; // the sim source always produces a frame
             }
             m_lastFrameUs = frame.timestampUs;
-            if (!m_logModulesPublished)
-            {
-                // The first poll sent the first keepalive: the table follows it.
-                m_logModulesPublished = true;
-                publishLogModules();
-            }
             // The time base of the frames changed (the platform switched
             // between its clock and a plant's, or the plant's clock started
             // over): nothing the flight core remembers about time applies,
@@ -517,14 +495,14 @@ namespace mark4
                 // measurable at all.
                 m_truthTelemetry.update(m_sensorSource.truth(), m_core.attitude());
             }
-            // The plant's exact state rides next to the estimate, so a ground
-            // tool compares the two sample by sample; a frame without sensors
-            // has no plant behind it and no truth.
-            m_statusPublisher.publish(frame,
-                                      actuators,
-                                      m_core,
-                                      !m_rcTracker.failsafeActive(frame.timestampUs),
-                                      frame.imuValid ? &m_sensorSource.truth() : nullptr);
+            // The plant's exact state rides next to the estimate, so a
+            // consumer compares the two sample by sample; a frame without
+            // sensors has no plant behind it and no truth.
+            m_statusProvider.publish(frame,
+                                     actuators,
+                                     m_core,
+                                     !m_rcTracker.failsafeActive(frame.timestampUs),
+                                     frame.imuValid ? &m_sensorSource.truth() : nullptr);
             // Whatever a subscriber enabled, at the period it asked for; the
             // frame's own timestamp stamps the samples, so the service never
             // reads a clock either.
@@ -540,7 +518,6 @@ namespace mark4
                 m_runTracker.update(frame, actuators);
                 m_runTracker.noteLink(m_sensorSource.lockstepTimeouts(),
                                       m_sensorSource.duplicateFrameCount());
-                m_runTracker.publish();
             }
             if ((steps % LINK_DEBUG_PERIOD_FRAMES) == 0U)
             {
