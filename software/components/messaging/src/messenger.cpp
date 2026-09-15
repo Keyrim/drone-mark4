@@ -109,17 +109,17 @@ namespace mark4
         return true;
     }
 
-    bool Messenger::request(std::uint32_t dst,
-                            mark4_Envelope &envelope,
-                            AbsMessageHandler &owner,
-                            RequestPolicy policy)
+    std::uint32_t Messenger::request(std::uint32_t dst,
+                                     mark4_Envelope &envelope,
+                                     AbsMessageHandler &owner,
+                                     RequestPolicy policy)
     {
         // A node the transport does not know is not asked anything: the
         // caller acts on onNodeUp() instead.
         if (dst == BROADCAST_NODE || m_transport.findNode(dst) == nullptr)
         {
             ++m_refused;
-            return false;
+            return 0U;
         }
         PendingRequest *slot = nullptr;
         for (PendingRequest &entry : m_pending)
@@ -133,14 +133,14 @@ namespace mark4
         if (slot == nullptr)
         {
             ++m_refused;
-            return false;
+            return 0U;
         }
         envelope.request_id = nextId();
         std::size_t size = 0U;
         if (!encodeEnvelope(envelope, slot->bytes.data(), slot->bytes.size(), size))
         {
             ++m_refused;
-            return false;
+            return 0U;
         }
         slot->used = true;
         slot->dst = dst;
@@ -157,7 +157,7 @@ namespace mark4
         // A first send the transport refuses (a full UART ring) is kept all
         // the same: the retry is exactly what covers it.
         emit(*slot);
-        return true;
+        return slot->id;
     }
 
     std::uint32_t Messenger::nextId()

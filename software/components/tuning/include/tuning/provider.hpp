@@ -204,7 +204,7 @@ namespace mark4
         /// @param envelope answer to send
         void send(std::uint32_t dst, mark4_Envelope &envelope)
         {
-            if (request(dst, envelope))
+            if (request(dst, envelope) != 0U)
             {
                 ++m_answerCount;
             }

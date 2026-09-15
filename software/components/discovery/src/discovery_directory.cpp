@@ -244,7 +244,7 @@ namespace mark4
         mark4_Envelope question = mark4_Envelope_init_zero;
         question.which_body = mark4_Envelope_identity_request_tag;
         const RequestPolicy policy{IDENTITY_TIMEOUT_US, IDENTITY_RETRIES};
-        if (!request(entry.id, question, policy))
+        if (request(entry.id, question, policy) == 0U)
         {
             // The transport does not hold the node yet, or the pending table
             // is full: the entry stays untouched and the next tick asks.

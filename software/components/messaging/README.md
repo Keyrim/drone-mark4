@@ -72,6 +72,23 @@ finds the table full, removes the node on `onNodeDown()`, and walks the
 table to emit. `N` is a constant of each stream, small because a board's
 link pays every entry.
 
+## Tables
+
+`messaging/table_pull.hpp` is the walk of one paged table as the consumer
+that asks for it keeps it: `TablePull<T, MAX>`, a fixed array with
+`reset()`, `applyPage(total, cursor, items)`, `abandon()`, the reads
+`complete()`, `abandoned()`, `cursor()`, `total()`, `size()`, `items()` and
+`Capacity()`, and the id of the page request still outstanding
+(`requestId()` / `setRequestId()`). The consumer sends the page request
+itself, because it is the only one that knows the message type, and hands
+the id back; `applyPage()` ignores a page whose cursor is not the one the
+walk waits on (a duplicate or a stale answer), restarts the table on a page
+at cursor 0, appends up to MAX and stops there, advances the cursor by the
+item count and marks the walk complete when the cursor reaches the total or
+the page is empty. A page request given up on reaches the consumer as
+`onRequestFailed(dst, id)`, and an id equal to the pull's `requestId()`
+abandons it.
+
 ## Dispatch
 
 `poll(nowUs)` drains the transport once. For each payload delivered to this
@@ -126,9 +143,14 @@ rest of the composition, not on every frame.
 ```cpp
 struct RequestPolicy { std::uint64_t periodUs = 500'000U; std::uint8_t retries = 5U; };
 // inside a handler, which is the owner of what it sends:
-request(dst, envelope, RequestPolicy{IDENTITY_TIMEOUT_US, IDENTITY_RETRIES});
+std::uint32_t id = request(dst, envelope, RequestPolicy{IDENTITY_TIMEOUT_US, IDENTITY_RETRIES});
 void onRequestFailed(std::uint32_t dst, std::uint32_t requestId) override;  // given up on
 ```
+
+`request()` returns the id it took, never 0, and 0 when it refused. Keep the
+id where `onRequestFailed()` has something to decide with it (a table pull
+abandons itself, a subscribe leaves its flag false) and drop it where it has
+not.
 
 A message sent with `request()` carries a `request_id` drawn from a counter
 of this node's own (never 0, wrapping back to 1), so a request is the pair

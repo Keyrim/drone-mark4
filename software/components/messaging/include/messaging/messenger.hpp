@@ -241,13 +241,14 @@ namespace mark4
         /// @param envelope message to send; its request_id is written here
         /// @param owner handler told when the request is given up on
         /// @param policy how long this request is retried
-        /// @return true when the request was taken; a first send the
-        ///         transport refused (a full UART ring) is kept and retried,
-        ///         so this says nothing about the frame having left
-        bool request(std::uint32_t dst,
-                     mark4_Envelope &envelope,
-                     AbsMessageHandler &owner,
-                     RequestPolicy policy);
+        /// @return the request id taken, never 0; 0 when the request was
+        ///         refused. A first send the transport refused (a full UART
+        ///         ring) is kept and retried, so a non-zero id says nothing
+        ///         about the frame having left
+        std::uint32_t request(std::uint32_t dst,
+                              mark4_Envelope &envelope,
+                              AbsMessageHandler &owner,
+                              RequestPolicy policy);
 
         /// @return the next request id of this node: a counter of its own,
         ///         never 0, so a request is the pair (node, id)
@@ -404,10 +405,12 @@ namespace mark4
         /// @param dst node to reach
         /// @param envelope message to send; its request_id is written here
         /// @param policy how long this one is retried
-        /// @return true when the request was taken
-        bool request(std::uint32_t dst,
-                     mark4_Envelope &envelope,
-                     RequestPolicy policy = RequestPolicy{})
+        /// @return the request id taken, never 0; 0 when the request was
+        ///         refused. Keep it where onRequestFailed() has something to
+        ///         decide, drop it where it has not.
+        std::uint32_t request(std::uint32_t dst,
+                              mark4_Envelope &envelope,
+                              RequestPolicy policy = RequestPolicy{})
         {
             return m_messenger.request(dst, envelope, *this, policy);
         }

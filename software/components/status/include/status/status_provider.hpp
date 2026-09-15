@@ -121,7 +121,7 @@ namespace mark4
             mark4_Envelope answer = mark4_Envelope_init_zero;
             answer.which_body = mark4_Envelope_status_subscribe_tag;
             answer.body.status_subscribe.enabled = applied;
-            if (request(src, answer))
+            if (request(src, answer) != 0U)
             {
                 ++m_answerCount;
             }
