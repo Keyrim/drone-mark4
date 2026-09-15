@@ -2,9 +2,10 @@
 
 /// @file
 /// @brief Who is around, by kind: a Discovery that also asks every node the
-///        transport hears who it is, with a timeout and retries, and keeps
-///        a directory of the answers for the nodes that need to know (a
-///        gateway, a phone, a plant, a campaign).
+///        messenger reports as present who it is, and keeps a directory of
+///        the answers for the nodes that need to know (a gateway, a phone,
+///        a plant, a campaign). The timeout and the retries are the
+///        messenger's, through the policy of the request it sends.
 
 #include <array>
 #include <cstddef>
@@ -38,8 +39,9 @@ namespace mark4
         mark4_Announce announce = mark4_Announce_init_zero; ///< valid when KNOWN
         bool wireMismatch = false;    ///< KNOWN and announce.wire_hash != WIRE_HASH
         std::uint8_t hops = 0U;       ///< distance in relays, from the transport's node
-        std::uint64_t askedUs = 0U;   ///< instant of the last request [us]
-        std::uint8_t requests = 0U;   ///< requests sent so far
+        std::uint64_t askedUs = 0U;   ///< instant the request was started [us]
+        std::uint8_t requests = 0U;   ///< requests started, 0 or 1: the resends are the
+                                      ///< messenger's and are not counted here
         std::uint64_t updatedUs = 0U; ///< instant of the last state change [us]
     };
 
@@ -77,24 +79,26 @@ namespace mark4
     /// A Discovery that also asks: who is around, by kind. For the nodes that
     /// need to know (a gateway, a phone, a plant, a campaign). It never reads
     /// a clock: the instants come from the messenger's poll and from tick().
-    class DiscoveryDirectory : public Discovery, public AbsPresenceListener
+    class DiscoveryDirectory : public Discovery
     {
       public:
         /// Body tags this handler consumes: the question and the answer.
         static constexpr std::array<pb_size_t, 2> TAGS = {mark4_Envelope_identity_request_tag,
                                                           mark4_Envelope_announce_tag};
 
-        /// Silence after a request before it is sent again [us].
+        /// Silence after a request before it is sent again [us]: the period
+        /// of the policy every IdentityRequest carries.
         static constexpr std::uint64_t IDENTITY_TIMEOUT_US = 500'000U;
 
-        /// Requests sent before giving up on a node.
+        /// Requests sent before giving up on a node: the retries of that
+        /// same policy, the first send included.
         static constexpr std::uint8_t IDENTITY_RETRIES = 5U;
 
         /// Entries kept at once: one per node the transport can hold.
         static constexpr std::size_t MAX_ENTRIES = Transport::MAX_NODES;
 
         /// Listeners one directory may hold; init() fails past that.
-        static constexpr std::size_t MAX_LISTENERS = 4U;
+        static constexpr std::size_t MAX_LISTENERS = 8U;
 
         /// @param messenger messenger the messages come from and leave by;
         ///        must outlive the directory
@@ -115,15 +119,22 @@ namespace mark4
                        std::uint64_t nowUs) override;
 
         /// @brief A node appeared: a PENDING entry the next tick() asks.
-        /// @param node the node, as the transport holds it
-        void onNodeUp(const Transport::Node &node) override;
+        /// @param nodeId the node
+        void onNodeUp(std::uint32_t nodeId) override;
 
         /// @brief A node expired: its entry goes, the listeners are told.
-        /// @param node the node, as it was
-        void onNodeDown(const Transport::Node &node) override;
+        /// @param nodeId the node
+        void onNodeDown(std::uint32_t nodeId) override;
 
-        /// @brief Asks, retries and gives up on time. Call it from the
-        ///        composition's loop, after the messenger's poll.
+        /// @brief The request to a node was never acknowledged: it is
+        ///        present and mute about itself, which is a state of its own.
+        /// @param dst node that never answered
+        /// @param requestId id of the request, unused
+        void onRequestFailed(std::uint32_t dst, std::uint32_t requestId) override;
+
+        /// @brief Asks the nodes that appeared and have not been asked yet.
+        ///        Call it from the composition's loop, after the messenger's
+        ///        poll. The resends and the giving up are the messenger's.
         /// @param nowUs current instant [us], from the caller's clock
         void tick(std::uint64_t nowUs);
 
@@ -159,7 +170,8 @@ namespace mark4
             return m_listenersOverflow == 0U;
         }
 
-        /// @return IdentityRequests sent, the refused ones included
+        /// @return IdentityRequests started, the refused ones included;
+        ///         what the messenger resent is its own counter
         [[nodiscard]] std::uint32_t requests() const
         {
             return m_requests;
@@ -171,7 +183,8 @@ namespace mark4
             return m_learnt;
         }
 
-        /// @return nodes given up on after IDENTITY_RETRIES requests
+        /// @return nodes given up on after the request to them ran out of
+        ///         sends
         [[nodiscard]] std::uint32_t muted() const
         {
             return m_muted;
@@ -202,14 +215,15 @@ namespace mark4
         /// @return mutable entry, nullptr when unknown
         DirectoryEntry *lookup(std::uint32_t id);
 
-        /// @brief Sends one IdentityRequest to the entry's node and counts it,
-        ///        whether or not the frame left: the transport may not know
-        ///        the node yet on the very first tick, the retry covers it.
+        /// @brief Sends one IdentityRequest to the entry's node as a request
+        ///        of its own policy, and counts it whether or not the
+        ///        messenger took it: a node the transport does not hold yet
+        ///        refuses it, and the next tick asks again.
         /// @param entry entry to ask
         /// @param nowUs current instant [us]
         void ask(DirectoryEntry &entry, std::uint64_t nowUs);
 
-        Transport &m_transport;                              ///< presence and hops, not owned
+        Transport &m_transport;                              ///< hops and addresses, not owned
         std::array<DirectoryEntry, MAX_ENTRIES> m_entries{}; ///< entries, dense prefix
         std::size_t m_count = 0U;                            ///< entries in m_entries
         std::array<AbsDirectoryListener *, MAX_LISTENERS> m_listeners{}; ///< attached, in order
@@ -219,6 +233,8 @@ namespace mark4
         std::uint32_t m_learnt = 0U;            ///< announces stored
         std::uint32_t m_muted = 0U;             ///< nodes given up on
         std::uint32_t m_dropped = 0U;           ///< nodes that found the table full
+        std::uint64_t m_lastTickUs = 0U;        ///< instant of the last tick(), stamped on a
+                                                ///< state change that happens outside one
     };
 
     inline AbsDirectoryListener::AbsDirectoryListener(DiscoveryDirectory &directory)

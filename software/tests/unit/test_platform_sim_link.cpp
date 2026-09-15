@@ -33,6 +33,9 @@ namespace
     /// Incarnation every transport of this file is built with: a test
     /// restarts nothing, so one constant stands for the random draw.
     constexpr std::uint32_t BOOT_ID = 0xB0071D00U;
+    /// Requests these benches keep at once: enough for what one test
+    /// exchanges, the size a board's composition uses.
+    constexpr std::size_t PENDING_REQUESTS = mark4::Messenger::BOARD_PENDING_REQUESTS;
     constexpr std::uint32_t DRONE_NODE = 0xD0000001U;
     constexpr std::uint32_t PLANT_NODE = 0xB1A00001U;
     constexpr std::uint32_t OTHER_PLANT_NODE = 0xB1A00002U;
@@ -181,7 +184,8 @@ namespace
         mark4::ClockSim clock;
         mark4::UdpLink udpLink;
         mark4::Transport transport{DRONE_NODE, BOOT_ID};
-        mark4::Messenger messenger{transport};
+        std::array<mark4::PendingRequest, PENDING_REQUESTS> pending{};
+        mark4::Messenger messenger{transport, pending};
         mark4::PlantLink link{messenger, transport, udpLink, clock};
         mark4::SensorSourceSim source{link, clock};
         mark4::MotorSinkSim sink{link};

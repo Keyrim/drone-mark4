@@ -203,9 +203,13 @@ namespace mark4
         mark4::ClockSim m_clock;
         mark4::UdpLink m_udpLink;
         mark4::Transport m_transport;
+        /// The requests waiting for their acknowledgement, owned here and
+        /// handed to the messenger as a span.
+        std::array<mark4::PendingRequest, mark4::Messenger::BOARD_PENDING_REQUESTS>
+            m_pendingRequests{};
         /// Every message addressed to this node goes through it to the one
         /// handler of its tag; every handler below is declared after it.
-        mark4::Messenger m_messenger{m_transport};
+        mark4::Messenger m_messenger{m_transport, m_pendingRequests};
         Commands m_commands{m_messenger, *this};
         /// Who this process is, to whoever asks.
         mark4::Discovery m_discovery{m_messenger, Identity()};

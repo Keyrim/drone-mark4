@@ -4,6 +4,7 @@
 /// @brief hub composition root: the gateway between the transport and the
 ///        websocket clients.
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -307,9 +308,13 @@ namespace mark4
         /// Complete at construction, before the directory copies it.
         mark4_Announce
             m_ownAnnounce; ///< this gateway's identity: the directory's self, row 0 of the table
-        Transport m_transport;                           ///< this hub as a transport node
-        Messenger m_messenger{m_transport};              ///< decodes for the handlers below
-        PresenceListener m_presence{m_transport, *this}; ///< its node table events
+        Transport m_transport; ///< this hub as a transport node
+        /// The requests waiting for their acknowledgement, owned here and
+        /// handed to the messenger as a span: one node appearing costs
+        /// several requests at once, and a gateway watches a whole LAN.
+        std::array<PendingRequest, Messenger::HUB_PENDING_REQUESTS> m_pendingRequests{};
+        Messenger m_messenger{m_transport, m_pendingRequests}; ///< decodes for the handlers below
+        PresenceListener m_presence{m_transport, *this};       ///< its node table events
         /// Who is who: asks every node that appears, keeps the answers.
         DiscoveryDirectory m_directory{m_messenger, m_transport, m_ownAnnounce}; ///< who is who
         IdentityListener m_identities{m_directory, *this};    ///< what the directory learns

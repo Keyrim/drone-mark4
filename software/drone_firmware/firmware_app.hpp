@@ -136,9 +136,14 @@ namespace mark4
         mark4::Uart1Stream m_uartStream;
         mark4::UartLink m_uartLink{m_uartStream};
         mark4::Transport m_transport{boardNodeId(), randomBootId()};
+        /// The requests waiting for their acknowledgement, owned here and
+        /// handed to the messenger as a span: a board talks to a handful of
+        /// nodes and every entry costs one encoded Envelope.
+        std::array<mark4::PendingRequest, mark4::Messenger::BOARD_PENDING_REQUESTS>
+            m_pendingRequests{};
         /// Every message addressed to this node goes through it to the one
         /// handler of its tag; every handler below is declared after it.
-        mark4::Messenger m_messenger{m_transport};
+        mark4::Messenger m_messenger{m_transport, m_pendingRequests};
         Commands m_commands{m_messenger, *this};
         /// Who this board is, to whoever asks. Optional because the answer
         /// carries the identity stamped in the running image, read from the

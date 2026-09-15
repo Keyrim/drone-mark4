@@ -47,8 +47,24 @@ message Envelope {
     OtaRevert ota_revert = 36;
     OtaAbort ota_abort = 37;
     OtaAck ota_ack = 38;
+    RequestAck ack = 40;
   }
+
+  // 0 when absent. A message carrying a non-zero id is a request: its
+  // sender resends it on its own policy until an Ack carrying the same id
+  // comes back from the destination, then gives up. The acknowledgement
+  // says "arrived" and nothing else; an answer that matters is a request
+  // of its own, numbered from the answering node's own counter.
+  uint32 request_id = 100;
 }
+
+// Acknowledges the arrival of one request, and says nothing of what was
+// done with it. The messenger of the receiving node sends it, the
+// messenger of the sending node consumes it: no handler ever sees one.
+// Named RequestAck rather than Ack because gateway.proto imports this file
+// into the same package and already holds an Ack of its own; the body is
+// the `ack` of the Envelope either way.
+message RequestAck {}
 
 // What kind of node is speaking.
 enum NodeKind {
@@ -72,12 +88,14 @@ enum Mcu {
   SIM = 200;  // desktop flight processes
 }
 
-// Asks one node who it is, unicast; the node answers with its Announce.
+// Asks one node who it is, unicast, as a request: it is resent until the
+// node acknowledges it. The node answers with its Announce.
 message IdentityRequest {
 }
 
-// Who a node is, unicast in answer to an IdentityRequest. Nothing sends
-// one unsolicited: presence on the wire is the transport's own keepalive.
+// Who a node is, unicast in answer to an IdentityRequest and sent as a
+// request of its own, so the asker acknowledges it. Nothing sends one
+// unsolicited: presence on the wire is the transport's own keepalive.
 message Announce {
   NodeKind kind = 1;
   string name = 2;           // free label, at most 16 characters

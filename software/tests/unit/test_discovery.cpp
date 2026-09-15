@@ -29,6 +29,9 @@ namespace
     /// Incarnation every transport of this file is built with: a test
     /// restarts nothing, so one constant stands for the random draw.
     constexpr std::uint32_t BOOT_ID = 0xB0071D00U;
+    /// Requests these benches keep at once: enough for what one test
+    /// exchanges, the size a board's composition uses.
+    constexpr std::size_t PENDING_REQUESTS = mark4::Messenger::BOARD_PENDING_REQUESTS;
     constexpr std::uint32_t NODE_ME = 0xD0000001U;
     constexpr std::uint32_t NODE_PEER = 0xD0000002U;
     constexpr std::uint32_t NODE_OTHER = 0xD0000003U;
@@ -141,7 +144,8 @@ namespace
     {
         mark4::RecordingLink link;
         mark4::Transport transport{NODE_ME, BOOT_ID};
-        mark4::Messenger messenger{transport};
+        std::array<mark4::PendingRequest, PENDING_REQUESTS> pending{};
+        mark4::Messenger messenger{transport, pending};
         mark4::DiscoveryDirectory directory{
             messenger, transport, announceOf(mark4_NodeKind_GATEWAY, "me")};
 
@@ -173,6 +177,16 @@ namespace
             link.deliver(node, NODE_ME, encode(envelope));
             messenger.poll(nowUs);
         }
+
+        /// @brief One turn of the composition's loop without a poll: the
+        ///        directory asks what it has not asked yet, then the
+        ///        messenger resends and gives up on what is past its policy.
+        /// @param nowUs instant of the turn
+        void tick(std::uint64_t nowUs)
+        {
+            directory.tick(nowUs);
+            messenger.tick(nowUs);
+        }
     };
 } // namespace
 
@@ -180,7 +194,8 @@ TEST_CASE("discovery answers an identity request with its announce", "[discovery
 {
     mark4::RecordingLink link;
     mark4::Transport transport{NODE_ME, BOOT_ID};
-    mark4::Messenger messenger{transport};
+    std::array<mark4::PendingRequest, PENDING_REQUESTS> pending{};
+    mark4::Messenger messenger{transport, pending};
     const mark4_Announce self = announceOf(mark4_NodeKind_DRONE_SIM, "drone_sim");
     mark4::Discovery discovery{messenger, self};
     REQUIRE(transport.addLink(link));
@@ -213,7 +228,7 @@ TEST_CASE("directory asks a node that appears, retries on the timeout and gives 
     REQUIRE(bench.directory.size() == 1U);
     CHECK(bench.directory.requests() == 0U); // no instant at node-up: nothing sent yet
 
-    bench.directory.tick(T0_US);
+    bench.tick(T0_US);
     CHECK(countSent(bench.link, mark4_Envelope_identity_request_tag, NODE_PEER) == 1U);
     CHECK(bench.directory.requests() == 1U);
     const mark4::DirectoryEntry *entry = bench.directory.find(NODE_PEER);
@@ -222,19 +237,22 @@ TEST_CASE("directory asks a node that appears, retries on the timeout and gives 
     CHECK(entry->requests == 1U);
     CHECK(entry->askedUs == T0_US);
 
-    bench.directory.tick(T0_US + 1U);
-    bench.directory.tick(T0_US + TIMEOUT_US - 1U);
+    bench.tick(T0_US + 1U);
+    bench.tick(T0_US + TIMEOUT_US - 1U);
     CHECK(countSent(bench.link, mark4_Envelope_identity_request_tag, NODE_PEER) == 1U);
 
-    bench.directory.tick(T0_US + TIMEOUT_US);
+    // The resends are the messenger's, on the policy the request carried:
+    // the directory started one request and counts one.
+    bench.tick(T0_US + TIMEOUT_US);
     CHECK(countSent(bench.link, mark4_Envelope_identity_request_tag, NODE_PEER) == 2U);
-    CHECK(bench.directory.requests() == 2U);
+    CHECK(bench.directory.requests() == 1U);
+    CHECK(bench.messenger.resent() == 1U);
 
     // Every timeout one more, until the retries are spent.
     for (std::uint8_t request = 3U; request <= mark4::DiscoveryDirectory::IDENTITY_RETRIES;
          ++request)
     {
-        bench.directory.tick(T0_US + TIMEOUT_US * (request - 1U));
+        bench.tick(T0_US + TIMEOUT_US * (request - 1U));
     }
     CHECK(countSent(bench.link, mark4_Envelope_identity_request_tag, NODE_PEER) ==
           mark4::DiscoveryDirectory::IDENTITY_RETRIES);
@@ -242,15 +260,16 @@ TEST_CASE("directory asks a node that appears, retries on the timeout and gives 
     CHECK(bench.directory.muted() == 0U);
 
     const std::uint64_t giveUpUs = T0_US + TIMEOUT_US * mark4::DiscoveryDirectory::IDENTITY_RETRIES;
-    bench.directory.tick(giveUpUs);
+    bench.tick(giveUpUs);
     CHECK(entry->state == mark4::DirectoryEntry::State::MUTE);
     CHECK(entry->updatedUs == giveUpUs);
     CHECK(bench.directory.muted() == 1U);
-    bench.directory.tick(giveUpUs + TIMEOUT_US);
-    bench.directory.tick(giveUpUs + TIMEOUT_US * 4U);
+    CHECK(bench.messenger.failed() == 1U);
+    bench.tick(giveUpUs + TIMEOUT_US);
+    bench.tick(giveUpUs + TIMEOUT_US * 4U);
     CHECK(countSent(bench.link, mark4_Envelope_identity_request_tag, NODE_PEER) ==
           mark4::DiscoveryDirectory::IDENTITY_RETRIES);
-    CHECK(bench.directory.requests() == mark4::DiscoveryDirectory::IDENTITY_RETRIES);
+    CHECK(bench.directory.requests() == 1U);
 }
 
 TEST_CASE("directory learns an announce and tells its listener of every change", "[discovery]")
@@ -296,7 +315,9 @@ TEST_CASE("directory learns an announce and tells its listener of every change",
     REQUIRE(spy.identities.size() == 3U);
     CHECK(spy.identities[2].wireMismatch);
 
-    // No further request for a node that answered.
+    // No further request for a node that answered: the directory starts
+    // none. What the messenger still holds for it is the request the peer
+    // never acknowledged, which is its own affair.
     bench.link.clear();
     bench.directory.tick(T0_US + TIMEOUT_US * 2U);
     CHECK(countSent(bench.link, mark4_Envelope_identity_request_tag, NODE_PEER) == 0U);
@@ -309,7 +330,7 @@ TEST_CASE("directory lists the known nodes of the wanted kinds", "[discovery]")
     bench.appear(NODE_PEER, T0_US);
     bench.appear(NODE_OTHER, T0_US);
     bench.appear(NODE_PLANT, T0_US);
-    bench.directory.tick(T0_US);
+    bench.tick(T0_US);
     REQUIRE(bench.directory.size() == 3U);
 
     // NODE_PEER answers as a drone, NODE_PLANT as a plant, NODE_OTHER never.
@@ -318,7 +339,7 @@ TEST_CASE("directory lists the known nodes of the wanted kinds", "[discovery]")
     for (std::uint8_t timeout = 1U; timeout <= mark4::DiscoveryDirectory::IDENTITY_RETRIES;
          ++timeout)
     {
-        bench.directory.tick(T0_US + TIMEOUT_US * timeout);
+        bench.tick(T0_US + TIMEOUT_US * timeout);
     }
     REQUIRE(bench.directory.find(NODE_OTHER) != nullptr);
     CHECK(bench.directory.find(NODE_OTHER)->state == mark4::DirectoryEntry::State::MUTE);

@@ -252,16 +252,19 @@ namespace mark4
             UartLink uart{stream}; ///< the board's link, serial framing
             UdpLink lan;           ///< the WiFi LAN, discovery port 47820
             Transport transport;   ///< the node, relaying between the two
+            /// The requests waiting for their acknowledgement, owned here
+            /// and handed to the messenger as a span.
+            std::array<PendingRequest, Messenger::BOARD_PENDING_REQUESTS> pendingRequests{};
             /// Every message addressed to this node goes through it to the one
             /// handler of its tag; every handler below is declared after it.
-            Messenger messenger{transport};            ///< decodes for the handlers below
-            PresenceLog presence{transport};           ///< one line per node up or gone
-            TransportSink logSink{&sendLogLine, this}; ///< its lines, as broadcasts
-            Commands commands{messenger, *this};       ///< the LogControl and the Reboot
-            Discovery discovery;                       ///< who this node is, on request
-            RelayOtaGate otaGate;                      ///< what the updater asks of a radio
-            FirmwareStoreEsp32 store;                  ///< the two OTA partitions
-            OtaUpdater updater{store};                 ///< the update session over them
+            Messenger messenger{transport, pendingRequests}; ///< decodes for the handlers below
+            PresenceLog presence{transport};                 ///< one line per node up or gone
+            TransportSink logSink{&sendLogLine, this};       ///< its lines, as broadcasts
+            Commands commands{messenger, *this};             ///< the LogControl and the Reboot
+            Discovery discovery;                             ///< who this node is, on request
+            RelayOtaGate otaGate;                            ///< what the updater asks of a radio
+            FirmwareStoreEsp32 store;                        ///< the two OTA partitions
+            OtaUpdater updater{store};                       ///< the update session over them
             /// The updater on the wire, absent until the store is ready: a
             /// node whose flash is not laid out for two slots claims no
             /// updater tag at all, which is the refusal it used to answer.

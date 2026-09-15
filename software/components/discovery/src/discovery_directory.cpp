@@ -29,7 +29,6 @@ namespace mark4
                                            Transport &transport,
                                            const mark4_Announce &self)
         : Discovery(messenger, self, TAGS),
-          AbsPresenceListener(transport),
           m_transport(transport)
     {
     }
@@ -81,9 +80,9 @@ namespace mark4
         return true;
     }
 
-    void DiscoveryDirectory::onNodeUp(const Transport::Node &node)
+    void DiscoveryDirectory::onNodeUp(std::uint32_t nodeId)
     {
-        DirectoryEntry *entry = lookup(node.id);
+        DirectoryEntry *entry = lookup(nodeId);
         if (entry == nullptr)
         {
             if (m_count >= MAX_ENTRIES)
@@ -96,16 +95,20 @@ namespace mark4
         }
         // No instant here: the entry waits for the next tick(), which asks a
         // PENDING entry with no request behind it at once. An id already
-        // present (the transport says up once per learn cycle, so it should
-        // not happen) starts over the same way.
+        // present (the transport says up once per learn cycle, and again for
+        // a node that rebooted, which starts over the same way) is reset.
         *entry = DirectoryEntry{};
-        entry->id = node.id;
-        entry->hops = node.hops;
+        entry->id = nodeId;
+        const Transport::Node *node = m_transport.findNode(nodeId);
+        if (node != nullptr)
+        {
+            entry->hops = node->hops;
+        }
     }
 
-    void DiscoveryDirectory::onNodeDown(const Transport::Node &node)
+    void DiscoveryDirectory::onNodeDown(std::uint32_t nodeId)
     {
-        DirectoryEntry *entry = lookup(node.id);
+        DirectoryEntry *entry = lookup(nodeId);
         if (entry == nullptr)
         {
             return;
@@ -118,36 +121,37 @@ namespace mark4
         m_count = last;
         for (std::size_t index = 0U; index < m_listenerCount; ++index)
         {
-            m_listeners[index]->onForgotten(node.id);
+            m_listeners[index]->onForgotten(nodeId);
         }
+    }
+
+    void DiscoveryDirectory::onRequestFailed(std::uint32_t dst, std::uint32_t requestId)
+    {
+        static_cast<void>(requestId); // one request per entry at a time
+        DirectoryEntry *entry = lookup(dst);
+        if (entry == nullptr || entry->state != DirectoryEntry::State::PENDING)
+        {
+            // Answered in the meantime, or gone: the request that ran out of
+            // sends has nothing left to say.
+            return;
+        }
+        entry->state = DirectoryEntry::State::MUTE;
+        entry->updatedUs = m_lastTickUs;
+        ++m_muted;
     }
 
     void DiscoveryDirectory::tick(std::uint64_t nowUs)
     {
+        m_lastTickUs = nowUs;
         for (std::size_t index = 0U; index < m_count; ++index)
         {
             DirectoryEntry &entry = m_entries[index];
-            if (entry.state != DirectoryEntry::State::PENDING)
-            {
-                continue;
-            }
-            if (entry.requests == 0U)
+            // Only the entries nobody has asked yet: once a request is with
+            // the messenger, the resends and the giving up are its business.
+            if (entry.state == DirectoryEntry::State::PENDING && entry.requests == 0U)
             {
                 ask(entry, nowUs);
-                continue;
             }
-            if (nowUs < entry.askedUs + IDENTITY_TIMEOUT_US)
-            {
-                continue;
-            }
-            if (entry.requests < IDENTITY_RETRIES)
-            {
-                ask(entry, nowUs);
-                continue;
-            }
-            entry.state = DirectoryEntry::State::MUTE;
-            entry.updatedUs = nowUs;
-            ++m_muted;
         }
     }
 
@@ -237,11 +241,18 @@ namespace mark4
 
     void DiscoveryDirectory::ask(DirectoryEntry &entry, std::uint64_t nowUs)
     {
-        mark4_Envelope request = mark4_Envelope_init_zero;
-        request.which_body = mark4_Envelope_identity_request_tag;
-        static_cast<void>(accessMessenger().send(entry.id, request));
+        mark4_Envelope question = mark4_Envelope_init_zero;
+        question.which_body = mark4_Envelope_identity_request_tag;
+        const RequestPolicy policy{IDENTITY_TIMEOUT_US, IDENTITY_RETRIES};
+        if (!request(entry.id, question, policy))
+        {
+            // The transport does not hold the node yet, or the pending table
+            // is full: the entry stays untouched and the next tick asks.
+            ++m_requests;
+            return;
+        }
         entry.askedUs = nowUs;
-        ++entry.requests;
+        entry.requests = 1U;
         ++m_requests;
     }
 } // namespace mark4

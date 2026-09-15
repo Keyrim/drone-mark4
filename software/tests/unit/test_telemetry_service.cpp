@@ -26,6 +26,9 @@ namespace
     /// Incarnation every transport of this file is built with: a test
     /// restarts nothing, so one constant stands for the random draw.
     constexpr std::uint32_t BOOT_ID = 0xB0071D00U;
+    /// Requests these benches keep at once: enough for what one test
+    /// exchanges, the size a board's composition uses.
+    constexpr std::size_t PENDING_REQUESTS = mark4::Messenger::BOARD_PENDING_REQUESTS;
     constexpr std::uint32_t NODE_SELF = 0x7E1E0000U;
     constexpr std::uint32_t NODE_GROUND = 0x67000001U;
     constexpr std::uint32_t NODE_OTHER = 0x67000002U;
@@ -108,9 +111,10 @@ namespace
         }
 
       private:
-        mark4::RecordingLink m_link;                      ///< the medium
-        mark4::Transport m_transport{NODE_SELF, BOOT_ID}; ///< this node
-        mark4::Messenger m_messenger{m_transport};        ///< what the service attaches to
+        mark4::RecordingLink m_link;                                     ///< the medium
+        mark4::Transport m_transport{NODE_SELF, BOOT_ID};                ///< this node
+        std::array<mark4::PendingRequest, PENDING_REQUESTS> m_pending{}; ///< requests kept
+        mark4::Messenger m_messenger{m_transport, m_pending}; ///< what the service attaches to
     };
 
     /// A handful of measures with known names, so a test knows what the

@@ -38,6 +38,9 @@ namespace
     /// Incarnation every transport of this file is built with: a test
     /// restarts nothing, so one constant stands for the random draw.
     constexpr std::uint32_t BOOT_ID = 0xB0071D00U;
+    /// Requests these benches keep at once: enough for what one test
+    /// exchanges, the size a board's composition uses.
+    constexpr std::size_t PENDING_REQUESTS = mark4::Messenger::BOARD_PENDING_REQUESTS;
     constexpr std::uint32_t DRONE_NODE = 0xD0000002U;
 
     /// @return a free UDP port of this host, released again on return
@@ -104,7 +107,8 @@ TEST_CASE("the plant's GDScript transport and codec agree with the C++ ones", "[
     mark4::Transport transport(DRONE_NODE, BOOT_ID);
     REQUIRE(transport.addLink(link));
     REQUIRE(transport.init());
-    mark4::Messenger messenger(transport);
+    std::array<mark4::PendingRequest, PENDING_REQUESTS> pending{};
+    mark4::Messenger messenger(transport, pending);
     mark4_Announce self = mark4_Announce_init_zero;
     self.kind = mark4_NodeKind_DRONE_SIM;
     self.mcu = mark4_Mcu_SIM;

@@ -33,9 +33,10 @@ namespace mark4
         mark4_Envelope answer = mark4_Envelope_init_zero;
         answer.which_body = mark4_Envelope_announce_tag;
         answer.body.announce = m_self;
-        // Whether the frame left is the messenger's count: the requester
-        // asks again if it did not.
-        static_cast<void>(m_messenger.send(src, answer));
+        // An answer that matters is a request of its own: the messenger
+        // keeps it until the requester acknowledges it, and gives up on its
+        // own policy. Whether this one was taken is that table's business.
+        static_cast<void>(request(src, answer));
         ++m_answered;
         return true;
     }
