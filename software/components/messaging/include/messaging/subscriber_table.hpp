@@ -17,8 +17,7 @@ namespace mark4
     /// board's link pays every entry.
     ///
     /// @tparam N node ids the table holds at most
-    template <std::size_t N>
-    class SubscriberTable
+    template <std::size_t N> class SubscriberTable
     {
       public:
         /// @brief Adds one node, if it is not there already.
@@ -87,7 +86,7 @@ namespace mark4
         }
 
         /// @return node ids the table holds at most
-        [[nodiscard]] static constexpr std::size_t capacity()
+        [[nodiscard]] static constexpr std::size_t Capacity()
         {
             return N;
         }

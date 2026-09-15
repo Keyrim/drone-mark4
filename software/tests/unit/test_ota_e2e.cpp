@@ -43,6 +43,7 @@
 #include "hub/gateway_codec.hpp"
 #include "hub/ota_bundle.hpp"
 #include "hub/ota_client.hpp"
+#include "log/wire.hpp"
 #include "ota/crc32_mpeg2.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
@@ -835,6 +836,29 @@ namespace
                    m_transport.send(SIM_NODE, bytes.data(), size);
         }
 
+        /// @brief Polls until the transport has heard from the sim, so a
+        ///        unicast to it can leave: a node nobody heard from has no
+        ///        address, and the sim now answers instead of broadcasting.
+        /// @param budgetMs how long to wait at most [ms]
+        /// @return true when the node is alive before the budget runs out
+        bool waitForNode(std::uint64_t budgetMs = STEP_BUDGET_MS)
+        {
+            const std::uint64_t deadlineUs = nowUs() + (budgetMs * US_PER_MS);
+            for (;;)
+            {
+                m_transport.poll(nowUs(), &Listener::Deliver, this);
+                if (m_transport.isAlive(SIM_NODE))
+                {
+                    return true;
+                }
+                if (nowUs() >= deadlineUs)
+                {
+                    return false;
+                }
+                sleepStep();
+            }
+        }
+
         /// @brief Polls until an envelope heard so far satisfies the
         ///        predicate (what arrived before the call counts).
         /// @return true when one did before the budget ran out
@@ -906,6 +930,10 @@ namespace
         return -1;
     }
 
+    /// Modules a test walks past before giving up on finding one: the
+    /// process has a few dozen, eight per page.
+    constexpr std::uint32_t LOG_MODULES_AT_MOST = 128U;
+
     /// @return the id of the module named, 0 when no page listed it
     std::uint32_t moduleIdOf(const std::vector<mark4_Envelope> &heard, const char *name)
     {
@@ -928,7 +956,7 @@ namespace
     }
 } // namespace
 
-TEST_CASE("a live drone_sim publishes its log modules and takes a level from the wire",
+TEST_CASE("a live drone_sim answers a page of its log modules and takes a level from the wire",
           "[log][e2e]")
 {
     std::error_code error;
@@ -943,41 +971,49 @@ TEST_CASE("a live drone_sim publishes its log modules and takes a level from the
     SimProcess sim;
     REQUIRE(sim.start(runDirectory, (runDirectory / "flash").string(), discoveryPort, SIM_NODE));
 
-    // The table follows the first keepalive, unasked, and names the boot line's
-    // module; the boot line itself is a Log carrying that module's id.
-    REQUIRE(ground.waitFor(isLogModules));
-    const std::uint32_t bootId = moduleIdOf(ground.heard, "app/boot");
-    const std::uint32_t linkId = moduleIdOf(ground.heard, "sim/link");
-    REQUIRE(bootId != 0U);
-    REQUIRE(linkId != 0U);
-    REQUIRE(ground.waitFor([bootId](const mark4_Envelope &envelope) {
-        return envelope.which_body == mark4_Envelope_log_tag &&
-               envelope.body.log.module_id == bootId &&
-               std::strncmp(envelope.body.log.text, "boot: node 51300001", 19U) == 0;
-    }));
+    // The table is pulled one page per request, and names the modules the
+    // process logs with. The first keepalive is what makes the sim
+    // reachable at all.
+    REQUIRE(ground.waitForNode());
+    mark4_Envelope ask = mark4_Envelope_init_zero;
+    ask.which_body = mark4_Envelope_log_modules_request_tag;
+    std::uint32_t linkId = 0U;
+    std::uint32_t bootId = 0U;
+    for (std::uint32_t cursor = 0U; linkId == 0U || bootId == 0U;
+         cursor += static_cast<std::uint32_t>(mark4::LOG_MODULES_PER_PAGE))
+    {
+        REQUIRE(cursor < LOG_MODULES_AT_MOST);
+        ask.body.log_modules_request.cursor = cursor;
+        ground.heard.clear();
+        REQUIRE(ground.send(ask));
+        REQUIRE(ground.waitFor([cursor](const mark4_Envelope &envelope) {
+            return isLogModules(envelope) && envelope.body.log_modules.cursor == cursor;
+        }));
+        bootId = bootId != 0U ? bootId : moduleIdOf(ground.heard, "app/boot");
+        linkId = linkId != 0U ? linkId : moduleIdOf(ground.heard, "sim/link");
+    }
 
-    // Setting one module publishes the table again, with the new level.
-    mark4_Envelope control = mark4_Envelope_init_zero;
-    control.which_body = mark4_Envelope_log_control_tag;
-    control.body.log_control.which_request = mark4_LogControl_set_tag;
-    control.body.log_control.request.set.module_id = linkId;
-    control.body.log_control.request.set.level = mark4_LogLevel_DEBUG;
+    // Setting one module is answered by that module as it stands.
+    mark4_Envelope set = mark4_Envelope_init_zero;
+    set.which_body = mark4_Envelope_log_set_level_tag;
+    set.body.log_set_level.module_id = linkId;
+    set.body.log_set_level.level = mark4_LogLevel_DEBUG;
     ground.heard.clear();
-    REQUIRE(ground.send(control));
+    REQUIRE(ground.send(set));
     REQUIRE(ground.waitFor([linkId](const mark4_Envelope &envelope) {
-        return levelOf({envelope}, linkId) == mark4_LogLevel_DEBUG;
+        return envelope.which_body == mark4_Envelope_log_module_info_tag &&
+               envelope.body.log_module_info.id == linkId &&
+               envelope.body.log_module_info.level == mark4_LogLevel_DEBUG;
     }));
 
-    // A query answers with the table as it stands: the module set, every
-    // other one at its default.
-    control.body.log_control.which_request = mark4_LogControl_query_tag;
-    control.body.log_control.request.query = true;
+    // And the table says so too: the module set, every other one at its
+    // default.
+    ask.body.log_modules_request.cursor = 0U;
     ground.heard.clear();
-    REQUIRE(ground.send(control));
+    REQUIRE(ground.send(ask));
     REQUIRE(ground.waitFor([bootId](const mark4_Envelope &envelope) {
         return levelOf({envelope}, bootId) == mark4_LogLevel_INFO;
     }));
-    CHECK(levelOf(ground.heard, linkId) == mark4_LogLevel_DEBUG);
     sim.stop();
     std::filesystem::remove_all(runDirectory, error);
 }

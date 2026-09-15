@@ -1,12 +1,14 @@
 /// @file
 /// @brief The log library: modules register themselves, a level gates the
-///        formatting, a prefix moves a whole area, the text truncates, the
-///        transport sink rate limits and reports it, the wire helpers page
-///        the table and carry out a LogControl.
+///        formatting, a prefix moves a whole area, the text truncates, and
+///        the provider rate limits the line stream, pages the module table
+///        and moves one level from the wire.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -14,7 +16,13 @@
 
 #include "log/module.hpp"
 #include "log/module_ids.hpp"
+#include "log/provider.hpp"
 #include "log/wire.hpp"
+#include "messaging/messenger.hpp"
+#include "protocol/envelope.hpp"
+#include "recording_link.hpp"
+#include "transport/frame.hpp"
+#include "transport/transport.hpp"
 
 namespace
 {
@@ -50,21 +58,98 @@ namespace
         std::vector<Line> lines;
     };
 
-    /// Decodes everything a TransportSink or logPublishModules() sends.
-    struct Captured
-    {
-        std::vector<mark4_Envelope> envelopes;
-        bool accept = true;
+    /// Incarnation every transport of this file is built with: a test
+    /// restarts nothing, so one constant stands for the random draw.
+    constexpr std::uint32_t BOOT_ID = 0xB0071D01U;
+    constexpr std::uint32_t NODE_SELF = 0x109E0000U;
+    constexpr std::uint32_t NODE_GROUND = 0x67000001U;
+    constexpr std::uint32_t NODE_OTHER = 0x67000002U;
+    constexpr std::uint64_t T0_US = 1'000'000U;
 
-        static bool Send(void *context, const std::uint8_t *data, std::size_t size)
+    /// A messenger over a transport over a recording link: the requests come
+    /// in through the link, the provider answers on it, and the test reads
+    /// back the payloads and where they went. The pending table is the
+    /// gateway's size because nothing here acknowledges what the provider
+    /// sends, and every unanswered request holds an entry.
+    class Wire
+    {
+      public:
+        Wire()
         {
-            auto *self = static_cast<Captured *>(context);
-            mark4_Envelope envelope;
-            REQUIRE(mark4::decodeEnvelope(data, size, envelope));
-            self->envelopes.push_back(envelope);
-            return self->accept;
+            static_cast<void>(m_transport.addLink(m_link));
         }
+
+        /// @return messenger the provider under test attaches to
+        mark4::Messenger &messenger()
+        {
+            return m_messenger;
+        }
+
+        /// @brief Makes the transport learn one node, so a unicast to it can
+        ///        actually leave.
+        /// @param node node to learn
+        void learn(std::uint32_t node)
+        {
+            m_link.deliver(node, NODE_SELF, {0x00U});
+            m_messenger.poll(T0_US);
+            REQUIRE(m_transport.isAlive(node));
+            m_link.clear();
+        }
+
+        /// @brief Delivers one message to this node and polls once.
+        /// @param envelope message to deliver
+        /// @param src node it comes from
+        /// @return true when a handler acted on it
+        bool request(const mark4_Envelope &envelope, std::uint32_t src)
+        {
+            std::vector<std::uint8_t> bytes(mark4::MAX_ENVELOPE_SIZE, 0U);
+            std::size_t size = 0U;
+            REQUIRE(mark4::encodeEnvelope(envelope, bytes.data(), bytes.size(), size));
+            bytes.resize(size);
+            m_link.deliver(src, NODE_SELF, bytes);
+            const std::uint32_t handled = m_messenger.handled();
+            m_messenger.poll(T0_US);
+            return m_messenger.handled() == handled + 1U;
+        }
+
+        /// @return every frame sent so far, headers included
+        [[nodiscard]] const std::vector<mark4::RecordedFrame> &frames() const
+        {
+            return m_link.frames();
+        }
+
+        /// @brief Forgets everything recorded so far.
+        void clear()
+        {
+            m_link.clear();
+        }
+
+        /// @param index frame to decode
+        /// @return the Envelope it carries
+        [[nodiscard]] mark4_Envelope envelope(std::size_t index) const
+        {
+            const std::optional<mark4_Envelope> decoded = m_link.envelope(index);
+            REQUIRE(decoded.has_value());
+            return *decoded;
+        }
+
+      private:
+        mark4::RecordingLink m_link;                      ///< the medium
+        mark4::Transport m_transport{NODE_SELF, BOOT_ID}; ///< this node
+        std::array<mark4::PendingRequest, mark4::Messenger::HUB_PENDING_REQUESTS>
+            m_pending{};                                      ///< requests kept
+        mark4::Messenger m_messenger{m_transport, m_pending}; ///< what the provider attaches to
     };
+
+    /// @param enabled what to ask for
+    /// @return one LogSubscribe
+    mark4_Envelope makeSubscribe(bool enabled)
+    {
+        mark4_Envelope envelope = mark4_Envelope_init_zero;
+        envelope.which_body = mark4_Envelope_log_subscribe_tag;
+        envelope.body.log_subscribe.enabled = enabled;
+        return envelope;
+    }
 
     std::uint64_t g_nowUs = 0U;
 
@@ -209,54 +294,87 @@ TEST_CASE("two sinks at most, each removed on request")
     CHECK(second.lines.size() == 1U);
 }
 
-TEST_CASE("the transport sink encodes a Log envelope and rate limits it")
+TEST_CASE("the provider sends a Log envelope to its subscribers and rate limits it")
 {
-    Captured captured;
-    mark4::TransportSink sink(&Captured::Send, &captured);
+    Wire wire;
+    wire.learn(NODE_GROUND);
+    mark4::LogProvider provider(wire.messenger());
 
-    sink.write(recordOf(1'000U, "first"));
-    REQUIRE(captured.envelopes.size() == 1U);
-    CHECK(captured.envelopes[0].which_body == mark4_Envelope_log_tag);
-    CHECK(captured.envelopes[0].body.log.module_id == IMU.id());
-    CHECK(captured.envelopes[0].body.log.level == mark4_LogLevel_INFO);
-    CHECK(captured.envelopes[0].body.log.timestamp_us == 1'000U);
-    CHECK(std::string(captured.envelopes[0].body.log.text) == "first");
+    // The subscribe is answered with what was applied; nothing of the
+    // stream leaves before it (the end of this case checks the other way
+    // round, when the subscriber goes away).
+    REQUIRE(wire.request(makeSubscribe(true), NODE_GROUND));
+    REQUIRE(wire.frames().size() == 1U);
+    CHECK(wire.envelope(0U).which_body == mark4_Envelope_log_subscribe_tag);
+    CHECK(wire.envelope(0U).body.log_subscribe.enabled);
+    CHECK(provider.subscribers() == 1U);
+    wire.clear();
+
+    provider.write(recordOf(1'000U, "first"));
+    REQUIRE(wire.frames().size() == 1U);
+    CHECK(wire.frames()[0].header.dst == NODE_GROUND);
+    CHECK(wire.envelope(0U).which_body == mark4_Envelope_log_tag);
+    CHECK(wire.envelope(0U).body.log.module_id == IMU.id());
+    CHECK(wire.envelope(0U).body.log.level == mark4_LogLevel_INFO);
+    CHECK(wire.envelope(0U).body.log.timestamp_us == 1'000U);
+    CHECK(std::string(wire.envelope(0U).body.log.text) == "first");
 
     // Fill the second: everything past the limit is counted, not sent.
-    for (std::uint32_t i = 0U; i < 2U * mark4::TransportSink::MAX_LINES_PER_SECOND; ++i)
+    for (std::uint32_t i = 0U; i < 2U * mark4::LogProvider::MAX_LINES_PER_SECOND; ++i)
     {
-        sink.write(recordOf(2'000U, "burst"));
+        provider.write(recordOf(2'000U, "burst"));
     }
-    CHECK(captured.envelopes.size() == mark4::TransportSink::MAX_LINES_PER_SECOND);
-    CHECK(sink.dropped() == mark4::TransportSink::MAX_LINES_PER_SECOND + 1U);
+    CHECK(wire.frames().size() == mark4::LogProvider::MAX_LINES_PER_SECOND);
+    CHECK(provider.dropped() == mark4::LogProvider::MAX_LINES_PER_SECOND + 1U);
 
     // The next second opens with the count, as a WARN of log/core, then the
     // line itself.
-    sink.write(recordOf(1'000U + mark4::TransportSink::WINDOW_US, "later"));
-    REQUIRE(captured.envelopes.size() == mark4::TransportSink::MAX_LINES_PER_SECOND + 2U);
-    const mark4_Log &notice = captured.envelopes[captured.envelopes.size() - 2U].body.log;
+    provider.write(recordOf(1'000U + mark4::LogProvider::WINDOW_US, "later"));
+    REQUIRE(wire.frames().size() == mark4::LogProvider::MAX_LINES_PER_SECOND + 2U);
+    const std::size_t noticeAt = wire.frames().size() - 2U;
+    const mark4_Log &notice = wire.envelope(noticeAt).body.log;
     CHECK(notice.module_id == mark4::LOG_MODULE_CORE);
     CHECK(notice.level == mark4_LogLevel_WARN);
     CHECK(std::string(notice.text) == "51 lines dropped by the rate limit");
-    CHECK(std::string(captured.envelopes.back().body.log.text) == "later");
+    CHECK(std::string(wire.envelope(wire.frames().size() - 1U).body.log.text) == "later");
+
+    // A node that goes down stops holding the stream.
+    wire.clear();
+    provider.onNodeDown(NODE_GROUND);
+    CHECK(provider.subscribers() == 0U);
+    provider.write(recordOf(2U * mark4::LogProvider::WINDOW_US, "unheard again"));
+    CHECK(wire.frames().empty());
 }
 
-TEST_CASE("the module table goes out in pages and a LogControl drives it")
+TEST_CASE("the module table goes out one page per request and a level moves from the wire")
 {
-    Captured captured;
     RecordingSink sink;
     const Session session(sink);
-    REQUIRE(mark4::logPublishModules(&Captured::Send, &captured));
+    Wire wire;
+    wire.learn(NODE_GROUND);
+    wire.learn(NODE_OTHER);
+    mark4::LogProvider provider(wire.messenger());
 
+    // The table is walked one page per request: the requester paces it, and
+    // the last page is the one where cursor + modules == total.
     const std::size_t total = mark4::logModuleCount();
     std::size_t listed = 0U;
+    std::size_t pages = 0U;
     bool sawBaro = false;
-    for (const mark4_Envelope &envelope : captured.envelopes)
+    do
     {
-        REQUIRE(envelope.which_body == mark4_Envelope_log_modules_tag);
-        const mark4_LogModules &page = envelope.body.log_modules;
+        wire.clear();
+        mark4_Envelope ask = mark4_Envelope_init_zero;
+        ask.which_body = mark4_Envelope_log_modules_request_tag;
+        ask.body.log_modules_request.cursor = static_cast<std::uint32_t>(listed);
+        REQUIRE(wire.request(ask, NODE_GROUND));
+        REQUIRE(wire.frames().size() == 1U);
+        CHECK(wire.frames()[0].header.dst == NODE_GROUND);
+        const mark4_Envelope answer = wire.envelope(0U);
+        REQUIRE(answer.which_body == mark4_Envelope_log_modules_tag);
+        const mark4_LogModules &page = answer.body.log_modules;
         CHECK(page.total == total);
-        CHECK(page.start_index == listed);
+        CHECK(page.cursor == listed);
         for (pb_size_t i = 0U; i < page.modules_count; ++i)
         {
             if (page.modules[i].id == BARO.id())
@@ -267,32 +385,76 @@ TEST_CASE("the module table goes out in pages and a LogControl drives it")
             }
         }
         listed += page.modules_count;
-    }
+        ++pages;
+    } while (listed < total);
     CHECK(listed == total);
     CHECK(sawBaro);
-    CHECK(captured.envelopes.size() == (total + 7U) / 8U);
+    CHECK(pages == (total + 7U) / 8U);
 
-    mark4_LogControl control = mark4_LogControl_init_zero;
-    control.which_request = mark4_LogControl_set_tag;
-    control.request.set.module_id = BARO.id();
-    control.request.set.level = mark4_LogLevel_TRACE;
-    CHECK(mark4::logHandleControl(control));
+    // A page asked past the end comes back empty, carrying the total.
+    wire.clear();
+    mark4_Envelope far = mark4_Envelope_init_zero;
+    far.which_body = mark4_Envelope_log_modules_request_tag;
+    far.body.log_modules_request.cursor = 100000U;
+    REQUIRE(wire.request(far, NODE_GROUND));
+    CHECK(wire.envelope(0U).body.log_modules.modules_count == 0U);
+    CHECK(wire.envelope(0U).body.log_modules.total == total);
+
+    // Two nodes hold the line stream, so the one that moves a level gets the
+    // module as it stands and the other is told the same thing.
+    REQUIRE(wire.request(makeSubscribe(true), NODE_GROUND));
+    REQUIRE(wire.request(makeSubscribe(true), NODE_OTHER));
+    REQUIRE(provider.subscribers() == 2U);
+
+    mark4_Envelope set = mark4_Envelope_init_zero;
+    set.which_body = mark4_Envelope_log_set_level_tag;
+    set.body.log_set_level.module_id = BARO.id();
+    set.body.log_set_level.level = mark4_LogLevel_TRACE;
+    wire.clear();
+    REQUIRE(wire.request(set, NODE_GROUND));
     CHECK(BARO.level() == mark4::LogLevel::TRACE);
-    CHECK(!mark4::logHandleControl(control)); // unchanged: nothing to republish
-    control.request.set.module_id = 0xFFFFU;
-    CHECK(!mark4::logHandleControl(control));
-    control.request.set.module_id = BARO.id();
-    // A level a newer peer knows and this build does not: a plain integer
-    // on the wire (enum_intsize IS_32), refused rather than loaded.
+    REQUIRE(wire.frames().size() == 2U);
+    CHECK(wire.frames()[0].header.dst == NODE_GROUND);
+    CHECK(wire.frames()[1].header.dst == NODE_OTHER);
+    for (std::size_t index = 0U; index < 2U; ++index)
+    {
+        const mark4_Envelope info = wire.envelope(index);
+        REQUIRE(info.which_body == mark4_Envelope_log_module_info_tag);
+        CHECK(info.body.log_module_info.id == BARO.id());
+        CHECK(std::string(info.body.log_module_info.name) == "test/platform/baro");
+        CHECK(info.body.log_module_info.level == mark4_LogLevel_TRACE);
+    }
+
+    // The same level again changes nothing, so only the requester is
+    // answered: nothing moved for the others to hear.
+    wire.clear();
+    REQUIRE(wire.request(set, NODE_GROUND));
+    REQUIRE(wire.frames().size() == 1U);
+    CHECK(wire.frames()[0].header.dst == NODE_GROUND);
+
+    // A module this node does not have: nothing to move and nothing to
+    // describe.
+    wire.clear();
+    set.body.log_set_level.module_id = 0xFFFFU;
+    REQUIRE(wire.request(set, NODE_GROUND));
+    CHECK(wire.frames().empty());
+
+    // A level a newer peer knows and this build does not: a plain integer on
+    // the wire (enum_intsize IS_32), refused rather than loaded, and the
+    // answer says what the module still is.
+    wire.clear();
+    set.body.log_set_level.module_id = BARO.id();
     const int unknownLevel = 99;
-    static_assert(sizeof(control.request.set.level) == sizeof(unknownLevel));
-    std::memcpy(&control.request.set.level, &unknownLevel, sizeof(unknownLevel));
-    CHECK(!mark4::logHandleControl(control));
+    static_assert(sizeof(set.body.log_set_level.level) == sizeof(unknownLevel));
+    std::memcpy(&set.body.log_set_level.level, &unknownLevel, sizeof(unknownLevel));
+    REQUIRE(wire.request(set, NODE_GROUND));
     CHECK(BARO.level() == mark4::LogLevel::TRACE);
-    control.which_request = mark4_LogControl_query_tag;
-    control.request.query = true;
-    CHECK(mark4::logHandleControl(control));
+    REQUIRE(wire.frames().size() == 1U);
+    CHECK(wire.envelope(0U).body.log_module_info.level == mark4_LogLevel_TRACE);
 
-    captured.accept = false;
-    CHECK(!mark4::logPublishModules(&Captured::Send, &captured));
+    // Giving the stream back is answered with false and stops the lines.
+    wire.clear();
+    REQUIRE(wire.request(makeSubscribe(false), NODE_OTHER));
+    CHECK(!wire.envelope(0U).body.log_subscribe.enabled);
+    CHECK(provider.subscribers() == 1U);
 }

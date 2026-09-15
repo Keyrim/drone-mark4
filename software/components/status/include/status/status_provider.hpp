@@ -168,10 +168,10 @@ namespace mark4
             return MODULE;
         }
 
-        Messenger &m_messenger;                          ///< reports leave by it, not owned
-        SubscriberTable<MAX_SUBSCRIBERS> m_subscribers;  ///< nodes holding the stream
-        std::uint32_t m_frameCount = 0U;                 ///< frames seen since construction
-        std::uint32_t m_messageCount = 0U;               ///< Status messages sent
-        std::uint32_t m_answerCount = 0U;                ///< subscribe answers sent
+        Messenger &m_messenger;                         ///< reports leave by it, not owned
+        SubscriberTable<MAX_SUBSCRIBERS> m_subscribers; ///< nodes holding the stream
+        std::uint32_t m_frameCount = 0U;                ///< frames seen since construction
+        std::uint32_t m_messageCount = 0U;              ///< Status messages sent
+        std::uint32_t m_answerCount = 0U;               ///< subscribe answers sent
     };
 } // namespace mark4

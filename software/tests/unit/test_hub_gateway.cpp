@@ -117,14 +117,14 @@ TEST_CASE("the node table carries the transport record and the last announce")
     // announces and lands at its own index.
     mark4::LogModuleTable modules;
     mark4_LogModules page = mark4_LogModules_init_zero;
-    page.start_index = 0U;
+    page.cursor = 0U;
     page.total = 2U;
     page.modules_count = 1U;
     page.modules[0].id = 16U;
     mark4::copyWireString("platform/imu", page.modules[0].name, sizeof(page.modules[0].name));
     page.modules[0].level = mark4_LogLevel_INFO;
     mark4::applyLogModulesPage(page, modules);
-    page.start_index = 1U;
+    page.cursor = 1U;
     page.modules[0].id = 17U;
     mark4::copyWireString("platform/baro", page.modules[0].name, sizeof(page.modules[0].name));
     page.modules[0].level = mark4_LogLevel_DEBUG;
@@ -161,7 +161,7 @@ TEST_CASE("the node table carries the transport record and the last announce")
 
     // A page opening at 0 restarts the table: a rebooted node with fewer
     // modules does not keep stale entries.
-    page.start_index = 0U;
+    page.cursor = 0U;
     page.total = 1U;
     mark4::applyLogModulesPage(page, modules);
     REQUIRE(modules.size() == 1U);

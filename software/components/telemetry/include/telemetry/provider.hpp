@@ -197,12 +197,17 @@ namespace mark4
                 return;
             }
             const std::uint64_t periodUs = static_cast<std::uint64_t>(m_periodMs) * US_PER_MS;
-            if (m_sampled && (nowUs < m_lastSampleUs || nowUs - m_lastSampleUs < periodUs))
+            // A batch that predates the configuration means none has gone
+            // out under it, and the first one is not made to wait a whole
+            // period. Both instants are on the frames' time base, which is
+            // why a configuration is stamped with the last sample() and
+            // never with the poll that delivered it.
+            const bool sampledUnderConfig = m_lastSampleUs >= m_lastConfigUs;
+            if (sampledUnderConfig && (nowUs < m_lastSampleUs || nowUs - m_lastSampleUs < periodUs))
             {
                 return;
             }
             m_lastSampleUs = nowUs;
-            m_sampled = true;
             emit(nowUs);
         }
 
@@ -339,12 +344,11 @@ namespace mark4
             }
 
             m_periodMs = clampPeriod(config.period_ms);
+            // Stamped on the frames' time base, so the first sample goes out
+            // on the very next frame: a consumer that asked for a slow
+            // period must not wait a whole one before seeing anything.
             m_lastConfigUs = nowUs;
             m_streaming = true;
-            // The first sample goes out on the very next frame: a consumer
-            // that asked for a slow period must not wait a whole one before
-            // seeing anything.
-            m_sampled = false;
             Module().info("%zu measures every %u ms, asked by %08lx",
                           m_enabledCount,
                           static_cast<unsigned>(m_periodMs),
@@ -479,7 +483,6 @@ namespace mark4
             m_streaming = false;
             m_enabledCount = 0U;
             m_periodMs = 0U;
-            m_sampled = false;
         }
 
         Messenger &m_messenger;      ///< answers and samples leave by it, not owned
@@ -500,7 +503,6 @@ namespace mark4
         std::uint64_t m_lastConfigUs = 0U;
         std::uint64_t m_lastSampleUs = 0U; ///< instant of the last batch [us]
         bool m_streaming = false;          ///< the configuration produces samples
-        bool m_sampled = false;            ///< a batch went out since the configuration
         std::uint32_t m_messageCount = 0U; ///< TelemetryData messages sent
     };
 } // namespace mark4

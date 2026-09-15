@@ -13,6 +13,8 @@
 #include "flight_core/types.hpp"
 #include "log/provider.hpp"
 #include "messaging/messenger.hpp"
+#include "ota/flight_gate.hpp"
+#include "ota/provider.hpp"
 #include "ota/updater.hpp"
 #include "platform_common/frame_telemetry.hpp"
 #include "platform_common/rc_tracker.hpp"
@@ -29,14 +31,12 @@
 #include "platform_stm32/sensor_source_stm32.hpp"
 #include "platform_stm32/uart1_stream.hpp"
 #include "protocol/envelope.hpp"
-#include "ota/flight_gate.hpp"
-#include "ota/provider.hpp"
 #include "status/status_provider.hpp"
 #include "telemetry/provider.hpp"
 #include "telemetry/registry.hpp"
-#include "tuning/provider.hpp"
 #include "transport/transport.hpp"
 #include "transport/uart_link.hpp"
+#include "tuning/provider.hpp"
 
 namespace mark4
 {
@@ -50,6 +50,12 @@ namespace mark4
     /// the nodes that subscribed to it, and what it answers goes to the node
     /// that asked: everything it emits is a unicast the relay puts on the
     /// LAN. Commands reach it as unicasts to its node id.
+    ///
+    /// The members are declared in construction order, which is the order
+    /// the dependencies need, never the order that packs them tightest: the
+    /// padding the analyzer sees is the price of that rule and there is one
+    /// instance of this class per board.
+    // NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding)
     class FirmwareApp
     {
       public:

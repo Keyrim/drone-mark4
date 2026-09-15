@@ -132,7 +132,7 @@ namespace mark4
         /// @param module module to describe
         void sendModuleInfo(std::uint32_t dst, const LogModule &module);
 
-        Messenger &m_messenger;                         ///< lines and answers leave by it, not owned
+        Messenger &m_messenger; ///< lines and answers leave by it, not owned
         SubscriberTable<MAX_SUBSCRIBERS> m_subscribers; ///< nodes holding the line stream
         AbsLogSink *m_localSink = nullptr;              ///< this node's own consumer, not owned
         std::uint64_t m_windowStartUs = 0U;             ///< start of the current second

@@ -253,10 +253,10 @@ namespace mark4
             /// module table one page per request, the levels.
             LogProvider logProvider{messenger};
             Commands commands{messenger, *this}; ///< the Reboot
-            Discovery discovery;                             ///< who this node is, on request
-            RelayOtaGate otaGate;                            ///< what the updater asks of a radio
-            FirmwareStoreEsp32 store;                        ///< the two OTA partitions
-            OtaUpdater updater{store};                       ///< the update session over them
+            Discovery discovery;                 ///< who this node is, on request
+            RelayOtaGate otaGate;                ///< what the updater asks of a radio
+            FirmwareStoreEsp32 store;            ///< the two OTA partitions
+            OtaUpdater updater{store};           ///< the update session over them
             /// The updater on the wire, absent until the store is ready: a
             /// node whose flash is not laid out for two slots claims no
             /// updater tag at all, which is the refusal it used to answer.

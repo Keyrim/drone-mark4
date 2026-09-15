@@ -337,16 +337,16 @@ namespace mark4
         PresenceListener m_presence{m_transport, *this};       ///< its node table events
         /// Who is who: asks every node that appears, keeps the answers.
         DiscoveryDirectory m_directory{m_messenger, m_transport, m_ownAnnounce}; ///< who is who
-        IdentityListener m_identities{m_directory, *this};    ///< what the directory learns
-        Reader m_reader{m_messenger, *this};                  ///< what the gateway reads
-        ConsoleSinkPosix m_consoleSink;                       ///< log lines on stdout
+        IdentityListener m_identities{m_directory, *this}; ///< what the directory learns
+        Reader m_reader{m_messenger, *this};               ///< what the gateway reads
+        ConsoleSinkPosix m_consoleSink;                    ///< log lines on stdout
         /// This node's log on the wire: the lines to whoever subscribed, the
         /// module table one page per request, the levels.
         LogProvider m_logProvider{m_messenger};
         OwnLogMirror m_logMirror{*this}; ///< its own lines, towards the clients
-        WsBridge m_ws;                                        ///< websocket endpoint
-        OtaClient m_ota;                                      ///< firmware update session
-        std::uint32_t m_otaTarget = 0U;                       ///< node the updater talks to
+        WsBridge m_ws;                   ///< websocket endpoint
+        OtaClient m_ota;                 ///< firmware update session
+        std::uint32_t m_otaTarget = 0U;  ///< node the updater talks to
         std::map<std::uint32_t, LogModuleTable> m_logModules; ///< last module table per node
 
         /// Where one node's telemetry table stands: the descriptors pulled

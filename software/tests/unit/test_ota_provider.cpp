@@ -13,13 +13,13 @@
 
 #include "flight_core/flight_core.hpp"
 #include "messaging/messenger.hpp"
+#include "ota/flight_gate.hpp"
+#include "ota/provider.hpp"
 #include "ota/updater.hpp"
 #include "platform_sim/firmware_store_sim.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
 #include "recording_link.hpp"
-#include "services/flight_ota_gate.hpp"
-#include "services/ota_service.hpp"
 #include "transport/frame.hpp"
 #include "transport/transport.hpp"
 
@@ -86,9 +86,9 @@ namespace
             return m_messenger;
         }
 
-        [[nodiscard]] const mark4::OtaService &service() const
+        [[nodiscard]] const mark4::OtaProvider &provider() const
         {
-            return m_service;
+            return m_provider;
         }
 
       private:
@@ -100,7 +100,7 @@ namespace
         mark4::FlightOtaGate m_gate{m_core};
         mark4::FirmwareStoreSim m_store;
         mark4::OtaUpdater m_updater{m_store};
-        mark4::OtaService m_service{m_messenger, m_updater, m_gate};
+        mark4::OtaProvider m_provider{m_messenger, m_updater, m_gate};
     };
 
     /// @param tag body tag of an empty-bodied message
@@ -119,7 +119,7 @@ TEST_CASE("an updater request is answered to the node that asked")
     Node node(directory);
 
     node.request(bareEnvelope(mark4_Envelope_ota_status_request_tag));
-    REQUIRE(node.service().consumed() == 1U);
+    REQUIRE(node.provider().consumed() == 1U);
     REQUIRE(node.messenger().handled() == 1U);
 
     REQUIRE(node.link().frames().size() == 1U);
@@ -145,7 +145,7 @@ TEST_CASE("a message that is not an updater request never reaches the updater")
     // messenger counts it, the updater consumed nothing and answered nothing.
     node.request(bareEnvelope(mark4_Envelope_reboot_tag));
     REQUIRE(node.messenger().unhandled() == 1U);
-    REQUIRE(node.service().consumed() == 0U);
+    REQUIRE(node.provider().consumed() == 0U);
     REQUIRE(node.link().frames().empty());
 
     std::error_code failure;

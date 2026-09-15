@@ -65,7 +65,7 @@ appearing costs several requests at once.
 
 `messaging/subscriber_table.hpp` is the set of node ids a stream goes to:
 `SubscriberTable<N>`, a fixed array with `add()`, `remove()`,
-`contains()`, `size()` and `id(index)`, no heap and no order (a removal
+`contains()`, `size()`, `Capacity()` and `id(index)`, no heap and no order (a removal
 moves the last entry into the freed slot). A provider holds one per stream
 it emits: it adds the node that subscribed, answers `false` when `add()`
 finds the table full, removes the node on `onNodeDown()`, and walks the

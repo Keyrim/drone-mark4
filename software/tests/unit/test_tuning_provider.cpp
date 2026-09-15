@@ -1,5 +1,5 @@
 /// @file
-/// @brief The tuning service, driven through the wire: which messages it
+/// @brief The tuning provider, driven through the wire: which messages it
 ///        claims, what it answers with, and to whom.
 
 #include <cstddef>
@@ -17,9 +17,9 @@
 #include "messaging/messenger.hpp"
 #include "protocol/envelope.hpp"
 #include "recording_link.hpp"
-#include "services/tuning_service.hpp"
 #include "transport/frame.hpp"
 #include "transport/transport.hpp"
+#include "tuning/provider.hpp"
 
 namespace
 {
@@ -29,16 +29,17 @@ namespace
     /// Incarnation every transport of this file is built with: a test
     /// restarts nothing, so one constant stands for the random draw.
     constexpr std::uint32_t BOOT_ID = 0xB0071D00U;
-    /// Requests these benches keep at once: enough for what one test
-    /// exchanges, the size a board's composition uses.
-    constexpr std::size_t PENDING_REQUESTS = mark4::Messenger::BOARD_PENDING_REQUESTS;
+    /// Requests these benches keep at once. The gateway's size, because
+    /// nothing here acknowledges what the provider answers and every
+    /// unanswered request holds an entry.
+    constexpr std::size_t PENDING_REQUESTS = mark4::Messenger::HUB_PENDING_REQUESTS;
     constexpr std::uint32_t NODE_SELF = 0x51A17000U;
     constexpr std::uint32_t NODE_GROUND = 0x67000001U;
     constexpr std::uint32_t NODE_OTHER = 0x67000002U;
     constexpr std::uint64_t T0_US = 1'000'000U;
 
     /// A messenger over a transport over a recording link: the requests
-    /// come in through the link, the service answers on it, and the test
+    /// come in through the link, the provider answers on it, and the test
     /// reads back the payloads and where they went.
     class Wire
     {
@@ -53,7 +54,7 @@ namespace
             learn(NODE_OTHER);
         }
 
-        /// @return messenger the service under test attaches to
+        /// @return messenger the provider under test attaches to
         mark4::Messenger &messenger()
         {
             return m_messenger;
@@ -120,7 +121,7 @@ namespace
         mark4::RecordingLink m_link;                                     ///< the medium
         mark4::Transport m_transport{NODE_SELF, BOOT_ID};                ///< this node
         std::array<mark4::PendingRequest, PENDING_REQUESTS> m_pending{}; ///< requests kept
-        mark4::Messenger m_messenger{m_transport, m_pending}; ///< what the service attaches to
+        mark4::Messenger m_messenger{m_transport, m_pending}; ///< what the provider attaches to
     };
 
     /// @param id parameter id
@@ -145,13 +146,13 @@ namespace
         return envelope;
     }
 
-    /// @param startIndex first table index to describe
-    /// @return one TuningList
-    mark4_Envelope makeList(std::uint32_t startIndex)
+    /// @param cursor first table index to describe
+    /// @return one TuningListRequest
+    mark4_Envelope makeList(std::uint32_t cursor)
     {
         mark4_Envelope envelope = mark4_Envelope_init_zero;
-        envelope.which_body = mark4_Envelope_tuning_list_tag;
-        envelope.body.tuning_list.start_index = startIndex;
+        envelope.which_body = mark4_Envelope_tuning_list_request_tag;
+        envelope.body.tuning_list_request.cursor = cursor;
         return envelope;
     }
 
@@ -174,12 +175,12 @@ namespace
     }
 
     /// @param datagram bytes to decode
-    /// @return the parameter description the datagram carries
-    mark4_TuningInfo decodeInfo(const std::vector<std::uint8_t> &datagram)
+    /// @return the page of parameter descriptions the datagram carries
+    mark4_TuningInfos decodePage(const std::vector<std::uint8_t> &datagram)
     {
         const mark4_Envelope envelope = decode(datagram);
-        REQUIRE(envelope.which_body == mark4_Envelope_tuning_info_tag);
-        return envelope.body.tuning_info;
+        REQUIRE(envelope.which_body == mark4_Envelope_tuning_infos_tag);
+        return envelope.body.tuning_infos;
     }
 
     /// @brief Drives a core to ARMED: settled on the ground, altitude-auto
@@ -210,10 +211,10 @@ TEST_CASE("a tuning set is applied and acknowledged with the value in effect")
 {
     mark4::FlightCore core;
     Wire wire;
-    mark4::TuningService service(wire.messenger(), core);
+    mark4::TuningProvider provider(wire.messenger(), core);
 
     REQUIRE(wire.request(makeSet(mark4::TUNING_ID_HOVER_COLLECTIVE, 0.7f)));
-    REQUIRE(service.requestCount() == 1U);
+    REQUIRE(provider.requestCount() == 1U);
     REQUIRE(wire.sent().size() == 1U);
 
     const mark4_TuningAck ack = decodeAck(wire.sent()[0]);
@@ -231,7 +232,7 @@ TEST_CASE("an out-of-bounds tuning set is refused and the live value survives")
 {
     mark4::FlightCore core;
     Wire wire;
-    mark4::TuningService service(wire.messenger(), core);
+    mark4::TuningProvider provider(wire.messenger(), core);
 
     float before = 0.0f;
     REQUIRE(core.getParam(mark4::TUNING_ID_HOVER_COLLECTIVE, before) == mark4::TuningStatus::OK);
@@ -247,7 +248,7 @@ TEST_CASE("an unknown parameter id is acknowledged as unknown")
 {
     mark4::FlightCore core;
     Wire wire;
-    mark4::TuningService service(wire.messenger(), core);
+    mark4::TuningProvider provider(wire.messenger(), core);
 
     REQUIRE(wire.request(makeSet(9999U, 1.0f)));
     const mark4_TuningAck ack = decodeAck(wire.sent()[0]);
@@ -260,7 +261,7 @@ TEST_CASE("a parameter locked while armed is refused with its own status")
 {
     mark4::FlightCore core;
     Wire wire;
-    mark4::TuningService service(wire.messenger(), core);
+    mark4::TuningProvider provider(wire.messenger(), core);
     driveToArmed(core);
 
     REQUIRE(wire.request(makeSet(mark4::TUNING_ID_AHRS_KP, 3.0f)));
@@ -278,7 +279,7 @@ TEST_CASE("a tuning get reads a value back without changing it")
 {
     mark4::FlightCore core;
     Wire wire;
-    mark4::TuningService service(wire.messenger(), core);
+    mark4::TuningProvider provider(wire.messenger(), core);
     REQUIRE(core.setParam(mark4::TUNING_ID_VERTICAL_KP, 0.42f) == mark4::TuningStatus::OK);
 
     REQUIRE(wire.request(makeGet(mark4::TUNING_ID_VERTICAL_KP)));
@@ -291,100 +292,103 @@ TEST_CASE("a tuning get reads a value back without changing it")
     REQUIRE(decodeAck(wire.sent()[1]).status == mark4_TuningStatus_UNKNOWN_ID);
 }
 
-TEST_CASE("a tuning list unrolls one description per pump, in table order")
+TEST_CASE("a tuning list is answered one page per request, in table order")
 {
     mark4::FlightCore core;
     Wire wire;
-    mark4::TuningService service(wire.messenger(), core);
+    mark4::TuningProvider provider(wire.messenger(), core);
 
-    REQUIRE(wire.request(makeList(0U)));
-    // The request itself emits nothing: the answer is paced by pump().
-    REQUIRE(wire.sent().empty());
-
-    // One extra pump past the end must add nothing.
-    for (std::size_t i = 0U; i <= mark4::FlightCore::ParamCount(); ++i)
+    // One page per request: the requester paces the walk, and the last page
+    // is the one where cursor + infos == total.
+    std::size_t listed = 0U;
+    std::size_t pages = 0U;
+    do
     {
-        service.pump();
-    }
-    REQUIRE(wire.sent().size() == mark4::FlightCore::ParamCount());
+        REQUIRE(wire.request(makeList(static_cast<std::uint32_t>(listed))));
+        REQUIRE(wire.sent().size() == pages + 1U);
+        const mark4_TuningInfos page = decodePage(wire.sent()[pages]);
+        REQUIRE(page.total == mark4::FlightCore::ParamCount());
+        REQUIRE(page.cursor == listed);
+        REQUIRE(page.infos_count > 0U);
+        for (pb_size_t index = 0U; index < page.infos_count; ++index)
+        {
+            const std::size_t at = listed + index;
+            INFO("entry " << at);
+            // Everything the description carries must match the registry
+            // entry it describes: the ground side reads this instead of a
+            // table of its own, so a mismatch here is a silently wrong
+            // ground station.
+            const mark4::TuningParam *param = core.paramInfo(at);
+            REQUIRE(param != nullptr);
+            const mark4_TuningInfo &info = page.infos[index];
+            REQUIRE(info.id == param->id);
+            REQUIRE(info.value == param->value);
+            REQUIRE(info.min_value == param->minValue);
+            REQUIRE(info.max_value == param->maxValue);
+            REQUIRE(info.armed_change == param->armedChange);
 
-    for (std::size_t i = 0U; i < mark4::FlightCore::ParamCount(); ++i)
-    {
-        const mark4_TuningInfo info = decodeInfo(wire.sent()[i]);
-        INFO("entry " << i);
-        REQUIRE(info.index == i);
-        REQUIRE(info.count == mark4::FlightCore::ParamCount());
-
-        // Everything the description carries must match the registry entry
-        // it describes: the ground side reads this instead of a table of its
-        // own, so a mismatch here is a silently wrong ground station.
-        const mark4::TuningParam *param = core.paramInfo(i);
-        REQUIRE(param != nullptr);
-        REQUIRE(info.id == param->id);
-        REQUIRE(info.value == param->value);
-        REQUIRE(info.min_value == param->minValue);
-        REQUIRE(info.max_value == param->maxValue);
-        REQUIRE(info.armed_change == param->armedChange);
-
-        const std::string name(info.name);
-        REQUIRE(!name.empty());
-        REQUIRE(name.size() <= mark4::TuningParam::NAME_SIZE);
-    }
-
-    // Pumping again with nothing pending stays silent.
-    service.pump();
-    REQUIRE(wire.sent().size() == mark4::FlightCore::ParamCount());
+            const std::string name(info.name);
+            REQUIRE(!name.empty());
+            REQUIRE(name.size() <= mark4::TuningParam::NAME_SIZE);
+        }
+        listed += page.infos_count;
+        ++pages;
+    } while (listed < mark4::FlightCore::ParamCount());
+    REQUIRE(listed == mark4::FlightCore::ParamCount());
+    // A table of a dozen parameters is a handful of pages, not one frame per
+    // parameter.
+    REQUIRE(pages < mark4::FlightCore::ParamCount());
 }
 
-TEST_CASE("a tuning list starting past the end answers nothing")
+TEST_CASE("a tuning list starting past the end answers an empty page")
 {
     mark4::FlightCore core;
     Wire wire;
-    mark4::TuningService service(wire.messenger(), core);
+    mark4::TuningProvider provider(wire.messenger(), core);
 
     REQUIRE(wire.request(makeList(static_cast<std::uint32_t>(mark4::FlightCore::ParamCount()))));
-    for (std::size_t i = 0U; i < 5U; ++i)
-    {
-        service.pump();
-    }
-    REQUIRE(wire.sent().empty());
+    REQUIRE(wire.sent().size() == 1U);
+    const mark4_TuningInfos page = decodePage(wire.sent()[0]);
+    REQUIRE(page.infos_count == 0U);
+    REQUIRE(page.total == mark4::FlightCore::ParamCount());
 }
 
-TEST_CASE("a new tuning list restarts the walk mid-stream")
+TEST_CASE("a tuning list asks again wherever a lost page left it")
 {
     mark4::FlightCore core;
     Wire wire;
-    mark4::TuningService service(wire.messenger(), core);
+    mark4::TuningProvider provider(wire.messenger(), core);
 
     REQUIRE(wire.request(makeList(0U)));
-    service.pump();
-    service.pump();
-    REQUIRE(wire.sent().size() == 2U);
-    REQUIRE(decodeInfo(wire.sent()[1]).index == 1U);
+    REQUIRE(wire.sent().size() == 1U);
+    REQUIRE(decodePage(wire.sent()[0]).cursor == 0U);
 
-    // A second request repositions the cursor: this is how a ground station
-    // asks again for the entries a lost frame took with it.
+    // A second request positions the walk wherever it asks: this is how a
+    // ground station asks again for the entries a lost frame took with it.
     wire.clear();
     REQUIRE(wire.request(makeList(3U)));
-    service.pump();
     REQUIRE(wire.sent().size() == 1U);
-    REQUIRE(decodeInfo(wire.sent()[0]).index == 3U);
+    const mark4_TuningInfos page = decodePage(wire.sent()[0]);
+    REQUIRE(page.cursor == 3U);
+    const mark4::TuningParam *param = core.paramInfo(3U);
+    REQUIRE(param != nullptr);
+    REQUIRE(page.infos[0].id == param->id);
 }
 
 TEST_CASE("a message that is not a tuning request is left to its owner")
 {
     mark4::FlightCore core;
     Wire wire;
-    mark4::TuningService service(wire.messenger(), core);
+    mark4::TuningProvider provider(wire.messenger(), core);
 
-    // Nothing claimed the tag: the messenger counts it, the service never
+    // Nothing claimed the tag: the messenger counts it, the provider never
     // sees it and answers nothing.
     mark4_Envelope reboot = mark4_Envelope_init_zero;
     reboot.which_body = mark4_Envelope_reboot_tag;
     REQUIRE(!wire.request(reboot));
     REQUIRE(wire.unhandled() == 1U);
 
-    REQUIRE(service.requestCount() == 0U);
+    REQUIRE(provider.requestCount() == 0U);
     REQUIRE(wire.sent().empty());
 }
 
@@ -392,7 +396,7 @@ TEST_CASE("the tuning answers go to the node that asked")
 {
     mark4::FlightCore core;
     Wire wire;
-    mark4::TuningService service(wire.messenger(), core);
+    mark4::TuningProvider provider(wire.messenger(), core);
 
     // A request is a conversation with one node: the ack goes back to it,
     // unicast, and to nobody else.
@@ -406,19 +410,11 @@ TEST_CASE("the tuning answers go to the node that asked")
     REQUIRE(wire.request(makeGet(mark4::TUNING_ID_HOVER_COLLECTIVE), NODE_GROUND));
     REQUIRE(wire.frames()[0].header.dst == NODE_GROUND);
 
-    // The descriptions of a list go to whoever asked for it, however many
-    // frames later pump() emits them.
+    // A page goes to whoever asked for it, like every other answer.
     wire.clear();
     REQUIRE(wire.request(makeList(0U), NODE_OTHER));
-    for (std::size_t i = 0U; i < 3U; ++i)
-    {
-        service.pump();
-    }
-    REQUIRE(wire.frames().size() == 3U);
-    for (const mark4::RecordedFrame &frame : wire.frames())
-    {
-        REQUIRE(!frame.broadcast);
-        REQUIRE(frame.header.dst == NODE_OTHER);
-    }
-    REQUIRE(decodeInfo(wire.sent()[2]).index == 2U);
+    REQUIRE(wire.frames().size() == 1U);
+    REQUIRE(!wire.frames()[0].broadcast);
+    REQUIRE(wire.frames()[0].header.dst == NODE_OTHER);
+    REQUIRE(decodePage(wire.sent()[0]).cursor == 0U);
 }

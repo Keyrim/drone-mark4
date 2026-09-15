@@ -156,19 +156,19 @@ TEST_CASE("the telemetry family round trips at its bounds")
     CHECK(std::strlen(backPage.body.telemetry_descriptors.descriptors[0].name) ==
           sizeof(descriptors.descriptors[0].name) - 1U);
 
-    // A full enable, then a full batch of samples: the two widest bodies of
-    // the family, which is what the frame budget was sized on.
-    mark4_Envelope enable = withBody(mark4_Envelope_telemetry_enable_tag);
-    enable.body.telemetry_enable.period_ms = 20U;
-    enable.body.telemetry_enable.ids_count = static_cast<pb_size_t>(
-        sizeof(enable.body.telemetry_enable.ids) / sizeof(enable.body.telemetry_enable.ids[0]));
-    for (pb_size_t index = 0U; index < enable.body.telemetry_enable.ids_count; ++index)
+    // A full configuration, then a full batch of samples: the two widest
+    // bodies of the family, which is what the frame budget was sized on.
+    mark4_Envelope config = withBody(mark4_Envelope_telemetry_config_tag);
+    config.body.telemetry_config.period_ms = 20U;
+    config.body.telemetry_config.ids_count = static_cast<pb_size_t>(
+        sizeof(config.body.telemetry_config.ids) / sizeof(config.body.telemetry_config.ids[0]));
+    for (pb_size_t index = 0U; index < config.body.telemetry_config.ids_count; ++index)
     {
-        enable.body.telemetry_enable.ids[index] = index;
+        config.body.telemetry_config.ids[index] = index;
     }
-    const mark4_Envelope backEnable = roundTrip(enable, size);
-    REQUIRE(backEnable.body.telemetry_enable.ids_count == enable.body.telemetry_enable.ids_count);
-    CHECK(backEnable.body.telemetry_enable.period_ms == 20U);
+    const mark4_Envelope backConfig = roundTrip(config, size);
+    REQUIRE(backConfig.body.telemetry_config.ids_count == config.body.telemetry_config.ids_count);
+    CHECK(backConfig.body.telemetry_config.period_ms == 20U);
 
     mark4_Envelope data = withBody(mark4_Envelope_telemetry_data_tag);
     data.body.telemetry_data.timestamp_us = 42'000'000U;
@@ -187,12 +187,9 @@ TEST_CASE("the telemetry family round trips at its bounds")
     // frame header in front of it.
     CHECK(mark4::FRAME_HEADER_SIZE + size <= mark4::MAX_PAYLOAD);
 
-    mark4_Envelope ack = withBody(mark4_Envelope_telemetry_ack_tag);
-    ack.body.telemetry_ack.period_ms = 20U;
-    ack.body.telemetry_ack.enabled = 32U;
-    const mark4_Envelope backAck = roundTrip(ack, size);
-    CHECK(backAck.body.telemetry_ack.period_ms == 20U);
-    CHECK(backAck.body.telemetry_ack.enabled == 32U);
+    mark4_Envelope subscribe = withBody(mark4_Envelope_telemetry_subscribe_tag);
+    subscribe.body.telemetry_subscribe.enabled = true;
+    CHECK(roundTrip(subscribe, size).body.telemetry_subscribe.enabled);
 }
 
 TEST_CASE("the sim link messages round trip")
@@ -249,23 +246,6 @@ TEST_CASE("the sim link messages round trip")
     CHECK(backRun.held_tilt_rad == 0.25f);
     CHECK(backRun.held_azimuth_rad == 0.5f);
     CHECK(backRun.swing_seconds == 0.375f);
-
-    mark4_Envelope stats = withBody(mark4_Envelope_sim_run_stats_tag);
-    stats.body.sim_run_stats.run_id = 42U;
-    stats.body.sim_run_stats.final = true;
-    stats.body.sim_run_stats.degraded = true;
-    stats.body.sim_run_stats.run_start_us = 1'000'000U;
-    stats.body.sim_run_stats.run_hash = 0xFEEDFACECAFEBEEFULL;
-    stats.body.sim_run_stats.duplicate_frames = 3U;
-    stats.body.sim_run_stats.lockstep_timeouts = 7U;
-    const mark4_SimRunStats &backStats = roundTrip(stats, size).body.sim_run_stats;
-    CHECK(backStats.run_id == 42U);
-    CHECK(backStats.final);
-    CHECK(backStats.degraded);
-    CHECK(backStats.run_start_us == 1'000'000U);
-    CHECK(backStats.run_hash == 0xFEEDFACECAFEBEEFULL);
-    CHECK(backStats.duplicate_frames == 3U);
-    CHECK(backStats.lockstep_timeouts == 7U);
 }
 
 TEST_CASE("the command and identity messages round trip")
@@ -315,7 +295,7 @@ TEST_CASE("the command and identity messages round trip")
     CHECK(std::string(backLog.text) == "init failed");
 
     mark4_Envelope modules = withBody(mark4_Envelope_log_modules_tag);
-    modules.body.log_modules.start_index = 8U;
+    modules.body.log_modules.cursor = 8U;
     modules.body.log_modules.total = 9U;
     modules.body.log_modules.modules_count = 1U;
     modules.body.log_modules.modules[0].id = 17U;
@@ -325,24 +305,39 @@ TEST_CASE("the command and identity messages round trip")
                                     "%s",
                                     "platform/baro"));
     const mark4_LogModules &backModules = roundTrip(modules, size).body.log_modules;
-    CHECK(backModules.start_index == 8U);
+    CHECK(backModules.cursor == 8U);
     CHECK(backModules.total == 9U);
     REQUIRE(backModules.modules_count == 1U);
     CHECK(backModules.modules[0].id == 17U);
     CHECK(backModules.modules[0].level == mark4_LogLevel_TRACE);
     CHECK(std::string(backModules.modules[0].name) == "platform/baro");
 
-    mark4_Envelope control = withBody(mark4_Envelope_log_control_tag);
-    control.body.log_control.which_request = mark4_LogControl_set_tag;
-    control.body.log_control.request.set.module_id = 17U;
-    control.body.log_control.request.set.level = mark4_LogLevel_DEBUG;
-    const mark4_LogControl &backControl = roundTrip(control, size).body.log_control;
-    REQUIRE(backControl.which_request == mark4_LogControl_set_tag);
-    CHECK(backControl.request.set.module_id == 17U);
-    CHECK(backControl.request.set.level == mark4_LogLevel_DEBUG);
-    control.body.log_control.which_request = mark4_LogControl_query_tag;
-    control.body.log_control.request.query = true;
-    CHECK(roundTrip(control, size).body.log_control.which_request == mark4_LogControl_query_tag);
+    mark4_Envelope ask = withBody(mark4_Envelope_log_modules_request_tag);
+    ask.body.log_modules_request.cursor = 8U;
+    CHECK(roundTrip(ask, size).body.log_modules_request.cursor == 8U);
+
+    mark4_Envelope set = withBody(mark4_Envelope_log_set_level_tag);
+    set.body.log_set_level.module_id = 17U;
+    set.body.log_set_level.level = mark4_LogLevel_DEBUG;
+    const mark4_LogSetLevel &backSet = roundTrip(set, size).body.log_set_level;
+    CHECK(backSet.module_id == 17U);
+    CHECK(backSet.level == mark4_LogLevel_DEBUG);
+
+    mark4_Envelope info = withBody(mark4_Envelope_log_module_info_tag);
+    info.body.log_module_info.id = 17U;
+    info.body.log_module_info.level = mark4_LogLevel_TRACE;
+    static_cast<void>(std::snprintf(info.body.log_module_info.name,
+                                    sizeof(info.body.log_module_info.name),
+                                    "%s",
+                                    "platform/baro"));
+    const mark4_LogModuleInfo &backInfo = roundTrip(info, size).body.log_module_info;
+    CHECK(backInfo.id == 17U);
+    CHECK(backInfo.level == mark4_LogLevel_TRACE);
+    CHECK(std::string(backInfo.name) == "platform/baro");
+
+    mark4_Envelope subscribe = withBody(mark4_Envelope_log_subscribe_tag);
+    subscribe.body.log_subscribe.enabled = true;
+    CHECK(roundTrip(subscribe, size).body.log_subscribe.enabled);
 
     // The bodies with no field at all still name themselves on the wire.
     CHECK(roundTrip(withBody(mark4_Envelope_reboot_tag), size).which_body ==
@@ -368,9 +363,9 @@ TEST_CASE("the tuning messages round trip")
     get.body.tuning_get.id = 102U;
     CHECK(roundTrip(get, size).body.tuning_get.id == 102U);
 
-    mark4_Envelope list = withBody(mark4_Envelope_tuning_list_tag);
-    list.body.tuning_list.start_index = 4U;
-    CHECK(roundTrip(list, size).body.tuning_list.start_index == 4U);
+    mark4_Envelope list = withBody(mark4_Envelope_tuning_list_request_tag);
+    list.body.tuning_list_request.cursor = 4U;
+    CHECK(roundTrip(list, size).body.tuning_list_request.cursor == 4U);
 
     mark4_Envelope ack = withBody(mark4_Envelope_tuning_ack_tag);
     ack.body.tuning_ack.id = 101U;
@@ -381,26 +376,36 @@ TEST_CASE("the tuning messages round trip")
     CHECK(backAck.value == 0.028f);
     CHECK(backAck.status == mark4_TuningStatus_LOCKED_WHILE_ARMED);
 
-    mark4_Envelope info = withBody(mark4_Envelope_tuning_info_tag);
-    info.body.tuning_info.index = 3U;
-    info.body.tuning_info.count = 12U;
-    info.body.tuning_info.id = 401U;
-    // A name filling the whole field: 16 characters plus the terminator.
-    static_cast<void>(std::snprintf(
-        info.body.tuning_info.name, sizeof(info.body.tuning_info.name), "%s", "abcdefghijklmnop"));
-    info.body.tuning_info.value = 2.0f;
-    info.body.tuning_info.min_value = 0.5f;
-    info.body.tuning_info.max_value = 8.0f;
-    info.body.tuning_info.armed_change = true;
-    const mark4_TuningInfo &backInfo = roundTrip(info, size).body.tuning_info;
-    CHECK(backInfo.index == 3U);
-    CHECK(backInfo.count == 12U);
-    CHECK(backInfo.id == 401U);
-    CHECK(std::string(backInfo.name) == "abcdefghijklmnop");
-    CHECK(backInfo.value == 2.0f);
-    CHECK(backInfo.min_value == 0.5f);
-    CHECK(backInfo.max_value == 8.0f);
-    CHECK(backInfo.armed_change);
+    // One full page: the widest body of the family.
+    mark4_Envelope page = withBody(mark4_Envelope_tuning_infos_tag);
+    mark4_TuningInfos &infos = page.body.tuning_infos;
+    infos.total = 12U;
+    infos.cursor = 3U;
+    infos.infos_count = static_cast<pb_size_t>(sizeof(infos.infos) / sizeof(infos.infos[0]));
+    for (pb_size_t index = 0U; index < infos.infos_count; ++index)
+    {
+        mark4_TuningInfo &info = infos.infos[index];
+        info.id = 401U + index;
+        // A name filling the whole field: 16 characters plus the terminator.
+        static_cast<void>(std::snprintf(info.name, sizeof(info.name), "%s", "abcdefghijklmnop"));
+        info.value = 2.0f;
+        info.min_value = 0.5f;
+        info.max_value = 8.0f;
+        info.armed_change = true;
+    }
+    const mark4_TuningInfos &backInfos = roundTrip(page, size).body.tuning_infos;
+    CHECK(backInfos.total == 12U);
+    CHECK(backInfos.cursor == 3U);
+    REQUIRE(backInfos.infos_count == infos.infos_count);
+    CHECK(backInfos.infos[0].id == 401U);
+    CHECK(std::string(backInfos.infos[0].name) == "abcdefghijklmnop");
+    CHECK(backInfos.infos[0].value == 2.0f);
+    CHECK(backInfos.infos[0].min_value == 0.5f);
+    CHECK(backInfos.infos[0].max_value == 8.0f);
+    CHECK(backInfos.infos[0].armed_change);
+    // The widest body of the family still fits one transport frame with the
+    // frame header in front of it.
+    CHECK(mark4::FRAME_HEADER_SIZE + size <= mark4::MAX_PAYLOAD);
 }
 
 TEST_CASE("the updater messages round trip, the chunk at its full size")
@@ -521,7 +526,7 @@ TEST_CASE("the body tag is read off the first bytes without decoding")
     // A one-byte tag (field 3) and two-byte tags (fields 18 and 30 to 38):
     // what the relay tells apart before deciding to decode.
     for (const pb_size_t tag : {static_cast<pb_size_t>(mark4_Envelope_announce_tag),
-                                static_cast<pb_size_t>(mark4_Envelope_log_control_tag),
+                                static_cast<pb_size_t>(mark4_Envelope_log_tag),
                                 static_cast<pb_size_t>(mark4_Envelope_reboot_tag),
                                 static_cast<pb_size_t>(mark4_Envelope_ota_status_request_tag),
                                 static_cast<pb_size_t>(mark4_Envelope_ota_chunk_tag),

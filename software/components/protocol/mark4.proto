@@ -53,9 +53,10 @@ message Envelope {
     TuningInfos tuning_infos = 49;
   }
 
-  // Numbers never reused: 8 was LogControl, 11 TelemetryEnable, 12
-  // TelemetryAck, 17 SimRunStats, 22 TuningList, 24 TuningInfo.
-  reserved 8, 11, 12, 17, 22, 24;
+  // Numbers never reused, and left out on purpose: 8 was LogControl, 11
+  // TelemetryEnable, 12 TelemetryAck, 17 SimRunStats, 22 TuningList, 24
+  // TuningInfo. They are named here rather than in a `reserved` statement
+  // because the GDScript generator of the plant parses no such statement.
 
   // 0 when absent. A message carrying a non-zero id is a request: its
   // sender resends it on its own policy until an Ack carrying the same id
@@ -405,8 +406,9 @@ message TuningInfo {
   float max_value = 7;
   bool armed_change = 8;
 
-  // Numbers never reused: 1 was index, 2 count; a page carries both now.
-  reserved 1, 2;
+  // Numbers never reused, and left out on purpose: 1 was index, 2 count; a
+  // page carries both now. Named here rather than in a `reserved` statement
+  // because the GDScript generator of the plant parses no such statement.
 }
 
 // Node to requester, unicast: one page of the parameter table. The last

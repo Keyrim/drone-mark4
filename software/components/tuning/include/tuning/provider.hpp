@@ -167,8 +167,7 @@ namespace mark4
             // Clamped first, so the walk below is provably inside the table
             // whatever cursor the requester sent.
             const std::size_t first = cursor > total ? total : static_cast<std::size_t>(cursor);
-            for (std::size_t index = first;
-                 index < total && page.infos_count < INFOS_PER_PAGE;
+            for (std::size_t index = first; index < total && page.infos_count < INFOS_PER_PAGE;
                  ++index)
             {
                 const TuningParam *const param = m_core.paramInfo(index);
@@ -176,7 +175,7 @@ namespace mark4
                 {
                     break;
                 }
-                fillInfo(*param, page.infos[page.infos_count]);
+                FillInfo(*param, page.infos[page.infos_count]);
                 ++page.infos_count;
             }
             send(dst, envelope);
@@ -185,7 +184,7 @@ namespace mark4
         /// @brief Describes one parameter as the wire does.
         /// @param param entry to describe
         /// @param[out] infoOut message to fill
-        static void fillInfo(const TuningParam &param, mark4_TuningInfo &infoOut)
+        static void FillInfo(const TuningParam &param, mark4_TuningInfo &infoOut)
         {
             infoOut.id = param.id;
             // The registry name is zero-padded and a full-length one carries

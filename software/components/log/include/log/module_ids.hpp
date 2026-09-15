@@ -22,8 +22,8 @@ namespace mark4
     inline constexpr std::uint16_t LOG_MODULE_STATUS_PROVIDER = 20U;
     inline constexpr std::uint16_t LOG_MODULE_LOG_PROVIDER = 21U;    ///< log/provider
     inline constexpr std::uint16_t LOG_MODULE_TUNING_PROVIDER = 22U; ///< tuning/provider
-    inline constexpr std::uint16_t LOG_MODULE_OTA_STORE = 32U;   ///< ota/store
-    inline constexpr std::uint16_t LOG_MODULE_OTA_UPDATER = 33U; ///< ota/updater (the apps)
+    inline constexpr std::uint16_t LOG_MODULE_OTA_STORE = 32U;       ///< ota/store
+    inline constexpr std::uint16_t LOG_MODULE_OTA_UPDATER = 33U;     ///< ota/updater (the apps)
 
     /// First id an application picks for its own modules.
     inline constexpr std::uint16_t LOG_MODULE_APP_BASE = 256U;
