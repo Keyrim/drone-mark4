@@ -6,8 +6,9 @@ section 8 is the decision that shapes the rework after it (the gateway
 API, the Dart and GDScript ports as the only ports); section 9 lists what
 the first rework left out; section 10 is the design of the second rework,
 decided on 2026-09-14, amended on 2026-09-15 with the decisions taken
-before implementation, and being implemented on branch
-`refactor/comm-stack-v3` (issue #31).
+before implementation, implemented on branch `refactor/comm-stack-v3`
+(issue #31); section 10.10 lists where the code departs from the text
+above it.
 Companions: `docs/target-architecture.md` (the system this plugs into,
 sections 3.3 to 3.5 describe the present protocol and hub),
 `software/components/transport/README.md` (the transport as it is),
@@ -1036,3 +1037,41 @@ The Python removal comes first so CI is green at every step after it.
 What is unusable between steps: the bench pages from step 4 to step 6, the
 plant's overlay from step 3 to step 7 (the lockstep link itself is not
 touched), the phone's cockpit from step 3 to step 8.
+
+### 10.10 As implemented
+
+Decisions taken during the implementation (2026-09-15), where the code
+departs from the sections above; the code is the reference.
+
+- **A request and its answer are two message types.** Section 10.4 said a
+  subscribe is "answered by the same message as applied". The hub is
+  provider and consumer of one concept (its own log lines), and one
+  handler per tag cannot hold both sides of one type. So the requests keep
+  their names (`StatusSubscribe`, `LogSubscribe`, `TelemetrySubscribe`,
+  and the configuration request is `TelemetryConfigure`) and the answers
+  are the state as the provider holds it (`StatusSubscription`,
+  `LogSubscription`, `TelemetrySubscription { enabled }`, and
+  `TelemetryConfig { ids, period_ms }`, which is also the notification to
+  the other subscribers). Providers claim the request tags, consumers the
+  state tags.
+- **The acknowledgement is `RequestAck`**, tag `ack`: `gateway.proto`
+  shares the package and already defines `Ack { ok, error }`.
+- **No `reserved` statement in `mark4.proto`**: the vendored godobuf parser
+  cannot read it. A retired field number is named in a comment. In
+  `gateway.proto`, which godobuf never reads, `reserved` is used.
+- **`Messenger::poll()` calls `tick()` itself**, so no composition has a
+  second call to forget; `tick()` stays public for a caller that has no
+  poll. `request()` returns the request id (0 when refused), which is what
+  a `TablePull` correlates an `onRequestFailed()` with.
+- **Consumers** are a non-template base over a storage span
+  (`LogConsumerBase`, ...) plus a thin `LogConsumer<N>` that owns the
+  array: the base is what a listener and a gateway name, the template is
+  what the composition declares.
+- **`SimRunStats` is gone** (10.4 as amended); the run tracker keeps the
+  hash and its log line.
+- **`ota_consumer`** is `OtaClient` moved, desktop only, the one consumer
+  with heap (10.1 as amended).
+- **The plant's `Mark4Requests`** and the Dart messenger acknowledge every
+  numbered message on arrival and answer the `IdentityRequest` with a
+  request of their own, so a C++ node no longer resends its `Announce`
+  five times to them.
