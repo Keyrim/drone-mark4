@@ -183,20 +183,27 @@ Three messages reach it:
   `TelemetryDescriptors { total, cursor, descriptors }` page; the consumer
   paces the walk, one page per request, and the last page is the one where
   `cursor + descriptors_count == total`.
-- `TelemetryConfig { ids, period_ms }`: what the stream carries and how
+- `TelemetryConfigure { ids, period_ms }`: what the stream carries and how
   often, **one configuration per node, never one per consumer**. It
   replaces the enabled set and the period wholesale, last writer wins. The
   ids are filtered to the table and to `MAX_ENABLED`, kept ascending, and
   the period is clamped between the composition's floor and
-  `MAX_PERIOD_MS` = 60 s. It is answered by the configuration as applied,
-  to the node that asked and to every other subscriber: holding a stream
-  means hearing what changes it. A period of 0, or no known id, stops the
-  samples without touching the subscriptions.
+  `MAX_PERIOD_MS` = 60 s. It is answered by `TelemetryConfig`, the
+  configuration in effect, to the node that asked and to every other
+  subscriber: holding a stream means hearing what changes it. A period of
+  0, or no known id, stops the samples without touching the subscriptions.
 - `TelemetrySubscribe { enabled }`: take the sample stream, or stop it.
-  Answered by the same message as applied; `enabled` comes back false when
-  the table is full (`MAX_SUBSCRIBERS` = 2). A node that goes down is
-  dropped (`onNodeDown()`), so a tool that crashed leaves nothing streaming
-  behind it.
+  Answered by `TelemetrySubscription`, the subscription the node holds
+  afterwards; `enabled` comes back false when the table is full
+  (`MAX_SUBSCRIBERS` = 2). A node that goes down is dropped
+  (`onNodeDown()`), so a tool that crashed leaves nothing streaming behind
+  it.
+
+A request and its answer are two message types throughout, never one: the
+provider claims the request tags (`TelemetryListRequest`,
+`TelemetryConfigure`, `TelemetrySubscribe`) and the consumer the state tags
+(`TelemetryDescriptors`, `TelemetryConfig`, `TelemetrySubscription`), so a
+node that is both keeps one handler per body tag.
 
 `sample(nowUs)` emits one batch per subscriber when the period elapsed and
 splits a sampling instant wider than `VALUES_PER_MESSAGE` into several

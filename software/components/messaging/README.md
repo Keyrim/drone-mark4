@@ -172,7 +172,11 @@ being applied twice does not go through `request()`. Stream data goes by
 
 An acknowledgement says "arrived", and nothing about what was done. An
 answer that matters is a request of its own, correlated by its content and
-never by the request id it answers.
+never by the request id it answers. A request and its answer are two body
+tags, never one: the request is the imperative a consumer sends, the answer
+the state the provider holds afterwards. That is what lets a node be the
+provider of a concept and a consumer of the same concept at once, which one
+handler per tag would otherwise forbid.
 
 ## Presence
 

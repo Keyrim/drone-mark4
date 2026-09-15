@@ -126,8 +126,8 @@ namespace mark4
             static_cast<void>(m_subscribers.remove(src));
         }
         mark4_Envelope answer = mark4_Envelope_init_zero;
-        answer.which_body = mark4_Envelope_log_subscribe_tag;
-        answer.body.log_subscribe.enabled = applied;
+        answer.which_body = mark4_Envelope_log_subscription_tag;
+        answer.body.log_subscription.enabled = applied;
         static_cast<void>(request(src, answer));
     }
 

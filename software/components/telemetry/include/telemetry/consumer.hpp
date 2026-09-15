@@ -82,20 +82,23 @@ namespace mark4
     {
       public:
         /// Body tags this handler consumes: the table pages, the sample
-        /// stream, the configuration and the answer to the subscribe.
-        static constexpr std::array<pb_size_t, 4> TAGS = {mark4_Envelope_telemetry_descriptors_tag,
-                                                          mark4_Envelope_telemetry_data_tag,
-                                                          mark4_Envelope_telemetry_config_tag,
-                                                          mark4_Envelope_telemetry_subscribe_tag};
+        /// stream, the configuration in effect and the subscription the node
+        /// holds. Never the request tags: the provider of the same concept
+        /// claims those, and both may live on one node.
+        static constexpr std::array<pb_size_t, 4> TAGS = {
+            mark4_Envelope_telemetry_descriptors_tag,
+            mark4_Envelope_telemetry_data_tag,
+            mark4_Envelope_telemetry_config_tag,
+            mark4_Envelope_telemetry_subscription_tag};
 
         /// Node kinds that carry a TelemetryProvider. Nothing is asked of
         /// any other kind: it would acknowledge the request and drop it.
         static constexpr std::array<mark4_NodeKind, 2> KINDS = {mark4_NodeKind_FIRMWARE,
                                                                 mark4_NodeKind_DRONE_SIM};
 
-        /// Measures the configuration may name at once, from the wire bound.
+        /// Measures a configuration may name at once, from the wire bound.
         static constexpr std::size_t MAX_ENABLED =
-            sizeof(mark4_TelemetryConfig::ids) / sizeof(mark4_TelemetryConfig::ids[0]);
+            sizeof(mark4_TelemetryConfigure::ids) / sizeof(mark4_TelemetryConfigure::ids[0]);
 
         /// Listeners one consumer may hold; init() fails past that.
         static constexpr std::size_t MAX_LISTENERS = 2U;
@@ -158,8 +161,8 @@ namespace mark4
         bool configure(std::uint32_t id, std::span<const std::uint32_t> ids, std::uint32_t periodMs)
         {
             mark4_Envelope ask = mark4_Envelope_init_zero;
-            ask.which_body = mark4_Envelope_telemetry_config_tag;
-            mark4_TelemetryConfig &config = ask.body.telemetry_config;
+            ask.which_body = mark4_Envelope_telemetry_configure_tag;
+            mark4_TelemetryConfigure &config = ask.body.telemetry_configure;
             config.period_ms = periodMs;
             for (const std::uint32_t measure : ids)
             {
@@ -222,8 +225,8 @@ namespace mark4
             static_cast<void>(nodeId);
         }
 
-        /// @brief One table page, one configuration, one batch of samples,
-        ///        or the answer to a subscribe.
+        /// @brief One table page, the configuration in effect, one batch of
+        ///        samples, or the subscription the node holds.
         /// @param src node it came from
         /// @param envelope the message
         /// @param nowUs instant of the poll that delivered it [us], unused:
@@ -251,8 +254,8 @@ namespace mark4
                     entry->hasConfig = true;
                     tellConfig(*entry);
                     return true;
-                case mark4_Envelope_telemetry_subscribe_tag:
-                    entry->subscribed = envelope.body.telemetry_subscribe.enabled;
+                case mark4_Envelope_telemetry_subscription_tag:
+                    entry->subscribed = envelope.body.telemetry_subscription.enabled;
                     entry->subscribeRequest = 0U;
                     tellConfig(*entry);
                     return true;

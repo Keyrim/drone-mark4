@@ -36,11 +36,14 @@ StatusProvider statusProvider{messenger};          // a member after the messeng
 statusProvider.publish(frame, actuators, core, rcLinkOk, truth);  // once per flight frame
 ```
 
-It consumes `StatusSubscribe`. A node that subscribes is added to the
-table and answered with the subscription as applied; `enabled` comes back
-false when the table is full or when the request was an unsubscribe. A node
-that goes down is dropped (`onNodeDown()`), so a consumer that crashed
-leaves nothing streaming behind it.
+It consumes `StatusSubscribe`. A node that subscribes is added to the table
+and answered with a `StatusSubscription`, the subscription the node holds
+afterwards; `enabled` comes back false when the table is full or when the
+request was an unsubscribe. A request and its answer are two message types,
+never one, so a node that is both provider and consumer of the concept
+claims a different body tag on each side. A node that goes down is dropped
+(`onNodeDown()`), so a consumer that crashed leaves nothing streaming
+behind it.
 
 `publish()` counts the frames and packs one report every
 `STATUS_PERIOD_FRAMES` = 10, so a 500 Hz loop reports at 50 Hz. The
@@ -70,7 +73,8 @@ The kinds that carry a `StatusProvider` are its own constant (`KINDS`:
 `FIRMWARE`, `DRONE_SIM`), so the composition names no kind. A node of one
 of those kinds whose announce matches this wire hash is opened from
 `onIdentity()`: one entry, one `StatusSubscribe { enabled: true }` sent
-with `request()`, and the answer says whether the node took it. Every
+with `request()`, and the `StatusSubscription` that answers says whether the
+node took it. Every
 report is stored and handed to the listeners
 (`AbsStatusConsumerListener::onStatus()`); a node that goes down loses its
 entry and the listeners hear `onForgotten()`. A reincarnation is a node

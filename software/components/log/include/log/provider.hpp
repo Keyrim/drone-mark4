@@ -110,7 +110,8 @@ namespace mark4
         /// @param record the line
         void emit(const LogRecord &record);
 
-        /// @brief Answers one subscribe request with what was applied.
+        /// @brief Answers one subscribe request with the subscription as it
+        ///        stands.
         /// @param src node that asked
         /// @param enabled what it asked for
         void applySubscribe(std::uint32_t src, bool enabled);

@@ -68,7 +68,7 @@ namespace mark4
       public:
         /// Body tags this handler consumes.
         static constexpr std::array<pb_size_t, 3> TAGS = {mark4_Envelope_telemetry_list_request_tag,
-                                                          mark4_Envelope_telemetry_config_tag,
+                                                          mark4_Envelope_telemetry_configure_tag,
                                                           mark4_Envelope_telemetry_subscribe_tag};
 
         /// Nodes that may hold the stream at once. Two: a sampling instant
@@ -87,9 +87,9 @@ namespace mark4
         static constexpr std::size_t VALUES_PER_MESSAGE =
             sizeof(mark4_TelemetryData::values) / sizeof(mark4_TelemetryData::values[0]);
 
-        /// Measures the configuration may name at once, from the wire bound.
+        /// Measures a configuration may name at once, from the wire bound.
         static constexpr std::size_t MAX_ENABLED =
-            sizeof(mark4_TelemetryConfig::ids) / sizeof(mark4_TelemetryConfig::ids[0]);
+            sizeof(mark4_TelemetryConfigure::ids) / sizeof(mark4_TelemetryConfigure::ids[0]);
 
         /// Slowest period a consumer may ask for [ms]. Past a minute
         /// nothing is left of the stream and the request is a mistake.
@@ -173,8 +173,8 @@ namespace mark4
                 case mark4_Envelope_telemetry_list_request_tag:
                     sendPage(envelope.body.telemetry_list_request.cursor, src);
                     return true;
-                case mark4_Envelope_telemetry_config_tag:
-                    applyConfig(envelope.body.telemetry_config, src, m_frameUs);
+                case mark4_Envelope_telemetry_configure_tag:
+                    applyConfig(envelope.body.telemetry_configure, src, m_frameUs);
                     return true;
                 case mark4_Envelope_telemetry_subscribe_tag:
                     applySubscribe(src, envelope.body.telemetry_subscribe.enabled);
@@ -306,7 +306,7 @@ namespace mark4
         /// @param src node that sent it: where the answer goes
         /// @param nowUs instant the request is stamped with [us], on the
         ///        time base of the frames
-        void applyConfig(const mark4_TelemetryConfig &config,
+        void applyConfig(const mark4_TelemetryConfigure &config,
                          std::uint32_t src,
                          std::uint64_t nowUs)
         {
@@ -356,8 +356,8 @@ namespace mark4
             tellConfig(src);
         }
 
-        /// @brief Takes one subscribe request and answers it with what was
-        ///        applied.
+        /// @brief Takes one subscribe request and answers it with the
+        ///        subscription as it stands.
         /// @param src node that asked
         /// @param enabled what it asked for
         void applySubscribe(std::uint32_t src, bool enabled)
@@ -378,8 +378,8 @@ namespace mark4
                 static_cast<void>(m_subscribers.remove(src));
             }
             mark4_Envelope answer = mark4_Envelope_init_zero;
-            answer.which_body = mark4_Envelope_telemetry_subscribe_tag;
-            answer.body.telemetry_subscribe.enabled = applied;
+            answer.which_body = mark4_Envelope_telemetry_subscription_tag;
+            answer.body.telemetry_subscription.enabled = applied;
             static_cast<void>(request(src, answer));
         }
 

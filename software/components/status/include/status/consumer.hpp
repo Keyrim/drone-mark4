@@ -64,10 +64,11 @@ namespace mark4
     class StatusConsumerBase : public AbsMessageHandler, public AbsDirectoryListener
     {
       public:
-        /// Body tags this handler consumes: the stream and the answer to the
-        /// subscribe.
+        /// Body tags this handler consumes: the stream and the subscription
+        /// the node holds. Never the request tag: the provider of the same
+        /// concept claims that one, and both may live on one node.
         static constexpr std::array<pb_size_t, 2> TAGS = {mark4_Envelope_status_tag,
-                                                          mark4_Envelope_status_subscribe_tag};
+                                                          mark4_Envelope_status_subscription_tag};
 
         /// Node kinds that carry a StatusProvider. Nothing is asked of any
         /// other kind: it would acknowledge the request and drop it.
@@ -139,7 +140,7 @@ namespace mark4
             static_cast<void>(nodeId);
         }
 
-        /// @brief One report, or the answer to a subscribe.
+        /// @brief One report, or the subscription the node holds.
         /// @param src node it came from
         /// @param envelope the message
         /// @param nowUs instant of the poll that delivered it [us]
@@ -155,9 +156,9 @@ namespace mark4
                 // consumer's business.
                 return false;
             }
-            if (envelope.which_body == mark4_Envelope_status_subscribe_tag)
+            if (envelope.which_body == mark4_Envelope_status_subscription_tag)
             {
-                entry->subscribed = envelope.body.status_subscribe.enabled;
+                entry->subscribed = envelope.body.status_subscription.enabled;
                 entry->subscribeRequest = 0U;
                 return true;
             }

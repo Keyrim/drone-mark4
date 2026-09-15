@@ -25,6 +25,7 @@ mark4.Status.motor                  max_count:4 fixed_count:true
 # either is not an option, lowering them is.
 mark4.TelemetryDescriptor.name      max_size:41
 mark4.TelemetryDescriptors.descriptors  max_count:6
+mark4.TelemetryConfigure.ids        max_count:64
 mark4.TelemetryConfig.ids           max_count:64
 mark4.TelemetryData.values          max_count:32
 

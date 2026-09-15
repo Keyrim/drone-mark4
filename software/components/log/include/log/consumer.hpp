@@ -70,11 +70,13 @@ namespace mark4
     {
       public:
         /// Body tags this handler consumes: the line stream, the table
-        /// pages, one module's description and the answer to the subscribe.
+        /// pages, one module's description and the subscription the node
+        /// holds. Never the request tag: the provider of the same concept
+        /// claims that one, and both live on the gateway.
         static constexpr std::array<pb_size_t, 4> TAGS = {mark4_Envelope_log_tag,
                                                           mark4_Envelope_log_modules_tag,
                                                           mark4_Envelope_log_module_info_tag,
-                                                          mark4_Envelope_log_subscribe_tag};
+                                                          mark4_Envelope_log_subscription_tag};
 
         /// Node kinds that carry a LogProvider. Nothing is asked of any
         /// other kind: it would acknowledge the request and drop it.
@@ -179,7 +181,7 @@ namespace mark4
         }
 
         /// @brief One line, one table page, one module description, or the
-        ///        answer to a subscribe.
+        ///        subscription the node holds.
         /// @param src node it came from
         /// @param envelope the message
         /// @param nowUs instant of the poll that delivered it [us], unused:
@@ -199,8 +201,8 @@ namespace mark4
             }
             switch (envelope.which_body)
             {
-                case mark4_Envelope_log_subscribe_tag:
-                    entry->subscribed = envelope.body.log_subscribe.enabled;
+                case mark4_Envelope_log_subscription_tag:
+                    entry->subscribed = envelope.body.log_subscription.enabled;
                     entry->subscribeRequest = 0U;
                     return true;
                 case mark4_Envelope_log_modules_tag:

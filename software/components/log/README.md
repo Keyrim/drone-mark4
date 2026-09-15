@@ -114,9 +114,13 @@ asked for it.
 Four messages of `mark4.proto`, one `Envelope` body each:
 
 - `LogSubscribe { enabled }`, consumer to node: take this node's line
-  stream, or stop it. Answered by the same message as applied; `enabled`
-  comes back false when the table is full (`MAX_SUBSCRIBERS` = 2). A node
-  that goes down is dropped from the table.
+  stream, or stop it. Answered by `LogSubscription { enabled }`, the
+  subscription the node holds afterwards; `enabled` comes back false when
+  the table is full (`MAX_SUBSCRIBERS` = 2). A node that goes down is
+  dropped from the table. The request and its answer are two message types
+  on purpose: the gateway is both a log provider and a log consumer, and a
+  messenger holds one handler per body tag, so the provider claims
+  `LogSubscribe` and the consumer `LogSubscription`.
 - `Log { timestamp_us, level, module_id, text (96) }`, one per line let
   through, to each subscriber. The module is named by id: the table below
   gives the name.

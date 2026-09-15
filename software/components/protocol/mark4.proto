@@ -45,13 +45,27 @@ message Envelope {
     StatusSubscribe status_subscribe = 41;
     LogSubscribe log_subscribe = 42;
     TelemetrySubscribe telemetry_subscribe = 43;
-    TelemetryConfig telemetry_config = 44;
+    TelemetryConfigure telemetry_configure = 44;
     LogModulesRequest log_modules_request = 45;
     LogSetLevel log_set_level = 46;
     LogModuleInfo log_module_info = 47;
     TuningListRequest tuning_list_request = 48;
     TuningInfos tuning_infos = 49;
+    StatusSubscription status_subscription = 50;
+    LogSubscription log_subscription = 51;
+    TelemetrySubscription telemetry_subscription = 52;
+    TelemetryConfig telemetry_config = 53;
   }
+
+  // A request and its answer are two bodies, never one. A request is an
+  // imperative the consumer sends ("subscribe me", "this is the
+  // configuration"); the answer is the state the provider holds once it has
+  // acted on it, and it reads the same whether it answers a request or
+  // notifies the other subscribers of a change. Two bodies rather than one
+  // because a node that is the provider of a concept and a consumer of the
+  // same concept (the gateway, for its own log lines) has one handler per
+  // body tag: it claims the request tags on the provider side and the state
+  // tags on the consumer side, and the two never meet.
 
   // Numbers never reused, and left out on purpose: 8 was LogControl, 11
   // TelemetryEnable, 12 TelemetryAck, 17 SimRunStats, 22 TuningList, 24
@@ -149,10 +163,16 @@ message PlantTruth {
 // state lives in the telemetry registry below instead: a field is added
 // here only when every consumer of Status needs it.
 // Consumer to node, unicast: take this node's Status stream, or stop it.
-// Answered by the same message as applied; enabled comes back false when
-// the node has no room for one more subscriber. There is nothing to
-// configure: the node emits at a cadence of its own.
+// Answered by a StatusSubscription. There is nothing to configure: the node
+// emits at a cadence of its own.
 message StatusSubscribe {
+  bool enabled = 1;
+}
+
+// Node to consumer, unicast: whether that consumer holds this node's Status
+// stream, once the node has acted on its StatusSubscribe. It comes back
+// false when the node has no room for one more subscriber.
+message StatusSubscription {
   bool enabled = 1;
 }
 
@@ -210,19 +230,33 @@ message TelemetryDescriptors {
 }
 
 // Consumer to node, unicast: take this node's TelemetryData stream, or
-// stop it. Answered by the same message as applied; enabled comes back
-// false when the node has no room for one more subscriber. What the stream
-// carries is not part of it: the configuration is one per node, below.
+// stop it. Answered by a TelemetrySubscription. What the stream carries is
+// not part of it: the configuration is one per node, below.
 message TelemetrySubscribe {
   bool enabled = 1;
 }
 
+// Node to consumer, unicast: whether that consumer holds this node's
+// TelemetryData stream, once the node has acted on its TelemetrySubscribe.
+// It comes back false when the node has no room for one more subscriber.
+message TelemetrySubscription {
+  bool enabled = 1;
+}
+
 // Consumer to node, unicast: replaces the enabled set and the period
-// wholesale, last writer wins. Answered by the configuration as applied
-// (the ids the node kept, the period clamped between its own floor and
-// 60 s), to the requester and to every other subscriber of the stream. An
-// empty set, or a period of 0, stops the samples without touching the
-// subscriptions.
+// wholesale, last writer wins. Answered by the TelemetryConfig the node
+// applied. An empty set, or a period of 0, stops the samples without
+// touching the subscriptions.
+message TelemetryConfigure {
+  repeated uint32 ids = 1;  // at most 64
+  uint32 period_ms = 2;
+}
+
+// Node to consumer, unicast: the configuration in effect, once the node has
+// acted on a TelemetryConfigure (the ids it kept, the period clamped
+// between its own floor and 60 s). It goes to the consumer that asked and
+// to every other subscriber of the stream: holding a stream means hearing
+// what changes it.
 message TelemetryConfig {
   repeated uint32 ids = 1;  // at most 64
   uint32 period_ms = 2;
@@ -297,10 +331,16 @@ message LogModuleInfo {
 }
 
 // Consumer to node, unicast: take this node's log line stream, or stop it.
-// Answered by the same message as applied; enabled comes back false when
-// the node has no room for one more subscriber. A subscriber is also told
-// of every level change, as a LogModuleInfo.
+// Answered by a LogSubscription. A subscriber is also told of every level
+// change, as a LogModuleInfo.
 message LogSubscribe {
+  bool enabled = 1;
+}
+
+// Node to consumer, unicast: whether that consumer holds this node's log
+// line stream, once the node has acted on its LogSubscribe. It comes back
+// false when the node has no room for one more subscriber.
+message LogSubscription {
   bool enabled = 1;
 }
 

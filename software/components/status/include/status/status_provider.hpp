@@ -86,8 +86,8 @@ namespace mark4
             }
         }
 
-        /// @brief Takes one subscribe request and answers it with what was
-        ///        applied.
+        /// @brief Takes one subscribe request and answers it with the
+        ///        subscription as it stands.
         /// @param src node it came from: the subscriber, and where the
         ///        answer goes
         /// @param envelope decoded message
@@ -119,8 +119,8 @@ namespace mark4
                 static_cast<void>(m_subscribers.remove(src));
             }
             mark4_Envelope answer = mark4_Envelope_init_zero;
-            answer.which_body = mark4_Envelope_status_subscribe_tag;
-            answer.body.status_subscribe.enabled = applied;
+            answer.which_body = mark4_Envelope_status_subscription_tag;
+            answer.body.status_subscription.enabled = applied;
             if (request(src, answer) != 0U)
             {
                 ++m_answerCount;

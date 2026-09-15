@@ -429,6 +429,6 @@ namespace mark4
 
     // A body tag past the slots is caught by init() at run time and, for the
     // highest tag of the schema today, here at compile time.
-    static_assert(mark4_Envelope_tuning_infos_tag < Messenger::TAG_SLOTS,
+    static_assert(mark4_Envelope_telemetry_config_tag < Messenger::TAG_SLOTS,
                   "an Envelope body tag is past the dispatch table");
 } // namespace mark4
