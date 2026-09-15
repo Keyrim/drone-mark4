@@ -1075,3 +1075,19 @@ departs from the sections above; the code is the reference.
   numbered message on arrival and answer the `IdentityRequest` with a
   request of their own, so a C++ node no longer resends its `Announce`
   five times to them.
+
+**Candidates for the testing design** (section 8.3): what this rework
+left without a unit test, collected from each step. The messenger's
+`request()` (id counter, refusals, the first send kept when the transport
+refuses, resend cadence, give-up, `onRequestFailed()`), the automatic
+`RequestAck` (before dispatch, for an unclaimed tag, not counted in
+`sent()`), the `(src, id)` matching, presence relayed once per handler,
+the pending requests dropped with a node; the boot id and the
+reincarnation event on all three transports; `SubscriberTable`,
+`TablePull`, `StatusProvider` as a whole, the four consumers end to end
+(open on identity, page walk, subscribe answer, drop on node down), a node
+that is provider and consumer of one concept; every gateway's publish, the
+telemetry marks, the pilot seats, the per-client snapshot; the GDScript
+`Mark4Requests` and `Mark4StatusConsumer`; the Dart messenger's request
+path and `StatusConsumer`. The live smokes (`pnpm smoke`, `pnpm
+log-smoke`) cover the end-to-end paths by hand.
