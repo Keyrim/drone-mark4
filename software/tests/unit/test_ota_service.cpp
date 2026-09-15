@@ -25,6 +25,9 @@
 
 namespace
 {
+    /// Incarnation every transport of this file is built with: a test
+    /// restarts nothing, so one constant stands for the random draw.
+    constexpr std::uint32_t BOOT_ID = 0xB0071D00U;
     constexpr std::uint32_t NODE_SELF = 0x07A00001U;
     constexpr std::uint32_t NODE_GROUND = 0x67000001U;
     constexpr std::uint64_t T0_US = 1'000'000U;
@@ -87,7 +90,7 @@ namespace
 
       private:
         mark4::RecordingLink m_link;
-        mark4::Transport m_transport{NODE_SELF};
+        mark4::Transport m_transport{NODE_SELF, BOOT_ID};
         mark4::Messenger m_messenger{m_transport};
         mark4::FlightCore m_core;
         mark4::FlightOtaGate m_gate{m_core};

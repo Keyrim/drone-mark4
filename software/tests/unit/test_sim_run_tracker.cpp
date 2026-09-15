@@ -22,6 +22,9 @@ namespace
     /// Frames per simulated second of the sequences below.
     constexpr std::uint64_t TICK_US = 2000U;
 
+    /// Incarnation every transport of this file is built with: a test
+    /// restarts nothing, so one constant stands for the random draw.
+    constexpr std::uint32_t BOOT_ID = 0xB0071D00U;
     constexpr std::uint32_t NODE_SELF = 0x5147A000U;
 
     /// A transport over a recording link: the tracker publishes on it and
@@ -59,8 +62,8 @@ namespace
         }
 
       private:
-        mark4::RecordingLink m_link;             ///< the medium
-        mark4::Transport m_transport{NODE_SELF}; ///< what the tracker holds
+        mark4::RecordingLink m_link;                      ///< the medium
+        mark4::Transport m_transport{NODE_SELF, BOOT_ID}; ///< what the tracker holds
     };
 
     /// One step of a synthetic run: the frame and the outputs it drew.

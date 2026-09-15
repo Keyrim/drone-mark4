@@ -19,6 +19,7 @@ add_library(platform_stm32 STATIC
     bmp581.cpp
     uart1.cpp
     clock_stm32.cpp
+    rng.cpp
     sensor_source_stm32.cpp
     motor_sink_dshot.cpp
     internal_flash.cpp

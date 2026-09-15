@@ -25,6 +25,7 @@
 #include "platform_stm32/motor_sink_dshot.hpp"
 #include "platform_stm32/mpu6050.hpp"
 #include "platform_stm32/ota_slots.hpp"
+#include "platform_stm32/rng.hpp"
 #include "platform_stm32/rtt_sink.hpp"
 #include "platform_stm32/sensor_source_stm32.hpp"
 #include "platform_stm32/uart1_stream.hpp"
@@ -134,7 +135,7 @@ namespace mark4
         mark4::ClockStm32 m_clock;
         mark4::Uart1Stream m_uartStream;
         mark4::UartLink m_uartLink{m_uartStream};
-        mark4::Transport m_transport{boardNodeId()};
+        mark4::Transport m_transport{boardNodeId(), randomBootId()};
         /// Every message addressed to this node goes through it to the one
         /// handler of its tag; every handler below is declared after it.
         mark4::Messenger m_messenger{m_transport};

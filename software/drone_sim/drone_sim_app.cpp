@@ -12,6 +12,7 @@
 #include "ota/boot_policy.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
+#include "transport/node_id.hpp"
 
 namespace
 {
@@ -89,7 +90,7 @@ namespace mark4
                              const char *otaDirectory)
         : m_maxFrames(maxFrames),
           m_udpLink(discoveryPort),
-          m_transport(nodeId),
+          m_transport(nodeId, randomBootId()),
           m_otaDirectory(makeOtaDirectory(otaDirectory))
     {
     }

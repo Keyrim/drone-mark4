@@ -30,6 +30,9 @@ namespace
     /// Short enough that a broken expectation fails fast instead of hanging.
     constexpr std::uint32_t TEST_TIMEOUT_MS = 200U;
 
+    /// Incarnation every transport of this file is built with: a test
+    /// restarts nothing, so one constant stands for the random draw.
+    constexpr std::uint32_t BOOT_ID = 0xB0071D00U;
     constexpr std::uint32_t DRONE_NODE = 0xD0000001U;
     constexpr std::uint32_t PLANT_NODE = 0xB1A00001U;
     constexpr std::uint32_t OTHER_PLANT_NODE = 0xB1A00002U;
@@ -112,9 +115,10 @@ namespace
         }
 
         /// @brief Waits for one frame carrying a payload, up to the test
-        ///        timeout. The drone's keepalives (a header alone, one to a
-        ///        newcomer and one per second) are what a plant learns the
-        ///        drone from and never delivers: they are skipped here too.
+        ///        timeout. The drone's keepalives (the flagged frames, one
+        ///        to a newcomer and one per second) are what a plant learns
+        ///        the drone from and never delivers: they are skipped here
+        ///        too.
         /// @return what came, size 0 when nothing did
         Received receive()
         {
@@ -124,9 +128,10 @@ namespace
             {
                 mark4::LinkAddress from;
                 const std::size_t size = m_link.receive(frame.data(), frame.size(), from);
-                if (size > mark4::FRAME_HEADER_SIZE)
+                if (size > mark4::FRAME_HEADER_SIZE &&
+                    mark4::decodeFrameHeader(frame.data(), size, received.header) &&
+                    !received.header.keepalive)
                 {
-                    REQUIRE(mark4::decodeFrameHeader(frame.data(), size, received.header));
                     received.size = size - mark4::FRAME_HEADER_SIZE;
                     std::memcpy(received.payload.data(),
                                 frame.data() + mark4::FRAME_HEADER_SIZE,
@@ -175,7 +180,7 @@ namespace
 
         mark4::ClockSim clock;
         mark4::UdpLink udpLink;
-        mark4::Transport transport{DRONE_NODE};
+        mark4::Transport transport{DRONE_NODE, BOOT_ID};
         mark4::Messenger messenger{transport};
         mark4::PlantLink link{messenger, transport, udpLink, clock};
         mark4::SensorSourceSim source{link, clock};

@@ -140,7 +140,7 @@ namespace mark4
           m_profiles(m_config.profilesDir),
           m_udpLink(m_config.discoveryPort),
           m_ownAnnounce(gatewayAnnounce()),
-          m_transport(m_config.nodeId != 0U ? m_config.nodeId : randomNodeId())
+          m_transport(m_config.nodeId != 0U ? m_config.nodeId : randomNodeId(), randomBootId())
     {
     }
 

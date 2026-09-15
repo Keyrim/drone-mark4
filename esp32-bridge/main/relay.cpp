@@ -23,6 +23,7 @@
 #include "driver/uart.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
+#include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -96,6 +97,16 @@ namespace mark4
 
         /// Bytes of the MAC the node name carries, its low half.
         constexpr std::size_t MAC_NAME_BYTES = 3U;
+
+        /// @brief Draws the identity of this run of this relay. The node
+        ///        id is the MAC and never changes; this one has to, so it
+        ///        comes from the chip's random source and not from the MAC.
+        /// @return the boot id, never 0
+        std::uint32_t bootId()
+        {
+            const std::uint32_t drawn = esp_random();
+            return drawn == 0U ? 1U : drawn;
+        }
 
         /// @param mac the WiFi MAC, the node name's low half
         /// @return what this node answers when asked who it is: what it is,
@@ -260,9 +271,10 @@ namespace mark4
             bool sessionWasOpen = false; ///< updater state at the last poll, for the log
 
             /// @param nodeId this relay's transport identity
+            /// @param bootId identity of this run of it, in every keepalive
             /// @param identity what it answers when asked who it is
-            Relay(std::uint32_t nodeId, const mark4_Announce &identity)
-                : transport(nodeId),
+            Relay(std::uint32_t nodeId, std::uint32_t bootId, const mark4_Announce &identity)
+                : transport(nodeId, bootId),
                   discovery(messenger, identity)
             {
             }
@@ -390,7 +402,7 @@ extern "C" void relayRun(void)
     ESP_ERROR_CHECK(esp_read_mac(mac.data(), ESP_MAC_WIFI_STA));
     // Static: the composition lives for the whole run and is too large for
     // the main task's stack (two frame buffers and the node table).
-    static Relay relay(hashNodeId(mac.data(), mac.size()), relayIdentity(mac));
+    static Relay relay(hashNodeId(mac.data(), mac.size()), bootId(), relayIdentity(mac));
 
     // A relay whose flash is not laid out for two slots still relays; it
     // only refuses to update itself, and says so once. Without the service

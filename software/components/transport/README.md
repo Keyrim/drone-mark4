@@ -32,11 +32,16 @@ Every frame opens with an 11-byte little-endian header (`transport/frame.hpp`):
 | `src` | u32 | node that produced the payload |
 | `dst` | u32 | node it is for, `0` = every node (`BROADCAST_NODE`) |
 | `seq` | u16 | per-sender counter, wraps |
-| `hops` | u8 | relays crossed so far; a sender writes 0, a relay adds one and drops a frame already at `MAX_HOPS` = 4 |
+| `flags:hops` | u8 | low nibble (`FRAME_HOPS_MASK`): relays crossed so far; a sender writes 0, a relay adds one and drops a frame already at `MAX_HOPS` = 4. High nibble: flags, bit 7 (`FRAME_FLAG_KEEPALIVE`) marking the transport's own keepalive, the others written 0 and ignored on read |
 
-The payload follows, at most `MAX_PAYLOAD` = 512 bytes; a frame carrying
-none is the transport's own keepalive (see Presence), and an application
-`send()` of an empty payload is refused. A medium that keeps
+The payload follows, at most `MAX_PAYLOAD` = 512 bytes; a frame whose
+header carries the keepalive flag is the transport's own (see Presence) and
+is never delivered whatever it carries, and an application `send()` of an
+empty payload is refused. A frame without the flag and without a payload is
+nobody's message: it is learnt from like any other frame and delivered
+nowhere. That is the compatibility rule with a node built before the flag
+existed, whose keepalive is the header alone: it is still heard, its boot id
+is simply unknown. A medium that keeps
 datagram boundaries (UDP) adds nothing; the UART link wraps the frame in
 the serial framing (`transport/serial_framing.hpp`: `A5 5A len_lo len_hi
 payload crc16`, CRC-16/CCITT-FALSE over the two length bytes and the
@@ -55,7 +60,8 @@ the ESP32 relay its WiFi MAC.
 ## API (`transport/transport.hpp`)
 
 ```cpp
-Transport transport(nodeId);           // explicit, value member of the App
+Transport transport(nodeId, bootId);   // value member of the App
+transport.nodeId(); transport.bootId(); // who it is, and which run of it
 transport.addLink(udpLink);            // up to MAX_LINKS = 4, AbsLink&
 transport.init();                      // false without a node id or a link
 transport.send(dst, payload, size);    // dst 0 = broadcast on every link, 1..MAX_PAYLOAD bytes
@@ -87,9 +93,10 @@ rather than in a wrapper around `send()`.
 `poll()` is the only place anything happens, and `nowUs` comes from the
 caller: the transport never reads a clock. Every frame received, whatever
 its payload, refreshes the node table (`nodeId -> link, address,
-lastSeenUs, lastSeq, received, lost, duplicates, hops`, `MAX_NODES` = 32);
+lastSeenUs, lastSeq, received, lost, duplicates, hops, boot`, `MAX_NODES` =
+32);
 a payload addressed to this node or to everyone is handed to `deliver`,
-and a frame carrying none (a keepalive) is not. A frame whose `src` is
+and a keepalive, or a frame carrying no payload, is not. A frame whose `src` is
 this node (its own broadcast coming back on a shared medium) is ignored.
 
 A broadcast leaves on every declared link; a unicast leaves on the link
@@ -104,13 +111,26 @@ nothing. The hub publishes these counters per node in its `NodeTable`
 
 ## Presence
 
-Presence is the keepalive, a frame that is the header alone (11 bytes, no
-payload), owned by the transport: every node broadcasts one every
-`KEEPALIVE_PERIOD_US` (1 s, the first one on the first `poll()`), and
-additionally unicasts one to a node the moment it first appears, so a
-newcomer learns everyone at once. A keepalive is learnt from, counted in
-the sequence accounting and relayed like any broadcast, and never
-delivered: it carries no identity and no application sees it. A node
+Presence is the keepalive, a frame flagged `FRAME_FLAG_KEEPALIVE` in its
+header and carrying `KEEPALIVE_PAYLOAD_SIZE` = 4 bytes, the sender's **boot
+id** little-endian (15 bytes in all), owned by the transport: every node
+broadcasts one every `KEEPALIVE_PERIOD_US` (1 s, the first one on the first
+`poll()`), and additionally unicasts one to a node the moment it first
+appears, so a newcomer learns everyone at once. A keepalive is learnt from,
+counted in the sequence accounting and relayed like any broadcast, and never
+delivered: it carries no identity and no application sees it.
+
+The boot id is the identity of one run of one node, drawn at random by the
+composition and handed to the constructor (`randomBootId()` on desktop, the
+RNG peripheral on the board, `esp_random()` on the ESP32); it is never
+derived from the chip, because what makes a node id stable is exactly what
+this number must not be. `Node::boot` keeps the last one heard, 0 until the
+node's first keepalive: a node id is stable across reboots, so a node that
+restarts faster than `NODE_EXPIRY_US` would otherwise never leave the tables
+of its peers. The first keepalive of a node sets its `boot` silently; one
+carrying a different, non-zero boot id is another incarnation of the same
+id, and the transport fires `onNodeDown()` then `onNodeUp()` for it with its
+counters reset, so every listener drops what it knew and starts over. A node
 silent for `NODE_EXPIRY_US` (3 s, three missed keepalives) is forgotten
 and every `AbsPresenceListener::onNodeDown()` fires; `onNodeUp()` fires
 when a node is heard for the first time. A listener attaches itself to the
@@ -129,7 +149,10 @@ arrival link (split horizon) or the destination is unknown (dropped). A
 node with one link therefore relays nothing, which is why no switch is
 needed. The duplicate drop by `(src, seq)` is what keeps a triangle of
 relays from looping. `Node::hops` keeps the count the last frame from a
-node carried: 0 for a direct neighbour, 1 for a node behind one relay.
+node carried: 0 for a direct neighbour, 1 for a node behind one relay. A
+relay rebuilds the last header byte rather than incrementing it in place:
+the hop count shares it with the flags, which cross unchanged, so a
+keepalive is relayed as a keepalive.
 
 The hub learns the board from its keepalives, relayed by the ESP32, at the
 relay's IP and data port, and its unicasts to the board land there and are

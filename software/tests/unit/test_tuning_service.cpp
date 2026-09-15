@@ -26,6 +26,9 @@ namespace
     constexpr std::uint64_t STEP_US = 2000U; // 500 Hz stream
     constexpr float HELPER_BARO_PA = 101325.0f;
 
+    /// Incarnation every transport of this file is built with: a test
+    /// restarts nothing, so one constant stands for the random draw.
+    constexpr std::uint32_t BOOT_ID = 0xB0071D00U;
     constexpr std::uint32_t NODE_SELF = 0x51A17000U;
     constexpr std::uint32_t NODE_GROUND = 0x67000001U;
     constexpr std::uint32_t NODE_OTHER = 0x67000002U;
@@ -111,9 +114,9 @@ namespace
             m_link.clear();
         }
 
-        mark4::RecordingLink m_link;               ///< the medium
-        mark4::Transport m_transport{NODE_SELF};   ///< this node
-        mark4::Messenger m_messenger{m_transport}; ///< what the service attaches to
+        mark4::RecordingLink m_link;                      ///< the medium
+        mark4::Transport m_transport{NODE_SELF, BOOT_ID}; ///< this node
+        mark4::Messenger m_messenger{m_transport};        ///< what the service attaches to
     };
 
     /// @param id parameter id

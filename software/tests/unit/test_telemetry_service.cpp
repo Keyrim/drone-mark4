@@ -23,6 +23,9 @@
 
 namespace
 {
+    /// Incarnation every transport of this file is built with: a test
+    /// restarts nothing, so one constant stands for the random draw.
+    constexpr std::uint32_t BOOT_ID = 0xB0071D00U;
     constexpr std::uint32_t NODE_SELF = 0x7E1E0000U;
     constexpr std::uint32_t NODE_GROUND = 0x67000001U;
     constexpr std::uint32_t NODE_OTHER = 0x67000002U;
@@ -105,9 +108,9 @@ namespace
         }
 
       private:
-        mark4::RecordingLink m_link;               ///< the medium
-        mark4::Transport m_transport{NODE_SELF};   ///< this node
-        mark4::Messenger m_messenger{m_transport}; ///< what the service attaches to
+        mark4::RecordingLink m_link;                      ///< the medium
+        mark4::Transport m_transport{NODE_SELF, BOOT_ID}; ///< this node
+        mark4::Messenger m_messenger{m_transport};        ///< what the service attaches to
     };
 
     /// A handful of measures with known names, so a test knows what the
@@ -543,11 +546,11 @@ TEST_CASE("a keepalive keeps the stream alive without restarting the pacing")
     const std::size_t expected = 1'000'000U / (periodMs * US_PER_MS);
     // One ack for the keepalive, and one sample per period, no more. The
     // transport's own keepalive rode along with the poll one second after
-    // the first: a header alone, not a message, so it is not counted.
+    // the first: a flagged frame, not a message, so it is not counted.
     std::size_t messages = 0U;
     for (const mark4::RecordedFrame &frame : wire.frames())
     {
-        if (!frame.payload.empty())
+        if (!frame.header.keepalive)
         {
             ++messages;
         }

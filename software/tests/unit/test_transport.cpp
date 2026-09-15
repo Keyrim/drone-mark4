@@ -24,6 +24,9 @@
 namespace
 {
     constexpr std::uint64_t T0_US = 10'000'000U;
+    /// Incarnation every transport of this file is built with: a test
+    /// restarts nothing, so one constant stands for the random draw.
+    constexpr std::uint32_t BOOT_ID = 0xB0071D00U;
     constexpr std::uint32_t NODE_A = 0xA0000001U;
     constexpr std::uint32_t NODE_B = 0xB0000002U;
     constexpr std::uint32_t NODE_C = 0xC0000003U;
@@ -167,8 +170,13 @@ namespace
 
     const std::vector<std::uint8_t> HELLO = {'h', 'e', 'l', 'l', 'o'};
 
-    /// A header alone: what the transport's keepalive is.
+    /// No payload: what a frame that is nobody's message carries.
     const std::vector<std::uint8_t> NOTHING;
+
+    /// Boot id a foreign keepalive announces, and the other incarnation of
+    /// the same node.
+    constexpr std::uint32_t PEER_BOOT = 0x11223344U;
+    constexpr std::uint32_t PEER_REBOOT = 0x55667788U;
 
     /// @brief Builds one raw frame the way a foreign sender would: hops = 0,
     ///        no relay crossed yet.
@@ -188,6 +196,24 @@ namespace
         {
             std::memcpy(frame.data() + mark4::FRAME_HEADER_SIZE, payload.data(), payload.size());
         }
+        return frame;
+    }
+
+    /// @brief Builds one raw keepalive the way a foreign node's transport
+    ///        would: the header flagged, the boot id behind it.
+    std::vector<std::uint8_t> keepaliveFrame(std::uint32_t src,
+                                             std::uint32_t dst,
+                                             std::uint16_t seq,
+                                             std::uint32_t boot)
+    {
+        std::vector<std::uint8_t> payload(mark4::KEEPALIVE_PAYLOAD_SIZE, 0U);
+        for (std::size_t index = 0U; index < payload.size(); ++index)
+        {
+            payload[index] = static_cast<std::uint8_t>(boot >> (8U * static_cast<unsigned>(index)));
+        }
+        std::vector<std::uint8_t> frame = rawFrame(src, dst, seq, payload);
+        frame[mark4::FRAME_HEADER_SIZE - 1U] = static_cast<std::uint8_t>(
+            frame[mark4::FRAME_HEADER_SIZE - 1U] | mark4::FRAME_FLAG_KEEPALIVE);
         return frame;
     }
 
@@ -254,7 +280,17 @@ TEST_CASE("frame header round trips little-endian")
     CHECK(decoded.dst == header.dst);
     CHECK(decoded.seq == header.seq);
     CHECK(decoded.hops == header.hops);
+    CHECK(!decoded.keepalive);
     CHECK(!mark4::decodeFrameHeader(bytes.data(), bytes.size() - 1U, decoded));
+
+    // The last byte holds the hop count and the flags: the keepalive flag
+    // rides on bit 7 and leaves the count alone.
+    header.keepalive = true;
+    mark4::encodeFrameHeader(header, bytes.data());
+    CHECK(bytes[mark4::FRAME_HEADER_SIZE - 1U] == (0x03U | mark4::FRAME_FLAG_KEEPALIVE));
+    REQUIRE(mark4::decodeFrameHeader(bytes.data(), bytes.size(), decoded));
+    CHECK(decoded.hops == header.hops);
+    CHECK(decoded.keepalive);
 }
 
 TEST_CASE("a node id hash is never the broadcast id")
@@ -270,9 +306,9 @@ TEST_CASE("a transport needs a node id and a link")
 {
     FakeBus bus;
     FakeLink link(bus);
-    mark4::Transport nothing(0U);
+    mark4::Transport nothing(0U, BOOT_ID);
     CHECK(!nothing.init());
-    mark4::Transport lonely(NODE_A);
+    mark4::Transport lonely(NODE_A, BOOT_ID);
     CHECK(!lonely.init());
     REQUIRE(lonely.addLink(link));
     CHECK(lonely.init());
@@ -282,7 +318,7 @@ TEST_CASE("a transport takes at most MAX_LISTENERS presence listeners")
 {
     FakeBus bus;
     FakeLink link(bus);
-    mark4::Transport transport(NODE_A);
+    mark4::Transport transport(NODE_A, BOOT_ID);
     REQUIRE(transport.addLink(link));
     static_assert(mark4::Transport::MAX_LISTENERS == 4U);
     Observer first(transport);
@@ -305,7 +341,7 @@ TEST_CASE("a destroyed presence listener is no longer called and frees its slot"
 {
     FakeBus bus;
     FakeLink link(bus);
-    mark4::Transport transport(NODE_A);
+    mark4::Transport transport(NODE_A, BOOT_ID);
     REQUIRE(transport.addLink(link));
     Observer kept(transport);
     {
@@ -336,8 +372,8 @@ TEST_CASE("nodes are learnt from any frame, delivered to, and expire with callba
     FakeBus bus;
     FakeLink linkA(bus);
     FakeLink linkB(bus);
-    mark4::Transport a(NODE_A);
-    mark4::Transport b(NODE_B);
+    mark4::Transport a(NODE_A, BOOT_ID);
+    mark4::Transport b(NODE_B, BOOT_ID);
     REQUIRE(a.addLink(linkA));
     REQUIRE(b.addLink(linkB));
     Observer seenByA(a);
@@ -402,19 +438,25 @@ TEST_CASE("the keepalive goes out once per period and at once to a newcomer")
     FakeBus bus;
     FakeLink linkA(bus);
     FakeLink linkB(bus);
-    mark4::Transport a(NODE_A);
-    mark4::Transport b(NODE_B);
+    mark4::Transport a(NODE_A, BOOT_ID);
+    mark4::Transport b(NODE_B, BOOT_ID);
     REQUIRE(a.addLink(linkA));
     REQUIRE(b.addLink(linkB));
     Observer seenByA(a);
     Observer seenByB(b);
 
-    // First poll: a header-only broadcast frame leaves at once.
+    // First poll: a flagged broadcast frame carrying the boot id leaves at
+    // once.
     seenByA.poll(a, T0_US);
     CHECK(linkA.broadcasts() == 1U);
     REQUIRE(!bus.inbox[1].empty());
     CHECK(bus.inbox[1].back().broadcast);
-    CHECK(bus.inbox[1].back().bytes.size() == mark4::FRAME_HEADER_SIZE);
+    CHECK(bus.inbox[1].back().bytes.size() ==
+          mark4::FRAME_HEADER_SIZE + mark4::KEEPALIVE_PAYLOAD_SIZE);
+    mark4::FrameHeader keepalive;
+    REQUIRE(mark4::decodeFrameHeader(
+        bus.inbox[1].back().bytes.data(), bus.inbox[1].back().bytes.size(), keepalive));
+    CHECK(keepalive.keepalive);
     // One per period, none in between.
     seenByA.poll(a, T0_US + mark4::Transport::KEEPALIVE_PERIOD_US - 1U);
     CHECK(linkA.broadcasts() == 1U);
@@ -428,12 +470,13 @@ TEST_CASE("the keepalive goes out once per period and at once to a newcomer")
     CHECK(b.isAlive(NODE_A));
     REQUIRE(b.findNode(NODE_A) != nullptr);
     CHECK(b.findNode(NODE_A)->received == 2U);
+    CHECK(b.findNode(NODE_A)->boot == a.bootId());
 
     // C appears through a plain frame: A unicasts a keepalive to C at once,
     // without waiting for the period (and one to B, whose own keepalives
     // A hears in the same poll).
     FakeLink linkC(bus);
-    mark4::Transport c(NODE_C);
+    mark4::Transport c(NODE_C, BOOT_ID);
     REQUIRE(c.addLink(linkC));
     Observer seenByC(c);
     REQUIRE(c.send(NODE_A, HELLO.data(), HELLO.size()) == false); // unknown yet
@@ -445,7 +488,8 @@ TEST_CASE("the keepalive goes out once per period and at once to a newcomer")
     CHECK(linkA.broadcasts() == 2U);
     REQUIRE(!bus.inbox[2].empty());
     CHECK(!bus.inbox[2].back().broadcast);
-    CHECK(bus.inbox[2].back().bytes.size() == mark4::FRAME_HEADER_SIZE);
+    CHECK(bus.inbox[2].back().bytes.size() ==
+          mark4::FRAME_HEADER_SIZE + mark4::KEEPALIVE_PAYLOAD_SIZE);
     // C learns A from that unicast, and nothing is delivered to it.
     seenByC.poll(c, midPeriod);
     CHECK(seenByC.up == std::vector<std::uint32_t>{NODE_A});
@@ -457,30 +501,53 @@ TEST_CASE("a keepalive is learnt from and never delivered")
 {
     FakeBus bus;
     FakeLink link(bus);
-    mark4::Transport a(NODE_A);
+    mark4::Transport a(NODE_A, BOOT_ID);
     REQUIRE(a.addLink(link));
     Observer seen(a);
 
-    // Unicast to this node: a header alone.
-    inject(bus, 0U, 1U, rawFrame(NODE_B, NODE_A, 1U, NOTHING));
+    // Unicast to this node: the flagged frame, its boot id behind it.
+    inject(bus, 0U, 1U, keepaliveFrame(NODE_B, NODE_A, 1U, PEER_BOOT));
     seen.poll(a, T0_US);
     CHECK(seen.up == std::vector<std::uint32_t>{NODE_B});
     CHECK(seen.delivered.empty());
     CHECK(a.isAlive(NODE_B));
+    REQUIRE(a.findNode(NODE_B) != nullptr);
+    CHECK(a.findNode(NODE_B)->boot == PEER_BOOT);
 
     // Broadcast: the same.
-    inject(bus, 0U, 2U, rawFrame(NODE_C, mark4::BROADCAST_NODE, 5U, NOTHING));
+    inject(bus, 0U, 2U, keepaliveFrame(NODE_C, mark4::BROADCAST_NODE, 5U, PEER_BOOT));
     seen.poll(a, T0_US);
     CHECK(seen.up == std::vector<std::uint32_t>{NODE_B, NODE_C});
     CHECK(seen.delivered.empty());
     CHECK(a.isAlive(NODE_C));
 
     // It counts in the sequence accounting like any frame.
-    inject(bus, 0U, 2U, rawFrame(NODE_C, mark4::BROADCAST_NODE, 7U, NOTHING));
+    inject(bus, 0U, 2U, keepaliveFrame(NODE_C, mark4::BROADCAST_NODE, 7U, PEER_BOOT));
     seen.poll(a, T0_US);
     REQUIRE(a.findNode(NODE_C) != nullptr);
     CHECK(a.findNode(NODE_C)->received == 2U);
     CHECK(a.findNode(NODE_C)->lost == 1U);
+    CHECK(seen.delivered.empty());
+
+    // A frame without the flag and without a payload is nobody's message
+    // either: learnt from, delivered nowhere. That is what a node built
+    // before the flag existed sends as its keepalive, boot id unknown.
+    inject(bus, 0U, 3U, rawFrame(NODE_B + 1U, NODE_A, 1U, NOTHING));
+    seen.poll(a, T0_US);
+    CHECK(a.isAlive(NODE_B + 1U));
+    REQUIRE(a.findNode(NODE_B + 1U) != nullptr);
+    CHECK(a.findNode(NODE_B + 1U)->boot == 0U);
+    CHECK(seen.delivered.empty());
+
+    // Another incarnation of NODE_B: it leaves the table and comes back,
+    // its counters reset, and every listener hears both.
+    inject(bus, 0U, 1U, keepaliveFrame(NODE_B, NODE_A, 2U, PEER_REBOOT));
+    seen.poll(a, T0_US);
+    CHECK(seen.down == std::vector<std::uint32_t>{NODE_B});
+    CHECK(seen.up == std::vector<std::uint32_t>{NODE_B, NODE_C, NODE_B + 1U, NODE_B});
+    REQUIRE(a.findNode(NODE_B) != nullptr);
+    CHECK(a.findNode(NODE_B)->boot == PEER_REBOOT);
+    CHECK(a.findNode(NODE_B)->received == 1U);
     CHECK(seen.delivered.empty());
 }
 
@@ -488,7 +555,7 @@ TEST_CASE("the send-side counters follow what actually left on a link")
 {
     FakeBus bus;
     FakeLink link(bus);
-    mark4::Transport transport(NODE_A);
+    mark4::Transport transport(NODE_A, BOOT_ID);
     REQUIRE(transport.addLink(link));
 
     const std::array<std::uint8_t, 4> payload{1U, 2U, 3U, 4U};
@@ -529,7 +596,7 @@ TEST_CASE("sequence accounting counts losses and duplicates across the wrap")
 {
     FakeBus bus;
     FakeLink linkA(bus);
-    mark4::Transport a(NODE_A);
+    mark4::Transport a(NODE_A, BOOT_ID);
     REQUIRE(a.addLink(linkA));
     Observer seen(a);
 
@@ -567,9 +634,9 @@ TEST_CASE("a relay in a line forwards towards the destination and no further")
     FakeLink linkR1(bus1);
     FakeLink linkR2(bus2);
     FakeLink linkC(bus2);
-    mark4::Transport a(NODE_A);
-    mark4::Transport r(0xBEEF0000U);
-    mark4::Transport c(NODE_C);
+    mark4::Transport a(NODE_A, BOOT_ID);
+    mark4::Transport r(0xBEEF0000U, BOOT_ID);
+    mark4::Transport c(NODE_C, BOOT_ID);
     REQUIRE(a.addLink(linkA));
     REQUIRE(r.addLink(linkR1));
     REQUIRE(r.addLink(linkR2));
@@ -656,9 +723,9 @@ TEST_CASE("a relay forwards a board broadcast to the lan exactly once and ignore
     FakeLink linkHubUart(uart);
     FakeLink linkHubLan(lan);
     FakeLink linkSim(lan);
-    mark4::Transport board(NODE_A);
-    mark4::Transport hub(0x4B000000U);
-    mark4::Transport sim(NODE_C);
+    mark4::Transport board(NODE_A, BOOT_ID);
+    mark4::Transport hub(0x4B000000U, BOOT_ID);
+    mark4::Transport sim(NODE_C, BOOT_ID);
     REQUIRE(board.addLink(linkBoard));
     REQUIRE(hub.addLink(linkHubUart));
     REQUIRE(hub.addLink(linkHubLan));
@@ -750,10 +817,10 @@ TEST_CASE("a relay carries every broadcast across and unicasts towards the board
     FakeLink linkRelayLan(lan);
     FakeLink linkHub(lan);
     FakeLink linkSim(lan);
-    mark4::Transport board(NODE_A);
-    mark4::Transport relay(0xE5320000U);
-    mark4::Transport hub(NODE_B);
-    mark4::Transport sim(NODE_C);
+    mark4::Transport board(NODE_A, BOOT_ID);
+    mark4::Transport relay(0xE5320000U, BOOT_ID);
+    mark4::Transport hub(NODE_B, BOOT_ID);
+    mark4::Transport sim(NODE_C, BOOT_ID);
     REQUIRE(board.addLink(linkBoard));
     REQUIRE(relay.addLink(linkRelayUart));
     REQUIRE(relay.addLink(linkRelayLan));
@@ -870,9 +937,9 @@ TEST_CASE("relays in a triangle never loop a broadcast")
     FakeLink cOnBC(busBC);
     FakeLink cOnCA(busCA);
     FakeLink aOnCA(busCA);
-    mark4::Transport a(NODE_A);
-    mark4::Transport b(NODE_B);
-    mark4::Transport c(NODE_C);
+    mark4::Transport a(NODE_A, BOOT_ID);
+    mark4::Transport b(NODE_B, BOOT_ID);
+    mark4::Transport c(NODE_C, BOOT_ID);
     REQUIRE(a.addLink(aOnAB));
     REQUIRE(a.addLink(aOnCA));
     REQUIRE(b.addLink(bOnAB));
@@ -976,8 +1043,8 @@ TEST_CASE("the uart link frames payloads and resynchronizes after garbage and a 
     CHECK(!linkA.broadcast(huge.data(), huge.size()));
 
     // Two transports over the pipe talk like over any other link.
-    mark4::Transport a(NODE_A);
-    mark4::Transport b(NODE_B);
+    mark4::Transport a(NODE_A, BOOT_ID);
+    mark4::Transport b(NODE_B, BOOT_ID);
     REQUIRE(a.addLink(linkA));
     REQUIRE(b.addLink(linkB));
     Observer seenByB(b);
@@ -1035,8 +1102,8 @@ TEST_CASE("two udp nodes on one host find each other through the shared discover
     CHECK(linkA.discoveryFd() >= 0);
     CHECK(linkA.dataFd() >= 0);
 
-    mark4::Transport a(NODE_A);
-    mark4::Transport b(NODE_B);
+    mark4::Transport a(NODE_A, BOOT_ID);
+    mark4::Transport b(NODE_B, BOOT_ID);
     REQUIRE(a.addLink(linkA));
     REQUIRE(b.addLink(linkB));
     REQUIRE(a.init());
@@ -1073,7 +1140,7 @@ TEST_CASE("two udp nodes on one host find each other through the shared discover
     // A node on another discovery port is on another deployment: unheard.
     mark4::UdpLink linkC(pickFreePort());
     REQUIRE(linkC.init());
-    mark4::Transport c(NODE_C);
+    mark4::Transport c(NODE_C, BOOT_ID);
     REQUIRE(c.addLink(linkC));
     Observer seenByC(c);
     seenByC.poll(c, T0_US);

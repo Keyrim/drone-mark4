@@ -56,6 +56,9 @@ namespace
     /// four, so the CRC convention's 0xFF tail padding never enters the
     /// picture, and small enough that the whole transfer is a handful of
     /// chunks.
+    /// Incarnation every transport of this file is built with: a test
+    /// restarts nothing, so one constant stands for the random draw.
+    constexpr std::uint32_t BOOT_ID = 0xB0071D00U;
     constexpr std::uint32_t IMAGE_PAYLOAD_SIZE = 1024U;
 
     /// Total bytes of one test image.
@@ -320,21 +323,21 @@ namespace
             }
         }
 
-        bool m_viaRelay;                                   ///< through the wire and two relays
-        mark4::UdpLink m_udp;                              ///< the ground node's LAN link
-        mark4::Transport m_transport{GROUND_NODE};         ///< this node
-        mark4::BytePipe m_wire;                            ///< the UART between the relays
-        mark4::PipeEnd m_relayEnd{m_wire.toA, m_wire.toB}; ///< ESP32 side of the wire
-        mark4::PipeEnd m_farEnd{m_wire.toB, m_wire.toA};   ///< board side of the wire
-        mark4::UartLink m_relayUart{m_relayEnd};           ///< the ESP32's UART link (index 0)
-        mark4::UdpLink m_relayUdp;                         ///< the ESP32's LAN link, the
-                                                           ///< ground's discovery port
-        mark4::Transport m_relay{RELAY_NODE};              ///< the ESP32
-        mark4::UartLink m_farUart{m_farEnd};               ///< far relay's UART link
-        mark4::UdpLink m_farUdp;                           ///< far relay's link to the sim
-        mark4::Transport m_farRelay{FAR_RELAY_NODE};       ///< the board's side of the wire
-        mark4::OtaClient *m_pending = nullptr;             ///< client being fed by drain()
-        std::uint64_t m_pendingUs = 0U;                    ///< instant handed to it
+        bool m_viaRelay;                                      ///< through the wire and two relays
+        mark4::UdpLink m_udp;                                 ///< the ground node's LAN link
+        mark4::Transport m_transport{GROUND_NODE, BOOT_ID};   ///< this node
+        mark4::BytePipe m_wire;                               ///< the UART between the relays
+        mark4::PipeEnd m_relayEnd{m_wire.toA, m_wire.toB};    ///< ESP32 side of the wire
+        mark4::PipeEnd m_farEnd{m_wire.toB, m_wire.toA};      ///< board side of the wire
+        mark4::UartLink m_relayUart{m_relayEnd};              ///< the ESP32's UART link (index 0)
+        mark4::UdpLink m_relayUdp;                            ///< the ESP32's LAN link, the
+                                                              ///< ground's discovery port
+        mark4::Transport m_relay{RELAY_NODE, BOOT_ID};        ///< the ESP32
+        mark4::UartLink m_farUart{m_farEnd};                  ///< far relay's UART link
+        mark4::UdpLink m_farUdp;                              ///< far relay's link to the sim
+        mark4::Transport m_farRelay{FAR_RELAY_NODE, BOOT_ID}; ///< the board's side of the wire
+        mark4::OtaClient *m_pending = nullptr;                ///< client being fed by drain()
+        std::uint64_t m_pendingUs = 0U;                       ///< instant handed to it
     };
 
     /// @return a UDP port nothing holds right now
@@ -874,7 +877,7 @@ namespace
         }
 
         mark4::UdpLink m_udp;
-        mark4::Transport m_transport{GROUND_NODE};
+        mark4::Transport m_transport{GROUND_NODE, BOOT_ID};
     };
 
     bool isLogModules(const mark4_Envelope &envelope)

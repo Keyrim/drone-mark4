@@ -26,6 +26,9 @@
 namespace
 {
     constexpr std::uint64_t T0_US = 10'000'000U;
+    /// Incarnation every transport of this file is built with: a test
+    /// restarts nothing, so one constant stands for the random draw.
+    constexpr std::uint32_t BOOT_ID = 0xB0071D00U;
     constexpr std::uint32_t NODE_ME = 0xD0000001U;
     constexpr std::uint32_t NODE_PEER = 0xD0000002U;
     constexpr std::uint32_t NODE_OTHER = 0xD0000003U;
@@ -85,7 +88,7 @@ namespace
     }
 
     /// @brief Counts the recorded frames carrying an Envelope of one tag,
-    ///        ignoring the transport's own keepalives (empty payloads).
+    ///        ignoring the transport's own keepalives (the flagged frames).
     /// @param link link to read
     /// @param tag body tag wanted
     /// @param dst destination the frame must carry
@@ -96,7 +99,7 @@ namespace
         for (std::size_t index = 0U; index < link.frames().size(); ++index)
         {
             const mark4::RecordedFrame &frame = link.frames()[index];
-            if (frame.payload.empty() || frame.header.dst != dst)
+            if (frame.header.keepalive || frame.payload.empty() || frame.header.dst != dst)
             {
                 continue;
             }
@@ -137,7 +140,7 @@ namespace
     struct Bench
     {
         mark4::RecordingLink link;
-        mark4::Transport transport{NODE_ME};
+        mark4::Transport transport{NODE_ME, BOOT_ID};
         mark4::Messenger messenger{transport};
         mark4::DiscoveryDirectory directory{
             messenger, transport, announceOf(mark4_NodeKind_GATEWAY, "me")};
@@ -176,7 +179,7 @@ namespace
 TEST_CASE("discovery answers an identity request with its announce", "[discovery]")
 {
     mark4::RecordingLink link;
-    mark4::Transport transport{NODE_ME};
+    mark4::Transport transport{NODE_ME, BOOT_ID};
     mark4::Messenger messenger{transport};
     const mark4_Announce self = announceOf(mark4_NodeKind_DRONE_SIM, "drone_sim");
     mark4::Discovery discovery{messenger, self};

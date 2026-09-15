@@ -34,4 +34,11 @@ namespace mark4
     /// @brief Draws a node id from /dev/urandom. POSIX only.
     /// @return the id, never 0; 0 when the random source cannot be read
     std::uint32_t randomNodeId();
+
+    /// @brief Draws a boot id from /dev/urandom: the identity of one run of
+    ///        one node, which every keepalive carries. POSIX only. It is
+    ///        never derived from the machine, unlike a node id, because what
+    ///        it has to say is that the node restarted.
+    /// @return the id, never 0; 0 when the random source cannot be read
+    std::uint32_t randomBootId();
 } // namespace mark4

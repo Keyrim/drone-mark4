@@ -2,7 +2,9 @@
 
 /// @file
 /// @brief Frame header the transport puts in front of every payload:
-///        src u32, dst u32, seq u16, hops u8, little-endian, 11 bytes. The
+///        src u32, dst u32, seq u16, flags:hops u8, little-endian, 11
+///        bytes. The last byte holds the hop count on its low nibble and
+///        the flags on its high one, the keepalive flag being bit 7. The
 ///        payload behind it is opaque; a medium that does not preserve
 ///        datagram boundaries adds its own length (see UartLink).
 
@@ -31,14 +33,25 @@ namespace mark4
     /// Largest frame a link has to carry or accept.
     inline constexpr std::size_t MAX_FRAME_SIZE = FRAME_HEADER_SIZE + MAX_PAYLOAD;
 
+    /// Bits of the last header byte holding the hop count.
+    inline constexpr std::uint8_t FRAME_HOPS_MASK = 0x0FU;
+
+    /// Flag of the last header byte marking the transport's own keepalive.
+    inline constexpr std::uint8_t FRAME_FLAG_KEEPALIVE = 0x80U;
+
+    /// Payload of a keepalive: the sender's boot id, little-endian u32.
+    inline constexpr std::size_t KEEPALIVE_PAYLOAD_SIZE = 4U;
+
     /// What every frame opens with.
     struct FrameHeader
     {
         std::uint32_t src = 0U; ///< node that produced the payload
         std::uint32_t dst = 0U; ///< node it is for, BROADCAST_NODE for all
         std::uint16_t seq = 0U; ///< per-sender counter, wraps
-        std::uint8_t hops = 0U; ///< relays crossed so far; a sender writes 0, a relay adds
-                                ///< one and drops a frame already at MAX_HOPS
+        std::uint8_t hops = 0U; ///< relays crossed so far, never above FRAME_HOPS_MASK; a
+                                ///< sender writes 0, a relay adds one and drops a frame
+                                ///< already at MAX_HOPS
+        bool keepalive = false; ///< the transport's own keepalive, never delivered upward
     };
 
     /// @brief Writes one header, little-endian whatever the host order.
@@ -57,7 +70,9 @@ namespace mark4
         }
         out[index] = static_cast<std::uint8_t>(header.seq);
         out[index + 1U] = static_cast<std::uint8_t>(header.seq >> FRAME_BYTE_BITS);
-        out[index + 2U] = header.hops;
+        out[index + 2U] = static_cast<std::uint8_t>(
+            (header.hops & FRAME_HOPS_MASK) |
+            (header.keepalive ? FRAME_FLAG_KEEPALIVE : static_cast<std::uint8_t>(0U)));
     }
 
     /// @brief Reads one header.
@@ -89,7 +104,10 @@ namespace mark4
             static_cast<std::uint16_t>(data[index]) |
             static_cast<std::uint16_t>(static_cast<std::uint16_t>(data[index + 1U])
                                        << FRAME_BYTE_BITS));
-        headerOut.hops = data[index + 2U];
+        // The other flag bits are ignored: they are written 0 and belong to
+        // whatever a later revision puts there.
+        headerOut.hops = static_cast<std::uint8_t>(data[index + 2U] & FRAME_HOPS_MASK);
+        headerOut.keepalive = (data[index + 2U] & FRAME_FLAG_KEEPALIVE) != 0U;
         return true;
     }
 } // namespace mark4
