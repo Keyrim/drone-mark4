@@ -17,7 +17,10 @@
 
 #include "hub/gateway_codec.hpp"
 #include "hub/tuning_profiles.hpp"
+#include "log/consumer.hpp"
+#include "messaging/table_pull.hpp"
 #include "ota/consumer.hpp"
+#include "telemetry/registry.hpp"
 
 namespace
 {
@@ -113,9 +116,9 @@ TEST_CASE("the node table carries the transport record and the last announce")
     announce.wire_hash = 0xDEADBEEFU;
     mark4::copyWireString("sim", announce.name, sizeof(announce.name));
 
-    // The table as two pages: a page sizes the table to the total it
-    // announces and lands at its own index.
-    mark4::LogModuleTable modules;
+    // The table as two pages: every page says the total, lands at the
+    // cursor the walk waits on and moves it on by its own item count.
+    mark4::TablePull<mark4_LogModuleInfo, mark4::LogConsumerBase::MAX_MODULES> modules;
     mark4_LogModules page = mark4_LogModules_init_zero;
     page.cursor = 0U;
     page.total = 2U;
@@ -123,17 +126,25 @@ TEST_CASE("the node table carries the transport record and the last announce")
     page.modules[0].id = 16U;
     mark4::copyWireString("platform/imu", page.modules[0].name, sizeof(page.modules[0].name));
     page.modules[0].level = mark4_LogLevel_INFO;
-    mark4::applyLogModulesPage(page, modules);
+    CHECK(modules.applyPage(page.total, page.cursor, {page.modules, page.modules_count}));
+    CHECK(modules.total() == 2U);
+    CHECK(modules.cursor() == 1U);
+    CHECK(!modules.complete());
     page.cursor = 1U;
     page.modules[0].id = 17U;
     mark4::copyWireString("platform/baro", page.modules[0].name, sizeof(page.modules[0].name));
     page.modules[0].level = mark4_LogLevel_DEBUG;
-    mark4::applyLogModulesPage(page, modules);
+    CHECK(modules.applyPage(page.total, page.cursor, {page.modules, page.modules_count}));
+    CHECK(modules.complete());
     REQUIRE(modules.size() == 2U);
+    // The same page again is a duplicate or a stale answer: the walk waits
+    // on cursor 2 now and the table is left alone.
+    CHECK(!modules.applyPage(page.total, page.cursor, {page.modules, page.modules_count}));
+    CHECK(modules.size() == 2U);
 
     mark4_GatewayMessage message = mark4_GatewayMessage_init_zero;
     message.which_body = mark4_GatewayMessage_nodes_tag;
-    mark4::fillNode(node, 1'250'000U, &announce, modules, message.body.nodes.nodes[0]);
+    mark4::fillNode(node, 1'250'000U, &announce, modules.items(), message.body.nodes.nodes[0]);
     mark4::fillNode(node, 1'250'000U, nullptr, {}, message.body.nodes.nodes[1]);
     message.body.nodes.nodes_count = 2U;
 
@@ -159,13 +170,15 @@ TEST_CASE("the node table carries the transport record and the last announce")
     CHECK(!decoded.body.nodes.nodes[1].has_announce);
     CHECK(decoded.body.nodes.nodes[1].log_modules_count == 0U);
 
-    // A page opening at 0 restarts the table: a rebooted node with fewer
-    // modules does not keep stale entries.
+    // A walk started again opens at cursor 0 and the page there restarts
+    // the table: a rebooted node with fewer modules keeps no stale entry.
+    modules.reset();
     page.cursor = 0U;
     page.total = 1U;
-    mark4::applyLogModulesPage(page, modules);
+    CHECK(modules.applyPage(page.total, page.cursor, {page.modules, page.modules_count}));
     REQUIRE(modules.size() == 1U);
-    CHECK(modules[0].id == 17U);
+    CHECK(modules.complete());
+    CHECK(modules.items()[0].id == 17U);
     CHECK(mark4::hexNodeId(0xABCDU) == "0000abcd");
 }
 
@@ -175,7 +188,7 @@ TEST_CASE("a telemetry table is merged page by page and published on its own")
     // cursor the merge returns, and the total closing it. The live pull
     // itself (a hub asking a real drone_sim) is what scripts/smoke.ts
     // checks; this is the merge it is built on.
-    mark4::TelemetryTable table;
+    mark4::TablePull<mark4_TelemetryDescriptor, mark4::MAX_TELEMETRY_ENTRIES> table;
     mark4_TelemetryDescriptors page = mark4_TelemetryDescriptors_init_zero;
     page.total = 3U;
     page.cursor = 0U;
@@ -188,8 +201,10 @@ TEST_CASE("a telemetry table is merged page by page and published on its own")
     mark4::copyWireString(
         "estimator/altitude", page.descriptors[1].name, sizeof(page.descriptors[1].name));
     page.descriptors[1].unit = mark4_TelemetryUnit_TELEMETRY_UNIT_M;
-    CHECK(mark4::applyTelemetryPage(page, table) == 2U);
-    REQUIRE(table.size() == 3U);
+    CHECK(table.applyPage(page.total, page.cursor, {page.descriptors, page.descriptors_count}));
+    CHECK(table.cursor() == 2U);
+    CHECK(table.total() == 3U);
+    CHECK(!table.complete());
 
     page.cursor = 2U;
     page.descriptors_count = 1U;
@@ -198,11 +213,13 @@ TEST_CASE("a telemetry table is merged page by page and published on its own")
         "mixer/motor_0", page.descriptors[0].name, sizeof(page.descriptors[0].name));
     page.descriptors[0].unit = mark4_TelemetryUnit_TELEMETRY_UNIT_UNITLESS;
     // The cursor reaches the total: the table is whole and the walk stops.
-    CHECK(mark4::applyTelemetryPage(page, table) == 3U);
+    CHECK(table.applyPage(page.total, page.cursor, {page.descriptors, page.descriptors_count}));
+    CHECK(table.cursor() == 3U);
+    CHECK(table.complete());
 
     mark4_GatewayMessage message = mark4_GatewayMessage_init_zero;
     message.which_body = mark4_GatewayMessage_node_telemetry_tag;
-    mark4::fillNodeTelemetry(0xABCDU, table, message.body.node_telemetry);
+    mark4::fillNodeTelemetry(0xABCDU, table.items(), message.body.node_telemetry);
     const mark4_GatewayMessage decoded = roundTrip(message);
     const mark4_NodeTelemetry &published = decoded.body.node_telemetry;
     CHECK(published.node == 0xABCDU);
@@ -211,22 +228,30 @@ TEST_CASE("a telemetry table is merged page by page and published on its own")
     CHECK(published.descriptors[1].unit == mark4_TelemetryUnit_TELEMETRY_UNIT_M);
     CHECK(std::string(published.descriptors[2].name) == "mixer/motor_0");
 
-    // A page opening at cursor 0 restarts the table: a rebooted node with
-    // fewer measures does not keep stale entries, and its ids are its own.
+    // A walk started again opens at cursor 0 and the page there restarts
+    // the table: a rebooted node with fewer measures keeps no stale entry,
+    // and its ids are its own.
+    table.reset();
     page.cursor = 0U;
     page.total = 1U;
     page.descriptors_count = 1U;
-    CHECK(mark4::applyTelemetryPage(page, table) == 1U);
+    CHECK(table.applyPage(page.total, page.cursor, {page.descriptors, page.descriptors_count}));
     REQUIRE(table.size() == 1U);
-    CHECK(std::string(table[0].name) == "mixer/motor_0");
+    CHECK(table.complete());
+    CHECK(std::string(table.items()[0].name) == "mixer/motor_0");
 
     // An empty page while the table is not full would loop the walk forever
-    // on the same cursor: the total closes it instead.
-    mark4::TelemetryTable stalled;
+    // on the same cursor: it closes the walk instead.
+    mark4::TablePull<mark4_TelemetryDescriptor, mark4::MAX_TELEMETRY_ENTRIES> stalled;
     page.total = 10U;
+    page.cursor = 0U;
+    page.descriptors_count = 4U;
+    CHECK(stalled.applyPage(page.total, page.cursor, {page.descriptors, page.descriptors_count}));
+    CHECK(!stalled.complete());
     page.cursor = 4U;
     page.descriptors_count = 0U;
-    CHECK(mark4::applyTelemetryPage(page, stalled) == 10U);
+    CHECK(stalled.applyPage(page.total, page.cursor, {page.descriptors, page.descriptors_count}));
+    CHECK(stalled.complete());
 
     // A node that exposes nothing publishes an empty table, which is also
     // what a node going down publishes.
@@ -314,13 +339,11 @@ TEST_CASE("a profile push is one TuningSet per value to the node named")
     std::string error;
     REQUIRE(profiles.save("bench", {{101U, 0.25F}, {102U, 2.0F}}, error));
 
-    std::vector<std::pair<std::uint32_t, mark4_TuningSet>> sent;
-    const mark4::EnvelopeSink sink =
-        [&sent](std::uint32_t dst, const mark4_Envelope &envelope, std::string &) {
-            REQUIRE(envelope.which_body == mark4_Envelope_tuning_set_tag);
-            sent.emplace_back(dst, envelope.body.tuning_set);
-            return true;
-        };
+    std::vector<std::pair<std::uint32_t, float>> sent;
+    const mark4::TuningSink sink = [&sent](std::uint32_t id, float value) {
+        sent.emplace_back(id, value);
+        return true;
+    };
     CHECK(!mark4::pushProfile(profiles, "bench", 0U, sink, error));
     CHECK(error == "no target node");
     CHECK(!mark4::pushProfile(profiles, "missing", 9U, sink, error));
@@ -328,11 +351,15 @@ TEST_CASE("a profile push is one TuningSet per value to the node named")
 
     REQUIRE(mark4::pushProfile(profiles, "bench", 9U, sink, error));
     REQUIRE(sent.size() == 2U);
-    CHECK(sent[0].first == 9U);
-    CHECK(sent[0].second.id == 101U);
-    CHECK(sent[0].second.value == 0.25F);
-    CHECK(sent[1].second.id == 102U);
-    CHECK(sent[1].second.value == 2.0F);
+    CHECK(sent[0].first == 101U);
+    CHECK(sent[0].second == 0.25F);
+    CHECK(sent[1].first == 102U);
+    CHECK(sent[1].second == 2.0F);
+
+    // A node that takes no write stops the push where it got to.
+    sent.clear();
+    const mark4::TuningSink refusing = [](std::uint32_t, float) { return false; };
+    CHECK(!mark4::pushProfile(profiles, "bench", 9U, refusing, error));
 
     // The profile itself, as a client reads it back.
     mark4_GatewayMessage message = mark4_GatewayMessage_init_zero;

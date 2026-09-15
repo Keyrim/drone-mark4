@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <span>
 #include <string>
 
 #include "discovery/discovery_directory.hpp"
@@ -18,12 +19,16 @@
 #include "hub/tuning_profiles.hpp"
 #include "hub/ws_bridge.hpp"
 #include "log/console_sink_posix.hpp"
+#include "log/consumer.hpp"
 #include "log/provider.hpp"
 #include "messaging/messenger.hpp"
 #include "ota/consumer.hpp"
 #include "protocol/envelope.hpp"
+#include "status/consumer.hpp"
+#include "telemetry/consumer.hpp"
 #include "transport/transport.hpp"
 #include "transport/udp_link.hpp"
+#include "tuning/consumer.hpp"
 
 namespace mark4
 {
@@ -35,12 +40,13 @@ namespace mark4
     /// The gateway forwards and does not interpret: every payload the
     /// transport delivers goes to the clients as a Frame from the
     /// messenger's raw tap, every Frame a client sends goes out on the
-    /// transport. What the messenger decodes for the gateway itself is a
-    /// short list: the identities its directory asks every node for (the
-    /// node table), the LogModules pages, the telemetry pages and the update
-    /// client's answers. It is a node too: its own log lines go out through
-    /// its LogProvider, whose local sink mirrors them to the clients as
-    /// frames from itself.
+    /// transport. What it knows for itself it knows through its consumers,
+    /// one per concept: they name the kinds that carry each provider,
+    /// subscribe, pull the tables and drop everything of a node that goes
+    /// down, and the gateway listens to them. The update consumer is fed by
+    /// a handler of its own. It is a node too: its own log lines go out
+    /// through its LogProvider, whose local sink mirrors them to the
+    /// clients as frames from itself.
     class HubApp
     {
       public:
@@ -64,17 +70,6 @@ namespace mark4
         /// A client whose last RC frame is older than this no longer counts
         /// as a pilot (the stream runs at 10 Hz while engaged).
         static constexpr std::uint64_t RC_PILOT_WINDOW_US = 2'000'000U;
-
-        /// How long a telemetry page request goes unanswered before it is
-        /// sent again [us]. A flight process answers from its command drain,
-        /// so a lost page costs one frame; this is a lost datagram, not a
-        /// slow node.
-        static constexpr std::uint64_t TELEMETRY_RETRY_US = 500'000U;
-
-        /// Requests for the same page before the node is given up on. Six
-        /// tries at half a second is three seconds, the transport's own node
-        /// expiry: past that the node is not answering, not merely slow.
-        static constexpr std::uint32_t TELEMETRY_MAX_ATTEMPTS = 6U;
 
         /// Everything main() decides before the hub starts.
         struct Config
@@ -146,9 +141,9 @@ namespace mark4
                         const std::uint8_t *data,
                         std::size_t size);
 
-        /// The gateway's ear on the transport's node table: a node that
-        ///        appears is asked for its module table, a node that expires
-        ///        takes its announce, modules and telemetry table with it.
+        /// The gateway's ear on the transport's node table: it logs what
+        /// comes and goes and marks the table dirty. What a node's arrival
+        /// and departure mean for the concepts is the consumers' business.
         class PresenceListener final : public AbsPresenceListener
         {
           public:
@@ -168,8 +163,9 @@ namespace mark4
         };
 
         /// The gateway's ear on its directory: a node whose identity is
-        /// learnt goes into the node table, and a drone speaking this
-        /// schema has its telemetry table pulled.
+        /// learnt goes into the node table. What that identity means for
+        /// each concept is the consumers' business; they listen to the same
+        /// directory.
         class IdentityListener final : public AbsDirectoryListener
         {
           public:
@@ -188,24 +184,110 @@ namespace mark4
             HubApp &m_app; ///< the gateway
         };
 
-        /// What the gateway reads off the wire for itself: the module tables
-        /// and telemetry pages of the nodes, the LogControl addressed to this
-        /// node, and the update client's answers. Everything else reaches
-        /// the clients raw and is their business.
-        class Reader final : public AbsMessageHandler
+        /// What the gateway hears of a Status consumer. Nothing yet: the
+        /// reports reach the clients through the raw mirror.
+        class StatusEars final : public AbsStatusConsumerListener
+        {
+          public:
+            /// @param consumer consumer to listen to
+            /// @param app the gateway the events act on
+            StatusEars(StatusConsumerBase &consumer, HubApp &app)
+                : AbsStatusConsumerListener(consumer),
+                  m_app(app)
+            {
+            }
+
+            void onStatus(std::uint32_t nodeId,
+                          const mark4_Status &status,
+                          std::uint64_t nowUs) override;
+            void onForgotten(std::uint32_t nodeId) override;
+
+          private:
+            HubApp &m_app; ///< the gateway
+        };
+
+        /// What the gateway hears of its log consumer: a module table that
+        /// changed is a node table to publish again.
+        class LogEars final : public AbsLogConsumerListener
+        {
+          public:
+            /// @param consumer consumer to listen to
+            /// @param app the gateway the events act on
+            LogEars(LogConsumerBase &consumer, HubApp &app)
+                : AbsLogConsumerListener(consumer),
+                  m_app(app)
+            {
+            }
+
+            void onModules(std::uint32_t nodeId,
+                           std::span<const mark4_LogModuleInfo> modules) override;
+            void onLine(std::uint32_t nodeId, const mark4_Log &line) override;
+            void onForgotten(std::uint32_t nodeId) override;
+
+          private:
+            HubApp &m_app; ///< the gateway
+        };
+
+        /// What the gateway hears of its telemetry consumer: a table that
+        /// arrived, or a node that took it away, is published at once.
+        class TelemetryEars final : public AbsTelemetryConsumerListener
+        {
+          public:
+            /// @param consumer consumer to listen to
+            /// @param app the gateway the events act on
+            TelemetryEars(TelemetryConsumerBase &consumer, HubApp &app)
+                : AbsTelemetryConsumerListener(consumer),
+                  m_app(app)
+            {
+            }
+
+            void onTable(std::uint32_t nodeId,
+                         std::span<const mark4_TelemetryDescriptor> descriptors) override;
+            void onConfig(std::uint32_t nodeId,
+                          const mark4_TelemetryConfig &config,
+                          bool subscribed) override;
+            void onSamples(std::uint32_t nodeId, const mark4_TelemetryData &data) override;
+            void onForgotten(std::uint32_t nodeId) override;
+
+          private:
+            HubApp &m_app; ///< the gateway
+        };
+
+        /// What the gateway hears of its tuning consumer. Nothing yet: the
+        /// answers reach the clients through the raw mirror.
+        class TuningEars final : public AbsTuningConsumerListener
+        {
+          public:
+            /// @param consumer consumer to listen to
+            /// @param app the gateway the events act on
+            TuningEars(TuningConsumerBase &consumer, HubApp &app)
+                : AbsTuningConsumerListener(consumer),
+                  m_app(app)
+            {
+            }
+
+            void onTable(std::uint32_t nodeId, std::span<const mark4_TuningInfo> infos) override;
+            void onResult(std::uint32_t nodeId, const mark4_TuningAck &ack) override;
+            void onForgotten(std::uint32_t nodeId) override;
+
+          private:
+            HubApp &m_app; ///< the gateway
+        };
+
+        /// The update consumer's ear on the wire. It is the one consumer
+        /// that is not an AbsMessageHandler of its own (it was moved as it
+        /// was), so the gateway hands it what it answers to.
+        class OtaReader final : public AbsMessageHandler
         {
           public:
             /// Body tags this handler consumes.
-            static constexpr std::array<pb_size_t, 5> TAGS = {
-                mark4_Envelope_telemetry_descriptors_tag,
-                mark4_Envelope_log_modules_tag,
-                mark4_Envelope_ota_status_tag,
-                mark4_Envelope_ota_ack_tag,
-                mark4_Envelope_ota_chunk_ack_tag};
+            static constexpr std::array<pb_size_t, 3> TAGS = {mark4_Envelope_ota_status_tag,
+                                                              mark4_Envelope_ota_ack_tag,
+                                                              mark4_Envelope_ota_chunk_ack_tag};
 
             /// @param messenger messenger to attach to
             /// @param app the gateway the messages act on
-            Reader(Messenger &messenger, HubApp &app)
+            OtaReader(Messenger &messenger, HubApp &app)
                 : AbsMessageHandler(messenger, TAGS),
                   m_app(app)
             {
@@ -214,17 +296,6 @@ namespace mark4
             bool onMessage(std::uint32_t src,
                            const mark4_Envelope &envelope,
                            std::uint64_t nowUs) override;
-
-            /// @brief Sends one message to one node as a request of the
-            ///        gateway's, so the composition reaches the messenger's
-            ///        protected request() through its one handler.
-            /// @param dst node to reach
-            /// @param envelope message to send; its request_id is written here
-            /// @return true when the request was taken
-            bool ask(std::uint32_t dst, mark4_Envelope &envelope)
-            {
-                return request(dst, envelope);
-            }
 
           private:
             HubApp &m_app; ///< the gateway
@@ -284,32 +355,6 @@ namespace mark4
         /// @param node node the table belongs to
         void broadcastNodeTelemetry(std::uint32_t node);
 
-        /// @brief Starts pulling a node's telemetry table, page by page. A
-        ///        node already being pulled, or already pulled, is left
-        ///        alone.
-        /// @param node node to ask
-        /// @param nowUs current time [us]
-        void beginTelemetryPull(std::uint32_t node, std::uint64_t nowUs);
-
-        /// @brief Asks one node for the page its pull is waiting on.
-        /// @param node node to ask
-        /// @param nowUs current time [us]
-        void requestTelemetryPage(std::uint32_t node, std::uint64_t nowUs);
-
-        /// @brief Merges one page into a node's table and asks for the next,
-        ///        or publishes the table when it is whole.
-        /// @param node node the page came from
-        /// @param page the page
-        /// @param nowUs current time [us]
-        void onTelemetryPage(std::uint32_t node,
-                             const mark4_TelemetryDescriptors &page,
-                             std::uint64_t nowUs);
-
-        /// @brief Re-sends the page requests that went unanswered, and gives
-        ///        up on the nodes that never answer.
-        /// @param nowUs current time [us]
-        void pumpTelemetryPulls(std::uint64_t nowUs);
-
         /// @brief Sends the gateway counters.
         void broadcastStatus();
 
@@ -338,36 +383,33 @@ namespace mark4
         /// Who is who: asks every node that appears, keeps the answers.
         DiscoveryDirectory m_directory{m_messenger, m_transport, m_ownAnnounce}; ///< who is who
         IdentityListener m_identities{m_directory, *this}; ///< what the directory learns
-        Reader m_reader{m_messenger, *this};               ///< what the gateway reads
-        ConsoleSinkPosix m_consoleSink;                    ///< log lines on stdout
+        /// What the gateway keeps of each concept: one consumer per concept,
+        /// each sized for every node the transport can hold.
+        StatusConsumer<Transport::MAX_NODES> m_status{m_messenger, m_directory};
+        LogConsumer<Transport::MAX_NODES> m_logs{m_messenger, m_directory};    ///< module tables
+        TelemetryConsumer<Transport::MAX_NODES> m_telemetryTables{m_messenger, ///< measure tables
+                                                                  m_directory};
+        TuningConsumer<Transport::MAX_NODES> m_tuning{m_messenger, m_directory}; ///< parameters
+        StatusEars m_statusEars{m_status, *this};                ///< what Status means here
+        LogEars m_logEars{m_logs, *this};                        ///< what a module table means
+        TelemetryEars m_telemetryEars{m_telemetryTables, *this}; ///< what a measure table means
+        TuningEars m_tuningEars{m_tuning, *this};                ///< what a parameter means
+        OtaReader m_otaReader{m_messenger, *this};               ///< the update answers
+        ConsoleSinkPosix m_consoleSink;                          ///< log lines on stdout
         /// This node's log on the wire: the lines to whoever subscribed, the
         /// module table one page per request, the levels.
         LogProvider m_logProvider{m_messenger};
-        OwnLogMirror m_logMirror{*this}; ///< its own lines, towards the clients
-        WsBridge m_ws;                   ///< websocket endpoint
-        OtaConsumer m_ota;               ///< firmware update session
-        std::uint32_t m_otaTarget = 0U;  ///< node the updater talks to
-        std::map<std::uint32_t, LogModuleTable> m_logModules; ///< last module table per node
-
-        /// Where one node's telemetry table stands: the descriptors pulled
-        /// so far and what the walk is still waiting on.
-        struct TelemetryPull
-        {
-            TelemetryTable table;             ///< descriptors merged so far
-            std::uint32_t cursor = 0U;        ///< page the pull is waiting on
-            std::uint64_t lastRequestUs = 0U; ///< instant the request went out [us]
-            std::uint32_t attempts = 0U;      ///< requests sent for this page
-            bool complete = false;            ///< the whole table arrived
-            bool abandoned = false;           ///< the node never answered
-        };
-        std::map<std::uint32_t, TelemetryPull> m_telemetry; ///< one pull per drone node
-        std::map<std::string, std::uint64_t> m_rcSeenUs;    ///< last RC instant per client
-        std::atomic_bool m_stopRequested{false};            ///< set by a signal handler
-        std::uint64_t m_nextStatusUs = 0U;                  ///< next periodic publish [us]
-        bool m_nodesDirty = false;                          ///< table changed since published
-        bool m_loopbackWarned = false;                      ///< the link's fallback was logged
-        std::uint32_t m_framesIn = 0U;                      ///< payloads delivered by the transport
-        std::uint32_t m_framesOut = 0U;                     ///< frames sent for clients
-        std::uint32_t m_badFrames = 0U;                     ///< client frames refused
+        OwnLogMirror m_logMirror{*this};                 ///< its own lines, towards the clients
+        WsBridge m_ws;                                   ///< websocket endpoint
+        OtaConsumer m_ota;                               ///< firmware update session
+        std::uint32_t m_otaTarget = 0U;                  ///< node the updater talks to
+        std::map<std::string, std::uint64_t> m_rcSeenUs; ///< last RC instant per client
+        std::atomic_bool m_stopRequested{false};         ///< set by a signal handler
+        std::uint64_t m_nextStatusUs = 0U;               ///< next periodic publish [us]
+        bool m_nodesDirty = false;                       ///< table changed since published
+        bool m_loopbackWarned = false;                   ///< the link's fallback was logged
+        std::uint32_t m_framesIn = 0U;                   ///< payloads delivered by the transport
+        std::uint32_t m_framesOut = 0U;                  ///< frames sent for clients
+        std::uint32_t m_badFrames = 0U;                  ///< client frames refused
     };
 } // namespace mark4

@@ -15,16 +15,24 @@ the `Upgrade` header, so a page loaded from the hub reaches it back with
 `new WebSocket("ws://" + location.host)` and never learns a port of its own.
 
 It links the `protocol` (both schemas), `transport`, `messaging`,
-`discovery`, `log` and `hub_core` libraries and nothing else: never
-`flight-core`, never `platform`. Desktop only. The transport is polled
-through a `Messenger`: its raw tap mirrors every delivered payload to the
-clients before anything is decoded, and one handler, `Reader`, receives
-the few messages the gateway reads for itself (`TelemetryDescriptors`,
-`LogModules`, a `LogControl` addressed to this node, the `OtaStatus` /
-`OtaAck` / `OtaChunkAck` the update client waits for); the directory is
-the handler of `IdentityRequest` and `Announce`. It logs like every node (`gateway/core`, `gateway/ws`, `app/main`
-modules): on its stdout, and as `Log` envelopes on the transport from its
-own node id, mirrored to its clients as frames from itself.
+`discovery`, `log`, the four consumers, `ota_consumer` and `hub_core` and
+nothing else: never `flight-core`, never `platform`. Desktop only. The
+transport is polled through a `Messenger`: its raw tap mirrors every
+delivered payload to the clients before anything is decoded, and what the
+gateway knows for itself it knows through one consumer per concept
+(`StatusConsumer`, `LogConsumer`, `TelemetryConsumer`, `TuningConsumer`,
+each sized at `Transport::MAX_NODES`). A consumer names the kinds that
+carry its provider, so the gateway names none: it opens a node when the
+directory learns its identity, subscribes, pulls the tables one page at a
+time and drops everything of a node that goes down. The gateway listens to
+them through four small nested classes and republishes what changed. One
+handler of its own, `OtaReader`, feeds the update consumer the `OtaStatus`
+/ `OtaAck` / `OtaChunkAck` it waits for, because that consumer was moved as
+it was and is not a handler itself; the directory is the handler of
+`IdentityRequest` and `Announce`. It logs like every node (`gateway/core`,
+`gateway/ws`, `app/main` modules): on its stdout, and as `Log` envelopes on
+the transport from its own node id, mirrored to its clients as frames from
+itself.
 
 ## Building and running
 
@@ -102,8 +110,8 @@ Gateway to client:
 | body | when | what |
 |------|------|------|
 | `frame` | every payload the transport delivers | `src` node id, `payload` = one encoded `Envelope` (telemetry, tuning answers, log lines, OTA answers, the `Announce` a node answered the gateway with: whatever the node sent). Mirrored raw from the messenger's tap, before anything is decoded. `dst` is left 0: the transport does not report it, and a delivered frame was for the gateway or for everyone anyway. |
-| `nodes` | every second, on every table change, on connect | `NodeTable`: the gateway itself first (address empty), then every node the transport hears: id, IPv4 `address`, `port`, `last_seen_ms_ago`, `received` / `lost` / `duplicates` frame counters, its `Announce` once the directory has it (the gateway sends every node that appears an `IdentityRequest`, again every 500 ms up to five times; a node that never answers, or answered nothing yet, shows without identity), and its `log_modules` (the last `LogModules` table it published, whole; the gateway queries a node the moment it appears, so a client connecting late still knows every module and level). |
-| `node_telemetry` | on every change of one node's table, on connect | `NodeTelemetry`: one drone node's whole telemetry table, `{id, name, unit}` per measure, as the gateway pulled it page by page (`TelemetryListRequest` / `TelemetryDescriptors`, unicast). The pull starts when the directory learns the node's identity, because the `Announce` is where its kind and its schema are known: only `DRONE_SIM` and `FIRMWARE` are asked, and never a node whose `wire_hash` differs. A page that goes unanswered is asked again every 500 ms, six times, then given up on with one WARN. A node that goes down publishes an empty table: the ids of a table are only stable while the node runs, so a client must drop its curves rather than rebind them to whatever the next boot numbers the same way. Its own message and not a `Node` field: every body of the `GatewayMessage` oneof shares one nanopb struct, and a table per node inside `NodeTable` would cost every message, the per-frame one included, a few hundred kB. |
+| `nodes` | every second, on every table change, on connect | `NodeTable`: the gateway itself first (address empty), then every node the transport hears: id, IPv4 `address`, `port`, `last_seen_ms_ago`, `received` / `lost` / `duplicates` frame counters, its `Announce` once the directory has it (the gateway sends every node that appears an `IdentityRequest`, again every 500 ms up to five times; a node that never answers, or answered nothing yet, shows without identity), and its `log_modules` (the table its `LogConsumer` pulled, whole; a node carrying a log provider is asked the moment its identity is known, so a client connecting late still knows every module and level). |
+| `node_telemetry` | on every change of one node's table, on connect | `NodeTelemetry`: one drone node's whole telemetry table, `{id, name, unit}` per measure, as its `TelemetryConsumer` pulled it page by page (`TelemetryListRequest` / `TelemetryDescriptors`, unicast). The pull starts when the directory learns the node's identity, because the `Announce` is where its kind and its schema are known: only `DRONE_SIM` and `FIRMWARE` are asked, and never a node whose `wire_hash` differs. Every page request is a request of the messenger's, resent on its own policy and given up on with one WARN when it runs out of sends. A node that goes down publishes an empty table: the ids of a table are only stable while the node runs, so a client must drop its curves rather than rebind them to whatever the next boot numbers the same way. Its own message and not a `Node` field: every body of the `GatewayMessage` oneof shares one nanopb struct, and a table per node inside `NodeTable` would cost every message, the per-frame one included, a few hundred kB. |
 | `status` | every second, on connect | `GatewayStatus`: the gateway's node id, `wire_hash` (of `mark4.proto` as built), `clients`, `rc_clients` (clients that sent an Rc frame within 2 s), `frames_in`, `frames_out`, `dropped`, `bad_frames`. |
 | `ota_state` | on every change of the update client, on connect | phase, verdict and its sentence, `target_node`, `target_slot`, the loaded bundle's identity, what the board last said (slots, running / active slot), transfer progress in bytes. |
 | `profiles` | answering `LIST` and `SAVE` | the profile names on disk. |
