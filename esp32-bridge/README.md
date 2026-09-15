@@ -19,24 +19,28 @@ The relay forwards with the transport's generic rules alone (split
 horizon, one hop less per relay, duplicate drop by `(src, seq)`); every
 transport node relays, and this one is the only node with two links:
 
-- towards the LAN: everything the board emits (telemetry, answers, log
-  lines, its keepalives), as broadcasts;
+- towards the LAN: everything the board emits (its `Status` stream, its
+  telemetry samples, its log lines, its answers), each a unicast to the
+  node that asked or subscribed, plus its keepalives;
 - towards the UART: every unicast the transport routes there (the board is
   the only node on that link, so a unicast routed there is for it: RC,
-  tuning, updater messages), and every LAN broadcast. The line is 921600
+  tuning, subscriptions, updater messages), and the LAN's keepalives, which
+  are the only broadcasts left. The line is 921600
   baud and `UartStream::write` refuses a frame the TX ring cannot hold
-  whole, so a LAN that broadcasts more than the line carries degrades by
-  dropping, never by blocking.
+  whole, so a LAN that sends the board more than the line carries degrades
+  by dropping, never by blocking.
 
-What the relay says itself (its log lines, its module table, its
-keepalives) is a broadcast on both links like any node's.
+What the relay says itself travels the same way: its keepalive is a
+broadcast on both links like any node's, its log lines and its module
+table go to whoever asked for them.
 
 Nothing relayed is decoded. What the delivery hands to the relay itself
 goes to its `Messenger` (`software/components/messaging/`), which decodes
 it once and calls the one handler that claimed its body tag; a message no
-handler claimed is counted and dropped. Three handlers claim something
-here: `Commands` (`LogControl`, `Reboot`), `Discovery`
-(`IdentityRequest`) and `OtaService` (the six `Ota*` requests).
+handler claimed is counted and dropped. Four handlers claim something
+here: `LogProvider` (the line subscription, the module table, the level
+moves), `Commands` (`Reboot`), `Discovery`
+(`IdentityRequest`) and `OtaProvider` (the six `Ota*` requests).
 
 ## Composition
 
@@ -59,9 +63,11 @@ without an address) then hands over to `relayRun()` in `main/relay.cpp`:
   between its two links as any transport node with several links does;
 - the shared `Messenger` over it: the one caller of `Transport::poll()`,
   the one decoder and the one encoder of this node;
-- `Commands`, the handler of what is the node's own: a `LogControl` (the
-  module table follows a level change) and the `Reboot` that ends an
-  update session, announced on the radio before the reset;
+- `LogProvider` (`software/components/log/`), this node's log on the wire:
+  the lines to whoever subscribed, the module table one page per request,
+  the levels;
+- `Commands`, the handler of what is left of the node's own: the `Reboot`
+  that ends an update session, announced on the radio before the reset;
 - `Discovery` (`software/components/discovery/`) with the identity built
   by `relayIdentity()`: kind `RELAY`, name `relay-<the low three bytes of
   the WiFi MAC>`, mcu `ESP32C3`, the build epoch and short commit hash the
@@ -70,15 +76,15 @@ without an address) then hands over to `relayRun()` in `main/relay.cpp`:
   so it carries no directory;
 - `FirmwareStoreEsp32` (`main/firmware_store_esp32.cpp`) over the two OTA
   partitions and the shared `OtaUpdater` (`ota/updater.hpp`) on top of it,
-  served on the wire by the shared `OtaService`
-  (`software/components/services/`) over a `RelayOtaGate` that arms
+  served on the wire by the shared `OtaProvider` (`ota/provider.hpp`) over
+  a `RelayOtaGate` that arms
   nothing and watches no pack voltage: the update session, fed by the
   `Ota*` unicasts a hub addresses to the relay. A flash that is not laid
-  out for two slots leaves the service unbuilt, so no handler claims the
+  out for two slots leaves the provider unbuilt, so no handler claims the
   `Ota*` tags at all and every request is refused;
 - the log library: the shared `ConsoleSinkPosix` (its console is plain
-  stdio) and a `TransportSink` broadcasting every line onto the LAN. The
-  clock is `esp_timer_get_time()`. The bring-up in `bridge_main.c` is C and
+  stdio) next to the `LogProvider` above, the two sinks every line goes
+  to. The clock is `esp_timer_get_time()`. The bring-up in `bridge_main.c` is C and
   speaks through two shims, `bridgeLogInfo()` / `bridgeLogWarn()`, rather
   than being ported to C++: the smaller diff of the two.
 
@@ -95,8 +101,8 @@ The shared sources are compiled by the ESP-IDF build straight from
 `posix/udp_link.cpp`, `messaging/src/messenger.cpp`,
 `discovery/src/discovery.cpp` (the answer alone: `discovery_directory.cpp`
 stays out, this node asks nobody), the log library (`module.cpp`,
-`wire.cpp`, `posix/console_sink_posix.cpp`) and the header-only bricks
-(`ota/`, `services/`) in the `main` component, the nanopb runtime,
+`wire.cpp`, `provider.cpp`, `posix/console_sink_posix.cpp`) and the
+header-only `ota/` bricks in the `main` component, the nanopb runtime,
 `envelope.cpp` and the codec generated from
 `software/components/protocol/mark4.proto` in `components/mark4_proto/` (same generator, same pinned nanopb commit, same
 `PB_NO_MALLOC PB_BUFFER_ONLY` as the desktop build; the generator needs a
@@ -111,8 +117,8 @@ Five modules, ids from `main/log_modules.hpp` (256 up, the shared code
 takes its own from `log/module_ids.hpp`): `app/boot`, `app/wifi`,
 `relay/core`, `relay/stats`, `relay/ota`; the firmware store logs as the
 shared `ota/store`. Every line goes to the USB Serial/JTAG console
-(115200) and, once the transport is up, onto the LAN as a `Log` envelope
-any client reads. What a healthy relay prints:
+(115200) and, once a node has subscribed to this one's lines, onto the LAN
+as a `Log` envelope addressed to it. What a healthy relay prints:
 
 ```
 00:00:01.712 INFO app/wifi: joined <ssid> as 192.168.1.31   (or: access point mark4-bridge)
@@ -124,9 +130,10 @@ any client reads. What a healthy relay prints:
 ```
 
 `relay/stats` is the five-second counters line, at DEBUG so it is off by
-default; a client turns it on with a `LogControl.set{relay/stats, DEBUG}`
-addressed to the relay's node id (the hub's pages list its modules like any
-node's) and it starts arriving as `Log` frames:
+default; a client turns it on with a `LogSetLevel` carrying the id of
+`relay/stats` and `DEBUG`, addressed to the relay's node id (the hub's
+pages list its modules like any node's), and it starts arriving as `Log`
+messages:
 
 ```
 00:00:20.000 DEBG relay/stats: nodes 2, relayed 1063, dropped 0, uart tx full 0

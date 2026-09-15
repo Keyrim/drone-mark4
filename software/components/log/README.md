@@ -167,33 +167,40 @@ table is whole, and again when a `LogModuleInfo` moves one module's level;
 every line reaches `onLine()`. A node that goes down loses its entry and
 the listeners hear `onForgotten()`.
 
-The gateway holds one and exposes what it keeps as `Node.log_modules` in
-the `NodeTable`, so a client connecting late knows every module and level
-without asking. The pages toast WARN and ERROR lines only, prefixed with
-the module name resolved from that table (`#id` when the table has not
-arrived).
+The gateway holds one and publishes what it keeps as a message of its own
+per node (`gateway.proto`), so a client connecting late knows every module
+and level without asking, and the lines reach it the same way. The pages
+toast WARN and ERROR lines only, prefixed with the module name resolved
+from that table (`#id` when the table has not arrived).
 
 ## Setting a level from a client (TypeScript, the generated codec)
 
+A client of the gateway sends a typed command and never an encoded
+`Envelope`: the gateway turns it into the `LogSetLevel` requests and keeps
+what comes back. Prefix semantics stay in the client, which knows the
+names from the table it was published:
+
 ```ts
-// modules = node.logModules from the NodeTable; prefix "platform/"
+// modules = the module table the gateway published for that node
 for (const module of modules.filter((m) => m.name.startsWith("platform/"))) {
-    socket.send(frameMessage(nodeId, create(EnvelopeSchema, {
-        body: { case: "logSetLevel", value: { moduleId: module.id, level: LogLevel.DEBUG } },
-    })));
+    socket.send(logCommand(nodeId, {
+        setLevel: { moduleId: module.id, level: LogLevel.DEBUG },
+    }));
 }
 ```
 
 The node answers each one with that module's `LogModuleInfo` as it stands,
-and the DEBUG lines of those modules start arriving as `Log` messages.
+the gateway republishes it, and the DEBUG lines of those modules start
+arriving.
 
 ## Choices, deliberately simple
 
 - Text formatting is `vsnprintf` alone: no fields, no colors (a sink may
   add its own), no file sink.
 - The table is paged rather than bounded to one frame, one page per
-  request, and the gateway's copy is capped at 32 modules per node (`gateway.options`): with 33 nodes
-  the `NodeTable` has to stay under nanopb's 64 kB struct limit.
+  request, and the gateway's copy is capped at 32 modules per node
+  (`gateway.options`), which is what the message carrying one node's whole
+  table is bounded to.
 - The transport library depends on nothing and therefore does not log: its
   UDP link stopped printing to stderr and exposes `loopbackFallback()`
   instead, which the hub logs once as a WARN; a failed socket call is a

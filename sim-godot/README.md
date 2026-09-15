@@ -187,14 +187,18 @@ once at startup, so the same seed replays the same sensor stream.
 
 `scripts/transport/transport.gd` (`Mark4Transport`) is the GDScript port
 of `software/components/transport/`, the same frames and the same rules:
-an 11-byte little-endian header (`src u32, dst u32, seq u16, hops u8`)
+an 11-byte little-endian header (`src u32, dst u32, seq u16, flags:hops
+u8`, the hop count on the low nibble and the keepalive flag on bit 7)
 in front of every payload, a node table learnt from every frame heard
-(address, last sequence, received / lost / duplicate counters, 3 s
-expiry, `node_up` / `node_down` signals), presence as a keepalive - a
-frame that is the header alone, broadcast every second and unicast once to
-every newcomer, delivering no payload - duplicates dropped by `(src, seq)`.
-An empty payload handed to `send()` is refused: the header-only frame is
-the transport's own. No relay, so every frame it sends carries `hops` 0.
+(address, last sequence, boot id, received / lost / duplicate counters,
+3 s expiry, `node_up` / `node_down` signals), presence as a keepalive - a
+flagged frame carrying the sender's boot id, broadcast every second and
+unicast once to every newcomer, never delivered upward whatever it carries
+- duplicates dropped by `(src, seq)`. A keepalive whose boot id is not the
+one held is another run of the same node id: the transport takes that node
+down and up again, so the drone it hosts starts over instead of believing
+it is still subscribed. An empty payload handed to `send()` is refused. No
+relay, so every frame it sends carries `hops` 0.
 The node id is a random nonzero `u32` drawn at start.
 
 Sockets, as in the C++ `UdpLink`: one shared discovery socket on
@@ -214,9 +218,10 @@ for the former, like the C++ link.
 `scripts/transport/announce.gd` builds this plant's identity (an
 `Announce` of kind `PLANT`, name `godot-plant`, mcu `SIM`, the wire hash of
 the generated codec) and keeps the body tags a payload is told apart by,
-after one look at its first bytes: the plant hears every broadcast of the
-LAN, the telemetry of every flight process included, and never runs the
-codec on a frame it does not want.
+after one look at its first bytes: every payload addressed to this node
+goes through one handler, the lockstep actuator frames of every drone it
+hosts at 500 Hz included, and the codec never runs on a frame it does not
+want.
 
 `scripts/transport/discovery.gd` (`Mark4Discovery`) is the GDScript port
 of `software/components/discovery/`, both directions of "who are you":

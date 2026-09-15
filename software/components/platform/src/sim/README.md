@@ -19,7 +19,7 @@ composition root never knows: `waitFrame()` always returns a frame.
 - **Without one**: the frame is paced by the platform clock at 500 Hz,
   carries that clock's time, zeros, and both flags false. The flight core
   integrates nothing and never arms; the messenger keeps being polled on
-  every frame, so RC, tuning, OTA on the emulated flash and LogControl
+  every frame, so RC, tuning, OTA on the emulated flash and the log levels
   keep being served.
   `MotorSinkSim` drops the answers, counted by `droppedCount()`.
 

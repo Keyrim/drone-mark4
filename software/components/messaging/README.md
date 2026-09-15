@@ -204,8 +204,9 @@ order.
   resend may overtake a later request.
 - No retry and no acknowledgement on `send()`: it reports whether the frame
   left, and nothing else. What must arrive goes through `request()`.
-- No broadcast: a broadcast destination is refused. What every node must
-  hear (a `Status`, an `Announce`, a `Log` line) is not a message to one
-  node and does not go through here.
+- No broadcast: a broadcast destination is refused, and nothing asks for
+  one. What used to be broadcast is addressed now: a `Status` and a `Log`
+  line go to the nodes that subscribed, an `Announce` to the node that
+  asked. Reaching everyone is a loop over the nodes a directory knows.
 - No routing, no addresses: the transport knows where a node is; the
   messenger knows which handler wants which message.

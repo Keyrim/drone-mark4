@@ -19,9 +19,8 @@ with one `UartLink` on USART1), and the ESP32 riding the drone
 and a `UdpLink` on the WiFi LAN. The hub holds one `UdpLink`, so it relays
 nothing: the board reaches it as one more node of the LAN, at the relay's
 address. The mobile app (`software/mobile`, kind
-`PHONE`) compiles this directory as it is with the Android NDK (bionic has
-the BSD sockets; `DRONE_PLATFORM` `android` selects the POSIX sources) and
-drives it from Dart through the C ABI of its `native/` shim.
+`PHONE`) compiles no native code: `lib/back/transport/` is a Dart port of
+this directory, rule for rule and constant for constant.
 
 ## Frame
 
@@ -231,8 +230,8 @@ and answers the plant's own identity to whoever asks.
 
 | port | who | what |
 |------|-----|------|
-| udp/47820 | every transport node | discovery: broadcast frames (keepalives, telemetry, answers) |
-| ephemeral | every transport node | data socket: unicast frames (commands, lockstep sim link, keepalive on first sight) |
+| udp/47820 | every transport node | discovery: the broadcast keepalives, and nothing else |
+| ephemeral | every transport node | data socket: every unicast frame (streams, commands, answers, the lockstep sim link, the keepalive on first sight) |
 | udp/47810 | hub | HTTP + WebSocket for the pages |
 
 The ESP32 relay owns no port of its own: it is one more node on udp/47820
@@ -240,21 +239,22 @@ with an ephemeral data socket, and the board's UART carries transport
 frames in the serial framing. It shares the address the board is seen at:
 two node ids, one IP and one data port.
 
-`drone_sim` and the firmware send telemetry, log lines and every answer
-(tuning, OTA, run stats) as broadcast frames, so the hub and any other
-node read the same stream; commands reach them as unicasts to
-their node. Presence is the keepalive and carries no identity: no node
-announces itself on the wire today, a node id is all the transport knows
-of a peer. The board's node id is `hashNodeId()` of the 96-bit MCU unique
+`drone_sim` and the firmware send telemetry, log lines, the `Status`
+report and every answer (tuning, OTA) as unicasts to the node that asked
+or subscribed; commands reach them as unicasts to their node. The
+keepalive is the one broadcast left, and it carries the sender's boot id
+and no identity: who a node is travels only as the answer to an
+`IdentityRequest` (`software/components/discovery/`). The board's node id
+is `hashNodeId()` of the 96-bit MCU unique
 id (`boardNodeId()`), so it survives resets and reflashes.
 
 ## Open points
 
 - No retransmission, no acknowledgement, no fragmentation: what the
-  application needs it does itself (the OTA client already does).
-- Unicast replies are not used by `drone_sim` nor by the firmware: every
-  answer is a broadcast, which is the simpler option and what the ground
-  tools expect today (the ESP32 relays the board's onto the LAN).
+  application needs it does above. The messenger
+  (`software/components/messaging/`) numbers, keeps and resends what has to
+  arrive and acknowledges what it receives; the OTA session has its own
+  go-back-N on top of that.
 - The board's transport keeps the full `MAX_NODES` = 32 table (about
   1.3 KB) although it only ever sees a handful of nodes; RAM is not tight
   on the F405 so nothing shrinks it.

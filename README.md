@@ -19,7 +19,7 @@ Documentation:
 - [docs/plan-dev.md](docs/plan-dev.md) - development plan and reference document
 - [docs/contributing/cpp-guidelines.md](docs/contributing/cpp-guidelines.md) - C++ coding guidelines
 - [docs/mobile-app.md](docs/mobile-app.md) - phone as gateway: what the two mobile PoCs established, and the roadmap of `software/mobile`
-- [docs/comm-design.md](docs/comm-design.md) - communication stack rework: transport presence, messaging postman, pull discovery (proposal, issue #29)
+- [docs/comm-design.md](docs/comm-design.md) - communication stack: transport presence, messaging postman, pull discovery, and the services on the messenger (issues #29 and #31)
 - [worktrees/README.md](worktrees/README.md) - git worktrees: where they live, how to bring one up, build it, open it, remove it
 
 ## Modules
@@ -61,8 +61,8 @@ cmake --preset desktop-san && cmake --build --preset desktop-san && ctest --pres
 # STM32F405 cross-compilation (Cortex-M4F) -> firmware.elf
 cmake --preset stm32 && cmake --build --preset stm32
 
-# Sign of life (waits for UDP sensor packets, exits after 2 s of silence)
-./software/build/desktop/drone_sim/drone_sim        # 500 frames max by default
+# Sign of life (runs its loop with or without a plant, no frame limit by default)
+./software/build/desktop/drone_sim/drone_sim
 ```
 
 ### Mobile app (Flutter, Android)
@@ -73,7 +73,7 @@ options -> wireless debugging), the container being on the host network:
 
 ```sh
 ./scripts/adb_wifi.sh                     # discovers the phone over mDNS, pairs once, connects
-cd software/mobile && flutter pub get && ./tool/gen.sh   # generated codec, wire hash, ffi binding
+cd software/mobile && flutter pub get && ./tool/gen.sh   # generated codec, wire hash
 flutter run                               # or: flutter build apk --debug --target-platform android-arm64
 ```
 
@@ -95,8 +95,9 @@ Three processes are transport nodes on udp/47820 and find each other by
 the transport's keepalives; the plant and the hub then ask every node that
 appears who it is. The Godot plant spawns one virtual drone per node that
 answers `drone_sim` and feeds it sensor frames in lockstep, `drone_sim` answers with
-actuator frames and broadcasts telemetry to any node, the hub decodes it
-for the pages. Nothing is configured, start them in any order.
+actuator frames and streams its status, logs and telemetry to the nodes
+that subscribed, the hub decodes it for the pages. Nothing is configured,
+start them in any order.
 
 ```sh
 # Terminal 1 - flight process (one per virtual drone wanted)

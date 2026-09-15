@@ -19,14 +19,16 @@ control loops, the mixer, the plant truth and the attitude error), listed in
 period: the plant paces the loop at 500 Hz and a loopback datagram costs
 nothing, so there is nothing faster to ask for.
 
-What it broadcasts unasked is the `Status` report, one message every 10
-frames: attitude, motors, phase, throw state and count, the two validity
-flags and the plant's exact state. Everything it answers (telemetry pages
-and samples, tuning acks and infos, updater replies) goes to the node that
-asked: the process holds one `Messenger` over its transport, polled from
-inside the sensor wait, and the services of
-`software/components/services/` plus the App's own `Commands` handler (RC,
-reboot, scenario, log control) are its handlers.
+It emits nothing unasked. The `Status` report, one message every 10 frames
+(attitude, motors, phase, throw state and count, the two validity flags and
+the plant's exact state), goes to the nodes that subscribed to it, and so
+do the log lines and the telemetry samples; everything it answers
+(descriptor pages, tuning acks and pages, updater replies) goes to the node
+that asked. The process holds one `Messenger` over its transport, polled
+from inside the sensor wait, and its handlers are the provider of each
+concept (`status/`, `log/`, `telemetry/`, `tuning/`, `ota/`), the
+`Discovery` that says who this process is, and the App's own `Commands`
+handler (RC, reboot, scenario).
 
 ## No plant needed to start
 
@@ -43,5 +45,6 @@ base; a throw scenario then runs as usual. When the plant goes silent for
 core is restarted again, idle. The application never knows whether a
 plant is there: only the platform does.
 
-The run hash (`SimRunStats`) covers plant frames only: frames without
-sensors are not part of any run.
+The run hash covers plant frames only: frames without sensors are not part
+of any run. Nothing publishes it on the wire; the tracker logs it as an
+`flight/core` line when the run seals.

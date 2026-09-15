@@ -145,7 +145,8 @@ for the conventions). What the first iteration put in place:
 - **The communication stack, in Dart.** The app compiles no native code:
   `lib/back/transport/` is the port of `software/components/transport`,
   rule for rule and constant for constant. `frame.dart` is the 11-byte
-  header (src u32, dst u32, seq u16, hops u8, little-endian) in front of
+  header (src u32, dst u32, seq u16, flags:hops u8, little-endian, the hop
+  count on the low nibble and the keepalive flag on bit 7) in front of
   every payload; `udp_link.dart` the two `RawDatagramSocket`s of the C++
   `UdpLink` (the shared discovery port every node binds with
   `reuseAddress` and `reusePort` and only receives broadcasts on, one
@@ -154,7 +155,9 @@ for the conventions). What the first iteration put in place:
   `transport_node.dart` the node itself: the table of at most 32 nodes
   (address, last sequence, hops, received / lost / duplicates), learning
   from any frame heard, the `(src, seq)` duplicate drop, the keepalive
-  broadcast every second and unicast once to a newcomer, the node
+  broadcast every second and unicast once to a newcomer - a flagged frame
+  carrying this run's boot id, so a node that restarts under the expiry is
+  seen going down and up again rather than never leaving - the node
   forgotten after three seconds of silence, and no relay at all, since one
   link has nowhere to forward to. Nothing reads a clock: the instant comes
   from the caller, a Dart `Stopwatch`, once per poll.
@@ -262,11 +265,13 @@ for the conventions). What the first iteration put in place:
   time a simulated core takes to restart and re-arm on the switch it still
   sees.
   `DroneManager` reads the `Status` stream of the connected drone through
-  its `StatusConsumer` on the messenger (`status` and `status_subscribe`,
+  its `StatusConsumer` on the messenger (the `status` and
+  `status_subscription` body cases,
   throttled to 50 ms except on a phase change); a drone streams its Status
   to the nodes that asked for it, so the consumer sends a
   `StatusSubscribe { enabled: true }` as a request the moment the transport
-  holds the node and records what the drone answered, asks again after a
+  holds the node and records the `StatusSubscription` the drone answered
+  with, asks again after a
   reboot (a node going down and coming back), and unsubscribes when the
   user lets the drone go; the two links
   the cockpit shows are the drone being heard and `Status.rc_link_ok`

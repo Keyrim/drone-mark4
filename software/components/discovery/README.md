@@ -7,14 +7,18 @@ stands. Two classes: `Discovery`, the handler every node carries, answers
 an `IdentityRequest` of `protocol/mark4.proto` with the node's `Announce`;
 `DiscoveryDirectory`, for a node that also needs to know who is around,
 asks every node the transport hears, retries on a timeout, gives up after a
-few, and keeps the answers by kind. `drone_sim` carries a `Discovery`, the
-hub a `DiscoveryDirectory`; the firmware, the relay, the plant, the
-campaign and the phone do not answer yet.
+few, and keeps the answers by kind. `drone_sim`, the firmware and the ESP32
+relay carry a `Discovery`; the hub carries a `DiscoveryDirectory`. The
+Godot plant and the phone hold ports of both in their own languages
+(`sim-godot/scripts/transport/discovery.gd`,
+`software/mobile/lib/back/discovery/`), so every node of the system
+answers who it is.
 
 ## Identity
 
-Presence on the wire is the transport's keepalive, a header-only frame
-that carries no identity. What a node is (its kind, its name, its MCU, the
+Presence on the wire is the transport's keepalive, which carries the
+sender's boot id and no identity. What a node is (its kind, its name, its
+MCU, the
 build it runs, the schema it speaks) travels only on request: whoever
 wants to know sends an `IdentityRequest`, unicast, and the node answers
 with its `Announce`, unicast, to the requester. Nothing is broadcast and

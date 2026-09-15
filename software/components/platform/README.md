@@ -8,18 +8,19 @@ reads the time off the frame.
 
 Commands do not come in through a platform service: every message
 addressed to the node is dispatched by the composition's `Messenger`
-(`software/components/messaging/`) to the handler of its body tag, and the
-request/answer services live in `software/components/services/`.
+(`software/components/messaging/`) to the handler of its body tag, and each
+concept that travels on the wire has a component of its own
+(`software/components/status/`, `log/`, `telemetry/`, `tuning/`, `ota/`),
+whose provider is one such handler.
 
-There is no output service: what a composition reports unasked (the
-`Status`, the sim's run stats, the log lines) leaves through the
-`Transport` it already holds as a broadcast (`sendEnvelope()` in
-`src/common/include/platform_common/envelope_io.hpp`); what it answers
-goes back to the requester through the messenger.
+There is no output service either: nothing leaves a composition unasked.
+The `Status` report and the log lines go to the nodes that subscribed to
+them, an answer goes back to the node that asked, and both leave through
+the messenger the composition already holds.
 
 Implementations live under `src/<variant>/` (`sim`, `stm32`, each with its
 own README) and the helpers shared by every variant under `src/common/`:
-the status packer and publisher, the RC tracker, the frame measures.
+the RC tracker and the frame measures.
 
 ## Frame validity contract
 

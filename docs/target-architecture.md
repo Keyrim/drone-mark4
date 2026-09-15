@@ -132,8 +132,9 @@ One rule generates most of the structure, stated from the inside out:
 - **External processes speak only protocol/** (simulator, bridges), over
   UDP or UART, and never link flight code.
 - **Humans speak to the hub.** The hub is the single process that decodes
-  the binary protocol on behalf of people; everything above it is JSON
-  over one WebSocket endpoint.
+  the binary protocol on behalf of people; everything above it is typed
+  `gateway.proto` messages over one WebSocket endpoint, never an encoded
+  `Envelope` and never JSON.
 
 ```mermaid
 flowchart LR
@@ -148,9 +149,9 @@ flowchart LR
     subgraph hub["hub daemon - links protocol/, never flight-core"]
         TR["transports<br/>UDP / UART"]
         DISC["discovery<br/>(identity on request)"]
-        SVC["commands / rc / tuning profiles"]
+        SVC["consumers: status, log,<br/>telemetry, tuning, updater"]
         LAUNCH["scenario launcher CLI"]
-        WS["WebSocket + JSON endpoint"]
+        WS["WebSocket<br/>typed gateway.proto"]
         TR --- DISC --- SVC --- WS
     end
 
@@ -197,7 +198,8 @@ Validity is layered where the knowledge is:
 
 One protobuf schema (`software/components/protocol/mark4.proto`) and
 generated codecs: nanopb for C/C++ (desktop and STM32, no allocation,
-every field bounded by `mark4.options`) and godobuf for GDScript. The
+every field bounded by `mark4.options`), godobuf for GDScript,
+protoc-gen-es for the web pages and protoc for the phone's Dart. The
 hand-packed structs and their per-language copies are gone;
 the build regenerates every codec, and the plant's is checked against the
 C++ one by a headless Godot in the unit tests.
@@ -215,20 +217,54 @@ Wire format properties:
 - **CRC** on serial framing; XOR-class checksums are not enough for a
   link that carries flight data.
 - **Presence and identity**: presence is the transport's own keepalive,
-  a header-only frame every second; identity is asked for, an
+  every second, a frame flagged in its header and carrying the sender's
+  boot id - a node that restarts under the expiry is a new incarnation,
+  not the same node still there. Identity is asked for, an
   `IdentityRequest` unicast to a node that appeared, answered by its
   `Announce` (node kind, name, chip, build identity, wire hash). Nothing
   is broadcast on the wire but the keepalive.
+- **Requests are acknowledged on arrival**: a message that has to arrive
+  carries a `request_id`, and the receiving messenger answers a
+  `RequestAck` with that id before dispatching it, whether or not anything
+  claims its type. The sender resends on its own policy until the
+  acknowledgement comes back, then gives up and says so. An
+  acknowledgement means "arrived" and nothing more: an answer that matters
+  is a request of its own, correlated by its content.
+- **Streams are subscribed, never pushed**: `Status`, the log lines and
+  the telemetry samples leave a node because a ground node asked for them,
+  towards that node alone, and stop when it disappears. A subscription is
+  binary (`StatusSubscribe { enabled }`, answered by a
+  `StatusSubscription`, and the same pair for logs and telemetry); what a
+  stream carries is a state of the node, held once and not per subscriber,
+  so a configuration that moves (`TelemetryConfigure` in, `TelemetryConfig`
+  out; `LogSetLevel` in, `LogModuleInfo` out) is told to every subscriber
+  and two ground tools watching one drone always agree.
+- **One page shape for every table**: the telemetry descriptors, the log
+  modules and the tuning parameters are pulled the same way, a
+  `{ cursor }` request answered by a `{ total, cursor, items }` page, one
+  page per request so a 921600 baud UART is never flooded by a table dump.
 - **Command set**: reboot, RC with the mode field (2.1), tuning
-  set/get/list with ack (2.3), the updater messages.
+  set/get/list with ack (2.3), the subscriptions, the updater messages.
+
+Every concept that travels (status, log, telemetry, tuning, updates) is
+written once as three roles: a **provider** on the node that owns the data,
+which answers requests towards whoever asked and emits its stream to its
+subscribers; a **consumer** on the node that uses it, which pulls the
+tables, subscribes, keeps what it learnt and drops all of it when the node
+goes down; and, in the hub alone, a **gateway** that maps the commands of
+`gateway.proto` onto one consumer and publishes what that consumer holds to
+the websocket clients.
 
 ### 3.4 Command paths: two kinds, never mixed
 
 - **Interactive RC and commands** travel out-of-band, from the hub to the
   flight process, as unicast messages the composition's `Messenger`
   dispatches to the handler of their type - in every composition,
-  simulator included. The fail-safe (silence means kill) is therefore
-  exercised in every simulated flight.
+  simulator included. A command that has to arrive (a reboot, a parameter
+  write, a subscription) is a numbered request the receiving messenger
+  acknowledges and the sender resends; `Rc` is a stream and carries no id,
+  so the fail-safe (silence means kill) is exercised in every simulated
+  flight.
 - **Scenario commands** (reset, throw, scripted arming) travel in-band on
   the lockstep sim link, tick-stamped, so a scripted run is reproducible
   by construction. Scenario tooling never emits RC and never touches an
@@ -241,8 +277,12 @@ One desktop C++ process, in this repo, linking the generated protocol/
 codec directly (zero schema duplication, a message change breaks it at
 compile time) and never linking flight-core. Roles: one transport node on
 the LAN (the board reaches it through the ESP32 relay), the directory of
-who is who (it asks every node that appears), the updater client, profile
-storage, and the mirror of every frame to its clients. Human-facing
+who is who (it asks every node that appears), one consumer per concept
+(status, log, telemetry, tuning, updates) and the profile storage. It
+decodes everything it hears and publishes it as typed messages: the node
+table, one node's log modules and lines, its last `Status`, its telemetry
+descriptors, configuration and samples, its tuning table and results. A
+client sends typed commands and never an encoded `Envelope`. Human-facing
 surface: a single WebSocket endpoint carrying binary `gateway.proto`
 messages to any number of simultaneous clients.
 
