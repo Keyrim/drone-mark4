@@ -223,3 +223,28 @@ the loop:
 
 A period outside `[minPeriodMs, MAX_PERIOD_MS]` is clamped and the answer
 says what was applied, so a ground tool never has to guess.
+
+## The consumer
+
+`telemetry/consumer.hpp` holds the other side of the same concept, for a
+ground node: `TelemetryConsumer<N>` (target `telemetry_consumer`), an
+`AbsMessageHandler` and an `AbsDirectoryListener` at once, sized by the
+composition. Header-only, fixed tables, no heap.
+
+```cpp
+TelemetryConsumer<Transport::MAX_NODES> telemetry{messenger, directory};  // after both
+telemetry.configure(node, ids, periodMs);   // also subscribe(), refresh()
+```
+
+The kinds that carry a `TelemetryProvider` are its own constant (`KINDS`:
+`FIRMWARE`, `DRONE_SIM`). A node of one of those kinds whose announce
+matches this wire hash is opened from `onIdentity()` and its measure table
+pulled with a `TablePull<mark4_TelemetryDescriptor, MAX_TELEMETRY_ENTRIES>`:
+one `TelemetryListRequest` per page, the next asked for as each page lands,
+the listeners told once the table is whole
+(`AbsTelemetryConsumerListener::onTable()`). Opening a node does not
+subscribe to its samples: a consumer takes the stream when it wants it, and
+`onConfig()` reports the configuration as the node applied it next to
+whether the stream is held. Samples reach `onSamples()`. A page request
+given up on abandons the walk; a node that goes down loses its entry, table
+and ids alike, because those ids are only stable while it runs.

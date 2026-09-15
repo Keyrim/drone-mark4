@@ -53,3 +53,25 @@ is ten frames away.
 a board's UART pays every one of them at 50 Hz, next to the log lines and
 the telemetry stream sharing the same line. The provider never reads a
 clock: `publish()` takes the frame's own timestamp through the frame.
+
+## The consumer
+
+`status/consumer.hpp` holds the other side of the same concept, for a
+ground node: `StatusConsumer<N>`, an `AbsMessageHandler` and an
+`AbsDirectoryListener` at once, sized by the composition
+(`StatusConsumer<Transport::MAX_NODES>` on the gateway). It is header-only
+like the provider, fixed tables, no heap.
+
+```cpp
+StatusConsumer<Transport::MAX_NODES> status{messenger, directory};  // after both
+```
+
+The kinds that carry a `StatusProvider` are its own constant (`KINDS`:
+`FIRMWARE`, `DRONE_SIM`), so the composition names no kind. A node of one
+of those kinds whose announce matches this wire hash is opened from
+`onIdentity()`: one entry, one `StatusSubscribe { enabled: true }` sent
+with `request()`, and the answer says whether the node took it. Every
+report is stored and handed to the listeners
+(`AbsStatusConsumerListener::onStatus()`); a node that goes down loses its
+entry and the listeners hear `onForgotten()`. A reincarnation is a node
+down, a node up and a fresh identity, so it opens itself again.

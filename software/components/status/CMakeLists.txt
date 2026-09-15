@@ -6,3 +6,10 @@
 add_library(status_provider INTERFACE)
 target_include_directories(status_provider INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(status_provider INTERFACE messaging flight_core log)
+
+# The other side of the same concept: what a ground node keeps of a drone's
+# Status, one subscription and one last report per node. Header-only, fixed
+# tables sized by the composition, no heap.
+add_library(status_consumer INTERFACE)
+target_include_directories(status_consumer INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(status_consumer INTERFACE messaging discovery log)

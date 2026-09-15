@@ -37,3 +37,26 @@ milliseconds and starve the telemetry stream sharing it.
 before `FlightCore::step()`: a value a request writes is in effect for the
 whole of the next step and never changes one halfway through. The core is
 single-threaded and so is this: no locking, no queue, and no clock read.
+
+## The consumer
+
+`tuning/consumer.hpp` holds the other side of the same concept, for a
+ground node: `TuningConsumer<N>` (target `tuning_consumer`), an
+`AbsMessageHandler` and an `AbsDirectoryListener` at once, sized by the
+composition. Header-only, fixed tables, no heap.
+
+```cpp
+TuningConsumer<Transport::MAX_NODES> tuning{messenger, directory};  // after both
+tuning.set(node, id, value);   // also get(), refresh()
+```
+
+The kinds that carry a `TuningProvider` are its own constant (`KINDS`:
+`FIRMWARE`, `DRONE_SIM`). A node of one of those kinds whose announce
+matches this wire hash is opened from `onIdentity()` and its table pulled
+with a `TablePull<mark4_TuningInfo, MAX_PARAMS>`: one
+`TuningListRequest` per page, the next asked for as each page lands, the
+listeners told once the table is whole
+(`AbsTuningConsumerListener::onTable()`). A `TuningAck` reaches
+`onResult()`, and a write that went through moves the value in the table,
+so what the consumer holds is what flies. A page request given up on
+abandons the walk; a node that goes down loses its entry.

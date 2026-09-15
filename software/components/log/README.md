@@ -21,15 +21,16 @@ namespace
 MODULE.info("found at 0x%02X", address);   // also trace / debug / warn / error
 ```
 
-Three CMake targets. `log` is a leaf (it links `drone_warnings` alone, no
+Four CMake targets. `log` is a leaf (it links `drone_warnings` alone, no
 heap, no iostream, no `std::function`, plain C++17) and builds on every
 preset; on desktop it also holds `ConsoleSinkPosix`. `log_wire` adds the
 level codec and the two helpers that fill the messages of the schema
 (`log/wire.hpp`: `logLevelToWire()`, `logLevelFromWire()`,
 `logFillModuleInfo()`, `logFillModulesPage()`) and links `protocol/`.
 `log_provider` adds `LogProvider` (`log/provider.hpp`), the library on the
-messenger, and links `messaging`. The RTT sink lives next to the RTT
-driver, `platform_stm32/rtt_sink.hpp`.
+messenger, and links `messaging`; `log_consumer` adds `LogConsumer<N>`
+(`log/consumer.hpp`), what a ground node keeps of another node's log. The
+RTT sink lives next to the RTT driver, `platform_stm32/rtt_sink.hpp`.
 
 ## Modules
 
@@ -140,12 +141,33 @@ messenger refuses its own node as a destination. It registers an
 limit exactly like a subscriber: that is how the gateway's own lines reach
 its clients.
 
-The gateway remembers the last table of every node it hears (dropped with
-the node) and exposes it as `Node.log_modules` in the `NodeTable`, so a
-client connecting late knows every module and level without asking. It asks
-each node for its table, one page at a time, the moment the node appears.
-The pages toast WARN and ERROR lines only, prefixed with the module name
-resolved from that table (`#id` when the table has not arrived).
+## The consumer
+
+`log/consumer.hpp` holds the other side of the same concept, for a node
+that reads another node's log: `LogConsumer<N>` (target `log_consumer`), an
+`AbsMessageHandler` and an `AbsDirectoryListener` at once, sized by the
+composition. Header-only, fixed tables, no heap.
+
+```cpp
+LogConsumer<Transport::MAX_NODES> logs{messenger, directory};  // after both
+logs.setLevel(node, moduleId, level);   // also refresh()
+```
+
+The kinds that carry a `LogProvider` are its own constant (`KINDS`:
+`FIRMWARE`, `DRONE_SIM`, `RELAY`, `GATEWAY`), so the composition names no
+kind. A node of one of those kinds whose announce matches this wire hash is
+opened from `onIdentity()`: one `LogSubscribe { enabled: true }` and one
+table walk, a `TablePull<mark4_LogModuleInfo, MAX_MODULES>` asking one
+`LogModulesRequest` per page. The listeners hear `onModules()` once the
+table is whole, and again when a `LogModuleInfo` moves one module's level;
+every line reaches `onLine()`. A node that goes down loses its entry and
+the listeners hear `onForgotten()`.
+
+The gateway holds one and exposes what it keeps as `Node.log_modules` in
+the `NodeTable`, so a client connecting late knows every module and level
+without asking. The pages toast WARN and ERROR lines only, prefixed with
+the module name resolved from that table (`#id` when the table has not
+arrived).
 
 ## Setting a level from a client (TypeScript, the generated codec)
 

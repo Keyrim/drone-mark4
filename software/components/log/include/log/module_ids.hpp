@@ -22,6 +22,12 @@ namespace mark4
     inline constexpr std::uint16_t LOG_MODULE_STATUS_PROVIDER = 20U;
     inline constexpr std::uint16_t LOG_MODULE_LOG_PROVIDER = 21U;    ///< log/provider
     inline constexpr std::uint16_t LOG_MODULE_TUNING_PROVIDER = 22U; ///< tuning/provider
+    /// status/consumer
+    inline constexpr std::uint16_t LOG_MODULE_STATUS_CONSUMER = 23U;
+    inline constexpr std::uint16_t LOG_MODULE_LOG_CONSUMER = 24U; ///< log/consumer
+    /// telemetry/consumer
+    inline constexpr std::uint16_t LOG_MODULE_TELEMETRY_CONSUMER = 25U;
+    inline constexpr std::uint16_t LOG_MODULE_TUNING_CONSUMER = 26U; ///< tuning/consumer
     inline constexpr std::uint16_t LOG_MODULE_OTA_STORE = 32U;       ///< ota/store
     inline constexpr std::uint16_t LOG_MODULE_OTA_UPDATER = 33U;     ///< ota/updater (the apps)
 

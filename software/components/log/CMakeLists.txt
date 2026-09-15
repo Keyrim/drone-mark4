@@ -17,6 +17,13 @@ target_link_libraries(log_wire PUBLIC log protocol PRIVATE drone_warnings drone_
 add_library(log_provider STATIC src/provider.cpp)
 target_link_libraries(log_provider PUBLIC log_wire messaging PRIVATE drone_warnings drone_strict)
 
+# The other side of the same concept: another node's module table as a
+# ground node holds it, pulled page by page, plus its line stream.
+# Header-only, fixed tables sized by the composition, no heap.
+add_library(log_consumer INTERFACE)
+target_include_directories(log_consumer INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(log_consumer INTERFACE messaging discovery log)
+
 if(DRONE_PLATFORM STREQUAL "desktop")
     target_sources(log PRIVATE src/posix/console_sink_posix.cpp)
 endif()
