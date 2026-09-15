@@ -45,8 +45,12 @@ const REPORT_PERIOD_US := 10_000_000
 @export var arena_path: NodePath
 
 var transport := Mark4Transport.new()
+## Numbers, resends and acknowledges everything that has to arrive.
+var requests := Mark4Requests.new()
 ## Who is who on the wire: the plant's identity out, the flight processes in.
 var discovery := Mark4Discovery.new()
+## The Status stream of every drone hosted, asked for drone by drone.
+var status := Mark4StatusConsumer.new()
 ## Flight process node id -> Drone, in spawn order.
 var drones: Dictionary = {}
 ## Drone the camera and the overlay follow; null when none.
@@ -89,7 +93,9 @@ func _ready() -> void:
 	var port := SimArgs.get_port("discovery-port", Mark4Transport.DISCOVERY_PORT)
 	if not transport.open(0, port):
 		return
-	discovery.setup(transport, Mark4Announce.build())
+	requests.setup(transport)
+	discovery.setup(transport, Mark4Announce.build(), requests)
+	status.setup(transport, requests)
 	discovery.identity.connect(_on_identity)
 	transport.node_down.connect(_on_node_down)
 	transport.payload_received.connect(_on_payload)
@@ -104,6 +110,7 @@ func _exit_tree() -> void:
 func _physics_process(_delta: float) -> void:
 	var now_us := Time.get_ticks_usec()
 	transport.poll(now_us)
+	requests.tick(now_us)
 	discovery.tick(now_us)
 	if now_us - _last_report_us >= REPORT_PERIOD_US:
 		_last_report_us = now_us
@@ -180,6 +187,9 @@ func _add_drone(node_id: int) -> void:
 	drone.name = "Drone_%08x" % node_id
 	add_child(drone)
 	drone.sim_link.setup(transport, node_id)
+	# The drone emits its Status to the nodes that asked for it, this plant
+	# among them: the overlay reads it in the link.
+	status.subscribe(node_id)
 	drones[node_id] = drone
 	print("drones: flight process %08x found, virtual drone %d spawned at %s" % [node_id, drones.size(), drone.start_position])
 	drone_added.emit(node_id, drone)
@@ -192,6 +202,10 @@ func _remove_drone(node_id: int) -> void:
 	var drone: Drone = drones.get(node_id)
 	if drone == null:
 		return
+	# A node that went down forgot its subscribers when it left; one still
+	# on the wire is told to stop the stream.
+	if transport.nodes.has(node_id):
+		status.unsubscribe(node_id)
 	drones.erase(node_id)
 	print("drones: flight process %08x gone, virtual drone removed (%d left)" % [node_id, drones.size()])
 	if _camera != null:

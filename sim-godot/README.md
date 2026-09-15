@@ -67,8 +67,9 @@ flight process joining or leaving. With no flight process on the LAN the
 world is empty and the overlay says so.
 
 The phase, the throw count, the validity flags and the RC state come from
-the `Status` every flight process broadcasts, which the plant reads (and
-nothing else: it acts on none of it). A drone that has not reported for a
+the `Status` each flight process streams to this plant because the plant
+subscribed to it, and which the plant reads (and nothing else: it acts on
+none of it). A drone that has not reported for a
 second shows `no status`. The same phase colors the status light on the
 rear of each drone model, which blinks while the flight process reports
 its RC fail-safe active; a ring on the ground marks the followed drone,
@@ -227,11 +228,38 @@ answered with its own `Announce`, unicast to whoever asked. Nothing is
 broadcast and nothing is unsolicited: presence is the transport's
 keepalive, identity is asked for.
 
+`scripts/transport/requests.gd` (`Mark4Requests`) is the port of the
+request side of `software/components/messaging/`, the one place this node
+numbers, resends and acknowledges. A message that has to arrive travels as
+a request: it carries a `request_id` of this node's own counter (field 100
+of the `Envelope`, never 0), it is kept encoded and sent again every 500 ms
+up to 5 sends by default (the policy is per call), and the `RequestAck`
+carrying the same id completes it; out of sends, or when the destination
+goes down, the request is dropped and `request_failed` says so. The other
+direction is automatic: every payload this plant receives that carries a
+non-zero id is answered with a `RequestAck` at once, whatever it is and
+whether or not anything here reads it. That answer is built from the first
+bytes of the payload, so it costs no decode and does not depend on the
+order the listeners of `payload_received` were connected in. Stream data
+(the `Status`, the lockstep frames) carries no id and is never
+acknowledged: a sample is only worth its own instant.
+
+`scripts/transport/status_consumer.gd` (`Mark4StatusConsumer`) is the
+consumer of that stream. A flight process emits its `Status` to the nodes
+that asked for it and to nobody else, so the plant sends one
+`StatusSubscribe { enabled: true }` per drone it spawns, as a request, and
+reads the answer the flight process sends back: the same message as
+applied, `enabled` false when it has no room for one more subscriber. The
+drone that leaves the world is told to stop the stream, unless its node is
+already gone, in which case it forgot its subscribers when it left. There
+is nothing to configure in the subscription: what the stream carries and
+how often it comes are states of the flight process.
+
 `scripts/drone_manager.gd` (`DroneManager`, the `Drones` node of the main
-scene) owns the transport and the directory and drives both once per
-physics tick, before the drones run. An identity of kind `DRONE_SIM`
-spawns `scenes/drone.tscn` for that node, on a 1 m grid (four per
-row); every payload from a known node goes to that drone's `SimLink`; a
+scene) owns the transport, the request helper and the directory and drives
+the three once per physics tick, before the drones run. An identity of
+kind `DRONE_SIM` spawns `scenes/drone.tscn` for that node, on a 1 m grid
+(four per row), and subscribes to its `Status`; every payload from a known node goes to that drone's `SimLink`; a
 node that expired has its drone freed 3 s later, unless it comes back
 before. A flight process that restarts draws a new node id, so it gets a
 new drone next to the old one's spot while the old one leaves. The plant
@@ -244,7 +272,8 @@ desktop build (target `proto_gd`, run by `cmake --build --preset desktop`;
 `scripts/gen/wire_hash.gd`, both gitignored: a fresh checkout has to run the
 desktop build once before this project can talk to anything.
 `scripts/sim_link.gd` (one per virtual drone), `sim_codec.gd`,
-`announce.gd` and `discovery.gd` are the only scripts that touch the wire. Every payload is one `Envelope`:
+`announce.gd`, `discovery.gd`, `requests.gd` and `status_consumer.gd` are
+the only scripts that touch the wire. Every payload is one `Envelope`:
 
 - `SimSensor`, virtual drone to its flight process, unicast: timestamp in
   microseconds, gyro [rad/s], accelerometer [m/s^2], pressure [Pa], reset
@@ -358,6 +387,8 @@ shaders/ground_grid.gdshader  metric grid ground material
 scripts/transport/transport.gd  the transport node: frames, node table, keepalive
 scripts/transport/announce.gd   this plant's identity, the body tags read on the wire
 scripts/transport/discovery.gd  who is who: identity asked of every node, and answered
+scripts/transport/requests.gd   requests: numbered, resent, acknowledged on arrival
+scripts/transport/status_consumer.gd  the Status stream of each drone, subscribed to
 scripts/drone_manager.gd  one virtual drone per flight process heard
 scripts/drone.gd        rigid body, motor model, drag, throw, tick loop
 scripts/sensors.gd      accelerometer, gyro, barometer models

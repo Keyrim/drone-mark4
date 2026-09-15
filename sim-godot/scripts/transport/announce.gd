@@ -24,10 +24,12 @@ const TAG_IDENTITY_REQUEST: Array[int] = [0xBA, 0x02]
 const NAME := "godot-plant"
 
 
-## The Announce of this plant, encoded: kind PLANT, mcu SIM, no build
-## identity (nothing is packaged), the wire hash of the generated codec.
-## It leaves as the answer to an IdentityRequest, never unasked.
-static func build() -> PackedByteArray:
+## The Announce of this plant: kind PLANT, mcu SIM, no build identity
+## (nothing is packaged), the wire hash of the generated codec. It leaves
+## as the answer to an IdentityRequest, never unasked, and as a request of
+## its own: the envelope rather than its bytes, because the request helper
+## numbers it before it is encoded.
+static func build() -> Mark4.Envelope:
 	var envelope := Mark4.Envelope.new()
 	var announce: Mark4.Announce = envelope.new_announce()
 	announce.set_kind(Mark4.NodeKind.PLANT)
@@ -36,4 +38,4 @@ static func build() -> PackedByteArray:
 	announce.set_build_epoch(0)
 	announce.set_git_hash("")
 	announce.set_wire_hash(WireHash.VALUE)
-	return envelope.to_bytes()
+	return envelope

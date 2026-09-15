@@ -21,10 +21,12 @@ extends Node
 ## sensor envelope, and the flight process forwards it inside its status
 ## so the ground tools compare estimate and truth sample by sample.
 ##
-## The flight process also broadcasts its Status every few frames: the
-## link reads it too, so the plant knows the phase, the throw count, the
-## sensor validity flags and the RC link state of the drone it hosts. That
-## is display only: nothing here acts on it, the plant is not the cockpit.
+## The flight process also streams its Status every few frames, to this
+## plant because the plant subscribed to it (the manager's status
+## consumer): the link reads it, so the plant knows the phase, the throw
+## count, the sensor validity flags and the RC link state of the drone it
+## hosts. That is display only: nothing here acts on it, the plant is not
+## the cockpit.
 ## Anything else the flight process emits (log lines, telemetry) is
 ## ignored without running the codec, and a payload that should decode but
 ## does not is dropped. The echoed timestamp identifies the sensor envelope
