@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:mark4/back/transport/abs_transport_node.dart';
@@ -20,6 +21,10 @@ class _Node {
   int duplicates = 0;
   int hops = 0;
 
+  /// Boot id of the node's current incarnation, 0 until its first
+  /// keepalive.
+  int boot = 0;
+
   NodeInfo get info => NodeInfo(
     id: id,
     host: host,
@@ -37,16 +42,29 @@ class _Node {
 ///
 /// Every frame heard refreshes the node table (address, last sequence, hops,
 /// counters); a node silent for [nodeExpiryUs] is forgotten. Presence is a
-/// keepalive, a frame that is the header alone: broadcast every
+/// keepalive, a flagged frame carrying this node's boot id: broadcast every
 /// [keepalivePeriodUs] and unicast once to a node the moment it first
-/// appears, carrying nothing for the application. A frame repeating the last
-/// sequence of its sender is a duplicate and is dropped. No relay: with one
-/// link there is nowhere to forward to, so a frame for another node is only
-/// used to learn its sender.
+/// appears, carrying nothing for the application whatever its size. A boot
+/// id that changes is another incarnation of the same node id, reported as
+/// a node that went down and came back. A frame repeating the last sequence
+/// of its sender is a duplicate and is dropped. No relay: with one link
+/// there is nowhere to forward to, so a frame for another node is only used
+/// to learn its sender.
 ///
 /// It reads no clock: every instant comes from the caller.
 class TransportNode implements AbsTransportNode {
-  TransportNode._(this._nodeId, this._link);
+  TransportNode._(this._nodeId, this._link) : _bootId = _drawBootId();
+
+  /// Draws the identity of this run of this node. Never derived from the
+  /// device: what it has to say is that the node restarted.
+  static int _drawBootId() {
+    final random = Random.secure();
+    var drawn = 0;
+    while (drawn == 0) {
+      drawn = random.nextInt(1 << 32);
+    }
+    return drawn;
+  }
 
   /// Nodes remembered at once; a frame from a further one is dropped.
   static const int maxNodes = 32;
@@ -78,6 +96,7 @@ class TransportNode implements AbsTransportNode {
   }
 
   final int _nodeId;
+  final int _bootId;
   final UdpLink _link;
   final Map<int, _Node> _nodes = {};
   final Queue<InboundPayload> _rx = Queue();
@@ -152,18 +171,29 @@ class TransportNode implements AbsTransportNode {
     unawaited(_presence.close());
   }
 
-  /// One keepalive, a header alone: this node's presence, broadcast every
-  /// [keepalivePeriodUs] and unicast once to a node the moment it first
-  /// appears. Counted like any send.
-  void _sendKeepalive(int dst) => _emit(dst, Uint8List(0));
+  /// One keepalive, the flagged frame carrying this node's boot id: its
+  /// presence, broadcast every [keepalivePeriodUs] and unicast once to a
+  /// node the moment it first appears. Counted like any send, and its
+  /// payload counts no byte: it is the transport's own, not a message.
+  void _sendKeepalive(int dst) {
+    final boot = Uint8List(keepalivePayloadSize);
+    ByteData.sublistView(boot).setUint32(0, _bootId, Endian.little);
+    _emit(dst, boot, keepalive: true);
+  }
 
   /// Frames one payload and hands it to the link.
-  bool _emit(int dst, Uint8List payload) {
-    final header = FrameHeader(src: _nodeId, dst: dst, seq: _nextSeq);
+  bool _emit(int dst, Uint8List payload, {bool keepalive = false}) {
+    final header = FrameHeader(
+      src: _nodeId,
+      dst: dst,
+      seq: _nextSeq,
+      keepalive: keepalive,
+    );
     _nextSeq = (_nextSeq + 1) & 0xFFFF;
     final frame = header.frame(payload);
+    final counted = keepalive ? 0 : payload.length;
     if (dst == broadcastNode) {
-      return _countSend(_link.broadcast(frame), payload.length);
+      return _countSend(_link.broadcast(frame), counted);
     }
     final target = _nodes[dst];
     if (target == null) {
@@ -171,10 +201,7 @@ class TransportNode implements AbsTransportNode {
       ++_refused;
       return false;
     }
-    return _countSend(
-      _link.send(frame, target.host, target.port),
-      payload.length,
-    );
+    return _countSend(_link.send(frame, target.host, target.port), counted);
   }
 
   bool _countSend(bool ok, int size) {
@@ -202,16 +229,33 @@ class TransportNode implements AbsTransportNode {
     if (node == null) {
       return;
     }
+    var reincarnated = false;
+    if (header.keepalive &&
+        datagram.bytes.length >= frameHeaderSize + keepalivePayloadSize) {
+      reincarnated = _onBootId(
+        node,
+        ByteData.sublistView(
+          datagram.bytes,
+        ).getUint32(frameHeaderSize, Endian.little),
+        header,
+        isNew,
+      );
+    }
     if (isNew) {
       _presence.add(PresenceEvent(up: true, node: node.info));
       // The newcomer learns this node at once instead of waiting for the
       // next periodic keepalive.
       _sendKeepalive(node.id);
+    } else if (reincarnated) {
+      _presence.add(PresenceEvent(up: false, node: node.info));
+      _presence.add(PresenceEvent(up: true, node: node.info));
     }
-    if (datagram.bytes.length > frameHeaderSize &&
+    if (!header.keepalive &&
+        datagram.bytes.length > frameHeaderSize &&
         (header.dst == _nodeId || header.dst == broadcastNode)) {
-      // A header alone is a keepalive: it was learnt from above and carries
-      // nothing for the application.
+      // A flagged frame is the transport's own, whatever it carries, and a
+      // frame without a payload has nothing for the application either:
+      // both were learnt from above and stop here.
       _queue(
         InboundPayload(
           src: header.src,
@@ -219,6 +263,27 @@ class TransportNode implements AbsTransportNode {
         ),
       );
     }
+  }
+
+  /// Reads the boot id one keepalive carries. The first one is learnt
+  /// silently; one that differs from a known incarnation is a node that
+  /// restarted, whose counters are reset and whose caller reports it as
+  /// gone and back.
+  bool _onBootId(_Node node, int boot, FrameHeader header, bool isNew) {
+    if (isNew || node.boot == 0) {
+      node.boot = boot;
+      return false;
+    }
+    if (boot == 0 || boot == node.boot) {
+      return false;
+    }
+    node.lastSeq = header.seq;
+    node.received = 1;
+    node.lost = 0;
+    node.duplicates = 0;
+    node.hops = header.hops;
+    node.boot = boot;
+    return true;
   }
 
   /// Refreshes or inserts the node a frame came from. The node is null when

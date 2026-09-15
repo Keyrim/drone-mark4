@@ -5,14 +5,17 @@ extends RefCounted
 ## of the LAN like every other process of the project.
 ##
 ## Frames: an 11-byte little-endian header (src u32, dst u32, seq u16,
-## hops u8) then an opaque payload, one Envelope of mark4.proto. Every
-## frame heard refreshes the node table (address, last sequence, hops,
-## counters); a node silent for NODE_EXPIRY_US is forgotten. Presence is a
-## keepalive, a frame that is the header alone: broadcast every
+## flags:hops u8, the hop count on the low nibble and the keepalive flag on
+## bit 7) then an opaque payload, one Envelope of mark4.proto. Every frame
+## heard refreshes the node table (address, last sequence, hops, counters);
+## a node silent for NODE_EXPIRY_US is forgotten. Presence is a keepalive, a
+## flagged frame carrying this node's boot id: broadcast every
 ## KEEPALIVE_PERIOD_US and unicast once to a node the moment it first
-## appears, carrying nothing for the application. Frames repeating the last
-## sequence of their sender are duplicates and dropped. No relay: a frame
-## for another node is only used to learn its sender.
+## appears, carrying nothing for the application, whatever its size. A boot
+## id that changes is another incarnation of the same node id, which leaves
+## the table and comes back into it. Frames repeating the last sequence of
+## their sender are duplicates and dropped. No relay: a frame for another
+## node is only used to learn its sender.
 ##
 ## Sockets, as in the C++ UdpLink: one shared DISCOVERY socket every node
 ## of the deployment binds and receives broadcasts on, and one ephemeral
@@ -37,6 +40,12 @@ const MAX_PAYLOAD := 512
 ## Relays a frame may cross. This node relays nothing, so it only ever
 ## writes hops 0 and keeps the ceiling for the record.
 const MAX_HOPS := 4
+## Bits of the last header byte holding the hop count.
+const HOPS_MASK := 0x0F
+## Flag of the last header byte marking the transport's own keepalive.
+const FLAG_KEEPALIVE := 0x80
+## Payload of a keepalive: the sender's boot id, little-endian u32.
+const KEEPALIVE_PAYLOAD_SIZE := 4
 const KEEPALIVE_PERIOD_US := 1_000_000
 const NODE_EXPIRY_US := 3_000_000
 ## A forward jump of the sequence beyond this is a restarted sender.
@@ -51,10 +60,13 @@ signal node_down(node_id: int)
 signal payload_received(src: int, payload: PackedByteArray)
 
 var node_id: int = 0
+## Identity of this run of this node, in every keepalive it sends: a peer
+## that sees it change knows this node restarted.
+var boot_id: int = 0
 var discovery_port: int = DISCOVERY_PORT
 ## Nodes heard within NODE_EXPIRY_US:
 ## id -> {address, port, last_seen_us, last_seq, received, lost, duplicates,
-## hops}.
+## hops, boot}.
 var nodes: Dictionary = {}
 ## Frames dropped: shorter than a header, an empty payload handed to send(),
 ## or a unicast to an unknown node.
@@ -77,6 +89,10 @@ func open(own_id: int = 0, port: int = DISCOVERY_PORT) -> bool:
 	node_id = own_id
 	while node_id == 0:
 		node_id = randi()
+	# Never derived from anything stable: what it has to say is that this
+	# node restarted.
+	while boot_id == 0:
+		boot_id = randi()
 	discovery_port = port
 	_discovery.max_pending_connections = MAX_PEERS
 	var error := _discovery.listen(discovery_port, "0.0.0.0")
@@ -106,8 +122,8 @@ func close() -> void:
 
 
 ## Send one payload. dst BROADCAST_NODE reaches every node of the LAN.
-## An application always sends a message: an empty payload is refused, the
-## header-only frame is the transport's own keepalive.
+## An application always sends a message: an empty payload is refused, and
+## the frame is never flagged as a keepalive, which is the transport's own.
 ## @return true when the frame was handed to the socket.
 func send(dst: int, payload: PackedByteArray) -> bool:
 	if payload.is_empty():
@@ -156,15 +172,16 @@ func is_alive(id: int) -> bool:
 	return nodes.has(id)
 
 
-## Send one keepalive, a frame that is the header alone: this node's
+## Send one keepalive, a flagged frame carrying this node's boot id: its
 ## presence, and nothing for the application on the other side.
 ## @param dst node to reach, BROADCAST_NODE for every node of the LAN.
 func _send_keepalive(dst: int) -> void:
-	_tx.resize(HEADER_SIZE)
+	_tx.resize(HEADER_SIZE + KEEPALIVE_PAYLOAD_SIZE)
 	_tx.encode_u32(0, node_id)
 	_tx.encode_u32(4, dst)
 	_tx.encode_u16(8, _next_seq)
-	_tx.encode_u8(10, 0)
+	_tx.encode_u8(10, FLAG_KEEPALIVE)
+	_tx.encode_u32(HEADER_SIZE, boot_id)
 	_next_seq = (_next_seq + 1) & 0xFFFF
 	if dst == BROADCAST_NODE:
 		var _broadcast_sent := _broadcast()
@@ -182,6 +199,9 @@ func _on_frame(frame: PackedByteArray, address: String, port: int, now_us: int) 
 	var src := frame.decode_u32(0)
 	var dst := frame.decode_u32(4)
 	var seq := frame.decode_u16(8)
+	var flags := frame.decode_u8(10)
+	var hops := flags & HOPS_MASK
+	var keepalive := (flags & FLAG_KEEPALIVE) != 0
 	if src == node_id or src == BROADCAST_NODE:
 		return  # own broadcast coming back, or nobody
 	var node: Dictionary = nodes.get(src, {})
@@ -195,7 +215,8 @@ func _on_frame(frame: PackedByteArray, address: String, port: int, now_us: int) 
 			"received": 1,
 			"lost": 0,
 			"duplicates": 0,
-			"hops": frame.decode_u8(10),
+			"hops": hops,
+			"boot": 0,
 		}
 		nodes[src] = node
 	else:
@@ -211,16 +232,44 @@ func _on_frame(frame: PackedByteArray, address: String, port: int, now_us: int) 
 		node["address"] = address
 		node["port"] = port
 		node["last_seen_us"] = now_us
-		node["hops"] = frame.decode_u8(10)
+		node["hops"] = hops
+	var reincarnated := false
+	if keepalive and frame.size() >= HEADER_SIZE + KEEPALIVE_PAYLOAD_SIZE:
+		reincarnated = _on_boot_id(src, node, frame.decode_u32(HEADER_SIZE), is_new, seq, hops)
 	if is_new:
 		node_up.emit(src)
 		# The newcomer learns this node at once instead of waiting for the
 		# next periodic keepalive.
 		_send_keepalive(src)
-	# A header alone is a keepalive: it was learnt from above and carries
-	# nothing for the application.
-	if frame.size() > HEADER_SIZE and (dst == node_id or dst == BROADCAST_NODE):
+	elif reincarnated:
+		node_down.emit(src)
+		node_up.emit(src)
+	# A flagged frame is the transport's own, whatever it carries, and a
+	# frame without a payload has nothing for the application either: both
+	# were learnt from above and stop here.
+	if not keepalive and frame.size() > HEADER_SIZE and (dst == node_id or dst == BROADCAST_NODE):
 		payload_received.emit(src, frame.slice(HEADER_SIZE))
+
+
+## Read the boot id one keepalive carries. The first one is learnt
+## silently; one that differs from a known incarnation is a node that
+## restarted, whose entry is reset and whose caller emits node_down then
+## node_up.
+## @return true when the node is another incarnation of the same id.
+func _on_boot_id(src: int, node: Dictionary, boot: int, is_new: bool, seq: int, hops: int) -> bool:
+	if is_new or node["boot"] == 0:
+		node["boot"] = boot
+		return false
+	if boot == 0 or boot == node["boot"]:
+		return false
+	node["last_seq"] = seq
+	node["received"] = 1
+	node["lost"] = 0
+	node["duplicates"] = 0
+	node["hops"] = hops
+	node["boot"] = boot
+	nodes[src] = node
+	return true
 
 
 func _expire(now_us: int) -> void:

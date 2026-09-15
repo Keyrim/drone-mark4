@@ -37,7 +37,7 @@ func _init() -> void:
 	a.payload_received.connect(func(src: int, payload: PackedByteArray) -> void: a_heard[src] = payload)
 
 	var now_us := 1_000_000
-	a.poll(now_us)  # first poll broadcasts an 11-byte keepalive
+	a.poll(now_us)  # first poll broadcasts a flagged keepalive carrying a boot id
 	var deadline := Time.get_ticks_msec() + STEP_TIMEOUT_MS
 	while not b.is_alive(a.node_id) and Time.get_ticks_msec() < deadline:
 		OS.delay_msec(5)
