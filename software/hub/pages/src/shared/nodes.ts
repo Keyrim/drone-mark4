@@ -1,9 +1,14 @@
 /**
  * The node model of the pages: the system is a set of transport nodes,
- * known by node id, fed by the gateway's NodeTable and refreshed by the
- * frames that arrive between two tables. Every UI element is keyed by node
- * id; the kind of a node (from its Announce) only decides what it gets (a
- * drone gets a widget, anything else is only routing).
+ * known by node id, fed by the gateway's NodeTable and refreshed by what
+ * arrives from a node between two tables (its status, its log lines).
+ * Every UI element is keyed by node id; the kind of a node (from its
+ * Announce) only decides what it gets (a drone gets a widget, anything else
+ * is only routing).
+ *
+ * The log modules of a node are their own message (NodeLogModules), so they
+ * are kept beside the table rather than inside a node: a name resolved for a
+ * log line, nothing a view is keyed on.
  *
  * Pure: no DOM, no socket. The console and the plots build on it, and the
  * tests drive it directly.
@@ -27,8 +32,6 @@ export interface NodeView {
     /** The node was built on another mark4.proto than the gateway: listed, and mute. */
     readonly wireMismatch: boolean;
     readonly announce: Announce | undefined;
-    /** The node's log modules and levels, as last published; empty until then. */
-    readonly logModules: readonly LogModuleInfo[];
 }
 
 /** A node id as every log line prints it: 8 hex digits. */
@@ -51,9 +54,9 @@ export function nodeLabel(node: { id: number; name: string }): string {
  */
 export const FADING_MS = 1500;
 
-/** The name of a node's log module, or "#id" when its table does not list it. */
-export function logModuleName(node: NodeView | undefined, moduleId: number): string {
-    return node?.logModules.find((module) => module.id === moduleId)?.name ?? `#${moduleId}`;
+/** The name of a log module, or "#id" when the table does not list it. */
+export function logModuleName(modules: readonly LogModuleInfo[], moduleId: number): string {
+    return modules.find((module) => module.id === moduleId)?.name ?? `#${moduleId}`;
 }
 
 export const KIND_NAMES: Record<number, string> = {
@@ -133,7 +136,6 @@ function toView(node: Node, gatewayWireHash: number): NodeView {
         lost: node.lost,
         wireMismatch: wireMismatch(node.announce, gatewayWireHash),
         announce: node.announce,
-        logModules: node.logModules,
     };
 }
 
@@ -150,6 +152,8 @@ export interface NodeDiff {
  */
 export class NodeModel {
     private nodes = new Map<number, NodeView>();
+    /** One node's log modules, as the gateway last published them. */
+    private modules = new Map<number, readonly LogModuleInfo[]>();
     private gatewayWireHash = 0;
     private readonly listeners: ((nodes: NodeView[], diff: NodeDiff) => void)[] = [];
 
@@ -181,11 +185,12 @@ export class NodeModel {
     }
 
     /**
-     * A frame from a node: it is alive right now, whatever the last table
-     * said. A node the table does not list yet gets a placeholder so its
-     * streams have an owner until the next table names it.
+     * Something was heard from a node (its status, one of its log lines):
+     * it is alive right now, whatever the last table said. A node the table
+     * does not list yet gets a placeholder so its streams have an owner
+     * until the next table names it.
      */
-    noteFrame(src: number): void {
+    noteHeard(src: number): void {
         const known = this.nodes.get(src);
         if (known) {
             if (known.ageMs !== 0) {
@@ -205,13 +210,23 @@ export class NodeModel {
             lost: 0,
             wireMismatch: false,
             announce: undefined,
-            logModules: [],
         });
         this.replace(next);
     }
 
+    /** One node's log module table, as the gateway published it. */
+    applyLogModules(id: number, modules: readonly LogModuleInfo[]): void {
+        this.modules.set(id, modules);
+    }
+
+    /** The log modules of a node, empty until the gateway published them. */
+    logModules(id: number): readonly LogModuleInfo[] {
+        return this.modules.get(id) ?? [];
+    }
+
     /** The link dropped: nothing is known any more. */
     clear(): void {
+        this.modules.clear();
         this.replace(new Map());
     }
 

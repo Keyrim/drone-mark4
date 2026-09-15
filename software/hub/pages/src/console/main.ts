@@ -8,9 +8,9 @@
  * out. Nothing is connected to, nothing is picked: every widget commands
  * the node id it was built for.
  *
- * Every command is a GatewayMessage with a correlation id; the answer is an
- * Ack that comes back to the toast strip. Nothing here reaches a UDP socket:
- * the gateway forwards the frames.
+ * Every command is a typed GatewayMessage with a correlation id; the answer
+ * is an Ack that comes back to the toast strip. Nothing here reaches a UDP
+ * socket, and nothing here encodes a wire message: the gateway does both.
  */
 
 import { GatewaySocket } from "../shared/gateway_socket";
@@ -61,9 +61,9 @@ shell.nodes.onChange((nodes, diff) => {
     }
 });
 
-socket.onEnvelope((src, envelope) => {
-    if (envelope.body.case === "status") {
-        widgets.get(src)?.onStatus(envelope.body.value);
+socket.on("nodeStatus", (report) => {
+    if (report.status !== undefined) {
+        widgets.get(report.node)?.onStatus(report.status);
     }
 });
 

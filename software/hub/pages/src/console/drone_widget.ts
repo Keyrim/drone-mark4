@@ -2,7 +2,7 @@
  * One live drone node, one widget: the color it wears in the 3D view, the
  * observation block every nature shares (phase, throw detector, altitude,
  * vertical, apex, motors), and the controls its nature calls for. Every
- * command it sends is an Envelope to THIS node's id.
+ * command it sends names THIS node's id.
  *
  * A real or simulated drone gets the transmitter: kill and arm are
  * switches, the mode a selector, the throttle a slider, and the widget
@@ -18,18 +18,12 @@
 
 import { create } from "@bufbuild/protobuf";
 
-import { type GatewayMessage } from "../gen/gateway_pb";
-import {
-    EnvelopeSchema,
-    FlightPhase,
-    NodeKind,
-    SimScenarioKind,
-    type Status,
-} from "../gen/mark4_pb";
-import { frameMessage, type GatewaySocket } from "../shared/gateway_socket";
+import { type GatewayMessage, GatewayMessageSchema } from "../gen/gateway_pb";
+import { FlightPhase, NodeKind, SimScenarioKind, type Status } from "../gen/mark4_pb";
+import { type GatewaySocket } from "../shared/gateway_socket";
 import { FADING_MS, type NodeView, hexNodeId, nodeColor } from "../shared/nodes";
 import { FLIGHT_PHASE_NAMES, THROW_STATE_NAMES } from "../shared/phases";
-import { MODE_LEVEL, MODE_OPTIONS, SAFE_RC, TICK_MS, clamp01, rcEnvelope, type RcState } from "./rc";
+import { MODE_LEVEL, MODE_OPTIONS, SAFE_RC, TICK_MS, clamp01, pilotInput, type RcState } from "./rc";
 import { TuningPanel } from "./tuning";
 
 /** How often the readout repaints: Status lands far faster than eyes read. */
@@ -317,7 +311,7 @@ export class DroneWidget {
     }
 
     private send(): void {
-        this.socket.sendEnvelope(this.nodeId, rcEnvelope(this.state));
+        this.socket.send(pilotInput(this.nodeId, this.state));
     }
 
     private switchRow(
@@ -354,8 +348,10 @@ export class DroneWidget {
                 armedUntil = 0;
                 button.textContent = "Reboot";
                 button.classList.remove("active");
-                const reboot = create(EnvelopeSchema, { body: { case: "reboot", value: {} } });
-                this.hooks.ask(frameMessage(this.nodeId, reboot), "reboot");
+                const reboot = create(GatewayMessageSchema, {
+                    body: { case: "nodeCommand", value: { node: this.nodeId, action: { case: "reboot", value: true } } },
+                });
+                this.hooks.ask(reboot, "reboot");
                 return;
             }
             armedUntil = Date.now() + CONFIRM_MS;
@@ -421,25 +417,32 @@ export class DroneWidget {
             button.addEventListener("click", () => {
                 const read = (name: string): number => inputs.get(name)?.() ?? 0;
                 scenarioSequence = (scenarioSequence % MAX_SCENARIO_SEQUENCE) + 1;
-                const scenario = create(EnvelopeSchema, {
+                const scenario = create(GatewayMessageSchema, {
                     body: {
-                        case: "simScenario",
+                        case: "nodeCommand",
                         value: {
-                            sequence: scenarioSequence,
-                            kind,
-                            seed: BigInt(Math.trunc(read("seed"))),
-                            throwDelayUs: kind === SimScenarioKind.THROW ? Math.trunc(read("throwDelayUs")) : 0,
-                            velocityMps: kind === SimScenarioKind.RESET ? [] : [0, 0, read("velocityMps z")],
-                            angularVelocityRadS:
-                                kind === SimScenarioKind.RESET ? [] : [0, 0, read("angularVelocityRadS z")],
-                            heldSeconds: kind === SimScenarioKind.HAND_THROW ? read("heldSeconds") : 0,
-                            heldTiltRad: kind === SimScenarioKind.HAND_THROW ? read("heldTiltRad") : 0,
-                            heldAzimuthRad: kind === SimScenarioKind.HAND_THROW ? read("heldAzimuthRad") : 0,
-                            swingSeconds: kind === SimScenarioKind.HAND_THROW ? read("swingSeconds") : 0,
+                            node: this.nodeId,
+                            action: {
+                                case: "scenario",
+                                value: {
+                                    sequence: scenarioSequence,
+                                    kind,
+                                    seed: BigInt(Math.trunc(read("seed"))),
+                                    throwDelayUs:
+                                        kind === SimScenarioKind.THROW ? Math.trunc(read("throwDelayUs")) : 0,
+                                    velocityMps: kind === SimScenarioKind.RESET ? [] : [0, 0, read("velocityMps z")],
+                                    angularVelocityRadS:
+                                        kind === SimScenarioKind.RESET ? [] : [0, 0, read("angularVelocityRadS z")],
+                                    heldSeconds: kind === SimScenarioKind.HAND_THROW ? read("heldSeconds") : 0,
+                                    heldTiltRad: kind === SimScenarioKind.HAND_THROW ? read("heldTiltRad") : 0,
+                                    heldAzimuthRad: kind === SimScenarioKind.HAND_THROW ? read("heldAzimuthRad") : 0,
+                                    swingSeconds: kind === SimScenarioKind.HAND_THROW ? read("swingSeconds") : 0,
+                                },
+                            },
                         },
                     },
                 });
-                this.hooks.ask(frameMessage(this.nodeId, scenario), label);
+                this.hooks.ask(scenario, label);
             });
             buttons.appendChild(button);
         }

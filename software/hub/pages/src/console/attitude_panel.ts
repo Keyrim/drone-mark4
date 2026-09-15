@@ -64,11 +64,12 @@ export class AttitudePanel {
         this.scene = new AttitudeScene(stage);
         new ResizeObserver(() => this.scene.resize()).observe(stage);
 
-        socket.onEnvelope((src, envelope) => {
-            if (envelope.body.case !== "status" || !this.active.has(src)) {
+        socket.on("nodeStatus", (report) => {
+            const src = report.node;
+            const status = report.status;
+            if (status === undefined || !this.active.has(src)) {
                 return;
             }
-            const status = envelope.body.value;
             const q = asQuat(status.attitudeQuat);
             if (q !== null && isUsable(q)) {
                 this.scene.setDrone(src, toRenderQuat(q), nodeColor(src));

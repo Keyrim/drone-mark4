@@ -6,14 +6,13 @@
  * Every message, both ways, is one binary GatewayMessage (gateway.proto).
  * Handlers are registered per body case; a case a page does not handle is
  * ignored, so a gateway that learns a new message never breaks an older page.
- * Transport frames carry one Envelope (mark4.proto): `onEnvelope` decodes it
- * and hands the sender's node id along.
+ * Nothing raw crosses: the gateway publishes typed messages and a page sends
+ * typed commands, so no Envelope is ever encoded or decoded here.
  */
 
-import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
+import { fromBinary, toBinary } from "@bufbuild/protobuf";
 
 import { type GatewayMessage, GatewayMessageSchema } from "../gen/gateway_pb";
-import { type Envelope, EnvelopeSchema } from "../gen/mark4_pb";
 
 /** Answer to a request that carried a correlation id. */
 export interface Ack {
@@ -28,7 +27,6 @@ type Body = Exclude<GatewayMessage["body"], { case: undefined }>;
 export type BodyCase = Body["case"];
 type BodyValue<K extends BodyCase> = Extract<Body, { case: K }>["value"];
 type Handler<K extends BodyCase> = (value: BodyValue<K>) => void;
-type EnvelopeHandler = (src: number, envelope: Envelope) => void;
 
 /** The subset of WebSocket the link uses, so a test can hand in a fake. */
 export interface SocketLike {
@@ -62,18 +60,9 @@ export function encodeGatewayMessage(message: GatewayMessage): Uint8Array {
     return toBinary(GatewayMessageSchema, message);
 }
 
-/** One Frame message carrying an Envelope for a node (0 = every node). */
-export function frameMessage(dst: number, envelope: Envelope, id = 0): GatewayMessage {
-    return create(GatewayMessageSchema, {
-        id,
-        body: { case: "frame", value: { src: 0, dst, payload: toBinary(EnvelopeSchema, envelope) } },
-    });
-}
-
 export class GatewaySocket {
     private socket: SocketLike | null = null;
     private readonly handlers = new Map<BodyCase, Handler<BodyCase>[]>();
-    private readonly envelopeHandlers: EnvelopeHandler[] = [];
     private readonly pending = new Map<number, (ack: Ack) => void>();
     private readonly stateHandlers: ((state: ConnectionState) => void)[] = [];
     private state: ConnectionState = "connecting";
@@ -120,16 +109,12 @@ export class GatewaySocket {
         }
     }
 
-    /** Every transport frame, decoded: the node it came from and its Envelope. */
-    onEnvelope(handler: EnvelopeHandler): void {
-        this.envelopeHandlers.push(handler);
-    }
-
-    /** Forgets one envelope handler (a widget leaving with its node). */
-    offEnvelope(handler: EnvelopeHandler): void {
-        const index = this.envelopeHandlers.indexOf(handler);
-        if (index >= 0) {
-            this.envelopeHandlers.splice(index, 1);
+    /** Forgets one handler of one body case (a widget leaving with its node). */
+    off<K extends BodyCase>(kind: K, handler: Handler<K>): void {
+        const list = this.handlers.get(kind);
+        const index = list?.indexOf(handler as unknown as Handler<BodyCase>) ?? -1;
+        if (list && index >= 0) {
+            list.splice(index, 1);
         }
     }
 
@@ -147,11 +132,6 @@ export class GatewaySocket {
         if (this.socket && this.socket.readyState === WS_OPEN) {
             this.socket.send(encodeGatewayMessage(message));
         }
-    }
-
-    /** One Envelope to one node, fire and forget (the RC stream). */
-    sendEnvelope(dst: number, envelope: Envelope): void {
-        this.send(frameMessage(dst, envelope));
     }
 
     /**
@@ -178,11 +158,6 @@ export class GatewaySocket {
         });
     }
 
-    /** One Envelope to one node, acknowledged by the gateway. */
-    requestEnvelope(dst: number, envelope: Envelope): Promise<Ack> {
-        return this.request(frameMessage(dst, envelope));
-    }
-
     /** Feeds one received binary message; public so a test can drive it. */
     dispatch(bytes: Uint8Array): void {
         const message = decodeGatewayMessage(bytes);
@@ -198,20 +173,7 @@ export class GatewaySocket {
             // An ack for another tab is not ours to look at
             return;
         }
-        if (message.body.case === "frame" && this.envelopeHandlers.length > 0) {
-            let envelope: Envelope | null = null;
-            try {
-                envelope = fromBinary(EnvelopeSchema, message.body.value.payload);
-            } catch {
-                envelope = null;
-            }
-            if (envelope !== null) {
-                for (const handler of this.envelopeHandlers) {
-                    handler(message.body.value.src, envelope);
-                }
-            }
-        }
-        for (const handler of this.handlers.get(message.body.case) ?? []) {
+        for (const handler of [...(this.handlers.get(message.body.case) ?? [])]) {
             handler(message.body.value);
         }
     }

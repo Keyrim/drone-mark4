@@ -74,15 +74,26 @@ export class Shell {
             this.nodes.setGatewayWireHash(status.wireHash);
             this.pilots.textContent = status.rcClients > 1 ? `${status.rcClients} RC PILOTS` : "";
         });
-        socket.onEnvelope((src, envelope) => {
-            this.nodes.noteFrame(src);
+        socket.on("nodeStatus", (report) => this.nodes.noteHeard(report.node));
+        socket.on("nodeLogModules", (published) =>
+            this.nodes.applyLogModules(published.node, published.modules),
+        );
+        socket.on("nodeLogLines", (published) => {
+            this.nodes.noteHeard(published.node);
+            if (published.lines.length !== 1) {
+                // The ring of what happened before this tab connected: it
+                // arrives whole, and history is not something to toast.
+                return;
+            }
             // A log line of any node, the gateway included: only what needs
             // an operator is toasted, prefixed with the module that said it.
-            if (envelope.body.case === "log" && envelope.body.value.level >= LogLevel.WARN) {
-                const line = envelope.body.value;
-                const node = this.nodes.get(src);
-                const who = node?.name ?? `node ${hexNodeId(src)}`;
-                this.notify(`${who} ${logModuleName(node, line.moduleId)}: ${line.text}`, false);
+            const node = this.nodes.get(published.node);
+            const who = node?.name ?? `node ${hexNodeId(published.node)}`;
+            const modules = this.nodes.logModules(published.node);
+            for (const line of published.lines) {
+                if (line.level >= LogLevel.WARN) {
+                    this.notify(`${who} ${logModuleName(modules, line.moduleId)}: ${line.text}`, false);
+                }
             }
         });
     }

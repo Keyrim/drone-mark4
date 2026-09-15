@@ -19,13 +19,13 @@
 import { create } from "@bufbuild/protobuf";
 import type uPlot from "uplot";
 
-import { EnvelopeSchema } from "../gen/mark4_pb";
+import { GatewayMessageSchema } from "../gen/gateway_pb";
 import { decimateMinMax } from "../lanes/decimate";
 import { LanesView } from "../lanes/lanes";
 import { type LaneConfig } from "../lanes/model";
 import { Ruler, RULER_H } from "../lanes/ruler";
 import { clampToData, pan, ticks, zoom, type Viewport } from "../lanes/timebase";
-import { frameMessage, GatewaySocket } from "../shared/gateway_socket";
+import { GatewaySocket } from "../shared/gateway_socket";
 import { nodeLabel } from "../shared/nodes";
 import { Shell } from "../shared/shell";
 import {
@@ -417,22 +417,29 @@ socket.on("nodeTelemetry", (published) => {
 /* -------------------- the stream -------------------- */
 
 /**
- * Sends one TelemetryConfigure to the source node: what the stream carries
- * and how often, one configuration per node. A period of 0 stops the samples
- * without touching the subscription. The node answers with the
- * TelemetryConfig it applied.
+ * Asks the gateway for the configuration of the source node: what the
+ * stream carries and how often, one configuration per node. A period of 0
+ * stops the samples without touching the subscription. The node answers
+ * with what it applied, which comes back as a NodeTelemetryConfig.
  */
 function sendConfig(periodMs: number): void {
     if (sourceNode === null) {
         return;
     }
-    const envelope = create(EnvelopeSchema, {
-        body: {
-            case: "telemetryConfigure",
-            value: { ids: periodMs === 0 ? [] : model.enabledIds(), periodMs },
-        },
-    });
-    socket.send(frameMessage(sourceNode, envelope));
+    socket.send(
+        create(GatewayMessageSchema, {
+            body: {
+                case: "telemetryCommand",
+                value: {
+                    node: sourceNode,
+                    action: {
+                        case: "config",
+                        value: { ids: periodMs === 0 ? [] : model.enabledIds(), periodMs },
+                    },
+                },
+            },
+        })
+    );
 }
 
 /** Takes the sample stream of the source node, or gives it back. */
@@ -440,10 +447,14 @@ function sendSubscribe(enabled: boolean): void {
     if (sourceNode === null) {
         return;
     }
-    const envelope = create(EnvelopeSchema, {
-        body: { case: "telemetrySubscribe", value: { enabled } },
-    });
-    socket.send(frameMessage(sourceNode, envelope));
+    socket.send(
+        create(GatewayMessageSchema, {
+            body: {
+                case: "telemetryCommand",
+                value: { node: sourceNode, action: { case: "subscribe", value: enabled } },
+            },
+        })
+    );
 }
 
 function startRecording(): void {
@@ -484,19 +495,19 @@ function stopRecording(): void {
     refreshToolbar();
 }
 
-socket.onEnvelope((src, envelope) => {
-    if (src !== sourceNode) {
+socket.on("nodeTelemetryConfig", (applied) => {
+    if (applied.node !== sourceNode) {
         return;
     }
-    if (envelope.body.case === "telemetryConfig") {
-        // The configuration as the node applied it: the period clamped to
-        // what the link carries, and the ids it kept.
-        effectivePeriodMs = envelope.body.value.periodMs;
-        configPanel.setEffectivePeriod(effectivePeriodMs);
-        refreshToolbar();
-        return;
-    }
-    if (envelope.body.case !== "telemetryData") {
+    // The configuration as the node applied it: the period clamped to what
+    // the link carries, and the ids it kept.
+    effectivePeriodMs = applied.periodMs;
+    configPanel.setEffectivePeriod(effectivePeriodMs);
+    refreshToolbar();
+});
+
+socket.on("telemetrySamples", (samples) => {
+    if (samples.node !== sourceNode || samples.data === undefined) {
         return;
     }
     if (!recording || paused) {
@@ -505,8 +516,8 @@ socket.onEnvelope((src, envelope) => {
     lastDataMs = Date.now();
     brokenBySilence = false;
     model.ingest(
-        Number(envelope.body.value.timestampUs),
-        envelope.body.value.values.map((value) => ({ id: value.id, value: value.value }))
+        Number(samples.data.timestampUs),
+        samples.data.values.map((value) => ({ id: value.id, value: value.value }))
     );
     if (exportButton.disabled) {
         refreshToolbar();

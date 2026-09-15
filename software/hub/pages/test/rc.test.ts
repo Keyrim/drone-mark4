@@ -3,7 +3,8 @@ import test from "node:test";
 
 import { fromBinary, toBinary } from "@bufbuild/protobuf";
 
-import { EnvelopeSchema, RcMode } from "../src/gen/mark4_pb";
+import { GatewayMessageSchema } from "../src/gen/gateway_pb";
+import { RcMode } from "../src/gen/mark4_pb";
 import {
     MODE_ALTITUDE_AUTO,
     MODE_LEVEL,
@@ -13,7 +14,7 @@ import {
     TICK_MS,
     clamp01,
     clampAxis,
-    rcEnvelope,
+    pilotInput,
 } from "../src/console/rc";
 
 test("the safe state is cut, disarmed, manual, stick down, sticks released", () => {
@@ -55,8 +56,8 @@ test("clampAxis keeps a stick inside [-1, 1] and turns NaN into released", () =>
     assert.equal(clampAxis(Number.NaN), 0);
 });
 
-test("the Rc envelope carries the switches, the mode, the throttle and the three sticks, clamped", () => {
-    const envelope = rcEnvelope({
+test("the pilot input names its node and carries the switches, the mode, the throttle and the three sticks, clamped", () => {
+    const message = pilotInput(0x51300001, {
         kill: false,
         arm: true,
         mode: MODE_LEVEL,
@@ -65,15 +66,17 @@ test("the Rc envelope carries the switches, the mode, the throttle and the three
         pitch: 0.5,
         yaw: 3,
     });
-    const back = fromBinary(EnvelopeSchema, toBinary(EnvelopeSchema, envelope));
-    assert.equal(back.body.case, "rc");
-    if (back.body.case === "rc") {
-        assert.equal(back.body.value.kill, false);
-        assert.equal(back.body.value.arm, true);
-        assert.equal(back.body.value.mode, RcMode.RC_LEVEL);
-        assert.equal(back.body.value.throttle, 1);
-        assert.equal(back.body.value.roll, -1);
-        assert.equal(back.body.value.pitch, 0.5);
-        assert.equal(back.body.value.yaw, 1);
+    const back = fromBinary(GatewayMessageSchema, toBinary(GatewayMessageSchema, message));
+    assert.equal(back.body.case, "pilotInput");
+    if (back.body.case === "pilotInput") {
+        assert.equal(back.body.value.node, 0x51300001);
+        const rc = back.body.value.rc!;
+        assert.equal(rc.kill, false);
+        assert.equal(rc.arm, true);
+        assert.equal(rc.mode, RcMode.RC_LEVEL);
+        assert.equal(rc.throttle, 1);
+        assert.equal(rc.roll, -1);
+        assert.equal(rc.pitch, 0.5);
+        assert.equal(rc.yaw, 1);
     }
 });
