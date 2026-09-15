@@ -3,10 +3,10 @@ extends RefCounted
 
 ## The plant's identity, the answer it unicasts to whoever asks who it is.
 ##
-## An encoded Envelope opens with the tag of its body (the Envelope has one
-## field, its oneof), so one byte says whether a payload is worth decoding:
-## the plant hears every broadcast of the LAN, telemetry at 500 Hz included,
-## and must not run the codec on frames it does not want.
+## An encoded Envelope opens with the tag of its body (the oneof comes
+## first, the request id after it), so one byte says whether a payload is
+## worth decoding: the plant answers a lockstep exchange at 500 Hz and must
+## not run the codec on frames it does not want.
 
 const Mark4 := preload("res://scripts/gen/mark4.gd")
 
