@@ -93,9 +93,11 @@ cd software/hub/pages && pnpm install --frozen-lockfile && pnpm build
 # Editor extension (Mark4 sidebar: apps, nodes, log levels, bench, plus the
 # hub pages as webviews and a "Mark4 Logs" output channel; it is one more
 # gateway.proto client and generates its own TypeScript codec with `pnpm
-# gen`. Local .vsix, no marketplace, no CI job). Install: "Extensions:
-# Install from VSIX".
+# gen`. Local .vsix, no marketplace, no CI job, version frozen at 0.0.0).
+# install.sh builds, packages and installs it when the installed copy's
+# source hash differs from the tree's (also the folderOpen task); by hand:
 cd tools/vscode-mark4 && pnpm install --frozen-lockfile && pnpm build && pnpm package
+tools/vscode-mark4/install.sh
 
 # Mobile app (Flutter, Android; software/mobile is the Flutter project root,
 # docs/contributing/dart-guidelines.md the conventions). Pure Dart, no

@@ -128,7 +128,7 @@ pnpm gen            # the TypeScript codecs, run by every script below
 pnpm typecheck
 pnpm test           # node:test over the pure logic
 pnpm build
-pnpm package        # produces vscode-mark4-<version>.vsix
+pnpm package        # produces vscode-mark4-0.0.0.vsix
 pnpm smoke          # against a live bench, see scripts/smoke.ts
 ```
 
@@ -139,9 +139,17 @@ exactly as the hub pages do (same versions of `@bufbuild/protobuf` and
 `src/gen/` is gitignored: nothing generated is committed, and the extension is
 always built against the schema of the tree it sits in.
 
-Install with "Extensions: Install from VSIX" in the command palette. Repeat
-after changes (`pnpm build && pnpm package`, then reinstall). `pnpm watch`
-plus F5 (Extension Development Host) works for iterating.
+`./install.sh` keeps the installed extension equal to the sources: it runs
+on folder open (the "install mark4 extension" task) and can be run by hand.
+It is content-based. `source_hash.sh` hashes everything the package is built
+from (`src/` without `src/gen/`, `syntaxes/`, `media/`, the manifests, the
+two `.proto` schemas), `pnpm build` writes that hash in `dist/source-hash`,
+the vsix carries it, and the script compares it with the hash of the
+installed copy: equal, nothing happens; different or none, build, package
+and `code --install-extension --force`. Reload the window after an install.
+The `version` of `package.json` is frozen at `0.0.0` and never bumped: the
+hash is what tells two builds apart. `pnpm watch` plus F5 (Extension
+Development Host) works for iterating without installing.
 
 ## Deliberate simplifications
 
