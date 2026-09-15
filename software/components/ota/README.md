@@ -34,6 +34,23 @@ desktop. `docs/ota-design.md` is the reference for every decision below.
 - `ota/image_header.hpp` - the `OtaImageHeader` reads of the two stores
   whose slots open with that header (stm32, sim): validity of a flashed
   image and its build identity.
+- `ota/provider.hpp` - `OtaProvider`, the updater on the wire (target
+  `ota_provider`, over `messaging`): an `AbsMessageHandler` that hands each
+  `Ota*` request to the updater and sends its reply, when there is one, to
+  the node that asked. The replies go out with `send()` rather than
+  `request()`: the session has its own go-back-N and its own retries, and a
+  reply resent by the messenger would answer a step the session has left.
+  `consumed()` counts the requests the updater consumed, so a composition
+  that caches something an update may change (the arming interlock read off
+  the boot metadata) re-reads it when the count moves rather than on every
+  frame.
+- `ota/gate.hpp` - `AbsOtaGate`, the two facts the updater asks of the node
+  before it lets a session in: whether the motors may spin and whether the
+  pack is above the update floor. `ota/flight_gate.hpp` is the gate of a
+  node that flies (`FlightOtaGate`, target `ota_flight_gate`, the one
+  header here that knows a `FlightCore` exists); a node that does not fly
+  writes its own two-line gate and carries the provider without a flight
+  core.
 - `ota/crc32_mpeg2.hpp` - the one checksum of the update system, software,
   bit for bit what the F405 hardware CRC unit computes over the same words.
   The hub uses this very code on the bundle.

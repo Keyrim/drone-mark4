@@ -8,15 +8,15 @@
 #include <cstdint>
 
 #include "messaging/messenger.hpp"
+#include "ota/gate.hpp"
 #include "ota/updater.hpp"
 #include "protocol/envelope.hpp"
-#include "services/ota_gate.hpp"
 
 namespace mark4
 {
     /// The updater on the wire: one Ota* request in, at most one reply out, to
     /// the requester. Pure glue between the messenger and the OtaUpdater.
-    class OtaService final : public AbsMessageHandler
+    class OtaProvider final : public AbsMessageHandler
     {
       public:
         /// Body tags this handler consumes: every request the updater answers.
@@ -28,13 +28,13 @@ namespace mark4
                                                           mark4_Envelope_ota_abort_tag};
 
         /// @param messenger messenger the requests come from and the replies
-        ///        leave by; must outlive the service
+        ///        leave by; must outlive the provider
         /// @param updater the session state machine served; must outlive the
-        ///        service
+        ///        provider
         /// @param gate what the node answers about itself: the arming state
         ///        the updater refuses to start a session in, and the pack
-        ///        voltage floor; must outlive the service
-        OtaService(Messenger &messenger, OtaUpdater &updater, const AbsOtaGate &gate)
+        ///        voltage floor; must outlive the provider
+        OtaProvider(Messenger &messenger, OtaUpdater &updater, const AbsOtaGate &gate)
             : AbsMessageHandler(messenger, TAGS),
               m_messenger(messenger),
               m_updater(updater),
@@ -63,6 +63,9 @@ namespace mark4
             const bool consumed = m_updater.handle(envelope, inputs, reply);
             if (reply.which_body != 0U)
             {
+                // A plain send: the session has its own go-back-N and its own
+                // retries, and a reply resent by the messenger would answer a
+                // step the session has left.
                 static_cast<void>(m_messenger.send(src, reply));
             }
             if (consumed)

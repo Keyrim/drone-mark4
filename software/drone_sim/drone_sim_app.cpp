@@ -133,14 +133,14 @@ namespace mark4
         }
         // Last: freezing the registry means every object holding a measure
         // must already exist, and the fake bootloader above builds some.
-        if (!m_telemetryService.init())
+        if (!m_telemetryProvider.init())
         {
             BOOT.error("telemetry: the registry is empty");
             return false;
         }
         BOOT.info("status: 1 message / %u frames; telemetry: %zu measures on demand",
                   static_cast<unsigned>(StatusProvider::STATUS_PERIOD_FRAMES),
-                  m_telemetryService.entryCount());
+                  m_telemetryProvider.entryCount());
         return true;
     }
 
@@ -211,10 +211,10 @@ namespace mark4
             std::memcmp(probe.data(), OTA_BROKEN_MARKER, probe.size()) == 0;
         // The handler holds a reference to the updater: gone before it, back
         // right after it.
-        m_otaService.reset();
+        m_otaProvider.reset();
         m_otaUpdater.emplace(*m_firmwareStore, !broken);
-        m_otaService.emplace(m_messenger, *m_otaUpdater, m_otaGate);
-        m_otaConsumedSeen = m_otaService->consumed();
+        m_otaProvider.emplace(m_messenger, *m_otaUpdater, m_otaGate);
+        m_otaConsumedSeen = m_otaProvider->consumed();
         refreshArmInterlock();
 
         BOOT.info("running slot %c, active slot %c, states %02x/%02x, emulated flash in %s",
@@ -237,7 +237,7 @@ namespace mark4
         {
             // Nothing bootable: the updater stops being served, which is the
             // closest a process gets to a board sitting in the bootloader.
-            m_otaService.reset();
+            m_otaProvider.reset();
             m_otaUpdater.reset();
         }
         // A reset is a power cycle: the flight core starts over, tuned values
@@ -350,11 +350,11 @@ namespace mark4
             // process, and an update takes longer than the keepalive period.
             // The poll dispatches, so the session is served from inside it.
             m_plantLink.poll();
-            if (m_otaService && m_otaService->consumed() != m_otaConsumedSeen)
+            if (m_otaProvider && m_otaProvider->consumed() != m_otaConsumedSeen)
             {
                 // A staging record may just have moved the running slot's
                 // state, which is what the arming interlock reads.
-                m_otaConsumedSeen = m_otaService->consumed();
+                m_otaConsumedSeen = m_otaProvider->consumed();
                 refreshArmInterlock();
             }
             m_otaUpdater->tick(m_clock.nowUs());
@@ -455,11 +455,11 @@ namespace mark4
                 m_rebootRequested = false;
                 rebootFirmware();
             }
-            if (m_otaService && m_otaService->consumed() != m_otaConsumedSeen)
+            if (m_otaProvider && m_otaProvider->consumed() != m_otaConsumedSeen)
             {
                 // A staging record may just have moved the running slot's
                 // state, which is what the arming interlock reads.
-                m_otaConsumedSeen = m_otaService->consumed();
+                m_otaConsumedSeen = m_otaProvider->consumed();
                 refreshArmInterlock();
             }
             if (m_otaUpdater.has_value() && m_otaUpdater->sessionActive())
@@ -506,11 +506,7 @@ namespace mark4
             // Whatever a subscriber enabled, at the period it asked for; the
             // frame's own timestamp stamps the samples, so the service never
             // reads a clock either.
-            m_telemetryService.sample(frame.timestampUs);
-            // Paced answers to a list request: one description per frame, so
-            // a table dump never bursts ahead of the telemetry it shares the
-            // link with.
-            m_tuningService.pump();
+            m_telemetryProvider.sample(frame.timestampUs);
             if (frame.imuValid)
             {
                 // The run is the plant's trajectory: frames without sensors

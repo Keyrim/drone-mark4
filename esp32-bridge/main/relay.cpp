@@ -36,10 +36,10 @@
 #include "log/provider.hpp"
 #include "log_modules.hpp"
 #include "messaging/messenger.hpp"
+#include "ota/gate.hpp"
+#include "ota/provider.hpp"
 #include "ota/updater.hpp"
 #include "protocol/wire_hash.hpp"
-#include "services/ota_gate.hpp"
-#include "services/ota_service.hpp"
 #include "transport/node_id.hpp"
 #include "transport/transport.hpp"
 #include "transport/uart_link.hpp"
@@ -260,7 +260,7 @@ namespace mark4
             /// The updater on the wire, absent until the store is ready: a
             /// node whose flash is not laid out for two slots claims no
             /// updater tag at all, which is the refusal it used to answer.
-            std::optional<OtaService>
+            std::optional<OtaProvider>
                 ota;                     ///< the updater on the wire, once the store is known good
             bool storeReady = false;     ///< the partition table is the two-slot one
             bool sessionWasOpen = false; ///< updater state at the last poll, for the log
@@ -382,7 +382,7 @@ extern "C" void relayRun(void)
     static Relay relay(hashNodeId(mac.data(), mac.size()), bootId(), relayIdentity(mac));
 
     // A relay whose flash is not laid out for two slots still relays; it
-    // only refuses to update itself, and says so once. Without the service
+    // only refuses to update itself, and says so once. Without the provider
     // no handler claims the updater tags, which is that refusal.
     relay.storeReady = relay.store.init();
     if (relay.storeReady)

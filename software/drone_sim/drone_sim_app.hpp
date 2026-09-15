@@ -24,12 +24,12 @@
 #include "platform_sim/sim_run_tracker.hpp"
 #include "platform_sim/truth_telemetry.hpp"
 #include "protocol/envelope.hpp"
+#include "ota/flight_gate.hpp"
+#include "ota/provider.hpp"
 #include "status/status_provider.hpp"
-#include "services/flight_ota_gate.hpp"
-#include "services/ota_service.hpp"
-#include "services/telemetry_service.hpp"
-#include "services/tuning_service.hpp"
+#include "telemetry/provider.hpp"
 #include "transport/transport.hpp"
+#include "tuning/provider.hpp"
 #include "transport/udp_link.hpp"
 
 namespace mark4
@@ -113,10 +113,10 @@ namespace mark4
             return m_runTracker;
         }
 
-        /// @return telemetry service, for post-run reporting
-        [[nodiscard]] const mark4::TelemetryService &accessTelemetryService() const
+        /// @return telemetry provider, for post-run reporting
+        [[nodiscard]] const mark4::TelemetryProvider &accessTelemetryProvider() const
         {
-            return m_telemetryService;
+            return m_telemetryProvider;
         }
 
       private:
@@ -225,11 +225,11 @@ namespace mark4
         /// What the updater asks this node about itself before a session.
         mark4::FlightOtaGate m_otaGate{m_core};
         mark4::TruthTelemetry m_truthTelemetry;
-        mark4::TuningService m_tuningService{m_messenger, m_core};
+        mark4::TuningProvider m_tuningProvider{m_messenger, m_core};
         mark4::SimRunTracker m_runTracker;
-        /// Last of the services: init() freezes the registry, so every
+        /// Last of the providers: init() freezes the registry, so every
         /// object holding a measure must exist before it runs.
-        mark4::TelemetryService m_telemetryService{m_messenger, MIN_TELEMETRY_PERIOD_MS};
+        mark4::TelemetryProvider m_telemetryProvider{m_messenger, MIN_TELEMETRY_PERIOD_MS};
 
         /// Emulated flash directory, declared before the store because the
         /// store keeps the pointer rather than a copy of the path.
@@ -244,13 +244,13 @@ namespace mark4
         std::optional<mark4::OtaUpdater> m_otaUpdater;
         /// The updater's handler, rebuilt with it: it holds a reference to
         /// the updater it serves.
-        std::optional<mark4::OtaService> m_otaService;
+        std::optional<mark4::OtaProvider> m_otaProvider;
 
         /// True while the running slot is on trial: arming is refused until
         /// the ground side confirms it (docs/ota-design.md section 3.2).
         bool m_armInhibited = false;
 
-        /// OtaService::consumed() at the last interlock refresh.
+        /// OtaProvider::consumed() at the last interlock refresh.
         std::uint32_t m_otaConsumedSeen = 0U;
 
         /// Timestamp of the last frame waitFrame() returned: the flight time

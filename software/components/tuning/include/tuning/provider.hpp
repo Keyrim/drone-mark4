@@ -1,11 +1,11 @@
 #pragma once
 
 /// @file
-/// @brief Tuning request dispatch, shared by every composition: the adapter
-///        between the tuning messages of the wire and the parameter registry
-///        the flight core owns. flight-core never includes a wire header, so
-///        this is where the two vocabularies meet and where they are pinned
-///        to each other.
+/// @brief The parameter table of the flight core on the wire: the adapter
+///        between the tuning messages of the schema and the registry the
+///        core owns. flight-core never includes a wire header, so this is
+///        where the two vocabularies meet and where they are pinned to each
+///        other.
 ///
 /// Timing contract. onMessage() runs inside the messenger poll, which every
 /// composition runs before step(), so a value written by a request is in
@@ -19,6 +19,8 @@
 
 #include "flight_core/flight_core.hpp"
 #include "flight_core/tuning_table.hpp"
+#include "log/module.hpp"
+#include "log/module_ids.hpp"
 #include "messaging/messenger.hpp"
 #include "protocol/envelope.hpp"
 
@@ -37,30 +39,27 @@ namespace mark4
                   "the parameter name width must match the wire");
 
     /// Answers the tuning requests the messenger hands it, to the node that
-    /// asked: the acknowledgement of a set or a get, and the descriptions a
-    /// list request unrolls.
-    class TuningService final : public AbsMessageHandler
+    /// asked: the acknowledgement of a set or a get, and one page of the
+    /// table per list request.
+    class TuningProvider final : public AbsMessageHandler
     {
       public:
         /// Body tags this handler consumes.
         static constexpr std::array<pb_size_t, 3> TAGS = {mark4_Envelope_tuning_set_tag,
                                                           mark4_Envelope_tuning_get_tag,
-                                                          mark4_Envelope_tuning_list_tag};
+                                                          mark4_Envelope_tuning_list_request_tag};
 
-        /// Parameter descriptions emitted per pump() call. One, deliberately:
-        /// a full table is a dozen frames, and a board that answers a list
-        /// request by dumping all of them at once floods a 921600 baud UART
-        /// for milliseconds and starves the telemetry stream sharing it. One
-        /// per flight frame spreads the same answer over a few tens of ms,
-        /// which no ground station notices.
-        static constexpr std::size_t INFOS_PER_PUMP = 1U;
+        /// Descriptions per TuningInfos page, from the wire bound. One page
+        /// per request: the consumer paces the walk, so a table dump never
+        /// bursts ahead of the telemetry sharing the same link.
+        static constexpr std::size_t INFOS_PER_PAGE =
+            sizeof(mark4_TuningInfos::infos) / sizeof(mark4_TuningInfos::infos[0]);
 
         /// @param messenger messenger the requests come from and the answers
-        ///        leave by; must outlive the service
+        ///        leave by; must outlive the provider
         /// @param core flight core owning the parameter registry
-        TuningService(Messenger &messenger, FlightCore &core)
+        TuningProvider(Messenger &messenger, FlightCore &core)
             : AbsMessageHandler(messenger, TAGS),
-              m_messenger(messenger),
               m_core(core)
         {
         }
@@ -94,37 +93,12 @@ namespace mark4
                                             value));
                     return true;
                 }
-                case mark4_Envelope_tuning_list_tag:
+                case mark4_Envelope_tuning_list_request_tag:
                     ++m_requestCount;
-                    // Only the cursor and the requester are latched: the
-                    // descriptions themselves go out from pump(), one per
-                    // call. A second list request restarts the walk wherever
-                    // it asks, which is also how a ground station recovers
-                    // from a lost frame.
-                    m_listCursor = envelope.body.tuning_list.start_index;
-                    m_listRequester = src;
-                    m_listPending = true;
+                    sendPage(src, envelope.body.tuning_list_request.cursor);
                     return true;
                 default:
                     return false;
-            }
-        }
-
-        /// @brief Emits at most INFOS_PER_PUMP parameter descriptions. Call
-        ///        once per flight frame; does nothing when no list request is
-        ///        being served.
-        void pump()
-        {
-            for (std::size_t emitted = 0U; m_listPending && emitted < INFOS_PER_PUMP; ++emitted)
-            {
-                const TuningParam *param = m_core.paramInfo(m_listCursor);
-                if (param == nullptr)
-                {
-                    m_listPending = false;
-                    return;
-                }
-                sendInfo(m_listCursor, *param);
-                ++m_listCursor;
             }
         }
 
@@ -134,13 +108,22 @@ namespace mark4
             return m_requestCount;
         }
 
-        /// @return answers emitted since construction, infos included
+        /// @return answers emitted since construction, pages included
         [[nodiscard]] std::uint32_t answerCount() const
         {
             return m_answerCount;
         }
 
       private:
+        /// @return the logging module of the provider. A function-local
+        ///         static because the class is header-only: one instance per
+        ///         process, however many compositions include it.
+        static LogModule &Module()
+        {
+            static LogModule MODULE{LOG_MODULE_TUNING_PROVIDER, "tuning/provider"};
+            return MODULE;
+        }
+
         /// @brief Sends one acknowledgement carrying the value in effect.
         /// @param dst node that sent the request
         /// @param id parameter id echoed from the request
@@ -152,6 +135,13 @@ namespace mark4
             // so a ground station never has to guess what it ended up with.
             float value = 0.0f;
             static_cast<void>(m_core.getParam(static_cast<std::uint16_t>(id), value));
+            if (status != TuningStatus::OK)
+            {
+                Module().warn("%08lx asked for parameter %lu: refused (status %u)",
+                              static_cast<unsigned long>(dst),
+                              static_cast<unsigned long>(id),
+                              static_cast<unsigned>(status));
+            }
 
             mark4_Envelope envelope = mark4_Envelope_init_zero;
             envelope.which_body = mark4_Envelope_tuning_ack_tag;
@@ -161,45 +151,68 @@ namespace mark4
             send(dst, envelope);
         }
 
-        /// @brief Sends one parameter description.
-        /// @param index table index of the entry
-        /// @param param entry to describe
-        void sendInfo(std::size_t index, const TuningParam &param)
+        /// @brief Sends one page of the parameter table.
+        /// @param dst node that asked: where the page goes
+        /// @param cursor first table index to describe; past the end sends an
+        ///        empty page carrying the total, which is how a requester
+        ///        learns it asked too far
+        void sendPage(std::uint32_t dst, std::uint32_t cursor)
         {
+            const std::size_t total = FlightCore::ParamCount();
             mark4_Envelope envelope = mark4_Envelope_init_zero;
-            envelope.which_body = mark4_Envelope_tuning_info_tag;
-            mark4_TuningInfo &info = envelope.body.tuning_info;
-            info.index = static_cast<std::uint32_t>(index);
-            info.count = static_cast<std::uint32_t>(FlightCore::ParamCount());
-            info.id = param.id;
-            // The registry name is zero-padded and a full-length one carries
-            // no terminator; the wire field has one byte more for it.
-            std::memcpy(info.name, param.name.data(), TuningParam::NAME_SIZE);
-            info.name[TuningParam::NAME_SIZE] = '\0';
-            info.value = param.value;
-            info.min_value = param.minValue;
-            info.max_value = param.maxValue;
-            info.armed_change = param.armedChange;
-            send(m_listRequester, envelope);
+            envelope.which_body = mark4_Envelope_tuning_infos_tag;
+            mark4_TuningInfos &page = envelope.body.tuning_infos;
+            page.total = static_cast<std::uint32_t>(total);
+            page.cursor = cursor;
+            // Clamped first, so the walk below is provably inside the table
+            // whatever cursor the requester sent.
+            const std::size_t first = cursor > total ? total : static_cast<std::size_t>(cursor);
+            for (std::size_t index = first;
+                 index < total && page.infos_count < INFOS_PER_PAGE;
+                 ++index)
+            {
+                const TuningParam *const param = m_core.paramInfo(index);
+                if (param == nullptr)
+                {
+                    break;
+                }
+                fillInfo(*param, page.infos[page.infos_count]);
+                ++page.infos_count;
+            }
+            send(dst, envelope);
         }
 
-        /// @brief Sends one answer to the node that asked.
+        /// @brief Describes one parameter as the wire does.
+        /// @param param entry to describe
+        /// @param[out] infoOut message to fill
+        static void fillInfo(const TuningParam &param, mark4_TuningInfo &infoOut)
+        {
+            infoOut.id = param.id;
+            // The registry name is zero-padded and a full-length one carries
+            // no terminator; the wire field has one byte more for it.
+            std::memcpy(infoOut.name, param.name.data(), TuningParam::NAME_SIZE);
+            infoOut.name[TuningParam::NAME_SIZE] = '\0';
+            infoOut.value = param.value;
+            infoOut.min_value = param.minValue;
+            infoOut.max_value = param.maxValue;
+            infoOut.armed_change = param.armedChange;
+        }
+
+        /// @brief Sends one answer to the node that asked, as a request of
+        ///        this provider's: an answer that matters is acknowledged
+        ///        like everything that has to arrive.
         /// @param dst node the answer goes to
         /// @param envelope answer to send
-        void send(std::uint32_t dst, const mark4_Envelope &envelope)
+        void send(std::uint32_t dst, mark4_Envelope &envelope)
         {
-            if (m_messenger.send(dst, envelope))
+            if (request(dst, envelope))
             {
                 ++m_answerCount;
             }
         }
 
-        Messenger &m_messenger;             ///< answer route, not owned
-        FlightCore &m_core;                 ///< registry owner, not owned
-        std::size_t m_listCursor = 0U;      ///< next table index to describe
-        std::uint32_t m_listRequester = 0U; ///< node the pending list goes to
-        bool m_listPending = false;         ///< a list request is still unrolling
-        std::uint32_t m_requestCount = 0U;  ///< tuning requests understood
-        std::uint32_t m_answerCount = 0U;   ///< acks and infos emitted
+        FlightCore &m_core;                ///< registry owner, not owned
+        std::uint32_t m_requestCount = 0U; ///< tuning requests understood
+        std::uint32_t m_answerCount = 0U;  ///< acks and pages emitted
     };
 } // namespace mark4

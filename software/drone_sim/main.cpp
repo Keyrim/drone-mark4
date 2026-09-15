@@ -170,7 +170,7 @@ int main(int argc, char **argv)
                 static_cast<double>(motor[2]),
                 static_cast<double>(motor[3]));
 
-    const auto &telemetry = app.accessTelemetryService();
+    const auto &telemetry = app.accessTelemetryProvider();
     MODULE.info("telemetry: %zu measures, %u sample messages sent",
                 telemetry.entryCount(),
                 telemetry.messageCount());

@@ -143,13 +143,13 @@ namespace mark4
                   static_cast<unsigned long>(RcTracker::RC_TIMEOUT_US / US_PER_MS));
         // Last: freezing the registry means every object holding a measure
         // must already exist.
-        if (!m_telemetryService.init())
+        if (!m_telemetryProvider.init())
         {
             BOOT.error("telemetry: the registry is empty");
             return false;
         }
         BOOT.info("telemetry: %lu measures on demand, %lu ms floor",
-                  static_cast<unsigned long>(m_telemetryService.entryCount()),
+                  static_cast<unsigned long>(m_telemetryProvider.entryCount()),
                   static_cast<unsigned long>(MIN_TELEMETRY_PERIOD_MS));
 
         refreshArmInterlock();
@@ -224,11 +224,11 @@ namespace mark4
                 OTA.warn("reboot command during a session, resetting");
                 systemReset();
             }
-            if (m_otaService.consumed() != m_otaConsumedSeen)
+            if (m_otaProvider.consumed() != m_otaConsumedSeen)
             {
                 // A staging record may just have moved the running slot's
                 // state, which is what the arming interlock reads.
-                m_otaConsumedSeen = m_otaService.consumed();
+                m_otaConsumedSeen = m_otaProvider.consumed();
                 refreshArmInterlock();
             }
             m_otaUpdater.tick(m_clock.nowUs());
@@ -272,11 +272,11 @@ namespace mark4
                 RC.warn("reboot command, resetting");
                 systemReset();
             }
-            if (m_otaService.consumed() != m_otaConsumedSeen)
+            if (m_otaProvider.consumed() != m_otaConsumedSeen)
             {
                 // A staging record may just have moved the running slot's
                 // state, which is what the arming interlock reads.
-                m_otaConsumedSeen = m_otaService.consumed();
+                m_otaConsumedSeen = m_otaProvider.consumed();
                 refreshArmInterlock();
             }
             // An accepted OtaBegin parks everything below until the session
@@ -318,11 +318,7 @@ namespace mark4
             // Whatever a subscriber enabled, at the period it asked for; the
             // frame's own timestamp stamps the samples, so the service never
             // reads a clock either.
-            m_telemetryService.sample(frame.timestampUs);
-            // Paced answers to a list request: one description per frame, so
-            // a table dump never bursts ahead of the telemetry sharing the
-            // same UART.
-            m_tuningService.pump();
+            m_telemetryProvider.sample(frame.timestampUs);
             if ((frames % FRAMES_PER_STATUS) == 0U)
             {
                 // A health counter that moved during the last window keeps
@@ -354,10 +350,10 @@ namespace mark4
                              static_cast<unsigned long>(m_sensorSource.readFailures()),
                              static_cast<unsigned long>(m_baro.failures()));
                 STATUS.debug("telemetry: %lu measures, %lu enabled every %lu ms, %lu sent",
-                             static_cast<unsigned long>(m_telemetryService.entryCount()),
-                             static_cast<unsigned long>(m_telemetryService.enabledCount()),
-                             static_cast<unsigned long>(m_telemetryService.periodMs()),
-                             static_cast<unsigned long>(m_telemetryService.messageCount()));
+                             static_cast<unsigned long>(m_telemetryProvider.entryCount()),
+                             static_cast<unsigned long>(m_telemetryProvider.enabledCount()),
+                             static_cast<unsigned long>(m_telemetryProvider.periodMs()),
+                             static_cast<unsigned long>(m_telemetryProvider.messageCount()));
                 STATUS.debug("tx: %lu sent %lu dropped  rx: %lu received %lu handled, "
                              "%lu nodes%s  tuning: %lu asked %lu answered  phase %u",
                              static_cast<unsigned long>(m_transport.sent()),
@@ -366,8 +362,8 @@ namespace mark4
                              static_cast<unsigned long>(m_messenger.handled()),
                              static_cast<unsigned long>(m_transport.nodeCount()),
                              m_rcTracker.failsafeActive(frame.timestampUs) ? " (failsafe)" : "",
-                             static_cast<unsigned long>(m_tuningService.requestCount()),
-                             static_cast<unsigned long>(m_tuningService.answerCount()),
+                             static_cast<unsigned long>(m_tuningProvider.requestCount()),
+                             static_cast<unsigned long>(m_tuningProvider.answerCount()),
                              static_cast<unsigned>(m_core.flightPhase()));
                 if (uart1RxDrops() != lastRxDrops)
                 {

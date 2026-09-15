@@ -2,19 +2,18 @@
 
 /// @file
 /// @brief The wire adapter of the telemetry registry: it freezes the leaf
-///        library's list into a table, answers the discovery and enable
-///        messages of `protocol/mark4.proto`, and streams batched samples to
-///        the one node that asked for them.
+///        library's list into a table, answers the discovery and
+///        configuration messages of `protocol/mark4.proto`, and streams
+///        batched samples to the nodes that subscribed.
 ///
 /// Timing contract. onMessage() runs inside the messenger poll, before
 /// step(); sample() is called once per flight frame, right after step() and
-/// the motor push, with the frame's own timestamp. The service never reads a
-/// clock: every instant comes from the caller, exactly like the transport.
+/// the motor push, with the frame's own timestamp. The provider never reads
+/// a clock: every instant comes from the caller, exactly like the transport.
 ///
-/// One active stream per drone. An enable from another node takes it over
-/// (last writer wins): a bench where two tools fight over the stream is a
-/// bench problem, and answering both would double the traffic on a UART
-/// that has none to spare.
+/// One configuration per node, never one per subscriber: what the stream
+/// carries and how often is a state of the node, last writer wins, and
+/// every subscriber is told when it moves.
 
 #include <array>
 #include <cstddef>
@@ -24,6 +23,7 @@
 #include "log/module.hpp"
 #include "log/module_ids.hpp"
 #include "messaging/messenger.hpp"
+#include "messaging/subscriber_table.hpp"
 #include "protocol/envelope.hpp"
 #include "telemetry/registry.hpp"
 
@@ -54,20 +54,27 @@ namespace mark4
                   "the measure name width must match the wire");
 
     /// Answers the telemetry requests the messenger hands it, to the node
-    /// that asked, and streams what its subscriber asked for.
+    /// that asked, and streams what the configuration names to the nodes
+    /// that subscribed.
     ///
     /// Two time bases meet here. The messenger is polled on the clock of the
     /// process (the sim polls it from the sensor wait), sample() runs on the
     /// timestamp of the flight frame, and the two differ; the stream is
-    /// timed against the frames, so an enable is stamped with the instant of
-    /// the last sample(), never with the instant of the poll that delivered
-    /// it.
-    class TelemetryService final : public AbsMessageHandler
+    /// timed against the frames, so a configuration is stamped with the
+    /// instant of the last sample(), never with the instant of the poll that
+    /// delivered it.
+    class TelemetryProvider final : public AbsMessageHandler
     {
       public:
         /// Body tags this handler consumes.
-        static constexpr std::array<pb_size_t, 2> TAGS = {mark4_Envelope_telemetry_list_request_tag,
-                                                          mark4_Envelope_telemetry_enable_tag};
+        static constexpr std::array<pb_size_t, 3> TAGS = {mark4_Envelope_telemetry_list_request_tag,
+                                                          mark4_Envelope_telemetry_config_tag,
+                                                          mark4_Envelope_telemetry_subscribe_tag};
+
+        /// Nodes that may hold the stream at once. Two: a sampling instant
+        /// is one emission per entry, on a link that also carries the flight
+        /// traffic.
+        static constexpr std::size_t MAX_SUBSCRIBERS = 2U;
 
         /// Descriptors per TelemetryDescriptors page, from the wire bound.
         static constexpr std::size_t DESCRIPTORS_PER_PAGE =
@@ -80,29 +87,22 @@ namespace mark4
         static constexpr std::size_t VALUES_PER_MESSAGE =
             sizeof(mark4_TelemetryData::values) / sizeof(mark4_TelemetryData::values[0]);
 
-        /// Measures one subscriber may enable at once, from the wire bound.
+        /// Measures the configuration may name at once, from the wire bound.
         static constexpr std::size_t MAX_ENABLED =
-            sizeof(mark4_TelemetryEnable::ids) / sizeof(mark4_TelemetryEnable::ids[0]);
+            sizeof(mark4_TelemetryConfig::ids) / sizeof(mark4_TelemetryConfig::ids[0]);
 
-        /// Slowest period a subscriber may ask for [ms]. Past a minute the
-        /// keepalive is the only traffic left and the request is a mistake.
+        /// Slowest period a consumer may ask for [ms]. Past a minute
+        /// nothing is left of the stream and the request is a mistake.
         static constexpr std::uint32_t MAX_PERIOD_MS = 60000U;
-
-        /// Silence from the subscriber after which the stream stops [us].
-        /// The subscriber repeats its enable once per second, so this is
-        /// three missed keepalives, like the transport's node expiry: a
-        /// ground tool that crashed must not leave a board streaming into
-        /// the void for the rest of the flight.
-        static constexpr std::uint64_t SUBSCRIBER_TIMEOUT_US = 3'000'000U;
 
         /// Microseconds in a millisecond, for the period arithmetic.
         static constexpr std::uint64_t US_PER_MS = 1000U;
 
         /// @param messenger messenger the requests come from and the answers
-        ///        and the samples leave by; must outlive the service
+        ///        and the samples leave by; must outlive the provider
         /// @param minPeriodMs fastest period this composition accepts [ms];
         ///        what the link can carry, not what the loop can produce
-        TelemetryService(Messenger &messenger, std::uint32_t minPeriodMs)
+        TelemetryProvider(Messenger &messenger, std::uint32_t minPeriodMs)
             : AbsMessageHandler(messenger, TAGS),
               m_messenger(messenger),
               m_minPeriodMs(minPeriodMs == 0U ? 1U : minPeriodMs)
@@ -165,7 +165,7 @@ namespace mark4
                        std::uint64_t nowUs) override
         {
             // The poll's instant is on the process clock while the stream is
-            // timed on the frames: an enable is stamped with the last
+            // timed on the frames: a configuration is stamped with the last
             // sample() instead (see the class comment).
             static_cast<void>(nowUs);
             switch (envelope.which_body)
@@ -173,30 +173,27 @@ namespace mark4
                 case mark4_Envelope_telemetry_list_request_tag:
                     sendPage(envelope.body.telemetry_list_request.cursor, src);
                     return true;
-                case mark4_Envelope_telemetry_enable_tag:
-                    applyEnable(envelope.body.telemetry_enable, src, m_frameUs);
+                case mark4_Envelope_telemetry_config_tag:
+                    applyConfig(envelope.body.telemetry_config, src, m_frameUs);
+                    return true;
+                case mark4_Envelope_telemetry_subscribe_tag:
+                    applySubscribe(src, envelope.body.telemetry_subscribe.enabled);
                     return true;
                 default:
                     return false;
             }
         }
 
-        /// @brief Emits one sampling instant when the period elapsed, and
-        ///        stops the stream when the subscriber went silent. Call once
-        ///        per flight frame with the frame's own timestamp.
+        /// @brief Emits one sampling instant when the period elapsed. Call
+        ///        once per flight frame with the frame's own timestamp;
+        ///        nothing goes out without a configuration or without a
+        ///        subscriber.
         /// @param nowUs timestamp of the frame just stepped [us]
         void sample(std::uint64_t nowUs)
         {
             m_frameUs = nowUs;
-            if (!m_streaming)
+            if (!m_streaming || m_subscribers.empty())
             {
-                return;
-            }
-            if (nowUs > m_lastEnableUs && nowUs - m_lastEnableUs > SUBSCRIBER_TIMEOUT_US)
-            {
-                Module().info("subscriber %08lx silent, stream stopped",
-                              static_cast<unsigned long>(m_subscriber));
-                stop();
                 return;
             }
             const std::uint64_t periodUs = static_cast<std::uint64_t>(m_periodMs) * US_PER_MS;
@@ -209,13 +206,28 @@ namespace mark4
             emit(nowUs);
         }
 
+        /// @brief A node went down: it is not listening any more. The
+        ///        configuration stays: it is the node's, not its
+        ///        subscribers'.
+        /// @param nodeId the node
+        void onNodeDown(std::uint32_t nodeId) override
+        {
+            if (m_subscribers.remove(nodeId))
+            {
+                Module().info("%08lx gone, %zu subscriber(s) left",
+                              static_cast<unsigned long>(nodeId),
+                              m_subscribers.size());
+            }
+        }
+
         /// @return measures in the frozen table
         [[nodiscard]] std::size_t entryCount() const
         {
             return m_count;
         }
 
-        /// @return true while a subscriber is being served
+        /// @return true while a configuration produces samples: measures
+        ///         enabled and a period to emit them at
         [[nodiscard]] bool streaming() const
         {
             return m_streaming;
@@ -227,16 +239,16 @@ namespace mark4
             return m_streaming ? m_periodMs : 0U;
         }
 
-        /// @return measures enabled by the current subscriber
+        /// @return measures the configuration enabled
         [[nodiscard]] std::size_t enabledCount() const
         {
             return m_enabledCount;
         }
 
-        /// @return node the samples go to, BROADCAST_NODE when none
-        [[nodiscard]] std::uint32_t subscriber() const
+        /// @return nodes holding the stream
+        [[nodiscard]] std::size_t subscribers() const
         {
-            return m_streaming ? m_subscriber : BROADCAST_NODE;
+            return m_subscribers.size();
         }
 
         /// @return TelemetryData messages sent since construction
@@ -246,12 +258,12 @@ namespace mark4
         }
 
       private:
-        /// @return the logging module of the service. A function-local static
+        /// @return the logging module of the provider. A function-local static
         ///         because the class is header-only: one instance per
         ///         process, however many compositions include it.
         static LogModule &Module()
         {
-            static LogModule MODULE{LOG_MODULE_PLATFORM_TELEMETRY, "platform/telemetry"};
+            static LogModule MODULE{LOG_MODULE_TELEMETRY_PROVIDER, "telemetry/provider"};
             return MODULE;
         }
 
@@ -281,25 +293,24 @@ namespace mark4
                 descriptor.unit = static_cast<mark4_TelemetryUnit>(m_entries[index]->unit());
                 ++page.descriptors_count;
             }
-            static_cast<void>(m_messenger.send(dst, envelope));
+            static_cast<void>(request(dst, envelope));
         }
 
-        /// @brief Replaces the enabled set and (re)arms the stream.
-        /// @param enable the request
-        /// @param src node that sent it: the new subscriber
+        /// @brief Replaces the enabled set and the period.
+        /// @param config the request
+        /// @param src node that sent it: where the answer goes
         /// @param nowUs instant the request is stamped with [us], on the
         ///        time base of the frames
-        void applyEnable(const mark4_TelemetryEnable &enable,
+        void applyConfig(const mark4_TelemetryConfig &config,
                          std::uint32_t src,
                          std::uint64_t nowUs)
         {
             const bool wasStreaming = m_streaming;
-            const std::uint32_t previous = m_subscriber;
             std::size_t unknown = 0U;
             m_enabledCount = 0U;
-            for (pb_size_t index = 0U; index < enable.ids_count; ++index)
+            for (pb_size_t index = 0U; index < config.ids_count; ++index)
             {
-                const std::uint32_t id = enable.ids[index];
+                const std::uint32_t id = config.ids[index];
                 if (id >= m_count || m_enabledCount == m_enabled.size())
                 {
                     ++unknown;
@@ -309,44 +320,63 @@ namespace mark4
             }
             if (unknown > 0U)
             {
-                Module().warn("%zu id(s) of the enable dropped: unknown or past %zu",
+                Module().warn("%zu id(s) of the configuration dropped: unknown or past %zu",
                               unknown,
                               m_enabled.size());
             }
 
-            if (enable.period_ms == 0U || m_enabledCount == 0U)
+            if (config.period_ms == 0U || m_enabledCount == 0U)
             {
+                // The subscriptions stand: the node has nothing to sample,
+                // not nobody to sample for.
                 if (wasStreaming)
                 {
-                    Module().info("stream stopped by %08lx", static_cast<unsigned long>(src));
+                    Module().info("samples stopped by %08lx", static_cast<unsigned long>(src));
                 }
                 stop();
-                sendAck(src, 0U, 0U);
+                tellConfig(src);
                 return;
             }
 
-            m_periodMs = clampPeriod(enable.period_ms);
-            m_subscriber = src;
-            m_lastEnableUs = nowUs;
+            m_periodMs = clampPeriod(config.period_ms);
+            m_lastConfigUs = nowUs;
             m_streaming = true;
-            // The first sample goes out on the very next frame: a subscriber
+            // The first sample goes out on the very next frame: a consumer
             // that asked for a slow period must not wait a whole one before
             // seeing anything.
             m_sampled = false;
-            if (!wasStreaming)
+            Module().info("%zu measures every %u ms, asked by %08lx",
+                          m_enabledCount,
+                          static_cast<unsigned>(m_periodMs),
+                          static_cast<unsigned long>(src));
+            tellConfig(src);
+        }
+
+        /// @brief Takes one subscribe request and answers it with what was
+        ///        applied.
+        /// @param src node that asked
+        /// @param enabled what it asked for
+        void applySubscribe(std::uint32_t src, bool enabled)
+        {
+            bool applied = false;
+            if (enabled)
             {
-                Module().info("stream to %08lx: %zu measures every %u ms",
-                              static_cast<unsigned long>(src),
-                              m_enabledCount,
-                              static_cast<unsigned>(m_periodMs));
+                applied = m_subscribers.add(src);
+                if (!applied)
+                {
+                    Module().warn("no room for %08lx: %zu subscribers already",
+                                  static_cast<unsigned long>(src),
+                                  m_subscribers.size());
+                }
             }
-            else if (previous != src)
+            else
             {
-                Module().info("stream taken over by %08lx (was %08lx)",
-                              static_cast<unsigned long>(src),
-                              static_cast<unsigned long>(previous));
+                static_cast<void>(m_subscribers.remove(src));
             }
-            sendAck(src, m_periodMs, static_cast<std::uint32_t>(m_enabledCount));
+            mark4_Envelope answer = mark4_Envelope_init_zero;
+            answer.which_body = mark4_Envelope_telemetry_subscribe_tag;
+            answer.body.telemetry_subscribe.enabled = applied;
+            static_cast<void>(request(src, answer));
         }
 
         /// @brief Inserts one id into the enabled set, kept ascending: the
@@ -372,7 +402,7 @@ namespace mark4
             ++m_enabledCount;
         }
 
-        /// @param requested period the subscriber asked for [ms]
+        /// @param requested period the consumer asked for [ms]
         /// @return the period in effect [ms]
         [[nodiscard]] std::uint32_t clampPeriod(std::uint32_t requested) const
         {
@@ -383,21 +413,35 @@ namespace mark4
             return requested > MAX_PERIOD_MS ? MAX_PERIOD_MS : requested;
         }
 
-        /// @brief Answers one enable with what was applied.
-        /// @param dst node that sent the enable
-        /// @param periodMs period in effect, 0 when the stream stopped
-        /// @param enabled measures kept
-        void sendAck(std::uint32_t dst, std::uint32_t periodMs, std::uint32_t enabled)
+        /// @brief Sends the configuration as applied to the node that asked
+        ///        for it and to every other subscriber: holding the stream
+        ///        means hearing what changes it.
+        /// @param requester node that sent the configuration
+        void tellConfig(std::uint32_t requester)
         {
             mark4_Envelope envelope = mark4_Envelope_init_zero;
-            envelope.which_body = mark4_Envelope_telemetry_ack_tag;
-            envelope.body.telemetry_ack.period_ms = periodMs;
-            envelope.body.telemetry_ack.enabled = enabled;
-            static_cast<void>(m_messenger.send(dst, envelope));
+            envelope.which_body = mark4_Envelope_telemetry_config_tag;
+            mark4_TelemetryConfig &config = envelope.body.telemetry_config;
+            config.period_ms = m_streaming ? m_periodMs : 0U;
+            for (std::size_t index = 0U; index < m_enabledCount; ++index)
+            {
+                config.ids[config.ids_count] = m_enabled[index];
+                ++config.ids_count;
+            }
+            static_cast<void>(request(requester, envelope));
+            for (std::size_t index = 0U; index < m_subscribers.size(); ++index)
+            {
+                if (m_subscribers.id(index) != requester)
+                {
+                    mark4_Envelope copy = envelope;
+                    static_cast<void>(request(m_subscribers.id(index), copy));
+                }
+            }
         }
 
-        /// @brief Reads every enabled measure and sends it as one or more
-        ///        TelemetryData messages, all carrying the same timestamp.
+        /// @brief Reads every enabled measure and sends it to every
+        ///        subscriber as one or more TelemetryData messages, all
+        ///        carrying the same timestamp.
         /// @param nowUs timestamp of the frame being reported [us]
         void emit(std::uint64_t nowUs)
         {
@@ -418,14 +462,18 @@ namespace mark4
                 }
                 // A refused send is dropped and counted by the messenger,
                 // never retried: a sample is only worth its own instant.
-                if (m_messenger.send(m_subscriber, envelope))
+                for (std::size_t index = 0U; index < m_subscribers.size(); ++index)
                 {
-                    ++m_messageCount;
+                    if (m_messenger.send(m_subscribers.id(index), envelope))
+                    {
+                        ++m_messageCount;
+                    }
                 }
             }
         }
 
-        /// @brief Disarms the stream, keeping the frozen table.
+        /// @brief Stops the samples, keeping the frozen table and the
+        ///        subscriptions.
         void stop()
         {
             m_streaming = false;
@@ -436,21 +484,23 @@ namespace mark4
 
         Messenger &m_messenger;      ///< answers and samples leave by it, not owned
         std::uint32_t m_minPeriodMs; ///< fastest period this composition accepts [ms]
-        std::uint64_t m_frameUs =
-            0U; ///< timestamp of the last sample(), the time base an enable is stamped with
+        /// Timestamp of the last sample(), the time base a configuration is
+        /// stamped with.
+        std::uint64_t m_frameUs = 0U;
 
         /// The frozen table: the index of an entry IS its wire id.
         std::array<const TelemetryEntry *, MAX_TELEMETRY_ENTRIES> m_entries{};
         std::size_t m_count = 0U; ///< measures in m_entries
 
+        SubscriberTable<MAX_SUBSCRIBERS> m_subscribers;     ///< nodes holding the stream
         std::array<std::uint32_t, MAX_ENABLED> m_enabled{}; ///< enabled ids, ascending
         std::size_t m_enabledCount = 0U;                    ///< ids in m_enabled
-        std::uint32_t m_subscriber = BROADCAST_NODE;        ///< node the samples go to
         std::uint32_t m_periodMs = 0U;                      ///< period in effect [ms]
-        std::uint64_t m_lastEnableUs = 0U;                  ///< instant of the last enable [us]
-        std::uint64_t m_lastSampleUs = 0U;                  ///< instant of the last batch [us]
-        bool m_streaming = false;                           ///< a subscriber is being served
-        bool m_sampled = false;                             ///< a batch went out since the enable
-        std::uint32_t m_messageCount = 0U;                  ///< TelemetryData messages sent
+        /// Instant of the last configuration [us], on the frames' time base.
+        std::uint64_t m_lastConfigUs = 0U;
+        std::uint64_t m_lastSampleUs = 0U; ///< instant of the last batch [us]
+        bool m_streaming = false;          ///< the configuration produces samples
+        bool m_sampled = false;            ///< a batch went out since the configuration
+        std::uint32_t m_messageCount = 0U; ///< TelemetryData messages sent
     };
 } // namespace mark4

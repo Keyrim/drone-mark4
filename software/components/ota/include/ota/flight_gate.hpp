@@ -5,13 +5,13 @@
 ///        flight core it carries.
 
 #include "flight_core/flight_core.hpp"
-#include "services/ota_gate.hpp"
+#include "ota/gate.hpp"
 
 namespace mark4
 {
     /// The gate of a flight composition: the flight core answers for the
     /// motors. This is the one header of the component that knows the core
-    /// exists, so a node without one carries the service all the same.
+    /// exists, so a node without one carries the provider all the same.
     class FlightOtaGate final : public AbsOtaGate
     {
       public:

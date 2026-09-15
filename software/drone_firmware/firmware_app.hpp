@@ -29,12 +29,12 @@
 #include "platform_stm32/sensor_source_stm32.hpp"
 #include "platform_stm32/uart1_stream.hpp"
 #include "protocol/envelope.hpp"
+#include "ota/flight_gate.hpp"
+#include "ota/provider.hpp"
 #include "status/status_provider.hpp"
-#include "services/flight_ota_gate.hpp"
-#include "services/ota_service.hpp"
-#include "services/telemetry_service.hpp"
-#include "services/tuning_service.hpp"
+#include "telemetry/provider.hpp"
 #include "telemetry/registry.hpp"
+#include "tuning/provider.hpp"
 #include "transport/transport.hpp"
 #include "transport/uart_link.hpp"
 
@@ -159,7 +159,7 @@ namespace mark4
         /// of the ids (see components/telemetry/README.md).
         mark4::FrameTelemetry m_frameTelemetry;
         mark4::FlightCore m_core;
-        mark4::TuningService m_tuningService{m_messenger, m_core};
+        mark4::TuningProvider m_tuningProvider{m_messenger, m_core};
         /// The slot this image was linked for is a compile-time fact
         /// (ota_slots.hpp, one -DDRONE_OTA_SLOT_ID per variant); the store
         /// refuses to erase or program it, whatever arrives on the wire.
@@ -167,10 +167,10 @@ namespace mark4
         mark4::OtaUpdater m_otaUpdater{m_firmwareStore};
         /// What the updater asks this node about itself before a session.
         mark4::FlightOtaGate m_otaGate{m_core};
-        mark4::OtaService m_otaService{m_messenger, m_otaUpdater, m_otaGate};
-        /// Last of the services: init() freezes the registry, so every
+        mark4::OtaProvider m_otaProvider{m_messenger, m_otaUpdater, m_otaGate};
+        /// Last of the providers: init() freezes the registry, so every
         /// object holding a measure must exist before it runs.
-        mark4::TelemetryService m_telemetryService{m_messenger, MIN_TELEMETRY_PERIOD_MS};
+        mark4::TelemetryProvider m_telemetryProvider{m_messenger, MIN_TELEMETRY_PERIOD_MS};
 
         /// Wall time one waitFrame -> step -> push cycle took, refreshed
         /// every frame [us]: the one number that says whether the loop still
@@ -183,7 +183,7 @@ namespace mark4
         /// the image confirms itself (docs/ota-design.md section 3.2).
         bool m_armInhibited = false;
 
-        /// OtaService::consumed() at the last interlock refresh.
+        /// OtaProvider::consumed() at the last interlock refresh.
         std::uint32_t m_otaConsumedSeen = 0U;
 
         /// A Reboot arrived, acted on after the poll.
