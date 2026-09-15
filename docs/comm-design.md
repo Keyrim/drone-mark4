@@ -1,11 +1,13 @@
 # Communication stack - target design
 
-Status: sections 3 to 6 are implemented on branch `refactor/comm-stack-v2`
-(issue #29, pull request #30 pending). Section 2 describes the code as it
-was on `main` before that rework; section 8 is the decision that shapes
-the rework after it (the gateway API, the Dart and GDScript ports as the
-only ports); section 9 lists what the first rework left out; section 10 is
-the design of the second rework, decided on 2026-09-14 and not started.
+Status: sections 3 to 6 are on `main` (issue #29, pull request #30, merged
+2026-09-14). Section 2 describes the code as it was before that rework;
+section 8 is the decision that shapes the rework after it (the gateway
+API, the Dart and GDScript ports as the only ports); section 9 lists what
+the first rework left out; section 10 is the design of the second rework,
+decided on 2026-09-14, amended on 2026-09-15 with the decisions taken
+before implementation, and being implemented on branch
+`refactor/comm-stack-v3` (issue #31).
 Companions: `docs/target-architecture.md` (the system this plugs into,
 sections 3.3 to 3.5 describe the present protocol and hub),
 `software/components/transport/README.md` (the transport as it is),
@@ -661,16 +663,24 @@ role of that concept, on the model `ota/` already follows for its updater:
 | `telemetry/` | `telemetry` (the registry) | `telemetry_provider` (what `services/telemetry_service.hpp` is today), `telemetry_consumer` (table pull, stream) |
 | `tuning/` | none | `tuning_provider` (links `flight_core`, what `services/tuning_service.hpp` is today), `tuning_consumer` (the parameter table per node, set and get) |
 | `status/` | none | `status_provider` (`packStatus` and the publisher, today in `platform_common`), `status_consumer` (the last report per node) |
-| `ota/` | `ota` (updater, store interface, boot policy) | `ota_provider` (what `services/ota_service.hpp` is today), `ota_consumer` (the hub's `OtaClient`, moved) |
+| `ota/` | `ota` (updater, store interface, boot policy) | `ota_provider` (what `services/ota_service.hpp` is today), `ota_consumer` (the hub's `OtaClient`, moved as it is) |
 
 `services/` dissolves into these. A leaf stays a leaf: `log` and
 `telemetry` still link `drone_warnings` alone. Every provider builds for
 the F405 (no heap, no iostream, no exceptions). A consumer follows the same
-rules: its tables are fixed arrays whose size is a template parameter or a
-constructor argument the composition chooses (the hub sizes them at
-`MAX_NODES`, a board that consumes something one day sizes them at what it
-can afford). The gateways are hub code and stay under `software/hub/`, one
-file per concept.
+rules: its tables are fixed arrays whose size is a template parameter the
+composition chooses (`LogConsumer<Transport::MAX_NODES>` on the hub, the
+only composition that consumes anything today; a board that consumes
+something one day sizes it at what it can afford). A consumer is also an
+`AbsDirectoryListener`: the kind of a node is only known from its
+`Announce`, and the consumer alone knows which kinds carry its provider
+(10.4), so it subscribes and pulls from `onIdentity()` and the hub names
+no kind. One exemption: `ota_consumer` is `OtaClient` moved, not
+rewritten. It reads a bundle from a filesystem and keeps its `std::string`
+and `std::function`, so the target is declared for the desktop only, where
+the one OTA consumer lives; its session state machine and its own retries
+are untouched (10.2). The gateways are hub code and stay under
+`software/hub/`, one file per concept.
 
 `discovery/` and `messaging/` are not concepts: they are the floor every
 concept stands on and keep their names.
@@ -684,33 +694,66 @@ every direction.
 
 **Wire.** `Envelope` gains one field outside the oneof: `uint32 request_id`
 (field 100), 0 when absent. A message carrying a non-zero id is a request;
-the message that answers it carries the same id. Every node numbers its own
-requests from its own counter, so a request is identified by the pair
-(peer node id, request id). A new body `Ack { AckStatus status }` answers a
-request that has nothing else to say back (a subscribe, a reboot, a
-scenario, a configuration notification); a request whose answer has content
-is answered by that content, with the id copied (a table page, the applied
-telemetry configuration, a `TuningAck`).
+the `Ack {}` that acknowledges it carries the same id and nothing else: it
+says "arrived", not what was done. Every node numbers its own requests from
+its own counter, so a request is identified by the pair (peer node id,
+request id).
 
-**Messenger.**
+**Messenger.** Two ways to send, chosen by the sender, never by the
+receiver:
 
 ```
-bool request(uint32_t dst, mark4_Envelope &e);          // allocates the id, sends, tracks
-bool reply(uint32_t dst, const mark4_Envelope &request, mark4_Envelope &answer);  // copies the id, sends
-void tick(uint64_t nowUs);                              // resends, gives up
+bool send(uint32_t dst, const mark4_Envelope &e);                          // once, no id: the streams
+bool request(uint32_t dst, mark4_Envelope &e, RequestPolicy policy = {});  // numbered, kept, resent
+void tick(uint64_t nowUs);                                                 // resends, gives up
+struct RequestPolicy { uint64_t periodUs = 500'000; uint8_t retries = 5; };
 ```
 
-`request()` stores the encoded bytes (`MAX_ENVELOPE_SIZE` each) in a fixed
-`PendingRequests<N>` table, N a constructor argument of the messenger (4 on
-a board, `MAX_NODES` on the hub). `tick()` resends an unanswered request
-every `REQUEST_TIMEOUT_US` (500 ms), up to `REQUEST_RETRIES` (5), then
-drops it and tells the handler that sent it (`AbsMessageHandler::
-onRequestFailed(dst, requestId)`, a virtual with an empty default). An
-incoming message whose `(src, request_id)` matches a pending request
-completes it before the normal dispatch to the handler of its tag: the
-handler sees the answer as any message, the messenger only stops resending.
-A node that goes down (`onNodeDown`) takes its pending requests with it,
-each reported failed. A full table refuses the request and counts it.
+`request()` is reached through a protected helper of `AbsMessageHandler`,
+which forwards to the messenger with the handler as the owner. It stores
+the encoded bytes (`MAX_ENVELOPE_SIZE` each) in a pending table the
+composition hands to the messenger as a `std::span<PendingRequest>` over
+an array the App owns: 4 entries on a board, 256 on the hub, where one
+node appearing costs five requests at once. A span rather than a template
+parameter or a constructor argument: without heap a fixed array must know
+its size at compile time, and a span keeps one `Messenger` type for every
+composition, the way a handler already hands the messenger a span over
+its tags. `tick()` resends an unanswered request every `policy.periodUs`,
+up to `policy.retries` sends, then drops it and tells its owner
+(`AbsMessageHandler::onRequestFailed(dst, requestId)`, a virtual with an
+empty default). The policy is per call, with the defaults above: a reboot
+and a table page do not want the same values. A request to a node the
+transport does not know is refused at once, not kept. A full table refuses
+the request and counts it. A node that goes down takes its pending
+requests with it, each reported failed.
+
+**The acknowledgement is the messenger's.** On receiving a message that
+carries an id, the receiving messenger sends `Ack` back to `src` before
+dispatching, whether or not a handler claims the tag. It is not the
+handler's business, so nothing is forgotten, and a `Reboot` is
+acknowledged before the reset rather than never. A node asked something it
+does not understand acknowledges and drops it; not asking it is the
+consumer's job (10.4). The tag `ack` belongs to the messenger: an `Ack`
+whose (src, id) matches a pending request completes it, any other is
+counted and dropped.
+
+**An answer that matters is a request too.** The acknowledgement covers
+the request, not what comes back for it. A page of a table, a
+configuration as applied, a `TuningAck`: the provider sends each with
+`request()`, and the consumer's messenger acknowledges it in turn. Four
+messages where a bare RPC would use two; the extra ones are 3-byte
+acknowledgements on exchanges that happen once per boot or by hand. An
+answer correlates by its content (the cursor of a page, the id of a
+parameter, the configuration itself), never by a request id.
+
+**Presence reaches the handlers through the messenger.** The messenger is
+the one `AbsPresenceListener` of the messaging side: it drops the pending
+requests of a node that goes down and relays both events to every handler
+(`AbsMessageHandler::onNodeUp(id)` / `onNodeDown(id)`, virtuals with empty
+defaults). A provider forgets a subscriber there, a consumer its tables.
+The transport's own listener table (4 entries) is not consumed by the
+concepts; `DiscoveryDirectory::MAX_LISTENERS` goes from 4 to 8, the hub
+holding four consumers and its node table.
 
 These are the constants and the retry logic `DiscoveryDirectory`
 (`IDENTITY_TIMEOUT_US`, `IDENTITY_RETRIES`) and the hub's telemetry pull
@@ -718,19 +761,20 @@ These are the constants and the retry logic `DiscoveryDirectory`
 move onto `request()`.
 
 **QoS 1, at least once.** A request lost is sent again; a request whose
-answer was lost is sent again and applied twice. So every request is an
-idempotent state: "subscribe me", "this is the configuration", "set this
-parameter to this value", "reboot". A message that would not survive being
-applied twice does not go through `request()`. The OTA session is not
-concerned: it has its own go-back-N over `OtaChunk` / `OtaChunkAck` and its
-own state machine (`docs/ota-design.md`), unchanged.
+acknowledgement was lost is sent again and applied twice. So every request
+is an idempotent state: "subscribe me", "this is the configuration", "set
+this parameter to this value", "reboot", "here is page 3". A message that
+would not survive being applied twice does not go through `request()`. The
+OTA session is not concerned: it has its own go-back-N over `OtaChunk` /
+`OtaChunkAck` and its own state machine (`docs/ota-design.md`), unchanged.
 
 **One-shots and streams.** Every one-shot message is a request, whatever
-its direction: a consumer asking a provider, a provider notifying its
-subscribers (10.4), a node asking another node's identity. Stream data
-(`Status`, `TelemetryData`, `Log` lines) carries no id, is never
-acknowledged and never resent: a sample is only worth its own instant, and
-the subscription is what guarantees the stream as a whole.
+its direction: a consumer asking a provider, a provider answering or
+notifying its subscribers (10.4), a node asking another node's identity
+and the `Announce` that answers. Stream data (`Status`, `TelemetryData`,
+`Log` lines, `Rc`) goes by `send()`: no id, never acknowledged, never
+resent. A sample is only worth its own instant, and the subscription is
+what guarantees the stream as a whole.
 
 ### 10.3 The keepalive carries the boot id
 
@@ -746,7 +790,17 @@ an 11-byte header alone, gains a 4-byte payload: `boot u32`, little-endian,
 drawn at random when the transport is constructed (the hardware RNG of the
 F405, `esp_random()` on the ESP32, the process's random source on desktop;
 never anything derived from the chip UID, which is what makes the id
-stable). The header does not change. Rules:
+stable; the composition draws it and hands it to the transport's
+constructor, which depends on nothing). The keepalive is marked in the
+header: the last header byte, `hops`, splits into the hop count on its low
+nibble (`MAX_HOPS` is 4) and flags on its high nibble, bit 7 being the
+keepalive flag. A frame with the flag is the transport's own, whatever its
+payload size, and is never delivered upward; a frame without it is an
+application payload. The payload size alone could not tell them apart
+(`TelemetryListRequest{cursor: 1}` encodes in exactly 4 bytes) and the
+transport reads no protobuf. Every frame sent today already reads as flags
+0, so the bytes on the wire are compatible until a node sends its first
+keepalive. Rules:
 
 - The transport keeps `boot` per node. A frame from an unknown node
   creates its entry with `boot = 0` (not known yet); the first keepalive
@@ -766,17 +820,18 @@ stable). The header does not change. Rules:
 
 Cost: 4 bytes per node per second. Collision: one in four billion. Three
 codecs to change, all ours: `transport.cpp`, `transport.gd`, the Dart
-frame codec. `Node` gains `boot`, and the gateway's `Node` does not: the
+frame codec, each masking the hop count and reading the flag. `Node` gains `boot`, and the gateway's `Node` does not: the
 clients see the effect (a node that goes down and up), not the mechanism.
 
 ### 10.4 Subscriptions
 
 **Binary, per stream.** A stream is subscribed or not; nothing about it is
 per subscriber. Each stream has one request, `XxxSubscribe { bool
-enabled }`, answered by `Ack`. The provider keeps a `SubscriberTable<N>`:
-N node ids, add, remove, iterate to emit, remove on `onNodeDown`. The
-stream is emitted while the table is not empty and to every entry; a full
-table refuses the subscribe (`Ack` says so). N is a constant of each
+enabled }`, answered like every configuration request by the same message
+as applied. The provider keeps a `SubscriberTable<N>`: N node ids, add,
+remove, iterate to emit, remove on `onNodeDown`. The stream is emitted
+while the table is not empty and to every entry; a full table refuses the
+subscribe, and the answer says so with `enabled = false`. N is a constant of each
 stream, small because a board's UART pays every entry: `Status` 4, `Log`
 lines 2, `TelemetryData` 2. One emission per subscriber today; when the
 transport learns multicast, one emission, and nothing above the transport
@@ -801,9 +856,9 @@ carries and how often is a state of the node, not of a consumer:
 stream means receiving its data and its configuration changes. When a
 request changes the configuration, the requester gets the applied
 configuration as its answer, and every other entry of the stream's
-`SubscriberTable` gets the same message as a request of the provider's own
-(`request()`, acknowledged with `Ack`, resent and given up on like any
-request). Two hubs on two machines watching the same drone therefore agree
+`SubscriberTable` gets the same message; both are requests of the
+provider's own (`request()`, acknowledged on arrival, resent and given up
+on like any request, 10.2). Two hubs on two machines watching the same drone therefore agree
 on its log levels the moment one of them moves one. A consumer that pulled
 a table without subscribing to the stream is not told: a table without its
 stream has no reason to stay exact. This is the one unsolicited emission
@@ -814,33 +869,45 @@ section 6's rules stand.
 
 | consumer | Status | Log lines | TelemetryData |
 |---|---|---|---|
-| hub | every node of a matching wire hash, always | every node, always | while at least one websocket client holds it (10.6) |
+| hub | every `FIRMWARE` and `DRONE_SIM` of a matching wire hash, always | every `FIRMWARE`, `DRONE_SIM`, `RELAY` and `GATEWAY`, always | while at least one websocket client holds it (10.6) |
 | phone | its drone | no | no |
 | plant | each drone it hosts (the overlay) | no | no |
 | campaign node (later) | its drones | as it needs | as it needs |
 
-**Run stats.** `SimRunStats`, a one-shot the sim emits at the end of a run,
-goes as a request to the `Status` subscribers of that sim: the same
-listeners, and no broadcast.
+The kinds are the consumer's own constants, checked in its `onIdentity()`:
+they name the nodes that carry the matching provider (the plant and the
+phone carry no `LogProvider`, the relay no `StatusProvider`), so no request
+is ever sent to a node that would acknowledge it and drop it.
+
+**Run stats.** `SimRunStats` goes. Its one reader was the campaign tool
+(10.8), and a one-shot republished every 50 frames for late joiners has no
+place in a system of requests. The sim's run tracker keeps computing the
+hash of every run and logs it when the run seals; the future test harness
+reads it there.
 
 ### 10.5 Tables and pages
 
 Three tables are pulled today in three shapes (`TelemetryDescriptors`:
 total, cursor, 6 descriptors; `LogModules`: start index, total, 8
 modules; `TuningInfo`: one description per `pump()`). They become one
-shape: a page request `{ uint32 cursor }` with a `request_id`, a page
+shape: a page request `{ uint32 cursor }` sent with `request()`, a page
 answer `{ uint32 total; uint32 cursor; repeated T items }` sized to the
-frame (`TelemetryDescriptors`, `LogModules`, a new `TuningInfos` replacing
-`TuningInfo`; `TuningList` becomes its page request and the provider's
-`pump()` goes: the consumer paces the walk by asking one page at a time,
-which is what the UART wanted).
+frame and sent with `request()` too (10.2). `TelemetryListRequest` stays;
+`LogModulesRequest` and `TuningListRequest` join it with the same one
+field; `LogModules` renames `start_index` to `cursor`; a new `TuningInfos`
+replaces `TuningInfo` as a body, and `TuningInfo` loses `index` and
+`count`. `LogControl` and `LogModuleLevel` go: the level move is
+`LogSetLevel { module_id, level }`, answered by the module's
+`LogModuleInfo` as a body of its own. The provider's `pump()` goes: the
+consumer paces the walk by asking one page at a time, which is what the
+UART wanted. Every tag removed from `Envelope` is `reserved`.
 
 A consumer walks a table with `TablePull<T, MAX>`: one `request()` per
 page, cursor advanced on each answer, complete when `cursor + items ==
-total`, abandoned when a request fails (five tries at 500 ms, the three
-seconds of the node expiry), restarted from zero on `onNodeUp`. The ids of
-a table are only stable while the node runs, so a reincarnation (10.3)
-drops the table and the consumer pulls it again.
+total`, abandoned when a request fails (the default policy: five sends at
+500 ms, about the three seconds of the node expiry), restarted from zero
+on `onNodeUp`. The ids of a table are only stable while the node runs, so
+a reincarnation (10.3) drops the table and the consumer pulls it again.
 
 ### 10.6 The gateway API
 
@@ -883,9 +950,11 @@ to a client that connects:
 | `GatewayStatus`, `OtaState`, `ProfileList`, `Profile`, `Ack` | unchanged |
 
 The gateway's own log lines take the same route as everyone's: its
-`LogProvider` has the gateway itself as a permanent subscriber, so they
-appear as `NodeLogLines` from its own node id, and a second hub that
-subscribes to them gets them on the wire like any node's.
+`LogProvider` has a local sink next to its subscriber table (an
+`AbsLogSink` fed after the rate limit, since a messenger cannot send to
+its own node), the log gateway is that sink, so the lines appear as
+`NodeLogLines` from its own node id, and a second hub that subscribes to
+them gets them on the wire like any node's.
 
 The VS Code extension and `pnpm smoke` are two more clients of this API
 and change with it.
@@ -908,11 +977,11 @@ rules the fail-safe depends on:
 
 - **What stops broadcasting, for good**: `status_publisher.hpp`, the
   `TransportSink` route of every node, the `LogModules` pages published at
-  boot, `SimRunStats`. `platform_common/envelope_io.hpp` and its
-  `sendEnvelope()` are deleted; the drone Apps no longer hold a
-  `GATEWAY`-kind destination, and the asymmetry of section 7.2 is gone.
-  `BROADCAST_NODE` is refused by the messenger as section 4.3 says, and
-  nothing asks for it any more.
+  boot. `SimRunStats` is removed altogether (10.4).
+  `platform_common/envelope_io.hpp` and its `sendEnvelope()` are deleted;
+  the drone Apps no longer hold a `GATEWAY`-kind destination, and the
+  asymmetry of section 7.2 is gone. `BROADCAST_NODE` is refused by the
+  messenger as section 4.3 says, and nothing asks for it any more.
 - **Python goes.** `tools/batch/`, `tools/telemetry_wire.py`, the
   `proto_py` target of `protocol/CMakeLists.txt`, the two batch steps of
   `ci.yml`, and every mention of the campaign in the documentation. The
@@ -922,14 +991,16 @@ rules the fail-safe depends on:
   push; it comes back with the test harness of section 8.3, which starts
   the real processes (hub, drone_sim, Godot, the phone's host build) and is
   designed on its own.
-- **GDScript** ports the minimum: the keepalive boot id in `transport.gd`,
-  a request helper (`request_id`, resend, give up: what `discovery.gd`
-  does by hand today, once), and a `StatusConsumer` (subscribe to each
-  hosted drone, read the stream). The plant stops reading `Status` off
-  broadcasts.
-- **Dart** mirrors the same three, constant for constant: the boot id in
-  the frame codec, `PendingRequests` in its messenger, `StatusConsumer` in
-  `DroneManager`. `PilotManager` does not change: `Rc` is a stream.
+- **GDScript** ports the minimum: the keepalive boot id and flag in
+  `transport.gd`, a request helper (`request_id`, per-call policy, resend,
+  give up, and the automatic `Ack` on every numbered message received:
+  what `discovery.gd` does by hand today, once), and a `StatusConsumer`
+  (subscribe to each hosted drone, read the stream). The plant stops
+  reading `Status` off broadcasts.
+- **Dart** mirrors the same three, constant for constant: the boot id and
+  flag in the frame codec, `PendingRequests` and the automatic `Ack` in
+  its messenger, `StatusConsumer` in `DroneManager`. `PilotManager` does
+  not change: `Rc` is a stream.
 - **Firmware and relay** carry the providers of what they have (the relay:
   `LogProvider` and its `Discovery`); nothing else changes for them.
 - **Tests stay frozen** (section 8.3): the existing suite is adapted where
@@ -940,13 +1011,15 @@ rules the fail-safe depends on:
 The Python removal comes first so CI is green at every step after it.
 
 1. Python removal: `tools/`, `proto_py`, `ci.yml`, documentation.
-2. messaging: `request_id`, `request()` / `reply()` / `tick()`,
-   `PendingRequests`, `Ack`, `onRequestFailed()`; `DiscoveryDirectory` on
-   it. transport: the boot id in the keepalive, the reincarnation event.
-   The GDScript and Dart frame codecs take the 4-byte keepalive in the same
-   step (they only have to accept it to keep hearing the C++ nodes).
+2. messaging: `request_id`, `request()` / `tick()`, `RequestPolicy`, the
+   pending table, `Ack` on arrival, `onRequestFailed()`, presence relayed
+   to the handlers; `DiscoveryDirectory` on it. transport: the boot id and
+   the flag in the keepalive, the reincarnation event. The GDScript and
+   Dart frame codecs take the flagged 4-byte keepalive in the same step
+   (they only have to accept it to keep hearing the C++ nodes).
 3. `mark4.proto`: the subscribes, `TelemetryConfig`, the unified pages,
-   `TuningInfos`. `WIRE_HASH` moves once.
+   `TuningInfos`, `LogSetLevel`, `SimRunStats` removed. `WIRE_HASH` moves
+   once.
 4. The concept directories with their providers; `services/` and
    `platform_common`'s wire files dissolve; drone_sim, the firmware and the
    relay on them. From here the hub hears nothing until step 5.
