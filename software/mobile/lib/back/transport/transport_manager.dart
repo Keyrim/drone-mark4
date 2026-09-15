@@ -154,6 +154,7 @@ class TransportManager extends AbsManager {
     _timer = null;
     await _directory?.dispose();
     _directory = null;
+    await _messenger?.dispose();
     _messenger = null;
     _node?.dispose();
     _node = null;

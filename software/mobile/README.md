@@ -23,7 +23,10 @@ The app is pure Dart: it compiles no native code, and the communication
 stack of the phone is written here, mirroring `software/components`
 constant for constant. `lib/back/transport/` is the frame codec, the UDP
 link and the node itself; `lib/back/messaging/` decodes one payload once
-and dispatches it by `Envelope` body case; `lib/back/discovery/` answers
-who the phone is and keeps a directory of who is around. Built by the
+and dispatches it by `Envelope` body case, numbers and resends what must
+arrive, and acknowledges every numbered message it receives;
+`lib/back/discovery/` answers who the phone is and keeps a directory of
+who is around; `lib/back/drone/` subscribes to the Status stream of the
+drone the user connected to. Built by the
 `mobile` CI job from the devcontainer image (Flutter and the Android SDK
 pinned in `.devcontainer/Dockerfile`).

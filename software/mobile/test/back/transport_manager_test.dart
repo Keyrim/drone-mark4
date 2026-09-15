@@ -152,7 +152,7 @@ void main() {
 }
 
 /// A handler that only remembers who sent what.
-class RecordingHandler implements AbsMessageHandler {
+class RecordingHandler extends AbsMessageHandler {
   RecordingHandler(this.sources);
 
   final List<int> sources;

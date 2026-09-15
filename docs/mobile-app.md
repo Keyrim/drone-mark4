@@ -163,11 +163,23 @@ for the conventions). What the first iteration put in place:
   decoded once into an `Envelope` and handed to the one handler that
   claimed its body case (a case claimed twice is a composition error), and
   `send()` encodes one message and unicasts it; a broadcast destination is
-  refused, as it is in C++. `lib/back/discovery/` is the port of
+  refused, as it is in C++. What must arrive goes through `request()`
+  instead: the message carries a `request_id` of the phone's own counter,
+  the encoded bytes are kept and sent again every 500 ms up to 5 sends
+  (a `RequestPolicy` per call), and the handler that owns the request hears
+  `onRequestFailed()` when they run out. The acknowledgement is the
+  messenger's business in both directions: every numbered message that
+  arrives is answered with a `RequestAck` before it is dispatched, whatever
+  claims its case, and an incoming `RequestAck` completes the pending
+  request its (node, id) names and reaches no handler at all. Presence is
+  the messenger's too: it is the one listener of the node's stream, drops
+  the pending requests of a node that goes down, and relays `onNodeUp()` /
+  `onNodeDown()` to every handler once. `lib/back/discovery/` is the port of
   `discovery/`: the phone answers an `IdentityRequest` with its own
-  `Announce`, unicast to whoever asked, and its directory asks every node
-  the transport hears who it is, again every 500 ms up to 5 requests
-  before leaving it mute. An `Announce` makes an entry known, with the
+  `Announce`, sent as a request like every answer that matters, and its
+  directory asks every node the transport hears who it is, once, with the
+  policy that resends it every 500 ms up to 5 sends before the messenger
+  gives up and the entry goes mute. An `Announce` makes an entry known, with the
   `wireMismatch` flag and the hops from the node table; a node the
   transport forgets takes its entry with it. The directory is what the
   managers and the screens read: there is no such thing as a node "of a
@@ -195,7 +207,7 @@ for the conventions). What the first iteration put in place:
   derives the drones from the announced kinds and follows the one the user
   connected to (connected while it is in the table, lost while it is not,
   back on its own: the transport is connectionless, connecting is choosing
-  an id); `SettingsManager` persists the theme mode. `lib/pages/` is one
+  an id, and subscribing to its Status is what makes it report); `SettingsManager` persists the theme mode. `lib/pages/` is one
   BLoC per page over those managers; `lib/widgets/` what pages share;
   `lib/theme/` every size and color, scaled by `flutter_screenutil` from a
   portrait design. The Android activity answers one method channel
@@ -249,9 +261,14 @@ for the conventions). What the first iteration put in place:
   that watch waits 300 ms after arming and 2 s after a scene action, the
   time a simulated core takes to restart and re-arm on the switch it still
   sees.
-  `DroneManager` reads the `Status` broadcasts of the connected drone
-  through its handler on the messenger (`status`, throttled to 50 ms
-  except on a phase change); the two links
+  `DroneManager` reads the `Status` stream of the connected drone through
+  its `StatusConsumer` on the messenger (`status` and `status_subscribe`,
+  throttled to 50 ms except on a phase change); a drone streams its Status
+  to the nodes that asked for it, so the consumer sends a
+  `StatusSubscribe { enabled: true }` as a request the moment the transport
+  holds the node and records what the drone answered, asks again after a
+  reboot (a node going down and coming back), and unsubscribes when the
+  user lets the drone go; the two links
   the cockpit shows are the drone being heard and `Status.rc_link_ok`
   fresh: the drone hears us; the controller's presence is in the app bar. Haptic cues (armed,
   disarmed, killed, kill cleared, refused, mode, link lost every 2 s while
