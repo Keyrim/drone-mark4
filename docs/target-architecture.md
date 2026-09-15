@@ -67,8 +67,8 @@ reflashing:
 - The ground side owns profiles: the hub stores named parameter sets and
   pushes them to the board on connection. On-board flash persistence is
   optional and can come later.
-- The same table is the entry point for offline work: batch campaigns
-  vary parameters through it, without recompiling.
+- The same table is the entry point for offline work: an unattended run
+  varies parameters through it, without recompiling.
 
 ### 2.4 Simulation
 
@@ -77,8 +77,8 @@ distinct guarantees, in increasing order of ambition:
 
 - **Determinism (lockstep)**: the simulator advances only after the
   flight process answers; runs are exactly repeatable step by step.
-- **Reproducibility**: same seed + same build = same trajectory. Batch
-  results carry a trajectory hash so reproducibility is verified, not
+- **Reproducibility**: same seed + same build = same trajectory. A run
+  carries a trajectory hash so reproducibility is verified, not
   assumed. Requirements: scenario commands travel in-band on the lockstep
   link (tick-stamped), the sensor-noise RNG reseeds per run from the run
   seed, and a run with lockstep timeouts is flagged or failed, never
@@ -98,9 +98,8 @@ standard page, and model parameters are data, not code.
 ### 2.5 Ground operations
 
 - **One command per scenario**: a launcher starts the right set of
-  processes with consistent settings (simulated flight, real board,
-  batch campaign). Batch campaigns use the same launcher as interactive
-  sessions.
+  processes with consistent settings (simulated flight, real board), the
+  same launcher for an unattended run as for an interactive session.
 - **No hand-wired ports**: the transport's keepalive makes every node
   visible, the ground side asks each one who it is and reconnects on its
   own.
@@ -198,8 +197,8 @@ Validity is layered where the knowledge is:
 
 One protobuf schema (`software/components/protocol/mark4.proto`) and
 generated codecs: nanopb for C/C++ (desktop and STM32, no allocation,
-every field bounded by `mark4.options`), godobuf for GDScript, protoc for
-python. The hand-packed structs and their per-language copies are gone;
+every field bounded by `mark4.options`) and godobuf for GDScript. The
+hand-packed structs and their per-language copies are gone;
 the build regenerates every codec, and the plant's is checked against the
 C++ one by a headless Godot in the unit tests.
 
@@ -230,11 +229,11 @@ Wire format properties:
   dispatches to the handler of their type - in every composition,
   simulator included. The fail-safe (silence means kill) is therefore
   exercised in every simulated flight.
-- **Scenario commands** (reset, throw, scripted arming for campaigns)
-  travel in-band on the lockstep sim link, tick-stamped, so batch runs
-  are reproducible by construction. Batch tooling never emits RC and
-  never touches an RC port: a campaign cannot, structurally, stream
-  commands at a real board on the bench.
+- **Scenario commands** (reset, throw, scripted arming) travel in-band on
+  the lockstep sim link, tick-stamped, so a scripted run is reproducible
+  by construction. Scenario tooling never emits RC and never touches an
+  RC port: it cannot, structurally, stream commands at a real board on
+  the bench.
 
 ### 3.5 The hub
 
@@ -287,9 +286,6 @@ The guarantees above are only real if something checks them continuously:
 - protocol: one schema, generated codecs, a round-trip test of every
   message in C++ and a headless-Godot exchange against the generated
   GDScript codec.
-- cross-language integration: one headless single-run batch in CI proves
-  the C++/GDScript wire compatibility end to end.
-- reproducibility: the trajectory hash in batch results.
 - `step()` contract: a test per invalid-input class (NaN, backwards
   timestamps, baro glitches, kill mid-phase).
 - the hub and pages are part of the tested surface, not a blind spot that

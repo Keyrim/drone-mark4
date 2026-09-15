@@ -110,15 +110,10 @@ cd tools/vscode-mark4 && pnpm install --frozen-lockfile && pnpm build && pnpm pa
 cd software/mobile && flutter pub get && ./tool/gen.sh && flutter analyze && dart format --set-exit-if-changed lib test && flutter test
 flutter build apk --debug --target-platform android-arm64
 
-# Monte Carlo throw campaign through headless Godot (see tools/batch/README.md;
-# needs the desktop build for drone_sim and the generated python codec)
-python3 tools/batch/run_batch.py --runs 100 --parallel 4 [--godot /path/to/godot4]
-
 # Wire codecs: generated from software/components/protocol/mark4.proto by the
 # desktop build (nanopb C into the build tree, godobuf GDScript into
-# sim-godot/scripts/gen/, python into software/build/desktop/gen/python).
-# Regenerate = rebuild; the two targets alone:
-(cd software && cmake --build --preset desktop --target proto_gd proto_py)
+# sim-godot/scripts/gen/). Regenerate = rebuild; the GDScript target alone:
+(cd software && cmake --build --preset desktop --target proto_gd)
 
 # Lint (all must be clean before committing; CI runs exactly these)
 git ls-files '*.cpp' '*.hpp' '*.c' '*.h' | xargs clang-format --dry-run --Werror
@@ -196,9 +191,8 @@ Everything C++ lives under `software/`: the executables at its top level
   nanopb bounds), codecs generated at build time and never committed:
   nanopb C for every C/C++ target (the `nanopb` lib, `PB_NO_MALLOC`,
   `PB_BUFFER_ONLY`; the `protocol` lib adds `encodeEnvelope()` /
-  `decodeEnvelope()` in `protocol/envelope.hpp`), godobuf GDScript for
-  Godot (`sim-godot/scripts/gen/`, target `proto_gd`), `protoc
-  --python_out` for the batch tool (target `proto_py`). Two different
+  `decodeEnvelope()` in `protocol/envelope.hpp`) and godobuf GDScript for
+  Godot (`sim-godot/scripts/gen/`, target `proto_gd`). Two different
   things travel on it: `Status`, the small fixed report of what the drone
   is doing (attitude, motors, phase, throw state and count, the validity
   flags, the RC link flag, the plant truth when there is one), broadcast
@@ -242,8 +236,8 @@ Everything C++ lives under `software/`: the executables at its top level
   broadcasts, one ephemeral data socket per node for unicasts. Node ids
   are self-assigned `uint32_t` (random on desktop, `hashNodeId()` of the
   MCU UID on a board, of the MAC on the ESP32), never configured.
-  Adopted by every node: drone_sim and the hub over UDP, the batch
-  campaign, the Godot plant (a GDScript port,
+  Adopted by every node: drone_sim and the hub over UDP, the Godot plant
+  (a GDScript port,
   `sim-godot/scripts/transport/transport.gd`, kind `plant`: it asks every
   node it hears who it is (`sim-godot/scripts/transport/discovery.gd`),
   hosts one virtual drone per `DRONE_SIM` identity it learns, and the
@@ -419,7 +413,7 @@ tag is missing, resolves it to an immutable digest, and retags `:latest` to it
 on main. `ci.yml` and `docs.yml` each call it as their first `image` job and
 run every other job in `container.image: ${{ needs.image.outputs.ref }}`, so a
 Dockerfile change is built and tested inside the PR that makes it and there is
-no digest to bump by hand. `ci.yml` runs 8 jobs (desktop+tests+batch through
+no digest to bump by hand. `ci.yml` runs 8 jobs (desktop+tests through
 headless Godot, stm32, esp32, desktop-san, pages pnpm typecheck+build+test,
 mobile gen+analyze+format+test+apk, format+ascii, tidy desktop+stm32); `docs.yml`
 builds the Doxygen reference and deploys it to GitHub Pages from main only. The

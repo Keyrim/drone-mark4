@@ -59,7 +59,7 @@ for everyone; run the step of the area you touch.
   `software/build/desktop`, fetches the FetchContent dependencies (Catch2,
   nanopb, ...) again for it and generates the nanopb codec in it. The
   desktop build also writes `sim-godot/scripts/gen/` (godobuf, target
-  `proto_gd`) and `software/build/desktop/gen/python`.
+  `proto_gd`).
 - **Tests**: `ctest --preset desktop` spawns a headless Godot for the two
   GDScript transport checks, and Godot resolves the plant's `class_name`
   globals from its import cache, `sim-godot/.godot/`, which a fresh worktree

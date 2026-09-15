@@ -11,9 +11,8 @@ the UART link build for every preset, the F405 included, with no heap and
 fixed-size tables; the UDP link needs BSD sockets (desktop, and lwIP on the
 ESP32).
 
-Adopted by every node: `drone_sim` and the `hub` over UDP, the batch
-campaign (`tools/batch/run_batch.py`, through the frame codec of
-`tools/telemetry_wire.py`), the Godot plant (a GDScript port, see below),
+Adopted by every node: `drone_sim` and the `hub` over UDP, the Godot plant
+(a GDScript port, see below),
 the board over its UART (the firmware is a node
 with one `UartLink` on USART1), and the ESP32 riding the drone
 (`esp32-bridge/`), which is a relay: a node with a `UartLink` to the board
@@ -48,8 +47,8 @@ payload), whose payload is capped at `SERIAL_MAX_PAYLOAD` = 512 bytes like
 
 Transport-level `uint32_t`, self-assigned at start, never configured, never
 0. A desktop process draws one from `/dev/urandom` (`randomNodeId()`);
-`drone_sim --node-id N` pins one so a batch campaign knows which node is
-which run. An embedded target folds its MCU UID or MAC through
+`drone_sim --node-id N` pins one so a launcher knows which node is
+which process. An embedded target folds its MCU UID or MAC through
 `hashNodeId(bytes, size)` (FNV-1a): the board hashes its MCU unique id,
 the ESP32 relay its WiFi MAC.
 
@@ -160,8 +159,8 @@ a broadcast.
   application logs it (the link itself prints nothing: this library does
   not link the log library, a failed system call is a `false` from
   `init()`). `DISCOVERY_PORT` = 47820 is the one port a
-  deployment must agree on; the constructor takes another one so a batch
-  campaign isolates itself from a live bench. `discoveryFd()` /
+  deployment must agree on; the constructor takes another one so a set of
+  processes isolates itself from a live bench. `discoveryFd()` /
   `dataFd()` let a caller `poll(2)` instead of spinning. The same source
   compiles against lwIP on the ESP32 (`socket`, `bind`, `sendto`,
   `recvfrom` with `MSG_DONTWAIT | MSG_TRUNC`, `getsockname`, `close`
@@ -219,8 +218,8 @@ frames in the serial framing. It shares the address the board is seen at:
 two node ids, one IP and one data port.
 
 `drone_sim` and the firmware send telemetry, log lines and every answer
-(tuning, OTA, run stats) as broadcast frames, so the hub, a batch campaign
-and any other node read the same stream; commands reach them as unicasts to
+(tuning, OTA, run stats) as broadcast frames, so the hub and any other
+node read the same stream; commands reach them as unicasts to
 their node. Presence is the keepalive and carries no identity: no node
 announces itself on the wire today, a node id is all the transport knows
 of a peer. The board's node id is `hashNodeId()` of the 96-bit MCU unique

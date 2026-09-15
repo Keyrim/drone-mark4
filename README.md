@@ -32,7 +32,7 @@ Documentation:
   through the `messaging` component, not through a platform service. No singletons: each executable has an
   explicit composition root in its main.
 - `protocol/` - one protobuf schema (`mark4.proto`), codecs generated at
-  build time for C/C++ (nanopb), GDScript (godobuf) and python; spoken by
+  build time for C/C++ (nanopb) and GDScript (godobuf); spoken by
   everyone (firmware, sim, Godot, hub).
 - `telemetry/` - the registry of named measures a node exposes, declared
   next to the variables they read. A leaf: names, units and pointers, no
@@ -133,7 +133,7 @@ preset.
 - `ci.yml` and `docs.yml` each call it as a first `image` job and run every
   other job inside the digest it returns, so a Dockerfile change is built and
   tested inside the PR that makes it, with no digest to bump by hand. `ci.yml`
-  has 8 parallel jobs: desktop+tests+batch, stm32, esp32, desktop-san, pages,
+  has 8 parallel jobs: desktop+tests, stm32, esp32, desktop-san, pages,
   mobile (gen, flutter analyze, format, test, debug apk), clang-format+ascii,
   clang-tidy.
 

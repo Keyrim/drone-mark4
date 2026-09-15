@@ -115,8 +115,8 @@ pilot state at all: the kill switch, the arm switch and the throttle are
 RC, they belong between the cockpit and the flight process, and they never
 pass through here. Resets and throws are scenarios (next section) that the
 console page served by the hub and the mobile app send to the flight
-process, which forwards them to its drone here: one door for the batch,
-the console and the phone, and no key of this project on the body.
+process, which forwards them to its drone here: one door for the console
+and the phone, and no key of this project on the body.
 
 Piloting flows through the hub or the phone: an `rc` message aimed at
 `drone_sim` is the same packet and fail-safe a real flight uses (200 ms of
@@ -197,7 +197,7 @@ the transport's own. No relay, so every frame it sends carries `hops` 0.
 The node id is a random nonzero `u32` drawn at start.
 
 Sockets, as in the C++ `UdpLink`: one shared discovery socket on
-udp/47820 (`--discovery-port N` after `--` for a batch pair) that receives
+udp/47820 (`--discovery-port N` after `--` for an isolated pair) that receives
 the broadcasts of the LAN, and one ephemeral data socket every frame
 leaves from, so its source port is this node's unicast address. Godot's
 `PacketPeerUDP.bind()` sets no reuse option and refuses a port another

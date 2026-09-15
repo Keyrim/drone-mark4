@@ -22,7 +22,6 @@ committed.
 | the hub (gateway.proto, desktop only) | nanopb, `gateway.options` | `software/build/desktop/gen/nanopb/gateway.pb.{c,h}` | the `nanopb_gateway` target of the desktop preset |
 | the web pages (both schemas) | `protoc-gen-es` (`@bufbuild/protoc-gen-es`, npm) run by the `protoc` of `grpcio-tools` | `software/hub/pages/src/gen/{mark4,gateway}_pb.ts` (gitignored) | `pnpm gen`, run by every pnpm script of `software/hub/pages` |
 | the Godot plant | godobuf, the addon committed in `sim-godot/addons/godobuf/` (pinned commit, BSD-3) run by a headless Godot through `scripts/gen_godobuf.py` | `sim-godot/scripts/gen/mark4.gd` and `wire_hash.gd` (gitignored) | target `proto_gd` of the desktop preset, when `godot` is on the PATH |
-| the batch tool | `python3 -m grpc_tools.protoc --python_out` | `software/build/desktop/gen/python/mark4_pb2.py` and `mark4_wire_hash.py` | target `proto_py` of the desktop preset |
 
 `mark4.options` bounds every field for nanopb (string sizes, fixed-count
 float vectors, the 240-byte chunk, two OTA slots) so the structs hold their
@@ -48,8 +47,8 @@ says so when they are missing.
   paints a mismatching chip red. `gateway.proto` is not part of the hash:
   the pages are generated from the same tree as the hub. The packaging
   script stamps it into the `.ota` manifest (`wireHash`) and the hub
-  refuses a bundle built on another schema. The Godot plant and the batch
-  tool read theirs from `wire_hash.gd` / `mark4_wire_hash.py`.
+  refuses a bundle built on another schema. The Godot plant reads its own
+  from `wire_hash.gd`.
 - `protocol/ota_image.hpp`: what is not wire but still crosses processes:
   the on-flash `OtaImageHeader`, the slot and chip identities in their
   flash encoding (`OTA_SLOT_*`, `OTA_MCU_*`, EMPTY is 0xFF on flash and 0
