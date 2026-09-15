@@ -300,13 +300,13 @@ TEST_CASE("the provider sends a Log envelope to its subscribers and rate limits 
     wire.learn(NODE_GROUND);
     mark4::LogProvider provider(wire.messenger());
 
-    // The subscribe is answered with what was applied; nothing of the
-    // stream leaves before it (the end of this case checks the other way
+    // The subscribe is answered with the subscription as it stands; nothing
+    // of the stream leaves before it (the end of this case checks the other way
     // round, when the subscriber goes away).
     REQUIRE(wire.request(makeSubscribe(true), NODE_GROUND));
     REQUIRE(wire.frames().size() == 1U);
-    CHECK(wire.envelope(0U).which_body == mark4_Envelope_log_subscribe_tag);
-    CHECK(wire.envelope(0U).body.log_subscribe.enabled);
+    CHECK(wire.envelope(0U).which_body == mark4_Envelope_log_subscription_tag);
+    CHECK(wire.envelope(0U).body.log_subscription.enabled);
     CHECK(provider.subscribers() == 1U);
     wire.clear();
 
@@ -455,6 +455,6 @@ TEST_CASE("the module table goes out one page per request and a level moves from
     // Giving the stream back is answered with false and stops the lines.
     wire.clear();
     REQUIRE(wire.request(makeSubscribe(false), NODE_OTHER));
-    CHECK(!wire.envelope(0U).body.log_subscribe.enabled);
+    CHECK(!wire.envelope(0U).body.log_subscription.enabled);
     CHECK(provider.subscribers() == 1U);
 }

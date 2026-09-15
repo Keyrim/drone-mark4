@@ -15,8 +15,10 @@ typedef StatusSink = bool Function(int src, Status status, int nowUs);
 /// A drone emits its Status to the nodes that asked for it and to nobody
 /// else, so the phone subscribes to the one it connected to and unsubscribes
 /// when it lets it go. The subscribe is a request: the drone acknowledges
-/// its arrival and answers with the subscription as it applied it, which is
-/// what [subscribed] holds. A node that goes down was never told anything:
+/// its arrival and answers with a StatusSubscription, the state it holds
+/// afterwards, which is what [subscribed] holds. A request and its answer
+/// are two message types, so a node that is provider and consumer of one
+/// concept never claims one body case twice. A node that goes down was never told anything:
 /// the subscription is dropped and the manager asks again when it comes
 /// back.
 class StatusConsumer extends AbsMessageHandler {
@@ -36,7 +38,7 @@ class StatusConsumer extends AbsMessageHandler {
   @override
   List<Envelope_Body> get bodyCases => const [
     Envelope_Body.status,
-    Envelope_Body.statusSubscribe,
+    Envelope_Body.statusSubscription,
   ];
 
   /// Asks [nodeId] for its Status stream. Refused while the transport does
@@ -64,9 +66,9 @@ class StatusConsumer extends AbsMessageHandler {
     if (src != _nodeId) {
       return false;
     }
-    // The answer is the subscription as the node applied it: a full
-    // subscriber table answers false.
-    _subscribed = envelope.statusSubscribe.enabled;
+    // The answer is the subscription the node holds afterwards, a message
+    // type of its own: a full subscriber table answers false.
+    _subscribed = envelope.statusSubscription.enabled;
     _log.info(
       'drone ${formatNodeId(src)}: status stream '
       '${_subscribed ? 'on' : 'off'}',

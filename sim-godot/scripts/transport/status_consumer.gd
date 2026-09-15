@@ -8,19 +8,22 @@ extends RefCounted
 ## nobody else: the initiator of a stream is the consumer. So the plant
 ## sends one StatusSubscribe {enabled: true} per drone it hosts, as a
 ## request (numbered, resent, given up on: Mark4Requests), and the drone
-## answers with the same message as applied - enabled false when it has no
-## room for one more subscriber. The stream itself is read where it is
-## used, in each drone's SimLink; nothing of it passes through here.
+## answers with a StatusSubscription, the state it holds afterwards -
+## enabled false when it has no room for one more subscriber. A request and
+## its answer are two message types, so a node that is provider and consumer
+## of one concept never claims one tag twice. The stream itself is read
+## where it is used, in each drone's SimLink; nothing of it passes through
+## here.
 ##
 ## The subscription is binary and carries no parameter: what the stream
 ## holds and how often it comes are states of the drone, not of this plant.
 
 const Mark4 := preload("res://scripts/gen/mark4.gd")
 
-## First two bytes of an Envelope whose body is a StatusSubscribe: the
-## varint tag of field 41, wire type 2. The answer is told from its tag
+## First two bytes of an Envelope whose body is a StatusSubscription: the
+## varint tag of field 50, wire type 2. The answer is told from its tag
 ## like every payload the plant looks at, before any codec runs.
-const TAG_STATUS_SUBSCRIBE: Array[int] = [0xCA, 0x02]
+const TAG_STATUS_SUBSCRIPTION: Array[int] = [0x92, 0x03]
 
 ## A drone answered: it holds the stream, or it refused it.
 signal subscription_changed(node_id: int, subscribed: bool)
@@ -72,16 +75,16 @@ func _ask(node_id: int, enabled: bool) -> void:
 func _on_payload(src: int, payload: PackedByteArray) -> void:
 	if (
 		payload.size() < 2
-		or payload[0] != TAG_STATUS_SUBSCRIBE[0]
-		or payload[1] != TAG_STATUS_SUBSCRIBE[1]
+		or payload[0] != TAG_STATUS_SUBSCRIPTION[0]
+		or payload[1] != TAG_STATUS_SUBSCRIPTION[1]
 	):
 		return
 	var envelope := Mark4.Envelope.new()
 	if envelope.from_bytes(payload) != Mark4.PB_ERR.NO_ERRORS:
 		return
-	if envelope.get_body_case() != Mark4.Envelope.BodyCase.STATUS_SUBSCRIBE:
+	if envelope.get_body_case() != Mark4.Envelope.BodyCase.STATUS_SUBSCRIPTION:
 		return
-	var enabled: bool = envelope.get_status_subscribe().get_enabled()
+	var enabled: bool = envelope.get_status_subscription().get_enabled()
 	var entry: Dictionary = entries.get(src, {"requested": 0, "subscribed": false})
 	entry["requested"] = 0
 	entry["subscribed"] = enabled

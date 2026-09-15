@@ -237,12 +237,12 @@ namespace
 
     /// @param ids measures to enable
     /// @param periodMs period asked for
-    /// @return one TelemetryConfig
+    /// @return one TelemetryConfigure
     mark4_Envelope makeConfig(const std::vector<std::uint32_t> &ids, std::uint32_t periodMs)
     {
         mark4_Envelope envelope = mark4_Envelope_init_zero;
-        envelope.which_body = mark4_Envelope_telemetry_config_tag;
-        mark4_TelemetryConfig &config = envelope.body.telemetry_config;
+        envelope.which_body = mark4_Envelope_telemetry_configure_tag;
+        mark4_TelemetryConfigure &config = envelope.body.telemetry_configure;
         config.period_ms = periodMs;
         for (const std::uint32_t id : ids)
         {
@@ -272,8 +272,8 @@ namespace
         REQUIRE(wire.request(makeSubscribe(true), node, T0_US));
         REQUIRE(wire.frames().size() == 1U);
         const mark4_Envelope answer = wire.envelope(0U);
-        REQUIRE(answer.which_body == mark4_Envelope_telemetry_subscribe_tag);
-        REQUIRE(answer.body.telemetry_subscribe.enabled);
+        REQUIRE(answer.which_body == mark4_Envelope_telemetry_subscription_tag);
+        REQUIRE(answer.body.telemetry_subscription.enabled);
         wire.clear();
     }
 } // namespace
@@ -600,13 +600,13 @@ TEST_CASE("every subscriber gets the stream and the configuration as applied")
     wire.clear();
     REQUIRE(wire.request(makeSubscribe(true), NODE_THIRD, T0_US + 2000U));
     REQUIRE(wire.frames().size() == 1U);
-    REQUIRE(!wire.envelope(0U).body.telemetry_subscribe.enabled);
+    REQUIRE(!wire.envelope(0U).body.telemetry_subscription.enabled);
     REQUIRE(provider.subscribers() == mark4::TelemetryProvider::MAX_SUBSCRIBERS);
 
     // Giving the stream back is answered with false and stops the samples.
     wire.clear();
     REQUIRE(wire.request(makeSubscribe(false), NODE_GROUND, T0_US + 3000U));
-    REQUIRE(!wire.envelope(0U).body.telemetry_subscribe.enabled);
+    REQUIRE(!wire.envelope(0U).body.telemetry_subscription.enabled);
     REQUIRE(provider.subscribers() == 1U);
     wire.clear();
     provider.sample(T0_US + 102000U);

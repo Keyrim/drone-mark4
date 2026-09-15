@@ -417,9 +417,10 @@ socket.on("nodeTelemetry", (published) => {
 /* -------------------- the stream -------------------- */
 
 /**
- * Sends one TelemetryConfig to the source node: what the stream carries and
- * how often, one configuration per node. A period of 0 stops the samples
- * without touching the subscription.
+ * Sends one TelemetryConfigure to the source node: what the stream carries
+ * and how often, one configuration per node. A period of 0 stops the samples
+ * without touching the subscription. The node answers with the
+ * TelemetryConfig it applied.
  */
 function sendConfig(periodMs: number): void {
     if (sourceNode === null) {
@@ -427,7 +428,7 @@ function sendConfig(periodMs: number): void {
     }
     const envelope = create(EnvelopeSchema, {
         body: {
-            case: "telemetryConfig",
+            case: "telemetryConfigure",
             value: { ids: periodMs === 0 ? [] : model.enabledIds(), periodMs },
         },
     });

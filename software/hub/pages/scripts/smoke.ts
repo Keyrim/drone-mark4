@@ -194,7 +194,7 @@ const subscribe = (enabled: boolean): void =>
 const enabledAt = Date.now();
 sendEnvelope(
     create(EnvelopeSchema, {
-        body: { case: "telemetryConfig", value: { ids: enabledIds, periodMs: PERIOD_MS } },
+        body: { case: "telemetryConfigure", value: { ids: enabledIds, periodMs: PERIOD_MS } },
     })
 );
 subscribe(true);

@@ -21,7 +21,7 @@ ws.on("message", (raw: ArrayBuffer) => {
         ids = m.body.value.descriptors.slice(0, 3).map((d) => d.id);
         console.log("table from", node.toString(16), m.body.value.descriptors.length, "measures; enabling", ids);
         enableSent = true;
-        const env = create(EnvelopeSchema, { body: { case: "telemetryConfig", value: { ids, periodMs: 100 } } });
+        const env = create(EnvelopeSchema, { body: { case: "telemetryConfigure", value: { ids, periodMs: 100 } } });
         ws.send(encodeGatewayMessage(frameMessage(node, env)));
         const sub = create(EnvelopeSchema, { body: { case: "telemetrySubscribe", value: { enabled: true } } });
         ws.send(encodeGatewayMessage(frameMessage(node, sub)));

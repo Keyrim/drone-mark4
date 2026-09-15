@@ -156,19 +156,23 @@ TEST_CASE("the telemetry family round trips at its bounds")
     CHECK(std::strlen(backPage.body.telemetry_descriptors.descriptors[0].name) ==
           sizeof(descriptors.descriptors[0].name) - 1U);
 
-    // A full configuration, then a full batch of samples: the two widest
-    // bodies of the family, which is what the frame budget was sized on.
-    mark4_Envelope config = withBody(mark4_Envelope_telemetry_config_tag);
-    config.body.telemetry_config.period_ms = 20U;
-    config.body.telemetry_config.ids_count = static_cast<pb_size_t>(
-        sizeof(config.body.telemetry_config.ids) / sizeof(config.body.telemetry_config.ids[0]));
-    for (pb_size_t index = 0U; index < config.body.telemetry_config.ids_count; ++index)
+    // A full configuration request, then a full batch of samples: the two
+    // widest bodies of the family, which is what the frame budget was sized
+    // on. The configuration as applied travels back in a TelemetryConfig of
+    // exactly the same shape.
+    mark4_Envelope config = withBody(mark4_Envelope_telemetry_configure_tag);
+    config.body.telemetry_configure.period_ms = 20U;
+    config.body.telemetry_configure.ids_count =
+        static_cast<pb_size_t>(sizeof(config.body.telemetry_configure.ids) /
+                               sizeof(config.body.telemetry_configure.ids[0]));
+    for (pb_size_t index = 0U; index < config.body.telemetry_configure.ids_count; ++index)
     {
-        config.body.telemetry_config.ids[index] = index;
+        config.body.telemetry_configure.ids[index] = index;
     }
     const mark4_Envelope backConfig = roundTrip(config, size);
-    REQUIRE(backConfig.body.telemetry_config.ids_count == config.body.telemetry_config.ids_count);
-    CHECK(backConfig.body.telemetry_config.period_ms == 20U);
+    REQUIRE(backConfig.body.telemetry_configure.ids_count ==
+            config.body.telemetry_configure.ids_count);
+    CHECK(backConfig.body.telemetry_configure.period_ms == 20U);
 
     mark4_Envelope data = withBody(mark4_Envelope_telemetry_data_tag);
     data.body.telemetry_data.timestamp_us = 42'000'000U;
