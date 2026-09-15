@@ -24,7 +24,7 @@
 #include <functional>
 #include <string>
 
-#include "hub/ota_bundle.hpp"
+#include "ota/bundle.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
 
@@ -120,7 +120,7 @@ namespace mark4
     [[nodiscard]] std::string otaResultText(mark4_OtaResult result);
 
     /// One update session at a time, against one board.
-    class OtaClient
+    class OtaConsumer
     {
       public:
         /// How long the OtaAck of an OtaBegin may take [ms]. Erasing a 384 KB
@@ -197,10 +197,10 @@ namespace mark4
         /// composition root can publish a progress event without polling.
         using ChangeHandler = std::function<void()>;
 
-        OtaClient() = default;
+        OtaConsumer() = default;
 
         /// @param config settings of this client
-        explicit OtaClient(Config config);
+        explicit OtaConsumer(Config config);
 
         /// @brief Sets the route messages go out by. Until then, any request
         ///        that would send something is refused.

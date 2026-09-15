@@ -68,7 +68,7 @@ namespace mark4
         return pb_decode(&stream, mark4_GatewayMessage_fields, &messageOut);
     }
 
-    mark4_OtaState otaStateOf(const OtaClient &client, std::uint32_t targetNode)
+    mark4_OtaState otaStateOf(const OtaConsumer &client, std::uint32_t targetNode)
     {
         mark4_OtaState state = mark4_OtaState_init_zero;
         state.phase = static_cast<mark4_OtaState_Phase>(client.phase());
@@ -117,7 +117,7 @@ namespace mark4
         return state;
     }
 
-    bool applyOtaCommand(OtaClient &client,
+    bool applyOtaCommand(OtaConsumer &client,
                          const mark4_OtaCommand &command,
                          std::uint32_t &targetNodeInOut,
                          std::uint64_t nowUs,

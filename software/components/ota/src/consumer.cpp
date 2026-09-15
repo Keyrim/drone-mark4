@@ -4,7 +4,7 @@
 ///        socket, which is what lets the whole flow run against a scripted
 ///        board in a unit test.
 
-#include "hub/ota_client.hpp"
+#include "ota/consumer.hpp"
 
 #include <algorithm>
 #include <array>
@@ -174,22 +174,22 @@ namespace mark4
                std::to_string(static_cast<int>(result));
     }
 
-    OtaClient::OtaClient(Config config)
+    OtaConsumer::OtaConsumer(Config config)
         : m_config(config)
     {
     }
 
-    void OtaClient::setSink(MessageSink sink)
+    void OtaConsumer::setSink(MessageSink sink)
     {
         m_sink = std::move(sink);
     }
 
-    void OtaClient::setOnChange(ChangeHandler handler)
+    void OtaConsumer::setOnChange(ChangeHandler handler)
     {
         m_onChange = std::move(handler);
     }
 
-    void OtaClient::setDefaultBundlePath(std::string path)
+    void OtaConsumer::setDefaultBundlePath(std::string path)
     {
         m_defaultBundlePath = std::move(path);
         if (m_bundlePath.empty())
@@ -198,7 +198,7 @@ namespace mark4
         }
     }
 
-    bool OtaClient::busy() const
+    bool OtaConsumer::busy() const
     {
         switch (m_phase)
         {
@@ -220,7 +220,7 @@ namespace mark4
         return false;
     }
 
-    std::string OtaClient::verdictText() const
+    std::string OtaConsumer::verdictText() const
     {
         const std::string board =
             m_board.seen
@@ -245,7 +245,9 @@ namespace mark4
         return {};
     }
 
-    bool OtaClient::start(const std::string &bundlePath, std::uint64_t nowUs, std::string &errorOut)
+    bool OtaConsumer::start(const std::string &bundlePath,
+                            std::uint64_t nowUs,
+                            std::string &errorOut)
     {
         if (busy())
         {
@@ -294,7 +296,7 @@ namespace mark4
         return true;
     }
 
-    bool OtaClient::abortSession(std::uint64_t nowUs, std::string &errorOut)
+    bool OtaConsumer::abortSession(std::uint64_t nowUs, std::string &errorOut)
     {
         static_cast<void>(nowUs);
         if (!busy())
@@ -322,7 +324,7 @@ namespace mark4
         return true;
     }
 
-    bool OtaClient::revert(std::uint64_t nowUs, std::string &errorOut)
+    bool OtaConsumer::revert(std::uint64_t nowUs, std::string &errorOut)
     {
         if (busy() && m_phase != OtaPhase::TESTING)
         {
@@ -347,7 +349,7 @@ namespace mark4
         return true;
     }
 
-    bool OtaClient::requestBoardStatus(std::uint64_t nowUs, std::string &errorOut)
+    bool OtaConsumer::requestBoardStatus(std::uint64_t nowUs, std::string &errorOut)
     {
         static_cast<void>(nowUs);
         if (!m_sink)
@@ -366,7 +368,7 @@ namespace mark4
         return true;
     }
 
-    bool OtaClient::onEnvelope(const mark4_Envelope &envelope, std::uint64_t nowUs)
+    bool OtaConsumer::onEnvelope(const mark4_Envelope &envelope, std::uint64_t nowUs)
     {
         switch (envelope.which_body)
         {
@@ -384,7 +386,7 @@ namespace mark4
         }
     }
 
-    void OtaClient::refreshBundle(std::uint64_t nowUs)
+    void OtaConsumer::refreshBundle(std::uint64_t nowUs)
     {
         if (busy() || nowUs < m_nextBundleCheckUs)
         {
@@ -429,7 +431,7 @@ namespace mark4
         notifyChange();
     }
 
-    void OtaClient::tick(std::uint64_t nowUs)
+    void OtaConsumer::tick(std::uint64_t nowUs)
     {
         refreshBundle(nowUs);
         switch (m_phase)
@@ -531,7 +533,7 @@ namespace mark4
         }
     }
 
-    bool OtaClient::emit(const mark4_Envelope &envelope)
+    bool OtaConsumer::emit(const mark4_Envelope &envelope)
     {
         if (!m_sink)
         {
@@ -547,22 +549,22 @@ namespace mark4
         return true;
     }
 
-    bool OtaClient::sendStatusRequest()
+    bool OtaConsumer::sendStatusRequest()
     {
         return emit(envelopeOf(mark4_Envelope_ota_status_request_tag));
     }
 
-    bool OtaClient::sendReboot()
+    bool OtaConsumer::sendReboot()
     {
         return emit(envelopeOf(mark4_Envelope_reboot_tag));
     }
 
-    bool OtaClient::sendRevert()
+    bool OtaConsumer::sendRevert()
     {
         return emit(envelopeOf(mark4_Envelope_ota_revert_tag));
     }
 
-    bool OtaClient::sendChunk()
+    bool OtaConsumer::sendChunk()
     {
         const OtaBundleImage *image = findOtaBundleImage(m_bundle, m_targetSlot);
         if (image == nullptr)
@@ -586,7 +588,7 @@ namespace mark4
         return true;
     }
 
-    void OtaClient::pumpChunks(std::uint64_t nowUs)
+    void OtaConsumer::pumpChunks(std::uint64_t nowUs)
     {
         if (m_phase != OtaPhase::TRANSFER || m_chunkData == 0U)
         {
@@ -614,7 +616,7 @@ namespace mark4
         }
     }
 
-    void OtaClient::openTransfer(std::uint64_t nowUs)
+    void OtaConsumer::openTransfer(std::uint64_t nowUs)
     {
         if (static_cast<std::uint8_t>(m_board.mcu) != m_bundle.mcuId)
         {
@@ -677,7 +679,7 @@ namespace mark4
         static_cast<void>(emit(begin));
     }
 
-    void OtaClient::onStatus(const mark4_OtaStatus &status, std::uint64_t nowUs)
+    void OtaConsumer::onStatus(const mark4_OtaStatus &status, std::uint64_t nowUs)
     {
         if ((m_phase == OtaPhase::REBOOTING || m_phase == OtaPhase::WAITING_BOARD) &&
             nowUs < m_settleUntilUs)
@@ -756,7 +758,7 @@ namespace mark4
         notifyChange();
     }
 
-    void OtaClient::judgeReturn(std::uint64_t nowUs)
+    void OtaConsumer::judgeReturn(std::uint64_t nowUs)
     {
         if (boardRunsBundle())
         {
@@ -786,7 +788,7 @@ namespace mark4
              ", which is neither the bundle nor what it ran before");
     }
 
-    void OtaClient::onAck(const mark4_OtaAck &ack, std::uint64_t nowUs)
+    void OtaConsumer::onAck(const mark4_OtaAck &ack, std::uint64_t nowUs)
     {
         switch (ack.op)
         {
@@ -850,7 +852,7 @@ namespace mark4
         }
     }
 
-    void OtaClient::onChunkAck(const mark4_OtaChunkAck &ack, std::uint64_t nowUs)
+    void OtaConsumer::onChunkAck(const mark4_OtaChunkAck &ack, std::uint64_t nowUs)
     {
         const std::uint32_t nextOffset = ack.next_offset;
         if (ack.session != m_session || m_session == 0U)
@@ -947,7 +949,7 @@ namespace mark4
         pumpChunks(nowUs);
     }
 
-    bool OtaClient::boardRunsBundle() const
+    bool OtaConsumer::boardRunsBundle() const
     {
         if (!m_board.seen)
         {
@@ -960,7 +962,7 @@ namespace mark4
         return m_board.buildEpoch == m_bundle.buildEpoch;
     }
 
-    bool OtaClient::boardRunsPrevious() const
+    bool OtaConsumer::boardRunsPrevious() const
     {
         if (!m_board.seen || !m_previousKnown)
         {
@@ -969,20 +971,20 @@ namespace mark4
         return m_board.buildEpoch == m_previousBuildEpoch;
     }
 
-    void OtaClient::fail(const std::string &reason)
+    void OtaConsumer::fail(const std::string &reason)
     {
         m_lastError = reason;
         m_verdict = OtaVerdict::FAILED;
         enter(OtaPhase::FAILED);
     }
 
-    void OtaClient::enter(OtaPhase phase)
+    void OtaConsumer::enter(OtaPhase phase)
     {
         m_phase = phase;
         notifyChange();
     }
 
-    void OtaClient::notifyChange()
+    void OtaConsumer::notifyChange()
     {
         if (m_onChange)
         {

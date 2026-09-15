@@ -15,12 +15,12 @@
 #include "discovery/discovery_directory.hpp"
 #include "gateway.pb.h"
 #include "hub/gateway_codec.hpp"
-#include "hub/ota_client.hpp"
 #include "hub/tuning_profiles.hpp"
 #include "hub/ws_bridge.hpp"
 #include "log/console_sink_posix.hpp"
 #include "log/provider.hpp"
 #include "messaging/messenger.hpp"
+#include "ota/consumer.hpp"
 #include "protocol/envelope.hpp"
 #include "transport/transport.hpp"
 #include "transport/udp_link.hpp"
@@ -345,7 +345,7 @@ namespace mark4
         LogProvider m_logProvider{m_messenger};
         OwnLogMirror m_logMirror{*this}; ///< its own lines, towards the clients
         WsBridge m_ws;                   ///< websocket endpoint
-        OtaClient m_ota;                 ///< firmware update session
+        OtaConsumer m_ota;               ///< firmware update session
         std::uint32_t m_otaTarget = 0U;  ///< node the updater talks to
         std::map<std::uint32_t, LogModuleTable> m_logModules; ///< last module table per node
 

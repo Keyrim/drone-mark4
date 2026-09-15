@@ -23,3 +23,27 @@ target_link_libraries(ota_provider INTERFACE ota messaging)
 add_library(ota_flight_gate INTERFACE)
 target_include_directories(ota_flight_gate INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(ota_flight_gate INTERFACE ota_provider flight_core)
+
+if(DRONE_PLATFORM STREQUAL "desktop")
+    # The ground side of the same concept, and the one exemption to the rules
+    # above: it reads a bundle off a filesystem and keeps the std::string and
+    # std::function it was written with, so it is a static library declared
+    # only where the desktop platform is configured, like platform_sim.
+    # SYSTEM: the fetched headers are not project code, so -Werror must not
+    # turn their warnings into build failures.
+    include(FetchContent)
+    FetchContent_Declare(
+        nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        # v3.12.0, pinned by commit: a tag can be force-pushed and would change
+        # what CI builds with no diff in this repo.
+        GIT_TAG 55f93686c01528224f448c19128836e7df245f72
+        SYSTEM)
+    FetchContent_MakeAvailable(nlohmann_json)
+
+    add_library(ota_consumer STATIC src/bundle.cpp src/consumer.cpp)
+    target_include_directories(ota_consumer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(ota_consumer
+        PUBLIC ota protocol log
+        PRIVATE nlohmann_json::nlohmann_json drone_warnings)
+endif()

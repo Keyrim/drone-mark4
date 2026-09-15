@@ -14,8 +14,8 @@
 #include <vector>
 
 #include "gateway.pb.h"
-#include "hub/ota_client.hpp"
 #include "hub/tuning_profiles.hpp"
+#include "ota/consumer.hpp"
 #include "protocol/envelope.hpp"
 #include "transport/transport.hpp"
 
@@ -44,7 +44,7 @@ namespace mark4
     /// @param client update client
     /// @param targetNode node the session talks to, 0 when none was chosen
     /// @return the state
-    mark4_OtaState otaStateOf(const OtaClient &client, std::uint32_t targetNode);
+    mark4_OtaState otaStateOf(const OtaConsumer &client, std::uint32_t targetNode);
 
     /// @brief Carries out one update command. The target is fixed for the
     ///        whole session: a command naming another node while a session
@@ -55,7 +55,7 @@ namespace mark4
     /// @param nowUs current time [us]
     /// @param[out] errorOut receives the refusal reason
     /// @return true when the command was carried out
-    bool applyOtaCommand(OtaClient &client,
+    bool applyOtaCommand(OtaConsumer &client,
                          const mark4_OtaCommand &command,
                          std::uint32_t &targetNodeInOut,
                          std::uint64_t nowUs,

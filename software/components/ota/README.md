@@ -8,7 +8,10 @@ loop, and an update is what happens when the loop is parked. Header-only
 INTERFACE target `ota`, `protocol/` alone underneath, no heap, no
 iostream, no exceptions, so the same headers compile for the F405, for the
 ESP32 (which builds `software/components/` sources as they are) and for the
-desktop. `docs/ota-design.md` is the reference for every decision below.
+desktop. The ground side of the same concept lives here too
+(`ota_consumer`), desktop only and under its own rules, described at the
+end of the list below. `docs/ota-design.md` is the reference for every
+decision below.
 
 ## What is here
 
@@ -54,6 +57,20 @@ desktop. `docs/ota-design.md` is the reference for every decision below.
 - `ota/crc32_mpeg2.hpp` - the one checksum of the update system, software,
   bit for bit what the F405 hardware CRC unit computes over the same words.
   The hub uses this very code on the bundle.
+- `ota/bundle.hpp` + `ota/consumer.hpp` - the ground side: the `.ota` bundle
+  a firmware build produces, read and validated off a filesystem, and
+  `OtaConsumer`, the session state machine that drives one board through the
+  transfer, the trial boot and the confirmation. It owns no socket, no
+  thread and no clock: it is fed instants by `tick()`, messages by
+  `onEnvelope()` and emits through a `MessageSink` the composition binds.
+
+  These two are the one exemption to the rules at the top of this page.
+  They read a file and keep the `std::string` and `std::function` they were
+  written with, so they are a static library (`ota_consumer`) declared only
+  where the desktop platform is configured, the way `platform_sim` is: the
+  one ground node of the project is a desktop process. Nothing of them
+  compiles for the F405 or the ESP32, and nothing of the headers above
+  depends on them.
 
 ## Two image formats behind one updater
 

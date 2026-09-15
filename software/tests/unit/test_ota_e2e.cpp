@@ -1,6 +1,6 @@
 /// @file
 /// @brief The desktop end-to-end test of the firmware update system, the one
-///        docs/ota-design.md section 6 asks for: the hub's real OtaClient
+///        docs/ota-design.md section 6 asks for: the hub's real OtaConsumer
 ///        against a real drone_sim process, over real UDP, with a real .ota
 ///        bundle on disk. Nothing is faked between the two ends - the sim
 ///        runs the same OtaUpdater the board runs, over the file-backed store,
@@ -12,7 +12,7 @@
 ///        unconfirmed and rebooted, which must roll back to the image the
 ///        first one installed and leave the trial slot BAD.
 ///
-///        Everything the test touches is a public surface: the OtaClient API,
+///        Everything the test touches is a public surface: the OtaConsumer API,
 ///        drone_sim's command line, the wire, and the bundle file format.
 
 #include <array>
@@ -41,9 +41,9 @@
 
 #include "byte_pipe.hpp"
 #include "hub/gateway_codec.hpp"
-#include "hub/ota_bundle.hpp"
-#include "hub/ota_client.hpp"
 #include "log/wire.hpp"
+#include "ota/bundle.hpp"
+#include "ota/consumer.hpp"
 #include "ota/crc32_mpeg2.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
@@ -161,7 +161,7 @@ namespace
     }
 
     /// @brief Writes a complete two-image .ota bundle for OTA_MCU_SIM. The
-    ///        layout is the one hub/ota_bundle.hpp documents; the manifest is
+    ///        layout is the one ota/bundle.hpp documents; the manifest is
     ///        the one scripts/make_ota.py writes, minus the F405 assumptions
     ///        that script is built on.
     /// @param path file to write
@@ -289,7 +289,7 @@ namespace
         ///        hub's poll loop does.
         /// @param client client to feed
         /// @param instantUs current time [us]
-        void drain(mark4::OtaClient &client, std::uint64_t instantUs)
+        void drain(mark4::OtaConsumer &client, std::uint64_t instantUs)
         {
             m_pending = &client;
             m_pendingUs = instantUs;
@@ -337,7 +337,7 @@ namespace
         mark4::UartLink m_farUart{m_farEnd};                  ///< far relay's UART link
         mark4::UdpLink m_farUdp;                              ///< far relay's link to the sim
         mark4::Transport m_farRelay{FAR_RELAY_NODE, BOOT_ID}; ///< the board's side of the wire
-        mark4::OtaClient *m_pending = nullptr;                ///< client being fed by drain()
+        mark4::OtaConsumer *m_pending = nullptr;              ///< client being fed by drain()
         std::uint64_t m_pendingUs = 0U;                       ///< instant handed to it
     };
 
@@ -465,7 +465,7 @@ namespace
     /// @param budgetMs how long it may take [ms]
     /// @return true when the condition held before the budget ran out
     template <typename Condition>
-    bool driveUntil(mark4::OtaClient &client,
+    bool driveUntil(mark4::OtaConsumer &client,
                     GroundLink &link,
                     Condition condition,
                     std::uint64_t budgetMs = STEP_BUDGET_MS)
@@ -503,7 +503,7 @@ namespace
     /// @param link ground side of the link
     /// @return true once a status packet newer than the current snapshot
     ///         came back
-    bool refreshBoard(mark4::OtaClient &client, GroundLink &link)
+    bool refreshBoard(mark4::OtaConsumer &client, GroundLink &link)
     {
         const std::uint64_t knownUs = client.board().seenAtUs;
         std::uint64_t nextPokeUs = 0U;
@@ -527,9 +527,9 @@ namespace
     ///        machine, its real timeouts shortened to what a loopback link
     ///        and a 500 ms sim wakeup actually need.
     /// @return the configuration
-    mark4::OtaClient::Config testConfig()
+    mark4::OtaConsumer::Config testConfig()
     {
-        mark4::OtaClient::Config config;
+        mark4::OtaConsumer::Config config;
         config.statusPeriodMs = 200U;
         config.statusTries = 60U;
         config.rebootSettleMs = 500U;
@@ -579,7 +579,7 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     SimProcess sim;
     REQUIRE(sim.start(runDirectory, otaDirectory, discoveryPort, SIM_NODE));
 
-    mark4::OtaClient client(testConfig());
+    mark4::OtaConsumer client(testConfig());
     client.setSink([&link](const mark4_Envelope &envelope, std::string &errorOut) {
         if (!link.send(envelope))
         {
@@ -622,7 +622,7 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
 
     // --- The rollback path: a trial that never confirms itself, then a
     // reset. ---
-    mark4::OtaClient manual(testConfig());
+    mark4::OtaConsumer manual(testConfig());
     manual.setSink([&link](const mark4_Envelope &envelope, std::string &errorOut) {
         if (!link.send(envelope))
         {
@@ -700,7 +700,7 @@ TEST_CASE("a hub-driven update crosses the esp32 relay and the serial framing", 
     SimProcess sim;
     REQUIRE(sim.start(runDirectory, otaDirectory, farPort, SIM_NODE));
 
-    mark4::OtaClient client(testConfig());
+    mark4::OtaConsumer client(testConfig());
     client.setSink([&link](const mark4_Envelope &envelope, std::string &errorOut) {
         if (!link.send(envelope))
         {
@@ -760,7 +760,7 @@ TEST_CASE("an OtaCommand from a gateway client drives the update of the node it 
     REQUIRE(sim.start(runDirectory, otaDirectory, discoveryPort, SIM_NODE));
 
     std::uint32_t target = 0U;
-    mark4::OtaClient client(testConfig());
+    mark4::OtaConsumer client(testConfig());
     client.setSink([&link, &target](const mark4_Envelope &envelope, std::string &errorOut) {
         // The gateway routes every updater message to the node the command
         // named; here the link only knows the sim, so the check is the target.

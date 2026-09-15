@@ -16,8 +16,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "hub/gateway_codec.hpp"
-#include "hub/ota_client.hpp"
 #include "hub/tuning_profiles.hpp"
+#include "ota/consumer.hpp"
 
 namespace
 {
@@ -236,7 +236,7 @@ TEST_CASE("a telemetry table is merged page by page and published on its own")
 
 TEST_CASE("the update state snapshot reads like the client")
 {
-    mark4::OtaClient client;
+    mark4::OtaConsumer client;
     client.setDefaultBundlePath("/nowhere/drone_firmware.ota");
     const mark4_OtaState idle = mark4::otaStateOf(client, 0U);
     CHECK(idle.phase == mark4_OtaState_Phase_IDLE);
@@ -268,7 +268,7 @@ TEST_CASE("the update state snapshot reads like the client")
 
 TEST_CASE("an update command needs a target and keeps it for the session")
 {
-    mark4::OtaClient client;
+    mark4::OtaConsumer client;
     std::vector<mark4_Envelope> sent;
     client.setSink([&sent](const mark4_Envelope &envelope, std::string &) {
         sent.push_back(envelope);

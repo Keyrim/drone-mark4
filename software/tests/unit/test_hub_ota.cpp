@@ -26,8 +26,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "hub/gateway_codec.hpp"
-#include "hub/ota_bundle.hpp"
-#include "hub/ota_client.hpp"
+#include "ota/bundle.hpp"
+#include "ota/consumer.hpp"
 #include "ota/crc32_mpeg2.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
@@ -305,12 +305,12 @@ namespace
       public:
         Bench()
         {
-            OtaClient::Config config;
+            OtaConsumer::Config config;
             // The pacing delay is the one production default a test must
             // drop: it exists to spread a window over milliseconds, and the
             // window is what is under test, not the milliseconds.
             config.chunkDelayUs = 0U;
-            m_client = OtaClient(config);
+            m_client = OtaConsumer(config);
             m_client.setSink([this](const mark4_Envelope &envelope, std::string &errorOut) {
                 if (!m_reachable)
                 {
@@ -323,7 +323,7 @@ namespace
         }
 
         /// @return the client under test
-        OtaClient &client()
+        OtaConsumer &client()
         {
             return m_client;
         }
@@ -416,7 +416,7 @@ namespace
         }
 
       private:
-        OtaClient m_client;
+        OtaConsumer m_client;
         std::vector<mark4_Envelope> m_sent;
         std::uint64_t m_nowUs = 1'000'000U;
         bool m_reachable = true;
@@ -466,7 +466,7 @@ namespace
         bench.feed(ackEnvelope(session, mark4_OtaOp_FINISH, mark4_OtaResult_OTA_OK));
         REQUIRE(bench.client().phase() == OtaPhase::REBOOTING);
         REQUIRE(bench.countSent(mark4_Envelope_reboot_tag) == 1U);
-        bench.advance(OtaClient::REBOOT_SETTLE_MS);
+        bench.advance(OtaConsumer::REBOOT_SETTLE_MS);
         REQUIRE(bench.client().phase() == OtaPhase::WAITING_BOARD);
     }
 } // namespace
@@ -588,20 +588,20 @@ TEST_CASE("a rebuilt bundle is picked up with no gesture, and a deleted one is f
     bench.client().setDefaultBundlePath(path);
 
     // The first idle tick loads the bundle without any start.
-    bench.advance(OtaClient::BUNDLE_CHECK_MS);
+    bench.advance(OtaConsumer::BUNDLE_CHECK_MS);
     REQUIRE(bench.client().bundle().loaded());
     CHECK(bench.client().bundle().buildEpoch == 100U);
 
     // A rebuild rewrites the file; the next check sees the new identity.
     static_cast<void>(directory.write(
         "watched.ota", buildBundle(OTA_MCU_STM32F405, 200U, "bbbbbbbb", currentWireHash()).bytes));
-    bench.advance(OtaClient::BUNDLE_CHECK_MS);
+    bench.advance(OtaConsumer::BUNDLE_CHECK_MS);
     CHECK(bench.client().bundle().buildEpoch == 200U);
     CHECK(bench.client().bundle().gitHash == "bbbbbbbb");
 
     // The artifact disappears (a clean build tree): so does the display.
     std::filesystem::remove(path);
-    bench.advance(OtaClient::BUNDLE_CHECK_MS);
+    bench.advance(OtaConsumer::BUNDLE_CHECK_MS);
     CHECK(!bench.client().bundle().loaded());
 }
 
@@ -714,7 +714,7 @@ TEST_CASE("a chunk acknowledgement that never comes sends the window again")
     // The acknowledgement is lost. After the silence the sender goes back to
     // the last cumulative offset, which is still zero.
     bench.clearSent();
-    bench.advance(OtaClient::CHUNK_ACK_TIMEOUT_MS);
+    bench.advance(OtaConsumer::CHUNK_ACK_TIMEOUT_MS);
     CHECK(bench.client().progress().retries == 1U);
     CHECK(bench.client().progress().sentBytes == windowBytes);
     const auto offsets = bench.chunkOffsets();
@@ -800,7 +800,7 @@ TEST_CASE("an erase that never finishes fails the session and names the slot")
     static_cast<void>(startHappySession(bench, directory));
     REQUIRE(bench.client().phase() == OtaPhase::ERASING);
 
-    bench.advance(OtaClient::BEGIN_TIMEOUT_MS - 1U);
+    bench.advance(OtaConsumer::BEGIN_TIMEOUT_MS - 1U);
     CHECK(bench.client().phase() == OtaPhase::ERASING);
     bench.advance(2U);
     CHECK(bench.client().phase() == OtaPhase::FAILED);
@@ -880,7 +880,7 @@ TEST_CASE("a board that never comes back after the reboot fails the session")
     runTransfer(bench, total);
     runTrialBoot(bench);
 
-    bench.advance(OtaClient::BOARD_RETURN_TIMEOUT_MS);
+    bench.advance(OtaConsumer::BOARD_RETURN_TIMEOUT_MS);
     CHECK(bench.client().phase() == OtaPhase::FAILED);
     CHECK(bench.client().lastError().find("did not come back") != std::string::npos);
 }
@@ -900,13 +900,13 @@ TEST_CASE("a trial that has not vouched for itself yet keeps the hub polling")
 
     for (int round = 0; round < 3; ++round)
     {
-        bench.advance(OtaClient::STATUS_PERIOD_MS);
+        bench.advance(OtaConsumer::STATUS_PERIOD_MS);
         bench.feed(statusEnvelope(OTA_SLOT_B, OTA_SLOT_TESTING, 2U, NEW_HASH));
         REQUIRE(bench.client().phase() == OtaPhase::TESTING);
     }
 
     // The image finally vouches for itself; the next answer says so.
-    bench.advance(OtaClient::STATUS_PERIOD_MS);
+    bench.advance(OtaConsumer::STATUS_PERIOD_MS);
     bench.feed(statusEnvelope(OTA_SLOT_B, OTA_SLOT_VALID, 2U, NEW_HASH));
     CHECK(bench.client().phase() == OtaPhase::CONFIRMED);
     CHECK(bench.client().verdict() == OtaVerdict::CONFIRMED);
@@ -998,13 +998,13 @@ TEST_CASE("a board that never answers the initial query gives up saying so")
     const std::string path = directory.write("drone_firmware.ota", built.bytes);
     std::string error;
     REQUIRE(bench.client().start(path, bench.nowUs(), error));
-    for (std::uint32_t round = 0U; round <= OtaClient::STATUS_TRIES; ++round)
+    for (std::uint32_t round = 0U; round <= OtaConsumer::STATUS_TRIES; ++round)
     {
-        bench.advance(OtaClient::STATUS_PERIOD_MS);
+        bench.advance(OtaConsumer::STATUS_PERIOD_MS);
     }
     CHECK(bench.client().phase() == OtaPhase::FAILED);
     CHECK(bench.client().lastError().find("did not answer a status request") != std::string::npos);
-    CHECK(bench.countSent(mark4_Envelope_ota_status_request_tag) == OtaClient::STATUS_TRIES);
+    CHECK(bench.countSent(mark4_Envelope_ota_status_request_tag) == OtaConsumer::STATUS_TRIES);
 }
 
 TEST_CASE("the ota state message carries the phase, the progress and the two identities")

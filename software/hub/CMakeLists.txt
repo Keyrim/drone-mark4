@@ -1,16 +1,5 @@
 include(FetchContent)
 
-# SYSTEM: the fetched headers are not project code, so -Werror must not turn
-# their warnings into build failures.
-FetchContent_Declare(
-    nlohmann_json
-    GIT_REPOSITORY https://github.com/nlohmann/json.git
-    # v3.12.0, pinned by commit: a tag can be force-pushed and would change
-    # what CI builds with no diff in this repo.
-    GIT_TAG 55f93686c01528224f448c19128836e7df245f72
-    SYSTEM)
-FetchContent_MakeAvailable(nlohmann_json)
-
 # No TLS and no compression: the endpoint is local, and both options would
 # pull a system library into a build that needs none.
 set(USE_TLS OFF CACHE BOOL "" FORCE)
@@ -29,16 +18,17 @@ FetchContent_MakeAvailable(ixwebsocket)
 add_library(hub_core STATIC
     src/gateway_codec.cpp
     src/http_api.cpp
-    src/ota_bundle.cpp
-    src/ota_client.cpp
     src/tuning_profiles.cpp)
 target_include_directories(hub_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
                                             ${CMAKE_CURRENT_SOURCE_DIR})
-# nlohmann_json reads the two on-disk formats (the bundle manifest, the
-# profile files); nothing of it reaches the websocket. ota is header-only
-# and brings the one CRC of the update system, the same code the boards run.
+# nlohmann_json reads the on-disk formats (the profile files, the saved
+# telemetry views); nothing of it reaches the websocket. It is fetched by
+# components/ota, which reads the bundle manifest with it. ota is
+# header-only and brings the one CRC of the update system, the same code the
+# boards run.
 target_link_libraries(hub_core
-    PUBLIC protocol ota nanopb_gateway transport log log_wire nlohmann_json::nlohmann_json)
+    PUBLIC protocol ota ota_consumer nanopb_gateway transport log log_wire
+           nlohmann_json::nlohmann_json)
 target_link_libraries(hub_core PRIVATE drone_warnings)
 
 # The hub itself: hub_core plus everything that owns a resource. Desktop only,

@@ -4,7 +4,7 @@
 ///        and "which of the two files did I pick" is the question a refusal
 ///        has to answer.
 
-#include "hub/ota_bundle.hpp"
+#include "ota/bundle.hpp"
 
 #include <algorithm>
 #include <cstring>
