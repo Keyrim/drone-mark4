@@ -13,7 +13,7 @@
  */
 
 import { type NodeTable } from "../src/gen/gateway_pb";
-import { LogLevel, NodeKind } from "../src/gen/mark4_pb";
+import { LogLevel, type LogModuleInfo, NodeKind } from "../src/gen/mark4_pb";
 import { GatewayClient, GATEWAY_URL } from "../src/gateway";
 import { LogStore } from "../src/logStore";
 import { levelName } from "../src/logTree";
@@ -29,6 +29,7 @@ const fail = (text: string): never => {
 
 let table: NodeTable | undefined;
 let wireHash = 0;
+const modules = new Map<number, readonly LogModuleInfo[]>();
 let names: NameTable = new Map();
 const store = new LogStore();
 const filter = new LogFilter();
@@ -52,7 +53,7 @@ const client = new GatewayClient({
                 node.id,
                 {
                     kind: kindName(node.announce?.kind ?? NodeKind.NODE_KIND_UNSPECIFIED),
-                    modules: new Map(node.logModules.map((module) => [module.id, module.name])),
+                    modules: new Map((modules.get(node.id) ?? []).map((module) => [module.id, module.name])),
                 },
             ]),
         );
@@ -60,22 +61,24 @@ const client = new GatewayClient({
     onStatus: (status) => {
         wireHash = status.wireHash;
     },
-    onEnvelope: (src, envelope) => {
-        if (envelope.body.case !== "log") {
-            return;
-        }
-        const record = envelope.body.value;
-        // Nothing is formatted at ingest: the store keeps the raw record and
-        // the extension's own clock, the names are resolved at render time.
-        store.push({
-            receivedAt: new Date(),
-            nodeId: src,
-            moduleId: record.moduleId,
-            level: record.level,
-            text: record.text,
-        });
-        if (watchDebug === src && record.level === LogLevel.DEBUG) {
-            debugLines += 1;
+    onLogModules: (node, published) => {
+        modules.set(node, published);
+    },
+    onLogLines: (src, lines) => {
+        for (const line of lines) {
+            // Nothing is formatted at ingest: the store keeps the raw record
+            // and the extension's own clock, the names are resolved at
+            // render time.
+            store.push({
+                receivedAt: new Date(),
+                nodeId: src,
+                moduleId: line.moduleId,
+                level: line.level,
+                text: line.text,
+            });
+            if (watchDebug === src && line.level === LogLevel.DEBUG) {
+                debugLines += 1;
+            }
         }
     },
     onState: (open, reconnected) => log(`link ${open ? "open" : "closed"}${reconnected ? " (reconnected)" : ""}`),
@@ -97,15 +100,18 @@ async function waitFor<T>(what: string, pick: () => T | undefined, timeoutMs = 2
     }
 }
 
-const sim = await waitFor("a drone_sim with its log modules in the node table", () =>
-    table?.nodes.find((node) => node.announce?.kind === NodeKind.DRONE_SIM && node.logModules.length > 0),
-);
+const sim = await waitFor("a drone_sim with its log modules published", () => {
+    const node = table?.nodes.find((entry) => entry.announce?.kind === NodeKind.DRONE_SIM);
+    return node !== undefined && (modules.get(node.id) ?? []).length > 0 ? node : undefined;
+});
 log(`nodes view (gateway wire ${wireHash.toString(16).padStart(8, "0")}):`);
 for (const row of nodeRows(table?.nodes ?? [], wireHash)) {
     log(`  ${row.live ? "*" : "."} ${row.name} [${row.kindName} ${row.hex}]${row.mismatch ? " WIRE MISMATCH" : ""}`);
 }
 
-const link = sim.logModules.find((module) => module.name === "sim/link") ?? fail("no sim/link module on the sim");
+const link =
+    (modules.get(sim.id) ?? []).find((module) => module.name === "sim/link") ??
+    fail("no sim/link module on the sim");
 watchDebug = sim.id;
 // One gesture, two effects: the node is moved and so is what the view shows
 // (a level raised on the node alone would print nothing: the display filter
@@ -125,19 +131,15 @@ log("with the table, every stored line is named again:");
 showLines(renderLogs(store.records(), names, filter));
 
 client.queryLogModules(sim.id);
-const refreshed = await waitFor("the table with sim/link at DEBUG", () =>
-    table?.nodes
-        .find((node) => node.id === sim.id)
-        ?.logModules.find((module) => module.id === link.id && module.level === LogLevel.DEBUG),
+const refreshed = await waitFor("the module table with sim/link at DEBUG", () =>
+    (modules.get(sim.id) ?? []).find((module) => module.id === link.id && module.level === LogLevel.DEBUG),
 );
 log(`query answered: ${refreshed.name} = ${levelName(refreshed.level)}`);
 
 client.setLogLevel(sim.id, link.id, LogLevel.INFO);
 client.queryLogModules(sim.id);
 await waitFor("sim/link back at INFO", () =>
-    table?.nodes
-        .find((node) => node.id === sim.id)
-        ?.logModules.find((module) => module.id === link.id && module.level === LogLevel.INFO),
+    (modules.get(sim.id) ?? []).find((module) => module.id === link.id && module.level === LogLevel.INFO),
 );
 log("restored sim/link to INFO; all good");
 client.dispose();

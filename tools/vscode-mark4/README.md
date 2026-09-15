@@ -4,7 +4,11 @@ Thin editor extension around the existing tooling. It adds a Mark4 sidebar
 with four views, an output channel for the logs of the whole bench, and opens
 the hub pages inside the editor. Everything about the running bench comes
 from one websocket to the gateway (the hub, `ws://127.0.0.1:47810`): the
-extension is one more client of `gateway.proto`, like the pages.
+extension is one more client of `gateway.proto`, like the pages. Nothing
+raw crosses that link: the gateway publishes typed messages (`NodeTable`,
+`NodeLogModules`, `NodeLogLines`, `GatewayStatus`) and the extension sends
+typed commands (`LogCommand`), so it never encodes or decodes an
+`Envelope`.
 
 - **Apps**: one line per apps.json entry, with inline build / run / debug.
   Build and run shell out to `scripts/build_app.py` / `scripts/run_app.py`
@@ -29,9 +33,9 @@ extension is one more client of `gateway.proto`, like the pages.
 - **Log levels**: every module of every node with its current threshold,
   grouped by node or by module name (the title action switches). A `/` in
   the names makes a folder (`platform/`) when two modules or more share it.
-  "Set level..." on a leaf, a folder or a node sends one `LogControl.set` per
-  module below it and then a query, so the tree shows what the nodes
-  confirmed rather than what was asked; the same gesture moves what the log
+  "Set level..." on a leaf, a folder or a node sends one
+  `LogCommand.set_level` per module below it and then a refresh, so the tree
+  shows what the nodes confirmed rather than what was asked; the same gesture moves what the log
   channel shows of that same scope, so the lines follow the level. On a
   node, "Hide / Show in logs" (eye) drops its lines from the channel and
   touches nothing on the wire. The title bar has the same gesture over the
@@ -49,9 +53,11 @@ extension is one more client of `gateway.proto`, like the pages.
   then docks the control and plots pages in two editor groups.
 
 The **Mark4 Logs** output channel separates what was received from what is
-shown. Every `Log` envelope the gateway forwards is stored raw (a ring of
-50000 records: the extension's own clock at reception, the node, the module
-id, the level, the text) and nothing is formatted at ingest. The channel is
+shown. Every line of every `NodeLogLines` the gateway publishes is stored
+raw (a ring of 50000 records: the extension's own clock at reception, the
+node, the module id, the level, the text) and nothing is formatted at
+ingest. A window that opens while the bench runs is given the ring the
+gateway kept per node, so the channel starts on what already happened. The channel is
 then the projection of that store, redrawn (at most five times a second)
 whenever a node table, the display filter or the search changes; new lines
 that pass are appended. The extension owns the whole line, so the columns
@@ -65,13 +71,13 @@ HH:MM:SS.mmm  LEVEL  kind       node id   module                    text
 Two spaces between fixed columns: the time to the millisecond, the level in
 5 characters (`TRACE DEBUG INFO  WARN  ERROR`), the kind padded to 9 and
 never cut, the node id in 8 hex digits, the module padded or cut to 24. The
-kind and the module name are resolved at render time from the node table, so
-a node announcing late names the lines it sent before: until then they read
-`unknown` and `#id`, and the next redraw names them all. The gateway's own
-lines arrive as frames from its node id like every other node's; the state of
-the link itself has no node, so "reconnected to the gateway" is stored as a
-line of a pseudo node `00000000` named `gateway link` and survives the
-redraws like any other.
+kind is resolved at render time from the node table and the module name from
+that node's `NodeLogModules`, so a node announcing late names the lines it
+sent before: until then they read `unknown` and `#id`, and the next redraw
+names them all. The gateway's own lines arrive from its node id like every
+other node's; the state of the link itself has no node, so "reconnected to
+the gateway" is stored as a line of a pseudo node `00000000` named `gateway
+link` and survives the redraws like any other.
 
 What is shown of the store is a minimum level per (node, module), INFO until
 a "Set level..." says otherwise, plus a hidden flag per node and one text

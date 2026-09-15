@@ -112,7 +112,11 @@ export function activate(context: vscode.ExtensionContext): void {
             logs.setTable(table);
         },
         onStatus: (status) => nodes.setStatus(status),
-        onEnvelope: (src, envelope) => logs.write(src, envelope),
+        onLogModules: (node, modules) => {
+            levels.setModules(node, modules);
+            logs.setModules(node, modules);
+        },
+        onLogLines: (node, lines) => logs.write(node, lines),
         onState: (open, reconnected) => {
             log.info(`gateway link ${open ? "open" : "closed"}`);
             nodes.setOnline(open);
