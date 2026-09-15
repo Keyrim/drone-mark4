@@ -21,10 +21,12 @@ ws.on("message", (raw: ArrayBuffer) => {
         ids = m.body.value.descriptors.slice(0, 3).map((d) => d.id);
         console.log("table from", node.toString(16), m.body.value.descriptors.length, "measures; enabling", ids);
         enableSent = true;
-        const env = create(EnvelopeSchema, { body: { case: "telemetryEnable", value: { ids, periodMs: 100 } } });
+        const env = create(EnvelopeSchema, { body: { case: "telemetryConfig", value: { ids, periodMs: 100 } } });
         ws.send(encodeGatewayMessage(frameMessage(node, env)));
+        const sub = create(EnvelopeSchema, { body: { case: "telemetrySubscribe", value: { enabled: true } } });
+        ws.send(encodeGatewayMessage(frameMessage(node, sub)));
         setTimeout(() => {
-            const stop = create(EnvelopeSchema, { body: { case: "telemetryEnable", value: { ids: [], periodMs: 0 } } });
+            const stop = create(EnvelopeSchema, { body: { case: "telemetrySubscribe", value: { enabled: false } } });
             ws.send(encodeGatewayMessage(frameMessage(node, stop)));
             console.log(`after 2 s: ${frames} frames, ${acks} acks, ${data} telemetryData frames`);
             setTimeout(() => process.exit(0), 200);
@@ -36,7 +38,7 @@ ws.on("message", (raw: ArrayBuffer) => {
         frames++;
         try {
             const env = fromBinary(EnvelopeSchema, f.payload);
-            if (env.body.case === "telemetryAck") { acks++; console.log("ack", env.body.value); }
+            if (env.body.case === "telemetryConfig") { acks++; console.log("config", env.body.value); }
             if (env.body.case === "telemetryData" && f.src === node) { data++; if (data === 1) console.log("first data", env.body.value.values.length, "values at", Date.now() - t0, "ms"); }
         } catch (e) { console.log("decode error", String(e)); }
     }

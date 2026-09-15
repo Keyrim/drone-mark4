@@ -185,30 +185,27 @@ if (table.length < 3) fail(`only ${table.length} measures in the table of ${pilo
 
 const enabledIds = table.slice(0, 3).map((descriptor) => descriptor.id);
 const PERIOD_MS = 50;
-const enable = (): void =>
-    ws.send(
-        encodeGatewayMessage(
-            frameMessage(
-                pilot,
-                create(EnvelopeSchema, {
-                    body: { case: "telemetryEnable", value: { ids: enabledIds, periodMs: PERIOD_MS } },
-                })
-            )
-        )
-    );
-// The enable doubles as the keepalive: repeated once per second, and the
-// drone stops three seconds after the last one.
-const enableTimer = setInterval(enable, 1000);
+const sendEnvelope = (envelope: ReturnType<typeof create<typeof EnvelopeSchema>>): void =>
+    ws.send(encodeGatewayMessage(frameMessage(pilot, envelope)));
+const subscribe = (enabled: boolean): void =>
+    sendEnvelope(create(EnvelopeSchema, { body: { case: "telemetrySubscribe", value: { enabled } } }));
+// The configuration says what the stream carries, the subscription says
+// who gets it: two messages, and nothing to repeat afterwards.
 const enabledAt = Date.now();
-enable();
+sendEnvelope(
+    create(EnvelopeSchema, {
+        body: { case: "telemetryConfig", value: { ids: enabledIds, periodMs: PERIOD_MS } },
+    })
+);
+subscribe(true);
 
-const ack = await waitFor(`a TelemetryAck from ${pilot}`, (m) => {
+const applied = await waitFor(`a TelemetryConfig from ${pilot}`, (m) => {
     const frame = envelopeOf(m);
-    return frame?.src === pilot && frame.envelope.body.case === "telemetryAck" ? frame.envelope.body.value : undefined;
+    return frame?.src === pilot && frame.envelope.body.case === "telemetryConfig" ? frame.envelope.body.value : undefined;
 });
-log(`ack from ${pilot}: ${ack.enabled} measures every ${ack.periodMs} ms (${Date.now() - enabledAt} ms)`);
-if (ack.enabled !== enabledIds.length) fail(`the drone kept ${ack.enabled} of ${enabledIds.length} ids`);
-if (ack.periodMs !== PERIOD_MS) fail(`the drone applied ${ack.periodMs} ms instead of ${PERIOD_MS}`);
+log(`config from ${pilot}: ${applied.ids.length} measures every ${applied.periodMs} ms (${Date.now() - enabledAt} ms)`);
+if (applied.ids.length !== enabledIds.length) fail(`the drone kept ${applied.ids.length} of ${enabledIds.length} ids`);
+if (applied.periodMs !== PERIOD_MS) fail(`the drone applied ${applied.periodMs} ms instead of ${PERIOD_MS}`);
 
 // A second of samples at 50 ms is 20 messages; 15 leaves room for the
 // datagram that goes missing on a busy bench.
@@ -232,15 +229,14 @@ await new Promise<void>((resolve) => setTimeout(resolve, 1000));
 log(`${samples} sample messages from ${pilot} in one second`);
 if (samples < EXPECTED_SAMPLES) fail(`only ${samples} sample messages, expected ${EXPECTED_SAMPLES}`);
 
-// Stop the keepalives without saying anything: the drone must give up on
-// its own, which is what keeps a board from streaming to a dead tab.
-clearInterval(enableTimer);
-const silenceAt = Date.now();
-await new Promise<void>((resolve) => setTimeout(resolve, 4000));
+// Give the stream back: the drone stops emitting it at once.
+subscribe(false);
+const stoppedAt = Date.now();
+await new Promise<void>((resolve) => setTimeout(resolve, 1000));
 waiters.splice(waiters.indexOf(countSamples), 1);
 const quietFor = Date.now() - lastSampleAt;
-log(`the stream stopped ${lastSampleAt - silenceAt} ms after the last keepalive (quiet for ${quietFor} ms)`);
-if (quietFor < 500) fail(`${pilot} was still streaming 4 s after the last keepalive`);
+log(`the stream stopped ${lastSampleAt - stoppedAt} ms after the unsubscribe (quiet for ${quietFor} ms)`);
+if (quietFor < 500) fail(`${pilot} was still streaming after the unsubscribe`);
 
 // The profile service.
 // The answer is broadcast before the ack: listen first, then ask.

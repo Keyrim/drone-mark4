@@ -2,11 +2,12 @@
  * The tunable parameter table of one node, and the profiles the gateway
  * stores beside it.
  *
- * The table is paged: TuningList only asks for a start index, and the
- * process unrolls one TuningInfo per flight frame. The ack to the request
- * says it went out, nothing more, so the page watches the descriptions
- * arrive and resumes from the last index it saw when they stop coming - a
- * lost datagram costs one more request, never the whole table.
+ * The table is paged: TuningListRequest asks for a cursor and the node
+ * answers one TuningInfos page, so the page walks it one request at a time
+ * and asks for the next page when it gets one. The ack to the request says
+ * it went out, nothing more, so the page also resumes from the last index
+ * it saw when a page stops coming - a lost datagram costs one more request,
+ * never the whole table.
  *
  * A TuningAck is broadcast by the node and carries no correlation id, so it
  * is matched on (node, id): the answer to a write on this node, for this
@@ -20,7 +21,7 @@ import {
     type Envelope,
     EnvelopeSchema,
     type TuningAck,
-    type TuningInfo,
+    type TuningInfos,
     TuningStatus,
 } from "../gen/mark4_pb";
 import type { GatewaySocket } from "../shared/gateway_socket";
@@ -87,8 +88,8 @@ export class TuningPanel {
         if (src !== this.nodeId) {
             return;
         }
-        if (envelope.body.case === "tuningInfo") {
-            this.onInfo(envelope.body.value);
+        if (envelope.body.case === "tuningInfos") {
+            this.onPage(envelope.body.value);
         } else if (envelope.body.case === "tuningAck") {
             this.onAck(envelope.body.value);
         }
@@ -192,19 +193,21 @@ export class TuningPanel {
         this.watchdog = setInterval(() => this.resume(), RESUME_AFTER_MS);
     }
 
-    private request(startIndex: number): void {
-        this.note.textContent = `reading from index ${startIndex}...`;
-        const list = create(EnvelopeSchema, { body: { case: "tuningList", value: { startIndex } } });
+    private request(cursor: number): void {
+        this.note.textContent = `reading from index ${cursor}...`;
+        const list = create(EnvelopeSchema, {
+            body: { case: "tuningListRequest", value: { cursor } },
+        });
         void this.socket
             .requestEnvelope(this.nodeId, list)
             .then((ack) => {
                 if (!ack.ok) {
-                    this.notify(`tuningList: ${ack.error}`, false);
+                    this.notify(`tuningListRequest: ${ack.error}`, false);
                     this.stopWatchdog();
                 }
             })
             .catch((error: unknown) => {
-                this.notify(`tuningList: ${String(error)}`, false);
+                this.notify(`tuningListRequest: ${String(error)}`, false);
                 this.stopWatchdog();
             });
     }
@@ -225,22 +228,29 @@ export class TuningPanel {
         this.request(this.highestIndex + 1);
     }
 
-    private onInfo(info: TuningInfo): void {
-        this.count = info.count;
-        this.highestIndex = Math.max(this.highestIndex, info.index);
-        this.params.set(info.id, {
-            index: info.index,
-            name: info.name,
-            value: info.value,
-            minValue: info.minValue,
-            maxValue: info.maxValue,
-            armedChange: info.armedChange,
+    private onPage(page: TuningInfos): void {
+        this.count = page.total;
+        page.infos.forEach((info, offset) => {
+            const index = page.cursor + offset;
+            this.highestIndex = Math.max(this.highestIndex, index);
+            this.params.set(info.id, {
+                index,
+                name: info.name,
+                value: info.value,
+                minValue: info.minValue,
+                maxValue: info.maxValue,
+                armedChange: info.armedChange,
+            });
         });
         this.render();
         this.note.textContent = `${this.params.size}/${this.count} parameters`;
-        if (this.params.size >= this.count) {
-            this.stopWatchdog();
+        // The last page is the one where cursor + infos == total; anything
+        // before it is followed by one more request.
+        if (page.cursor + page.infos.length < page.total) {
+            this.request(page.cursor + page.infos.length);
+            return;
         }
+        this.stopWatchdog();
     }
 
     private onAck(ack: TuningAck): void {

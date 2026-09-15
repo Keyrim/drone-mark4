@@ -193,7 +193,7 @@ export function diffLevelTree(previous: readonly LevelItem[], next: readonly Lev
 /** What a "Set level..." on one item does, both to the nodes and to the view. */
 export interface LevelPlan {
     readonly level: LogLevel;
-    /** The LogControl.set to send, one per module of the scope. */
+    /** The LogSetLevel to send, one per module of the scope. */
     readonly control: LevelTarget[];
     /** The same scope, applied to what the log channel shows. */
     readonly display: LevelTarget[];

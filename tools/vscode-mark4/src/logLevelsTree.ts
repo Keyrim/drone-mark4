@@ -1,5 +1,5 @@
 // The log levels view: every module of every node and its threshold, grouped
-// by node or by module name. A level is set by sending one LogControl per
+// by node or by module name. A level is set by sending one LogSetLevel per
 // module under the item, then a query so the node republishes its table.
 //
 // The table comes once a second and the levels almost never move: the root

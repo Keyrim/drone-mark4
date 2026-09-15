@@ -60,15 +60,15 @@ export class GatewayClient {
     setLogLevel(nodeId: number, moduleId: number, level: LogLevel): void {
         this.sendEnvelope(
             nodeId,
-            create(EnvelopeSchema, { body: { case: "logControl", value: { request: { case: "set", value: { moduleId, level } } } } }),
+            create(EnvelopeSchema, { body: { case: "logSetLevel", value: { moduleId, level } } }),
         );
     }
 
-    /** Asks a node to publish its module table again. */
+    /** Asks a node for the first page of its module table. */
     queryLogModules(nodeId: number): void {
         this.sendEnvelope(
             nodeId,
-            create(EnvelopeSchema, { body: { case: "logControl", value: { request: { case: "query", value: true } } } }),
+            create(EnvelopeSchema, { body: { case: "logModulesRequest", value: { cursor: 0 } } }),
         );
     }
 

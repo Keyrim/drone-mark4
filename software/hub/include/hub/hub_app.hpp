@@ -19,7 +19,7 @@
 #include "hub/tuning_profiles.hpp"
 #include "hub/ws_bridge.hpp"
 #include "log/console_sink_posix.hpp"
-#include "log/wire.hpp"
+#include "log/provider.hpp"
 #include "messaging/messenger.hpp"
 #include "protocol/envelope.hpp"
 #include "transport/transport.hpp"
@@ -37,10 +37,10 @@ namespace mark4
     /// messenger's raw tap, every Frame a client sends goes out on the
     /// transport. What the messenger decodes for the gateway itself is a
     /// short list: the identities its directory asks every node for (the
-    /// node table), the LogModules tables, the telemetry pages, a LogControl
-    /// addressed to this node and the update client's answers. It is a node
-    /// too: its own log lines leave as Log envelopes on the transport and
-    /// are mirrored to the clients as frames from itself.
+    /// node table), the LogModules pages, the telemetry pages and the update
+    /// client's answers. It is a node too: its own log lines go out through
+    /// its LogProvider, whose local sink mirrors them to the clients as
+    /// frames from itself.
     class HubApp
     {
       public:
@@ -196,10 +196,9 @@ namespace mark4
         {
           public:
             /// Body tags this handler consumes.
-            static constexpr std::array<pb_size_t, 6> TAGS = {
+            static constexpr std::array<pb_size_t, 5> TAGS = {
                 mark4_Envelope_telemetry_descriptors_tag,
                 mark4_Envelope_log_modules_tag,
-                mark4_Envelope_log_control_tag,
                 mark4_Envelope_ota_status_tag,
                 mark4_Envelope_ota_ack_tag,
                 mark4_Envelope_ota_chunk_ack_tag};
@@ -216,21 +215,42 @@ namespace mark4
                            const mark4_Envelope &envelope,
                            std::uint64_t nowUs) override;
 
+            /// @brief Sends one message to one node as a request of the
+            ///        gateway's, so the composition reaches the messenger's
+            ///        protected request() through its one handler.
+            /// @param dst node to reach
+            /// @param envelope message to send; its request_id is written here
+            /// @return true when the request was taken
+            bool ask(std::uint32_t dst, mark4_Envelope &envelope)
+            {
+                return request(dst, envelope);
+            }
+
           private:
             HubApp &m_app; ///< the gateway
         };
 
-        /// @brief Route of the gateway's own log lines and module table: a
-        ///        transport broadcast, mirrored to the clients as a frame
-        ///        from this node (the transport never hands a node its own
-        ///        broadcasts back).
-        static bool SendLog(void *context, const std::uint8_t *data, std::size_t size);
+        /// The gateway's own lines: a messenger refuses this node as a
+        /// destination, so the provider feeds them here instead and they
+        /// reach the clients as a frame from this node, exactly like every
+        /// other node's.
+        class OwnLogMirror final : public AbsLogSink
+        {
+          public:
+            /// @param app the gateway the lines are mirrored through
+            explicit OwnLogMirror(HubApp &app)
+                : m_app(app)
+            {
+            }
+
+            void write(const LogRecord &record) override;
+
+          private:
+            HubApp &m_app; ///< the gateway
+        };
 
         /// @brief Clock the log records are stamped with.
         static std::uint64_t LogClock(void *context);
-
-        /// @brief Publishes this node's module table (LogModules pages).
-        void publishLogModules();
 
         /// @brief Sends one envelope to one node through the messenger.
         /// @param dst node to reach
@@ -320,7 +340,10 @@ namespace mark4
         IdentityListener m_identities{m_directory, *this};    ///< what the directory learns
         Reader m_reader{m_messenger, *this};                  ///< what the gateway reads
         ConsoleSinkPosix m_consoleSink;                       ///< log lines on stdout
-        TransportSink m_logSink{&HubApp::SendLog, this};      ///< log lines on the wire
+        /// This node's log on the wire: the lines to whoever subscribed, the
+        /// module table one page per request, the levels.
+        LogProvider m_logProvider{m_messenger};
+        OwnLogMirror m_logMirror{*this}; ///< its own lines, towards the clients
         WsBridge m_ws;                                        ///< websocket endpoint
         OtaClient m_ota;                                      ///< firmware update session
         std::uint32_t m_otaTarget = 0U;                       ///< node the updater talks to
@@ -342,7 +365,6 @@ namespace mark4
         std::atomic_bool m_stopRequested{false};            ///< set by a signal handler
         std::uint64_t m_nextStatusUs = 0U;                  ///< next periodic publish [us]
         bool m_nodesDirty = false;                          ///< table changed since published
-        bool m_logModulesPublished = false;                 ///< own table sent after the first poll
         bool m_loopbackWarned = false;                      ///< the link's fallback was logged
         std::uint32_t m_framesIn = 0U;                      ///< payloads delivered by the transport
         std::uint32_t m_framesOut = 0U;                     ///< frames sent for clients

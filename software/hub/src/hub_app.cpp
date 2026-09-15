@@ -144,32 +144,36 @@ namespace mark4
     {
     }
 
-    bool HubApp::SendLog(void *context, const std::uint8_t *data, std::size_t size)
+    void HubApp::OwnLogMirror::write(const LogRecord &record)
     {
-        auto *self = static_cast<HubApp *>(context);
-        const bool sent = self->m_transport.send(BROADCAST_NODE, data, size);
-        if (size <= sizeof(mark4_Frame::payload.bytes))
+        // TODO(tmagne): the clients read this node's lines off a Frame like
+        // every other node's until the consumers land.
+        mark4_Envelope envelope = mark4_Envelope_init_zero;
+        envelope.which_body = mark4_Envelope_log_tag;
+        envelope.body.log.timestamp_us = record.timestampUs;
+        envelope.body.log.level = logLevelToWire(record.level);
+        envelope.body.log.module_id = record.moduleId;
+        std::strncpy(envelope.body.log.text, record.text, LogModule::MAX_TEXT);
+
+        std::array<std::uint8_t, MAX_ENVELOPE_SIZE> bytes{};
+        std::size_t size = 0U;
+        if (!encodeEnvelope(envelope, bytes.data(), bytes.size(), size) ||
+            size > sizeof(mark4_Frame::payload.bytes))
         {
-            mark4_GatewayMessage message = mark4_GatewayMessage_init_zero;
-            message.which_body = mark4_GatewayMessage_frame_tag;
-            message.body.frame.src = self->m_transport.nodeId();
-            message.body.frame.payload.size = static_cast<pb_size_t>(size);
-            std::memcpy(message.body.frame.payload.bytes, data, size);
-            self->broadcast(message);
+            return;
         }
-        return sent;
+        mark4_GatewayMessage message = mark4_GatewayMessage_init_zero;
+        message.which_body = mark4_GatewayMessage_frame_tag;
+        message.body.frame.src = m_app.m_transport.nodeId();
+        message.body.frame.payload.size = static_cast<pb_size_t>(size);
+        std::memcpy(message.body.frame.payload.bytes, bytes.data(), size);
+        m_app.broadcast(message);
     }
 
     std::uint64_t HubApp::LogClock(void *context)
     {
         static_cast<void>(context);
         return monotonicUs();
-    }
-
-    void HubApp::publishLogModules()
-    {
-        static_cast<void>(logPublishModules(&HubApp::SendLog, this));
-        m_nodesDirty = true; // the gateway's own entry carries its table
     }
 
     bool HubApp::init()
@@ -197,7 +201,10 @@ namespace mark4
         // Every payload reaches the clients raw, before the messenger
         // decodes what the gateway reads for itself.
         m_messenger.setTap(&HubApp::Tap, this);
-        static_cast<void>(logAddSink(m_logSink));
+        // A messenger refuses this node as a destination, so the gateway's
+        // own lines reach its clients through the mirror instead.
+        m_logProvider.setLocalSink(&m_logMirror);
+        static_cast<void>(logAddSink(m_logProvider));
         MODULE.info("boot: node %s on discovery udp/%u, wire %08x",
                     hexNodeId(m_transport.nodeId()).c_str(),
                     static_cast<unsigned>(m_udpLink.discoveryPort()),
@@ -271,12 +278,6 @@ namespace mark4
 
             m_messenger.poll(monotonicUs());
             m_directory.tick(monotonicUs());
-            if (!m_logModulesPublished)
-            {
-                // The first poll sent the first keepalive: the table follows it.
-                m_logModulesPublished = true;
-                publishLogModules();
-            }
             handleClientMessages();
             housekeeping(monotonicUs());
         }
@@ -293,12 +294,11 @@ namespace mark4
         HubApp *const self = &m_app;
         MODULE.info("node %s appeared", hexNodeId(node.id).c_str());
         self->m_nodesDirty = true;
-        // A node that booted before this gateway published its table into
-        // the void: ask for it, so the clients know its modules either way.
+        // The module table of a node is pulled one page at a time, starting
+        // here: the clients know its modules without asking.
         mark4_Envelope query = mark4_Envelope_init_zero;
-        query.which_body = mark4_Envelope_log_control_tag;
-        query.body.log_control.which_request = mark4_LogControl_query_tag;
-        query.body.log_control.request.query = true;
+        query.which_body = mark4_Envelope_log_modules_request_tag;
+        query.body.log_modules_request.cursor = 0U;
         std::string ignored;
         static_cast<void>(self->sendEnvelope(node.id, query, ignored));
     }
@@ -339,9 +339,31 @@ namespace mark4
         // is where a drone's telemetry table starts being pulled rather than
         // at node-up: a node speaking another schema is not asked at all,
         // its answers would not decode.
-        if (isDroneKind(entry.announce.kind) && !entry.wireMismatch)
+        if (entry.wireMismatch)
+        {
+            return;
+        }
+        if (isDroneKind(entry.announce.kind))
         {
             self->beginTelemetryPull(entry.id, monotonicUs());
+        }
+        // TODO(tmagne): the streams are subscribed to from here, and the
+        // frames reach the clients through the mirror, until the consumers
+        // land and hold them.
+        if (isDroneKind(entry.announce.kind))
+        {
+            mark4_Envelope status = mark4_Envelope_init_zero;
+            status.which_body = mark4_Envelope_status_subscribe_tag;
+            status.body.status_subscribe.enabled = true;
+            static_cast<void>(self->m_reader.ask(entry.id, status));
+        }
+        if (isDroneKind(entry.announce.kind) || entry.announce.kind == mark4_NodeKind_RELAY ||
+            entry.announce.kind == mark4_NodeKind_GATEWAY)
+        {
+            mark4_Envelope lines = mark4_Envelope_init_zero;
+            lines.which_body = mark4_Envelope_log_subscribe_tag;
+            lines.body.log_subscribe.enabled = true;
+            static_cast<void>(self->m_reader.ask(entry.id, lines));
         }
     }
 
@@ -374,26 +396,29 @@ namespace mark4
         static_cast<void>(nowUs); // the gateway's timers all read monotonicUs()
         HubApp *const self = &m_app;
         // The things the gateway reads: which modules a node logs with, its
-        // telemetry pages, the levels a client sets on the gateway itself,
-        // and the updater's answers. Everything else is the clients'
-        // business and reached them from the tap.
+        // telemetry pages and the updater's answers. Everything else is the
+        // clients' business and reached them from the tap.
         switch (envelope.which_body)
         {
             case mark4_Envelope_telemetry_descriptors_tag:
                 self->onTelemetryPage(src, envelope.body.telemetry_descriptors, monotonicUs());
                 return true;
-            case mark4_Envelope_log_modules_tag:
-                applyLogModulesPage(envelope.body.log_modules, self->m_logModules[src]);
+            case mark4_Envelope_log_modules_tag: {
+                const mark4_LogModules &page = envelope.body.log_modules;
+                applyLogModulesPage(page, self->m_logModules[src]);
                 self->m_nodesDirty = true;
-                return true;
-            case mark4_Envelope_log_control_tag:
-                // Addressed to this node: a client drives the gateway's own
-                // levels like any other node's.
-                if (logHandleControl(envelope.body.log_control))
+                // TODO(tmagne): the walk is driven from here until the
+                // consumers land and TablePull drives it.
+                if (page.cursor + page.modules_count < page.total)
                 {
-                    self->publishLogModules();
+                    mark4_Envelope next = mark4_Envelope_init_zero;
+                    next.which_body = mark4_Envelope_log_modules_request_tag;
+                    next.body.log_modules_request.cursor = page.cursor + page.modules_count;
+                    std::string ignored;
+                    static_cast<void>(self->sendEnvelope(src, next, ignored));
                 }
                 return true;
+            }
             default:
                 return self->m_ota.onEnvelope(envelope, monotonicUs());
         }

@@ -248,14 +248,14 @@ namespace mark4
 
     void applyLogModulesPage(const mark4_LogModules &page, LogModuleTable &tableInOut)
     {
-        if (page.start_index == 0U)
+        if (page.cursor == 0U)
         {
             tableInOut.clear();
         }
         tableInOut.resize(page.total);
         for (pb_size_t i = 0U; i < page.modules_count; ++i)
         {
-            const std::size_t index = page.start_index + i;
+            const std::size_t index = page.cursor + i;
             if (index < tableInOut.size())
             {
                 tableInOut[index] = page.modules[i];
