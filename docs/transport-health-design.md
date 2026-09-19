@@ -908,6 +908,5 @@ Step 3 (the pages):
   dark default; the three that do not (`--vscode-checkbox-border`,
   `--vscode-checkbox-foreground`, `--vscode-font-size`) are covered by the
   `:root` block of `transport.css`.
-- The hub's MIME table has no `.ttf`, so it serves the font as
-  `application/octet-stream`. Browsers take that for a `@font-face`, so the
-  hub was left alone.
+- The hub's MIME table gained `.ttf` (`font/ttf`) for the codicon font
+  the page links.

@@ -40,6 +40,7 @@ namespace mark4
             {".csv", "text/csv; charset=utf-8"},
             {".ico", "image/x-icon"},
             {".png", "image/png"},
+            {".ttf", "font/ttf"},
         };
 
         /// @brief Turns a request target into a path relative to the pages
