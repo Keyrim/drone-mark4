@@ -956,6 +956,37 @@ Step 5 (streams, Dart):
   real `TransportNode` (the suite runs the managers over
   `FakeTransportNode`), so no test asserted on the old rule.
 
+Step 6 (hub and page counts):
+
+- The tooltip carries both halves: 10.6 appends `keepalive only` to the
+  edge tooltip and its amendment gives the words and the condition, so a
+  quiet edge reads `loss 0 % (0/10 over 10 s), ..., keepalive only (10
+  frames over 10 s)`. The loss segment is printed for every edge, quiet or
+  not; only the judgement drops it.
+- `lossClass()` takes the edge rather than a loss: the two counts it now
+  needs live on the edge and both call sites hold one. Its `idle` class (no
+  window at all) is still decided first, so an edge of a node that has sent
+  one report only keeps the class it had.
+- An edge with no window at all is quiet to the words (the tooltip's note,
+  the Peers table's stream column): no frame is fewer than
+  `LOSS_MIN_FRAMES`. Only the class tells `idle` from `quiet`, and both are
+  drawn in the same color, so what is seen is one thing.
+- `.tp-edge.quiet` is written after `.tp-edge.one-sided` in `transport.css`:
+  the two selectors have the same specificity, so the order is what decides
+  an edge that is both, and it is drawn dotted.
+- The Peers table loses its `dup/s` column: 10.6 lists `dup` among the three
+  cumulative counters and leaves the window's rate no column. Its eleven
+  cells are built by one helper for both shapes of the table (a node's own
+  peers, and the observers of a node that does not report).
+- `TransportHealth.frames_per_s` still sums the `rx_per_s` of every edge,
+  the quiet ones included: 10.5 takes a quiet edge out of the loss verdict
+  alone.
+- `pages/README.md` said "one line per edge that loses frames or has gone
+  quiet" of a fading edge; the word now names something else, so that line
+  reads "fades".
+- The editor extension reads no edge (it takes `TransportHealth` alone), so
+  the three new fields cost it nothing.
+
 ## 10. Sequence per stream, and what a percentage is worth
 
 Decided on 2026-09-19, after the first bench run of the page: with a hub,
