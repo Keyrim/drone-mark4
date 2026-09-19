@@ -1086,3 +1086,15 @@ seconds:
 A keepalive-only edge is drawn dotted (short dashes); the dashed stroke
 keeps its meaning (the other direction is not reported). The README of the
 pages says what a quiet edge and a keepalive-only edge are.
+
+Amended on 2026-09-19 once 10.1 was implemented: `unicast_heard` is true
+for nearly every direct peer, because the transport's greeting to a
+newcomer (the unicast keepalive of the Presence rule) is a frame of that
+stream, so the flag cannot tell an edge with traffic from one without.
+The page therefore reads "keepalive only" from the window alone: an edge
+is **keepalive only** when it is quiet (10.5, fewer than `LOSS_MIN_FRAMES`
+frames over the window), which is the practical meaning of the words. The
+`unicast_heard` field stays on the wire as documented in 10.2 and the
+page does not show it; the Peers table's stream column reads `quiet` or
+`traffic` from the same rule, and the tooltip says `keepalive only (n
+frames over N s)`.
