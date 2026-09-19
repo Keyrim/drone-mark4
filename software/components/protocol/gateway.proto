@@ -42,6 +42,7 @@ message GatewayMessage {
     TuningCommand tuning_command = 52;
     PilotInput pilot_input = 53;
     NodeCommand node_command = 54;
+    TransportCommand transport_command = 55;
     NodeLogModules node_log_modules = 60;
     NodeLogLines node_log_lines = 61;
     NodeStatus node_status = 62;
@@ -49,6 +50,8 @@ message GatewayMessage {
     TelemetrySamples telemetry_samples = 64;
     NodeTuning node_tuning = 65;
     TuningResult tuning_result = 66;
+    NodeTransport node_transport = 67;
+    TransportHealth transport_health = 68;
     // 31 was the gateway's own Log: the gateway is a node and its lines
     // travel as NodeLogLines from its own node id like everyone else's.
     // Never reuse.
@@ -68,10 +71,11 @@ message Node {
   uint32 id = 1;
   string address = 2;          // IPv4 dotted, empty for the gateway itself
   uint32 port = 3;
+  // 5, 6 and 7 were the gateway's own receive counters, which live in
+  // NodeTransport now; never reuse.
+  reserved 5, 6, 7;
+
   uint32 last_seen_ms_ago = 4;
-  uint32 received = 5;
-  uint32 lost = 6;
-  uint32 duplicates = 7;
   Announce announce = 8;       // absent until the node beaconed
 }
 
@@ -141,6 +145,14 @@ message NodeCommand {
   }
 }
 
+// Client to gateway: this client wants the transport reports of every
+// node. The gateway subscribes to the nodes while at least one client is
+// marked, and unsubscribes when the last one clears or disconnects. Its own
+// report needs no subscription and is always published.
+message TransportCommand {
+  bool subscribe = 1;
+}
+
 // Gateway to client: one node's whole telemetry table, as the gateway
 // pulled it page by page. Published on every change and to every client
 // that connects; a table the gateway dropped (the node went down) is
@@ -201,6 +213,96 @@ message NodeTuning {
 message TuningResult {
   uint32 node = 1;
   TuningAck ack = 2;
+}
+
+// Gateway to client: one node's view of the transport, the last report it
+// sent (pages merged) plus what the gateway derives from it over a sliding
+// window. Published on every complete report; the gateway's own every
+// second. A client that connects gets every one held.
+message NodeTransport {
+  uint32 node = 1;
+  TransportReport report = 2;       // counters and links as reported; peers is empty here, the edges carry them
+  uint32 window_ms = 3;             // span of the rates below, 0 while one report only
+  repeated TransportLinkRate links = 4;   // one per report.links entry
+  repeated TransportEdge edges = 5;       // one per peer the node holds, 32 at most
+  TransportWindow window = 6;       // this node's own counters over the window
+}
+
+// One link of a node over the window.
+message TransportLinkRate {
+  float frames_in_per_s = 1;
+  float bytes_in_per_s = 2;
+  float frames_out_per_s = 3;
+  float bytes_out_per_s = 4;
+  uint32 refused = 5;    // over the window
+  uint32 rx_errors = 6;  // over the window
+}
+
+// One directed edge: what the reporting node (the observer) counts of one
+// peer, cumulative as reported and as rates over the window.
+message TransportEdge {
+  uint32 peer = 1;
+  uint32 link = 2;             // index into NodeTransport.report.links
+  uint32 hops = 3;
+  uint32 age_ms = 4;
+  uint32 received = 5;
+  uint32 lost = 6;
+  uint32 duplicates = 7;
+  float rx_per_s = 8;          // frames per second over the window
+  float loss = 9;              // lost / (received + lost) over the window, 0..1
+  float duplicates_per_s = 10;
+}
+
+// A node's own counters over the window: what happened lately rather than
+// since boot.
+message TransportWindow {
+  uint32 sent = 1;
+  uint32 refused = 2;
+  uint32 dropped = 3;
+  uint32 relayed = 4;
+  uint32 expired = 5;
+  uint32 restarted = 6;
+  uint32 requests = 7;
+  uint32 resent = 8;
+  uint32 failed = 9;
+  uint32 undecodable = 10;
+  uint32 unhandled = 11;
+}
+
+enum TransportVerdict {
+  VERDICT_UNKNOWN = 0;   // nothing to judge yet
+  VERDICT_OK = 1;
+  VERDICT_DEGRADED = 2;
+  VERDICT_BAD = 3;
+}
+
+// One node as the gateway judges it from every view it holds.
+message TransportNodeHealth {
+  uint32 node = 1;
+  TransportVerdict verdict = 2;
+  bool reporting = 3;        // a complete report of its own is held (the gateway itself always)
+  float worst_in_loss = 4;   // worst loss over the edges this node observes
+  float worst_out_loss = 5;  // worst loss over the edges other nodes observe of it
+  bool fading = 6;           // some observer heard it more than 1.5 s ago
+  bool asymmetric = 7;       // a reporting node lists it and it does not list that node back
+  bool link_refused = 8;     // one of its links refused frames in the window
+  bool link_rx_errors = 9;   // one of its links had receive errors in the window
+  bool requests_failed = 10; // it gave up on requests in the window
+  bool churn = 11;           // it expired or saw restart a peer in the window
+}
+
+// Gateway to client: the verdict on the whole transport, published every
+// second and to a client that connects. With no client marked it is built
+// from the gateway's own view alone, which nodes_reporting says.
+message TransportHealth {
+  TransportVerdict verdict = 1;
+  uint32 nodes_known = 2;      // the node table, the gateway included
+  uint32 nodes_reporting = 3;
+  uint32 worst_observer = 4;   // the edge with the worst loss, 0 when none
+  uint32 worst_peer = 5;
+  float worst_loss = 6;
+  float frames_per_s = 7;      // sum of rx_per_s over every edge held
+  repeated TransportNodeHealth nodes = 8;   // one per node of the table, 33 at most
 }
 
 // The whole table, the gateway itself included as its first entry.
