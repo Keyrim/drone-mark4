@@ -95,7 +95,6 @@ export function nodeRows(nodes: readonly Node[], gatewayWireHash: number): NodeR
             `${node.announce?.name || word} (${word} ${hexNodeId(node.id)})`,
             address,
             ...announceLines(node.announce),
-            `received ${node.received}, lost ${node.lost}, duplicates ${node.duplicates}`,
             `last seen ${node.lastSeenMsAgo} ms ago`,
             ...(mismatch ? ["WIRE MISMATCH: built on another mark4.proto than the gateway"] : []),
         ].join("\n");
