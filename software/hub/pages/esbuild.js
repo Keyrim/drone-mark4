@@ -3,8 +3,11 @@
 // One ESM bundle per page: every src/<page>/main.ts becomes dist/<page>.js,
 // code shared by several pages lands in dist/chunks/. src/shared/style.css is
 // a second entry point, so the stylesheet (uPlot included) is a single file
-// every page links. The .html files sitting next to this script are copied
-// verbatim. Run with --watch to rebuild on change and get sourcemaps.
+// every page links, and the codicon font is a third: the icon component looks
+// the stylesheet up by its link element and loads it into its own shadow root,
+// so it has to stay a file of its own rather than an import of another one.
+// The .html files sitting next to this script are copied verbatim. Run with
+// --watch to rebuild on change and get sourcemaps.
 
 import * as esbuild from "esbuild";
 import fs from "node:fs";
@@ -25,6 +28,7 @@ const pages = fs
 const entryPoints = Object.fromEntries([
     ...pages.map((name) => [name, path.join(SRC, name, "main.ts")]),
     ["style", path.join(SRC, "shared", "style.css")],
+    ["codicon", path.join(ROOT, "node_modules", "@vscode", "codicons", "dist", "codicon.css")],
 ]);
 
 // A deleted page must not survive as a stale bundle the hub still serves
@@ -50,6 +54,8 @@ const options = {
     target: "es2022",
     splitting: true,
     chunkNames: "chunks/[name]-[hash]",
+    // The codicon font travels beside its stylesheet rather than inside it
+    loader: { ".ttf": "file" },
     sourcemap: watch,
     minify: !watch,
     logLevel: "info",
