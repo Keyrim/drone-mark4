@@ -5,8 +5,8 @@
 
 #include <pb.h>
 
-#include "mark4.pb.h"
 #include "messaging/messenger.hpp"
+#include "protocol/envelope.hpp"
 
 namespace mark4
 {

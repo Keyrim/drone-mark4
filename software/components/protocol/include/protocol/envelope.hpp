@@ -10,10 +10,13 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <pb.h>
+// The one header the schema enters C++ through: the generated codec and the
+// wire hash are re-exported, so a user of a mark4_* type or of WIRE_HASH
+// includes this file and never the generated headers directly.
+#include <pb.h> // IWYU pragma: export
 
-#include "mark4.pb.h"
-#include "protocol/wire_hash.hpp"
+#include "mark4.pb.h"             // IWYU pragma: export
+#include "protocol/wire_hash.hpp" // IWYU pragma: export
 
 namespace mark4
 {

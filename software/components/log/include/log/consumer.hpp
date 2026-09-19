@@ -14,7 +14,6 @@
 #include "discovery/discovery_directory.hpp"
 #include "log/module.hpp"
 #include "log/module_ids.hpp"
-#include "mark4.pb.h"
 #include "messaging/messenger.hpp"
 #include "messaging/table_pull.hpp"
 #include "protocol/envelope.hpp"

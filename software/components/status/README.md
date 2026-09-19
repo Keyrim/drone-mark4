@@ -1,9 +1,12 @@
 # status
 
-What a drone is doing, as the wire says it. A header-only INTERFACE target
+What a drone is doing, as the wire says it. A header-only target
 (`status_provider`) over `messaging` (the dispatch and the sender),
 `flight_core` (the state read) and `log`; no heap, no iostream, no
-exceptions, no RTTI, and it builds for the F405 as it stands.
+exceptions, no RTTI, and it builds for the F405 as it stands. Its `src/`
+holds one single-include source per header: the file that compiles the
+header alone and that the editor's language server takes the header's
+flags from.
 
 ## What Status is
 

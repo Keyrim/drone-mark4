@@ -12,6 +12,10 @@ FetchContent_Declare(
     GIT_TAG 2efe037c9cc96fd536774f17bdb5215161ee5087
     SYSTEM)
 FetchContent_MakeAvailable(ixwebsocket)
+# SYSTEM covers its headers only. Its own CMakeLists appends -Wall -Wextra to
+# the flags of its sources, and with USE_ZLIB off the gzip and deflate stubs
+# leave every parameter unused: not our code, not our warnings.
+target_compile_options(ixwebsocket PRIVATE -w)
 
 # Everything the hub does that a unit test can exercise without a socket, a
 # thread or a child process. This is the target the tests link.

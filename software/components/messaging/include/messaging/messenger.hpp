@@ -16,7 +16,6 @@
 
 #include <pb.h>
 
-#include "mark4.pb.h"
 #include "protocol/envelope.hpp"
 #include "transport/transport.hpp"
 
