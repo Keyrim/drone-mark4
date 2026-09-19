@@ -28,8 +28,12 @@ namespace mark4
     /// telemetry/consumer
     inline constexpr std::uint16_t LOG_MODULE_TELEMETRY_CONSUMER = 25U;
     inline constexpr std::uint16_t LOG_MODULE_TUNING_CONSUMER = 26U; ///< tuning/consumer
-    inline constexpr std::uint16_t LOG_MODULE_OTA_STORE = 32U;       ///< ota/store
-    inline constexpr std::uint16_t LOG_MODULE_OTA_UPDATER = 33U;     ///< ota/updater (the apps)
+    /// transport/provider
+    inline constexpr std::uint16_t LOG_MODULE_TRANSPORT_PROVIDER = 27U;
+    /// transport/consumer
+    inline constexpr std::uint16_t LOG_MODULE_TRANSPORT_CONSUMER = 28U;
+    inline constexpr std::uint16_t LOG_MODULE_OTA_STORE = 32U;   ///< ota/store
+    inline constexpr std::uint16_t LOG_MODULE_OTA_UPDATER = 33U; ///< ota/updater (the apps)
 
     /// First id an application picks for its own modules.
     inline constexpr std::uint16_t LOG_MODULE_APP_BASE = 256U;
