@@ -626,7 +626,7 @@ TEST_CASE("sequence accounting counts losses and duplicates across the wrap")
     CHECK(node.received == 4U);
     CHECK(node.lost == 1U);
     CHECK(node.duplicates == 1U);
-    CHECK(node.lastSeq == 1U);
+    CHECK(node.unicastSeq == 1U);
     // The duplicate was not delivered twice.
     CHECK(seen.delivered.size() == 4U);
 

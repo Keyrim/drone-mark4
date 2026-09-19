@@ -30,7 +30,7 @@ Every frame opens with an 11-byte little-endian header (`transport/frame.hpp`):
 |-------|------|---------|
 | `src` | u32 | node that produced the payload |
 | `dst` | u32 | node it is for, `0` = every node (`BROADCAST_NODE`) |
-| `seq` | u16 | per-sender counter, wraps |
+| `seq` | u16 | counter of one stream, wraps: a stream is the frames from this sender to this destination, and the broadcast is a stream of its own |
 | `flags:hops` | u8 | low nibble (`FRAME_HOPS_MASK`): relays crossed so far; a sender writes 0, a relay adds one and drops a frame already at `MAX_HOPS` = 4. High nibble: flags, bit 7 (`FRAME_FLAG_KEEPALIVE`) marking the transport's own keepalive, the others written 0 and ignored on read |
 
 The payload follows, at most `MAX_PAYLOAD` = 512 bytes; a frame whose
@@ -105,8 +105,8 @@ coming back with another boot id.
 `poll()` is the only place anything happens, and `nowUs` comes from the
 caller: the transport never reads a clock. Every frame received, whatever
 its payload, refreshes the node table (`nodeId -> link, address,
-lastSeenUs, lastSeq, received, lost, duplicates, hops, boot`, `MAX_NODES` =
-32);
+lastSeenUs, txSeq, unicastSeq, unicastHeard, broadcastSeq, broadcastHeard,
+received, lost, duplicates, hops, boot`, `MAX_NODES` = 32);
 a payload addressed to this node or to everyone is handed to `deliver`,
 and a keepalive, or a frame carrying no payload, is not. A frame whose `src` is
 this node (its own broadcast coming back on a shared medium) is ignored.
@@ -115,11 +115,24 @@ A broadcast leaves on every declared link; a unicast leaves on the link
 its destination was last heard on, and is refused while the destination is
 unknown.
 
-Sequence accounting per node: an exact repeat of the last sequence is a
-duplicate and is dropped; a forward gap below `RESYNC_THRESHOLD` (1024) is
-counted as lost frames; a larger jump is a restarted sender and counts as
-nothing. The hub publishes these counters per node in its `NodeTable`
-(`gateway.proto`).
+Sequence accounting per stream, not per sender. A sender keeps one counter
+per node it knows (`Node::txSeq`, 0 when the entry is created and again
+when a reincarnation rebuilds it) plus one for the broadcast; a receiver
+keeps one sequence per peer and per stream (`unicastSeq` for what a peer
+addresses to this node, `broadcastSeq` for what it addresses to everyone,
+each one meaningless until its `unicastHeard` / `broadcastHeard` flag is
+set by the first frame of that stream, whose sequence is taken as it is).
+Inside one stream: an exact repeat of the last sequence is a duplicate and
+is dropped; a forward gap below `RESYNC_THRESHOLD` (1024) is counted as
+lost frames; a larger jump is a restarted sender and counts as nothing.
+`received`, `lost` and `duplicates` are the two streams together. A frame
+addressed to a third node says its sender is there and nothing more: it
+refreshes the link, the address, `lastSeenUs` and `hops` and is numbered in
+neither stream, because this node hears only the part of that stream its
+own relaying carries. One counter for everything a sender emits would make
+every unicast it sends elsewhere read as a lost frame for everybody else.
+The hub publishes these counters per observed edge (`TransportEdge` of
+`gateway.proto`), an edge being one pair (observer, peer).
 
 ## Presence
 
@@ -129,8 +142,10 @@ id** little-endian (15 bytes in all), owned by the transport: every node
 broadcasts one every `KEEPALIVE_PERIOD_US` (1 s, the first one on the first
 `poll()`), and additionally unicasts one to a node the moment it first
 appears, so a newcomer learns everyone at once. A keepalive is learnt from,
-counted in the sequence accounting and relayed like any broadcast, and never
-delivered: it carries no identity and no application sees it.
+counted in the sequence accounting of the stream its destination names and
+relayed like any broadcast, and never delivered: it carries no identity and
+no application sees it. The unicast one opens the stream towards the
+newcomer, so it carries sequence 0.
 
 The boot id is the identity of one run of one node, drawn at random by the
 composition and handed to the constructor (`randomBootId()` on desktop, the
@@ -159,8 +174,9 @@ broadcast goes out on every link but the one it arrived on; a unicast goes
 out on the link its destination was last heard on, unless that is the
 arrival link (split horizon) or the destination is unknown (dropped). A
 node with one link therefore relays nothing, which is why no switch is
-needed. The duplicate drop by `(src, seq)` is what keeps a triangle of
-relays from looping. `Node::hops` keeps the count the last frame from a
+needed. The duplicate drop of the broadcast stream is what keeps a triangle
+of relays from looping; a unicast that would loop is bounded by `MAX_HOPS`
+alone. `Node::hops` keeps the count the last frame from a
 node carried: 0 for a direct neighbour, 1 for a node behind one relay. A
 relay rebuilds the last header byte rather than incrementing it in place:
 the hop count shares it with the flags, which cross unchanged, so a
@@ -262,8 +278,8 @@ entry and `accept()` feeds it the pages directly.
 
 `sim-godot/scripts/transport/transport.gd` (`Mark4Transport`) is the same
 transport for the Godot plant: the same header, the same node table and
-counters, the same keepalive and expiry rules, the `(src, seq)` duplicate
-drop, no relay. Its two sockets follow the `UdpLink` layout, with one
+counters, the same keepalive and expiry rules, the same sequence per stream
+and its duplicate drop, no relay. Its two sockets follow the `UdpLink` layout, with one
 substitution forced by the engine: Godot's `PacketPeerUDP.bind()` sets no
 reuse option, so the discovery socket is a `UDPServer` (`listen()` sets
 `SO_REUSEADDR`, which is enough on Linux to share the port with the
