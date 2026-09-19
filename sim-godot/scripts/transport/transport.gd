@@ -7,15 +7,22 @@ extends RefCounted
 ## Frames: an 11-byte little-endian header (src u32, dst u32, seq u16,
 ## flags:hops u8, the hop count on the low nibble and the keepalive flag on
 ## bit 7) then an opaque payload, one Envelope of mark4.proto. Every frame
-## heard refreshes the node table (address, last sequence, hops, counters);
-## a node silent for NODE_EXPIRY_US is forgotten. Presence is a keepalive, a
-## flagged frame carrying this node's boot id: broadcast every
+## heard refreshes the node table (address, stream sequences, hops,
+## counters); a node silent for NODE_EXPIRY_US is forgotten. Presence is a
+## keepalive, a flagged frame carrying this node's boot id: broadcast every
 ## KEEPALIVE_PERIOD_US and unicast once to a node the moment it first
 ## appears, carrying nothing for the application, whatever its size. A boot
 ## id that changes is another incarnation of the same node id, which leaves
-## the table and comes back into it. Frames repeating the last sequence of
-## their sender are duplicates and dropped. No relay: a frame for another
-## node is only used to learn its sender.
+## the table and comes back into it.
+##
+## A sequence numbers one stream: the frames from one sender to one
+## destination, the broadcast being a stream of its own. This node keeps
+## one counter per node it knows plus one for the broadcast, and one
+## sequence per peer and per stream on the way in; a frame repeating the
+## last sequence of its stream is a duplicate and is dropped, a forward gap
+## below RESYNC_THRESHOLD is counted as lost frames. A frame addressed to
+## another node says its sender is there and nothing more: it is numbered
+## in neither stream. No relay: this node forwards nothing.
 ##
 ## Sockets, as in the C++ UdpLink: one shared DISCOVERY socket every node
 ## of the deployment binds and receives broadcasts on, and one ephemeral
@@ -53,7 +60,8 @@ const RESYNC_THRESHOLD := 1024
 ## Remote addresses the discovery socket may hold at once.
 const MAX_PEERS := 64
 
-## Sequence dedup and the loss counter are per node, as in the C++ table.
+## Sequence dedup and the loss counters are per node and per stream, as in
+## the C++ table.
 signal node_up(node_id: int)
 signal node_down(node_id: int)
 ## One payload addressed to this node or to everyone.
@@ -65,8 +73,8 @@ var node_id: int = 0
 var boot_id: int = 0
 var discovery_port: int = DISCOVERY_PORT
 ## Nodes heard within NODE_EXPIRY_US:
-## id -> {address, port, last_seen_us, last_seq, received, lost, duplicates,
-## hops, boot}.
+## id -> {address, port, last_seen_us, tx_seq, unicast_seq, unicast_heard,
+## broadcast_seq, broadcast_heard, received, lost, duplicates, hops, boot}.
 var nodes: Dictionary = {}
 ## Frames dropped: shorter than a header, an empty payload handed to send(),
 ## or a unicast to an unknown node.
@@ -75,7 +83,7 @@ var dropped: int = 0
 var _discovery := UDPServer.new()
 var _data := PacketPeerUDP.new()
 var _peers: Array[PacketPeerUDP] = []
-var _next_seq: int = 0
+var _broadcast_seq: int = 0
 var _last_keepalive_us: int = 0
 var _keepalive_sent: bool = false
 var _tx := PackedByteArray()
@@ -131,19 +139,22 @@ func send(dst: int, payload: PackedByteArray) -> bool:
 		return false
 	if payload.size() > MAX_PAYLOAD:
 		return false
+	# The sequence is the destination's, so the destination entry is needed
+	# before the header is written.
+	var node: Dictionary = {}
+	if dst != BROADCAST_NODE:
+		node = nodes.get(dst, {})
+		if node.is_empty():
+			dropped += 1
+			return false
 	_tx.resize(HEADER_SIZE)
 	_tx.encode_u32(0, node_id)
 	_tx.encode_u32(4, dst)
-	_tx.encode_u16(8, _next_seq)
+	_tx.encode_u16(8, _next_seq(node))
 	_tx.encode_u8(10, 0)
-	_next_seq = (_next_seq + 1) & 0xFFFF
 	_tx.append_array(payload)
 	if dst == BROADCAST_NODE:
 		return _broadcast()
-	var node: Dictionary = nodes.get(dst, {})
-	if node.is_empty():
-		dropped += 1
-		return false
 	return _send_to(node["address"], node["port"])
 
 
@@ -176,20 +187,33 @@ func is_alive(id: int) -> bool:
 ## presence, and nothing for the application on the other side.
 ## @param dst node to reach, BROADCAST_NODE for every node of the LAN.
 func _send_keepalive(dst: int) -> void:
+	var node: Dictionary = {}
+	if dst != BROADCAST_NODE:
+		node = nodes.get(dst, {})
+		if node.is_empty():
+			return
 	_tx.resize(HEADER_SIZE + KEEPALIVE_PAYLOAD_SIZE)
 	_tx.encode_u32(0, node_id)
 	_tx.encode_u32(4, dst)
-	_tx.encode_u16(8, _next_seq)
+	_tx.encode_u16(8, _next_seq(node))
 	_tx.encode_u8(10, FLAG_KEEPALIVE)
 	_tx.encode_u32(HEADER_SIZE, boot_id)
-	_next_seq = (_next_seq + 1) & 0xFFFF
 	if dst == BROADCAST_NODE:
 		var _broadcast_sent := _broadcast()
 		return
-	var node: Dictionary = nodes.get(dst, {})
-	if node.is_empty():
-		return
 	var _unicast_sent := _send_to(node["address"], node["port"])
+
+
+## Take the next sequence of one stream and advance it.
+## @param node destination entry, empty for the broadcast stream.
+func _next_seq(node: Dictionary) -> int:
+	if node.is_empty():
+		var seq: int = _broadcast_seq
+		_broadcast_seq = (_broadcast_seq + 1) & 0xFFFF
+		return seq
+	var unicast: int = node["tx_seq"]
+	node["tx_seq"] = (unicast + 1) & 0xFFFF
+	return unicast
 
 
 func _on_frame(frame: PackedByteArray, address: String, port: int, now_us: int) -> void:
@@ -211,31 +235,27 @@ func _on_frame(frame: PackedByteArray, address: String, port: int, now_us: int) 
 			"address": address,
 			"port": port,
 			"last_seen_us": now_us,
-			"last_seq": seq,
-			"received": 1,
+			"tx_seq": 0,
+			"unicast_seq": 0,
+			"unicast_heard": false,
+			"broadcast_seq": 0,
+			"broadcast_heard": false,
+			"received": 0,
 			"lost": 0,
 			"duplicates": 0,
 			"hops": hops,
 			"boot": 0,
 		}
 		nodes[src] = node
-	else:
-		var delta: int = (seq - node["last_seq"]) & 0xFFFF
-		if delta == 0:
-			node["duplicates"] += 1
-			node["last_seen_us"] = now_us
-			return
-		if delta > 1 and delta < RESYNC_THRESHOLD:
-			node["lost"] += delta - 1
-		node["last_seq"] = seq
-		node["received"] += 1
-		node["address"] = address
-		node["port"] = port
-		node["last_seen_us"] = now_us
-		node["hops"] = hops
+	node["last_seen_us"] = now_us
+	if not _track(node, dst, seq):
+		return
+	node["address"] = address
+	node["port"] = port
+	node["hops"] = hops
 	var reincarnated := false
 	if keepalive and frame.size() >= HEADER_SIZE + KEEPALIVE_PAYLOAD_SIZE:
-		reincarnated = _on_boot_id(src, node, frame.decode_u32(HEADER_SIZE), is_new, seq, hops)
+		reincarnated = _on_boot_id(src, node, frame.decode_u32(HEADER_SIZE), is_new, dst, seq, hops)
 	if is_new:
 		node_up.emit(src)
 		# The newcomer learns this node at once instead of waiting for the
@@ -251,23 +271,70 @@ func _on_frame(frame: PackedByteArray, address: String, port: int, now_us: int) 
 		payload_received.emit(src, frame.slice(HEADER_SIZE))
 
 
+## Take one frame into the stream its destination names: what a peer
+## addresses to this node and what it addresses to everyone are numbered
+## apart, and a frame for another node is numbered in neither, since this
+## node hears only a part of that stream.
+## @return false when the frame repeats the last sequence of its stream and
+## must be dropped.
+func _track(node: Dictionary, dst: int, seq: int) -> bool:
+	var seq_key := ""
+	var heard_key := ""
+	if dst == node_id:
+		seq_key = "unicast_seq"
+		heard_key = "unicast_heard"
+	elif dst == BROADCAST_NODE:
+		seq_key = "broadcast_seq"
+		heard_key = "broadcast_heard"
+	else:
+		# A frame for another node says its sender is there and nothing
+		# more; counting the gaps of a stream heard in part would call
+		# every frame that went elsewhere a loss.
+		return true
+	if not node[heard_key]:
+		# First frame of that stream: its sequence is taken as it is,
+		# whatever the sender numbered before this node listened.
+		node[heard_key] = true
+		node[seq_key] = seq
+		node["received"] += 1
+		return true
+	var delta: int = (seq - node[seq_key]) & 0xFFFF
+	if delta == 0:
+		node["duplicates"] += 1
+		return false
+	if delta > 1 and delta < RESYNC_THRESHOLD:
+		node["lost"] += delta - 1
+	node[seq_key] = seq
+	node["received"] += 1
+	return true
+
+
 ## Read the boot id one keepalive carries. The first one is learnt
 ## silently; one that differs from a known incarnation is a node that
 ## restarted, whose entry is reset and whose caller emits node_down then
 ## node_up.
 ## @return true when the node is another incarnation of the same id.
-func _on_boot_id(src: int, node: Dictionary, boot: int, is_new: bool, seq: int, hops: int) -> bool:
+func _on_boot_id(
+	src: int, node: Dictionary, boot: int, is_new: bool, dst: int, seq: int, hops: int
+) -> bool:
 	if is_new or node["boot"] == 0:
 		node["boot"] = boot
 		return false
 	if boot == 0 or boot == node["boot"]:
 		return false
-	node["last_seq"] = seq
-	node["received"] = 1
+	node["tx_seq"] = 0
+	node["unicast_seq"] = 0
+	node["unicast_heard"] = false
+	node["broadcast_seq"] = 0
+	node["broadcast_heard"] = false
+	node["received"] = 0
 	node["lost"] = 0
 	node["duplicates"] = 0
 	node["hops"] = hops
 	node["boot"] = boot
+	# The keepalive that said so opens the stream its destination names;
+	# the other one is unheard until its first frame.
+	var _taken := _track(node, dst, seq)
 	nodes[src] = node
 	return true
 
