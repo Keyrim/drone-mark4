@@ -559,6 +559,9 @@ namespace mark4
     void HubApp::housekeeping(std::uint64_t nowUs)
     {
         m_pilotGateway.tick(nowUs);
+        // This node reports to another gateway that subscribes like any
+        // node does; its own gateway reads the pages without the wire.
+        m_transportProvider.tick(nowUs);
         m_ota.tick(nowUs);
         if (m_udpLink.loopbackFallback() && !m_loopbackWarned)
         {

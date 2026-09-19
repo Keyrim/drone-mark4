@@ -871,7 +871,7 @@ Step 2 (gateway wire, hub, clients trimmed):
   it: its edges are the transport's node table, in the same order, so 6.5's
   constructor (which hands the gateway a node id and not the transport) is
   enough for the table 6.4 asks for.
-- The hub's `TransportProvider` answers a subscribe but nothing ticks it,
-  6.2 giving the gateway the provider for its pages alone. No node carries
-  a transport consumer but the hub, so nothing is asking for that stream
-  yet.
+- The hub ticks its own `TransportProvider` in `housekeeping()` (every
+  loop, the provider paces itself), so it streams its report to another
+  gateway that subscribes, as principle 2 says; 6.5 had listed only the
+  gateway's `tick()`.
