@@ -1,0 +1,387 @@
+/*
+ * The transport page, painted with the editor's own theme.
+ *
+ * Every color is a --vscode-* variable, the ones the editor writes on the
+ * root element of the page it embeds. A browser tab gets no such message, so
+ * the block below is what those variables are worth in the dark theme: it is
+ * the only place in this file where a color is written out. The components
+ * carry defaults of their own for most of them; the three they do not
+ * (--vscode-checkbox-border, --vscode-checkbox-foreground and
+ * --vscode-font-size) are why the block has to be complete rather than
+ * partial.
+ *
+ * The shared tokens of style.css are remapped onto the same variables, so
+ * the nav, the dots and the toasts follow the theme with the page.
+ */
+
+:root {
+    --vscode-font-family: system-ui, "Ubuntu", "Droid Sans", sans-serif;
+    --vscode-font-size: 13px;
+    --vscode-editor-font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
+    --vscode-foreground: #cccccc;
+    --vscode-descriptionForeground: #9d9d9d;
+    --vscode-errorForeground: #f14c4c;
+    --vscode-focusBorder: #0078d4;
+    --vscode-editor-background: #1f1f1f;
+    --vscode-editorWidget-background: #252526;
+    --vscode-editorGroup-border: #444444;
+    --vscode-sideBar-background: #181818;
+    --vscode-panel-border: #2b2b2b;
+    --vscode-widget-border: #303031;
+    --vscode-badge-background: #616161;
+    --vscode-badge-foreground: #f8f8f8;
+    --vscode-button-background: #0078d4;
+    --vscode-button-foreground: #ffffff;
+    --vscode-icon-foreground: #cccccc;
+    --vscode-checkbox-background: #313131;
+    --vscode-checkbox-border: #3c3c3c;
+    --vscode-checkbox-foreground: #cccccc;
+    --vscode-list-hoverBackground: #2a2d2e;
+    --vscode-list-activeSelectionBackground: #04395e;
+    --vscode-list-activeSelectionForeground: #ffffff;
+    --vscode-keybindingTable-rowsBackground: rgba(204, 204, 204, 0.04);
+    --vscode-toolbar-hoverBackground: rgba(90, 93, 94, 0.31);
+    --vscode-charts-foreground: #cccccc;
+    --vscode-charts-lines: #808080;
+    --vscode-charts-red: #f14c4c;
+    --vscode-charts-blue: #3794ff;
+    --vscode-charts-yellow: #cca700;
+    --vscode-charts-orange: #d18616;
+    --vscode-charts-green: #89d185;
+    --vscode-charts-purple: #b180d7;
+
+    --bg: var(--vscode-editor-background);
+    --bg-panel: var(--vscode-sideBar-background);
+    --bg-raised: var(--vscode-editorWidget-background);
+    --border: var(--vscode-panel-border);
+    --fg: var(--vscode-foreground);
+    --fg-dim: var(--vscode-descriptionForeground);
+    --accent: var(--vscode-focusBorder);
+    --ok: var(--vscode-charts-green);
+    --warn: var(--vscode-charts-yellow);
+    --bad: var(--vscode-charts-red);
+    --mono: var(--vscode-editor-font-family);
+}
+
+body {
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+}
+
+/* ===== The page ===== */
+
+.content.transport {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px;
+    overflow: hidden;
+}
+
+.tp-head {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.tp-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-panel);
+    font-family: var(--mono);
+    font-size: 12px;
+}
+
+/* A verdict is a state, so it wears the status colors and its own word:
+   the badge never says it by color alone. */
+.tp-verdict.ok {
+    --vscode-badge-background: var(--vscode-charts-green);
+    --vscode-badge-foreground: var(--vscode-editor-background);
+}
+
+.tp-verdict.degraded {
+    --vscode-badge-background: var(--vscode-charts-yellow);
+    --vscode-badge-foreground: var(--vscode-editor-background);
+}
+
+.tp-verdict.bad {
+    --vscode-badge-background: var(--vscode-charts-red);
+    --vscode-badge-foreground: var(--vscode-editor-background);
+}
+
+.tp-findings {
+    height: 132px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+
+/* ===== The two halves ===== */
+
+.content.transport vscode-split-layout {
+    flex: 1;
+    min-height: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.tp-half {
+    display: flex;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* ===== The graph ===== */
+
+.tp-graph {
+    flex: 1;
+    min-width: 0;
+    overflow: auto;
+    background: var(--bg);
+}
+
+.tp-canvas {
+    position: relative;
+}
+
+.tp-wires {
+    position: absolute;
+    left: 0;
+    top: 0;
+    pointer-events: none;
+}
+
+/* Only the lines take the pointer, so their titles answer a hover while the
+   empty space still clears the selection. */
+.tp-wires line {
+    pointer-events: stroke;
+}
+
+.tp-bus {
+    stroke: var(--vscode-charts-lines);
+    stroke-width: 2;
+}
+
+.tp-stub {
+    stroke: var(--vscode-charts-lines);
+    stroke-width: 1.5;
+    opacity: 0.6;
+}
+
+.tp-edge {
+    stroke-width: 2;
+    opacity: 0.85;
+}
+
+.tp-edge.chosen {
+    opacity: 1;
+}
+
+/* One end of the pair reports and the other does not: what is drawn is half
+   of what happens on that wire. */
+.tp-edge.one-sided {
+    stroke-dasharray: 5 4;
+}
+
+.tp-edge.idle {
+    stroke: var(--vscode-descriptionForeground);
+}
+
+.tp-arrow.idle {
+    fill: var(--vscode-descriptionForeground);
+}
+
+.tp-edge.ok {
+    stroke: var(--vscode-charts-green);
+}
+
+.tp-arrow.ok {
+    fill: var(--vscode-charts-green);
+}
+
+.tp-edge.degraded {
+    stroke: var(--vscode-charts-yellow);
+}
+
+.tp-arrow.degraded {
+    fill: var(--vscode-charts-yellow);
+}
+
+.tp-edge.bad {
+    stroke: var(--vscode-charts-red);
+}
+
+.tp-arrow.bad {
+    fill: var(--vscode-charts-red);
+}
+
+.tp-card {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-raised);
+    cursor: pointer;
+    overflow: hidden;
+}
+
+.tp-card:hover {
+    border-color: var(--accent);
+}
+
+.tp-card.selected {
+    border-color: var(--accent);
+    background: var(--vscode-list-activeSelectionBackground);
+}
+
+.tp-card-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.tp-card-name {
+    flex: 1;
+    min-width: 0;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tp-card-id {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+}
+
+.tp-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--fg-dim);
+}
+
+.tp-dot.ok {
+    background: var(--vscode-charts-green);
+}
+
+.tp-dot.degraded {
+    background: var(--vscode-charts-yellow);
+}
+
+.tp-dot.bad {
+    background: var(--vscode-charts-red);
+}
+
+.tp-ports {
+    margin-top: auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.tp-port {
+    height: 16px;
+    padding: 0 5px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg);
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 14px;
+    white-space: nowrap;
+}
+
+.tp-port.muted {
+    color: var(--fg-dim);
+}
+
+/* ===== The panel ===== */
+
+.tp-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--bg-panel);
+}
+
+.tp-panel-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.tp-panel-name {
+    font-weight: 600;
+}
+
+.tp-panel-id {
+    flex: 1;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+}
+
+.tp-panel-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 10px;
+    overflow: hidden;
+}
+
+.tp-panel-body vscode-tabs {
+    flex: 1;
+    min-height: 0;
+}
+
+.tp-panel-body vscode-tab-panel,
+.tp-panel-body vscode-table {
+    height: 100%;
+}
+
+.tp-note {
+    color: var(--fg-dim);
+    font-size: 11px;
+}
+
+.tp-sparks {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.tp-spark-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 11px;
+    color: var(--fg-dim);
+}
+
+.tp-spark-head b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--fg);
+}
