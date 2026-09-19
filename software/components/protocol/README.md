@@ -11,11 +11,12 @@ of the messenger). `gateway.proto` (imports it) is
 the contract between the hub and its websocket clients: `GatewayMessage`,
 a `oneof` over the `NodeTable`, one message per node and per concept (its
 log modules and its lines, its last `Status`, its telemetry descriptors,
-configuration and samples, its tuning table and results), the commands a
-client sends (telemetry, log, tuning, pilot input, node, plus the
-`OtaCommand` of the updater and the `ProfileCommand` of the tuning
-profiles), the `GatewayStatus`, the `OtaState`, the `ProfileList` /
-`Profile`, and `Ack`. No encoded `Envelope` crosses it in either direction:
+configuration and samples, its tuning table and results, its view of the
+wire as `NodeTransport`), the commands a client sends (telemetry, log,
+tuning, pilot input, node, transport, plus the `OtaCommand` of the updater
+and the `ProfileCommand` of the tuning profiles), the `GatewayStatus`, the
+`TransportHealth`, the `OtaState`, the `ProfileList` / `Profile`, and
+`Ack`. No encoded `Envelope` crosses it in either direction:
 the hub decodes everything it hears and publishes typed messages, and a
 client sends typed commands. It never crosses the LAN. Its bodies share one
 nanopb struct, so anything per-node and unbounded gets a message of its own

@@ -149,14 +149,14 @@ Godot project imported once). That page has the commands and the reasons.
 Everything C++ lives under `software/`: the executables at its top level
 (`drone_sim`, `drone_firmware`, `hub`), the libraries in
 `software/components/`. Eleven directories, one rule of dependency flow.
-Five of them are wire concepts (`log`, `telemetry`, `tuning`, `status`,
-`ota`), each holding up to three roles with fixed names: a **Provider** on
-the node that owns the data (an `AbsMessageHandler` that answers requests
-towards `src` and emits its stream to its subscribers), a **Consumer** on a
-node that uses it (pulls the tables, subscribes, keeps what it learnt,
-drops it on node down), and a **Gateway** in the hub only (maps
-`gateway.proto` commands onto one consumer, publishes what it holds as
-typed messages). Providers and consumers build for the F405 (no heap);
+Six of them are wire concepts (`log`, `telemetry`, `tuning`, `status`,
+`ota`, `transport`), each holding up to three roles with fixed names: a
+**Provider** on the node that owns the data (an `AbsMessageHandler` that
+answers requests towards `src` and emits its stream to its subscribers), a
+**Consumer** on a node that uses it (pulls the tables, subscribes, keeps
+what it learnt, drops it on node down), and a **Gateway** in the hub only
+(maps `gateway.proto` commands onto one consumer, publishes what it holds
+as typed messages). Providers and consumers build for the F405 (no heap);
 the one exemption is `ota_consumer`, desktop only. A header-only library
 is still a STATIC target: every header of its own has a source file of the
 same name in `src/` holding a single `#include` of it, which compiles the
@@ -242,10 +242,12 @@ then borrows the flags of an unrelated neighbour). `messaging/` and
   flight-core. The hub is a GATEWAY: its websocket carries binary
   `GatewayMessage`s of the second schema, `gateway.proto`, typed both ways
   and never a raw `Envelope` (client to gateway: `TelemetryCommand`,
-  `LogCommand`, `TuningCommand`, `PilotInput`, `NodeCommand`, `OtaCommand`,
+  `LogCommand`, `TuningCommand`, `PilotInput`, `NodeCommand`,
+  `TransportCommand`, `OtaCommand`,
   `ProfileCommand`; gateway to client: `NodeTable`, `NodeStatus`,
   `NodeLogModules`, `NodeLogLines`, `NodeTelemetry`, `NodeTelemetryConfig`,
-  `TelemetrySamples`, `NodeTuning`, `TuningResult`, `GatewayStatus`,
+  `TelemetrySamples`, `NodeTuning`, `TuningResult`, `NodeTransport`,
+  `TransportHealth`, `GatewayStatus`,
   `OtaState`, `ProfileList`, `Profile`, `Ack`), never JSON. Every body of
   that oneof shares one nanopb struct, so anything per-node and unbounded
   gets a message of its own rather than a field in `Node`. The gateway is

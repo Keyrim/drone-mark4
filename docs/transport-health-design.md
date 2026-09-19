@@ -856,3 +856,22 @@ Step 1 (transport, wire, provider, consumer, compositions):
 - Measured after the change: `mark4_TransportReport_size` 438,
   `mark4_Envelope_size` 449 (under `MAX_PAYLOAD` 512),
   `sizeof(mark4_Envelope)` 384 (the `static_assert` budget is 400).
+
+Step 2 (gateway wire, hub, clients trimmed):
+
+- The thresholds of 6.4 live in `hub/transport_health.hpp` rather than in
+  `hub/gateway_transport.hpp`: the gateway includes the health header (for
+  the sample type the free functions take), so the constants have to sit on
+  that side of the include or the derivation could not read them.
+- The window sample of 6.2 is `TransportSample`, declared in
+  `hub/transport_health.hpp` next to the functions that read it: the
+  project has one namespace, where a bare `Sample` says nothing, and the
+  derivation must name the type without depending on the gateway.
+- `TransportHealth` walks the node table as the gateway's own view holds
+  it: its edges are the transport's node table, in the same order, so 6.5's
+  constructor (which hands the gateway a node id and not the transport) is
+  enough for the table 6.4 asks for.
+- The hub's `TransportProvider` answers a subscribe but nothing ticks it,
+  6.2 giving the gateway the provider for its pages alone. No node carries
+  a transport consumer but the hub, so nothing is asking for that stream
+  yet.

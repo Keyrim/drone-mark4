@@ -7,7 +7,7 @@ clients as typed messages. Nothing raw crosses: a client never sees an
 `Envelope` and never sends one, it sends typed commands the gateway carries
 out through one consumer. What the hub owns besides that is what a browser
 cannot: the `.ota` bundle on disk, the tuning profiles on disk, and the node
-table with its counters and every node's identity (asked for, kept in a
+table with every node's identity (asked for, kept in a
 `DiscoveryDirectory`).
 
 That same TCP port also serves the static pages: the library dispatches on
@@ -15,11 +15,11 @@ the `Upgrade` header, so a page loaded from the hub reaches it back with
 `new WebSocket("ws://" + location.host)` and never learns a port of its own.
 
 It links the `protocol` (both schemas), `transport`, `messaging`,
-`discovery`, `log`, the four consumers, `ota_consumer` and `hub_core` and
+`discovery`, `log`, the five consumers, `ota_consumer` and `hub_core` and
 nothing else: never `flight-core`, never `platform`. Desktop only. The
 transport is polled through a `Messenger`, and what the gateway knows it
 knows through one consumer per concept (`StatusConsumer`, `LogConsumer`,
-`TelemetryConsumer`, `TuningConsumer`, each sized at
+`TelemetryConsumer`, `TuningConsumer`, `TransportConsumer`, each sized at
 `Transport::MAX_NODES`). A consumer names the kinds that carry its
 provider, so the gateway names none: it opens a node when the directory
 learns its identity, subscribes, pulls the tables one page at a time and
@@ -27,10 +27,11 @@ drops everything of a node that goes down.
 
 One gateway per concept sits on each consumer, one file per concept
 (`gateway_status`, `gateway_log`, `gateway_telemetry`, `gateway_tuning`,
-plus `gateway_pilot`, which has no consumer behind it because `Rc` is a
-stream and not a state). Each listens to its consumer, publishes what it
-holds through the composition (`AbsGatewayPublisher`: `broadcast()` and
-`sendTo()`), and carries out the commands of its own concept. Two handlers
+`gateway_transport`, plus `gateway_pilot`, which has no consumer behind it
+because `Rc` is a stream and not a state). Each listens to its consumer,
+publishes what it holds through the composition (`AbsGatewayPublisher`:
+`broadcast()` and `sendTo()`), and carries out the commands of its own
+concept. Two handlers
 of the composition complete them: `OtaReader`, which feeds the update
 consumer the `OtaStatus` / `OtaAck` / `OtaChunkAck` it waits for (that
 consumer was moved as it was and is not a handler itself), and
@@ -118,14 +119,14 @@ page side). Text frames are ignored. There is no JSON anywhere, and no
 encoded `Envelope`: the types a client needs of `mark4.proto` are the ones
 `gateway.proto` imports (`Status`, `TelemetryDescriptor`, `TelemetryData`,
 `LogModuleInfo`, `Log`, `Announce`, `Rc`, `TuningInfo`, `TuningAck`,
-`SimScenario`).
+`SimScenario`, `TransportReport`).
 
 Gateway to client, the state the gateway holds: on every change, and whole
 to a client that connects.
 
 | body | what |
 |------|------|
-| `nodes` | `NodeTable`: the gateway itself first (address empty), then every node the transport hears: id, IPv4 `address`, `port`, `last_seen_ms_ago`, `received` / `lost` / `duplicates` counters, and its `Announce` once the directory has it (every node that appears is sent an `IdentityRequest`, again every 500 ms up to five times; a node that never answers shows without identity). Every second and on every change. |
+| `nodes` | `NodeTable`: identity and presence only - the gateway itself first (address empty), then every node the transport hears: id, IPv4 `address`, `port`, `last_seen_ms_ago`, and its `Announce` once the directory has it (every node that appears is sent an `IdentityRequest`, again every 500 ms up to five times; a node that never answers shows without identity). Every second and on every change. |
 | `node_log_modules` | `NodeLogModules`: one node's whole module table with the level of each, as its `LogConsumer` pulled it; empty for a node that went down. The gateway's own table is published the same way, from its own registry. |
 | `node_log_lines` | `NodeLogLines`: the lines of one node as they arrive, one per message, and on connect the last 256 lines the gateway kept per node, oldest first. The gateway's own lines come from its own node id. |
 | `node_status` | `NodeStatus`: one node's last report, at that node's own cadence. |
@@ -133,6 +134,8 @@ to a client that connects.
 | `node_telemetry_config` | `NodeTelemetryConfig`: the configuration as the node applied it (the ids it kept, the period it clamped) and whether the gateway holds its sample stream. |
 | `telemetry_samples` | `TelemetrySamples`: one sampling instant, to the clients marked on that node and to them alone. |
 | `node_tuning` | `NodeTuning`: one node's whole parameter table. |
+| `node_transport` | `NodeTransport`: one node's own view of the wire, its last report (the transport and messenger counters, one entry per link) plus what the gateway derives from it over a sliding window: a rate per link, one edge per peer it holds (frames per second, loss, duplicates) and its own counters over the window. On every complete report, and every second for the gateway's own. |
+| `transport_health` | `TransportHealth`: the verdict, `VERDICT_OK` to `VERDICT_BAD`, on every node of the table and on the system as the worst of them, with the worst edge (observer, peer, loss), the frames per second over every edge and the flag that raised each verdict. Every second. |
 | `tuning_result` | `TuningResult`: the answer to a write or a read, to every client; a client correlates on the id of its own command and on the parameter id. |
 | `status` | `GatewayStatus`: node id, `wire_hash` (of `mark4.proto` as built), `clients`, `rc_clients` (pilot seats held), `messages_in` (payloads the transport delivered), `commands` and `refused` (client commands carried out and refused), `dropped`. Every second. |
 | `ota_state` | phase, verdict and its sentence, `target_node`, `target_slot`, the loaded bundle's identity, what the board last said (slots, running / active slot), transfer progress in bytes. |
@@ -150,6 +153,7 @@ consumer and answers with an `Ack` when `id` is set.
 | `tuning_command` | `refresh {}`: the parameter table pulled again. `set { id, value }` / `get { id }`: one request, answered by a `tuning_result`. |
 | `pilot_input` | one `Rc` forwarded to the node named, from the gateway's own id (see below). |
 | `node_command` | `reboot {}` or `scenario { SimScenario }`: one request to the node named. |
+| `transport_command` | `subscribe { bool }`: marks this client; the gateway subscribes to the reports of every node while at least one client is marked and gives them back when the last one clears or disconnects. The gateway's own view is published whatever the marks say. |
 | `ota_command` | `START` (bundle path, empty = the build output), `ABORT`, `REVERT`, `STATUS_REQUEST`, each naming `target_node`. The target is fixed for the whole session: while a session runs, a command naming another node is refused; `ABORT` always works. |
 | `profile_command` | `LIST`, `SAVE` (name + values), `LOAD` (name), `PUSH` (name + `target_node`: one parameter write per value). Names are letters, digits, `_` and `-`. |
 
@@ -159,6 +163,32 @@ parameter table, and the node table. The wire mismatch of a node is not a
 field: a page compares `Node.announce.wire_hash` with
 `GatewayStatus.wire_hash`; the hub also logs the mismatch once (a
 `gateway/core` WARN) when the directory learns the identity.
+
+### The wire itself
+
+The transport is a concept like the others: every C++ node carries a
+`TransportProvider` that answers a `TransportSubscribe` and streams what
+its transport and its messenger count once a second, and the gateway holds
+one `TransportConsumer` that merges the pages of each report into one view
+per node. Nothing travels unasked: the gateway subscribes only while a
+client is marked through `transport_command`, so with nobody watching the
+wire costs nothing.
+
+Its own view is the exception, and it needs no wire at all: a messenger
+refuses this node as a destination, so the gateway walks its own provider's
+pages with `fillPage()` and hands each of them to its consumer's
+`accept()`, exactly as the wire would have delivered them. That view is
+always held, which is why a client sees a verdict even with no node marked.
+
+What the gateway adds is the window: the last ten reports of a node, the
+newest read against the oldest, which turns cumulative counters into rates
+(`NodeTransport`) and a loss per directed edge. A loss on the direction A
+to B is only seen by B, so the verdict (`TransportHealth`) is read from
+every view at once: the edges a node observes, the edges observed of it, a
+node that hears another without being heard back, a link that refused
+frames or could not deliver them whole, requests given up on, peers
+expiring or restarting. `NodeTable` carries none of this any more: it is
+identity and presence, and `node_transport` is what each node counts.
 
 ### Piloting
 
