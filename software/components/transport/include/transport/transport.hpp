@@ -60,6 +60,17 @@ namespace mark4
                                      ///< first keepalive
         };
 
+        /// What crossed one link, in both directions, cumulative.
+        struct LinkStats
+        {
+            std::uint32_t framesIn = 0U;  ///< frames the link handed over, header decoded or not
+            std::uint32_t bytesIn = 0U;   ///< their bytes, header included
+            std::uint32_t framesOut = 0U; ///< frames the link took: this node's sends,
+                                          ///< its keepalives and what it relayed
+            std::uint32_t bytesOut = 0U;  ///< their bytes, header included
+            std::uint32_t refused = 0U;   ///< frames the link would not take (a full UART ring)
+        };
+
         /// Receives one payload addressed to this node or to everyone.
         using DeliverFn = void (*)(void *context,
                                    std::uint32_t src,
@@ -142,6 +153,38 @@ namespace mark4
         [[nodiscard]] const Node &node(std::size_t index) const
         {
             return m_nodes[index];
+        }
+
+        /// @return links declared
+        [[nodiscard]] std::size_t linkCount() const
+        {
+            return m_linkCount;
+        }
+
+        /// @param index 0 <= index < linkCount()
+        /// @return one declared link, in declaration order
+        [[nodiscard]] const AbsLink &link(std::size_t index) const
+        {
+            return *m_links[index];
+        }
+
+        /// @param index 0 <= index < linkCount()
+        /// @return what crossed that link since construction
+        [[nodiscard]] const LinkStats &linkStats(std::size_t index) const
+        {
+            return m_linkStats[index];
+        }
+
+        /// @return peers forgotten for silence (NODE_EXPIRY_US), cumulative
+        [[nodiscard]] std::uint32_t expired() const
+        {
+            return m_expired;
+        }
+
+        /// @return peers seen restarting (another boot id), cumulative
+        [[nodiscard]] std::uint32_t restarted() const
+        {
+            return m_restarted;
         }
 
         /// @return frames dropped: shorter than a header, table full, or
@@ -263,6 +306,14 @@ namespace mark4
         /// @param dst node to reach, BROADCAST_NODE for every link
         void sendKeepalive(std::uint32_t dst);
 
+        /// @brief Folds the outcome of one frame handed to one link into
+        ///        that link's counters.
+        /// @param linkIndex link the frame was handed to
+        /// @param ok true when the link took it
+        /// @param frameSize frame size, header included [bytes]
+        /// @return ok, so a caller returns it straight away
+        bool countLinkSend(std::size_t linkIndex, bool ok, std::size_t frameSize);
+
         /// @brief Folds the outcome of one send into the send-side counters.
         /// @param ok true when every link the frame was meant for took it
         /// @param size payload size of the frame [bytes], 0 for a keepalive
@@ -271,7 +322,8 @@ namespace mark4
 
         std::uint32_t m_nodeId;                     ///< this node
         std::uint32_t m_bootId;                     ///< this run of this node
-        std::array<AbsLink *, MAX_LINKS> m_links{}; ///< declared links
+        std::array<AbsLink *, MAX_LINKS> m_links{};      ///< declared links
+        std::array<LinkStats, MAX_LINKS> m_linkStats{}; ///< what crossed each of them
         std::size_t m_linkCount = 0U;               ///< links declared
         std::array<Node, MAX_NODES> m_nodes{};      ///< live nodes, dense prefix
         std::size_t m_nodeCount = 0U;               ///< nodes in m_nodes
@@ -286,6 +338,8 @@ namespace mark4
         std::size_t m_sentBytes = 0U;                          ///< payload bytes of those frames
         std::uint32_t m_refused = 0U;                          ///< sends that reached no link
         std::uint32_t m_relayed = 0U;                          ///< frames forwarded
+        std::uint32_t m_expired = 0U;                          ///< peers forgotten for silence
+        std::uint32_t m_restarted = 0U;                        ///< peers seen restarting
         std::array<std::uint8_t, MAX_FRAME_SIZE> m_rxBuffer{}; ///< frame being handled
         std::array<std::uint8_t, MAX_FRAME_SIZE> m_txBuffer{}; ///< frame being sent
     };

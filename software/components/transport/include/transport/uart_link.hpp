@@ -55,12 +55,27 @@ namespace mark4
                             std::size_t capacity,
                             LinkAddress &fromOut) override;
 
+        /// @return LinkKind::UART
+        [[nodiscard]] LinkKind kind() const override
+        {
+            return LinkKind::UART;
+        }
+
+        /// @return frames the line could not deliver whole: what the framing
+        ///         dropped on a CRC or a length, plus the frames it decoded
+        ///         and the caller's buffer could not hold
+        [[nodiscard]] std::uint32_t rxErrors() const override
+        {
+            return m_parser.errors() + m_oversized;
+        }
+
       private:
         AbsByteStream &m_stream;                          ///< the medium, not owned
         SerialFrameParser m_parser;                       ///< incremental decoder
         std::array<std::uint8_t, READ_CHUNK> m_pending{}; ///< bytes read, not yet fed
         std::size_t m_pendingSize = 0U;                   ///< bytes in m_pending
         std::size_t m_pendingIndex = 0U;                  ///< next byte to feed
+        std::uint32_t m_oversized = 0U; ///< frames too large for the caller's buffer
         std::array<std::uint8_t, SERIAL_MAX_PAYLOAD + SERIAL_FRAME_OVERHEAD>
             m_txFrame{}; ///< frame being sent
     };

@@ -79,6 +79,19 @@ namespace mark4
                             std::size_t capacity,
                             LinkAddress &fromOut) override;
 
+        /// @return LinkKind::UDP
+        [[nodiscard]] LinkKind kind() const override
+        {
+            return LinkKind::UDP;
+        }
+
+        /// @return datagrams larger than the caller's buffer, which this
+        ///         link reads and skips
+        [[nodiscard]] std::uint32_t rxErrors() const override
+        {
+            return m_rxErrors;
+        }
+
         /// @return descriptor of the discovery socket, -1 before init(); for
         ///         a caller that poll()s instead of spinning
         [[nodiscard]] int discoveryFd() const
@@ -121,11 +134,13 @@ namespace mark4
         /// @param[out] bufferOut receives the datagram
         /// @param capacity size of bufferOut
         /// @param[out] fromOut sender
+        /// @param[out] rxErrorsOut counter the oversized datagrams are added to
         /// @return datagram size, 0 when nothing pending or oversized
         static std::size_t ReadOne(int fd,
                                    std::uint8_t *bufferOut,
                                    std::size_t capacity,
-                                   LinkAddress &fromOut);
+                                   LinkAddress &fromOut,
+                                   std::uint32_t &rxErrorsOut);
 
         /// @param from sender of a datagram read on the discovery socket
         /// @return true when it is this node's own data socket
@@ -139,6 +154,7 @@ namespace mark4
         int m_dataFd = -1;                       ///< bound to m_dataPort, -1 when closed
         std::uint16_t m_dataPort = 0U;           ///< ephemeral port the kernel picked
         bool m_loopbackFallback = false;         ///< a broadcast fell back to the loopback
+        std::uint32_t m_rxErrors = 0U;           ///< datagrams larger than the caller's buffer
         std::vector<std::uint32_t> m_localHosts; ///< this host's IPv4 addresses at init(),
                                                  ///< host byte order, echo detection
     };

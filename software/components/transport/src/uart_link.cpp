@@ -37,6 +37,9 @@ namespace mark4
                 }
                 if (frameSize > capacity)
                 {
+                    // Whole on the line, too large for the caller: the frame
+                    // is lost all the same.
+                    ++m_oversized;
                     continue; // too large for the caller: dropped, keep hunting
                 }
                 std::memcpy(bufferOut, m_parser.payload(), frameSize);

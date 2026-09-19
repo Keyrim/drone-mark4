@@ -64,6 +64,18 @@ namespace mark4
             return frame.size();
         }
 
+        /// @return LinkKind::UDP: the fake stands in for a socket link
+        [[nodiscard]] LinkKind kind() const override
+        {
+            return LinkKind::UDP;
+        }
+
+        /// @return 0: nothing is ever torn in memory
+        [[nodiscard]] std::uint32_t rxErrors() const override
+        {
+            return 0U;
+        }
+
         /// @brief Queues one frame for the next receive(), so a test can make
         ///        the transport learn a node and then be able to unicast to
         ///        it: a node the transport never heard from has no address

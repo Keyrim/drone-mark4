@@ -11,6 +11,14 @@
 
 namespace mark4
 {
+    /// What medium a link is: what a report says of it, and what a page
+    /// draws.
+    enum class LinkKind : std::uint8_t
+    {
+        UART = 1, ///< a point-to-point serial line behind the serial framing
+        UDP = 2,  ///< an IPv4 LAN, one shared discovery port and one data socket
+    };
+
     /// Address of a peer on a point-to-point link: there is only one peer.
     struct UartAddress
     {
@@ -57,5 +65,13 @@ namespace mark4
         virtual std::size_t receive(std::uint8_t *bufferOut,
                                     std::size_t capacity,
                                     LinkAddress &fromOut) = 0;
+
+        /// @return what medium this link is
+        [[nodiscard]] virtual LinkKind kind() const = 0;
+
+        /// @return frames the medium could not deliver whole, cumulative: a
+        ///         CRC failure or an impossible length on a serial line, a
+        ///         datagram larger than the caller's buffer on UDP
+        [[nodiscard]] virtual std::uint32_t rxErrors() const = 0;
     };
 } // namespace mark4

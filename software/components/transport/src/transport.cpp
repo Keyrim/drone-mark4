@@ -90,7 +90,9 @@ namespace mark4
             bool all = true;
             for (std::size_t index = 0U; index < m_linkCount; ++index)
             {
-                all = m_links[index]->broadcast(m_txBuffer.data(), frameSize) && all;
+                all = countLinkSend(
+                          index, m_links[index]->broadcast(m_txBuffer.data(), frameSize), frameSize)
+                      && all;
             }
             return countSend(all, size);
         }
@@ -101,8 +103,11 @@ namespace mark4
             ++m_refused;
             return false;
         }
-        return countSend(m_links[target->link]->send(m_txBuffer.data(), frameSize, target->address),
-                         size);
+        return countSend(
+            countLinkSend(target->link,
+                          m_links[target->link]->send(m_txBuffer.data(), frameSize, target->address),
+                          frameSize),
+            size);
     }
 
     void Transport::sendKeepalive(std::uint32_t dst)
@@ -129,7 +134,9 @@ namespace mark4
             bool all = true;
             for (std::size_t index = 0U; index < m_linkCount; ++index)
             {
-                all = m_links[index]->broadcast(m_txBuffer.data(), frameSize) && all;
+                all = countLinkSend(
+                          index, m_links[index]->broadcast(m_txBuffer.data(), frameSize), frameSize)
+                      && all;
             }
             static_cast<void>(countSend(all, 0U));
             return;
@@ -137,8 +144,24 @@ namespace mark4
         const Node *target = findNode(dst);
         static_cast<void>(countSend(
             target != nullptr &&
-                m_links[target->link]->send(m_txBuffer.data(), frameSize, target->address),
+                countLinkSend(
+                    target->link,
+                    m_links[target->link]->send(m_txBuffer.data(), frameSize, target->address),
+                    frameSize),
             0U));
+    }
+
+    bool Transport::countLinkSend(std::size_t linkIndex, bool ok, std::size_t frameSize)
+    {
+        LinkStats &stats = m_linkStats[linkIndex];
+        if (!ok)
+        {
+            ++stats.refused;
+            return false;
+        }
+        ++stats.framesOut;
+        stats.bytesOut += static_cast<std::uint32_t>(frameSize);
+        return true;
     }
 
     bool Transport::countSend(bool ok, std::size_t size)
@@ -166,6 +189,8 @@ namespace mark4
                 {
                     break;
                 }
+                ++m_linkStats[index].framesIn;
+                m_linkStats[index].bytesIn += static_cast<std::uint32_t>(size);
                 onFrame(index, from, size, nowUs, deliver, context);
             }
         }
@@ -274,6 +299,7 @@ namespace mark4
         node->received = 1U;
         node->hops = header.hops;
         node->boot = boot;
+        ++m_restarted;
         notifyDown(gone);
         notifyUp(*node);
     }
@@ -346,7 +372,8 @@ namespace mark4
             {
                 if (index != arrivalLink)
                 {
-                    static_cast<void>(m_links[index]->broadcast(m_rxBuffer.data(), size));
+                    static_cast<void>(countLinkSend(
+                        index, m_links[index]->broadcast(m_rxBuffer.data(), size), size));
                     ++m_relayed;
                 }
             }
@@ -360,7 +387,10 @@ namespace mark4
             ++m_dropped;
             return;
         }
-        static_cast<void>(m_links[target->link]->send(m_rxBuffer.data(), size, target->address));
+        static_cast<void>(
+            countLinkSend(target->link,
+                          m_links[target->link]->send(m_rxBuffer.data(), size, target->address),
+                          size));
         ++m_relayed;
     }
 
@@ -379,6 +409,7 @@ namespace mark4
             --m_nodeCount;
             node = m_nodes[m_nodeCount];
             m_nodes[m_nodeCount] = Node{};
+            ++m_expired;
             notifyDown(gone);
         }
     }

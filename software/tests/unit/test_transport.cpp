@@ -106,6 +106,18 @@ namespace
             return datagram.bytes.size();
         }
 
+        /// @return LinkKind::UDP: the bus stands in for a socket link
+        [[nodiscard]] mark4::LinkKind kind() const override
+        {
+            return mark4::LinkKind::UDP;
+        }
+
+        /// @return 0: nothing is ever torn on a virtual bus
+        [[nodiscard]] std::uint32_t rxErrors() const override
+        {
+            return 0U;
+        }
+
         [[nodiscard]] std::uint32_t sent() const
         {
             return m_sent;
