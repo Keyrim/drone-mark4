@@ -911,6 +911,30 @@ Step 3 (the pages):
 - The hub's MIME table gained `.ttf` (`font/ttf`) for the codicon font
   the page links.
 
+Step 5 (streams, C++ and GDScript):
+
+- 10.1 states rules, not methods. Both ports gained two helpers so the two
+  sides of the rule read once: `Transport::track()` / `_track()`, which take
+  one frame into the stream its destination names, and
+  `Transport::nextSeq()` / `_next_seq()`, which take the next sequence of
+  one stream.
+- A unicast to a destination the transport does not know consumes no
+  sequence any more: the entry has to be found before the header is
+  written, so the refusal happens first. It used to consume one of the
+  single counter. The counters `send()` and `sendKeepalive()` move
+  (`dropped`, `refused`) are unchanged.
+- A consequence of 10.2 worth knowing before 10.5 and 10.6 are written:
+  `unicast_heard` is true for nearly every direct peer, because the
+  transport's own greeting to a newcomer (the unicast keepalive of the
+  Presence rule) is a frame of that stream. An edge reads as keepalive only
+  while the peer has sent that greeting and nothing since, which is the
+  case of a peer that learnt this node and never addressed it again.
+- Nothing else departs. `test_transport.cpp` needed one line
+  (`node.lastSeq` became `node.unicastSeq`); every other assertion on
+  `lost`, `duplicates` and `received` holds unchanged under the new rule,
+  and `sim-godot/tests/transport_check.gd` and `test_plant_link.cpp`
+  asserted on nothing the rule moves.
+
 ## 10. Sequence per stream, and what a percentage is worth
 
 Decided on 2026-09-19, after the first bench run of the page: with a hub,
