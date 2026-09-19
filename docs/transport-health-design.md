@@ -935,6 +935,27 @@ Step 5 (streams, C++ and GDScript):
   and `sim-godot/tests/transport_check.gd` and `test_plant_link.cpp`
   asserted on nothing the rule moves.
 
+Step 5 (streams, Dart):
+
+- `_emit()` numbers the frame after the destination is resolved, so a
+  unicast to a node the table does not hold is refused without consuming a
+  sequence; the old code took the node's single counter before the lookup.
+  The unicast sequence lives on the destination entry, which leaves no
+  other order.
+- The stream accounting of `_learn()` is a private `_account()`, with
+  `_takeSeq()` next to it, which `_onBootId()` calls too: Dart rebuilds a
+  reincarnated entry field by field where the C++ assigns a fresh `Node{}`,
+  so the reset of `txSeq` and of both streams is written out.
+- `frame.dart`: the doc of `FrameHeader.seq` read "per-sender counter",
+  the words of `transport/frame.hpp`, and now names the stream. 10.4 named
+  `transport_node.dart` alone, but the line had become false.
+- `docs/mobile-app.md` describes the same node ("last sequence", the
+  `(src, seq)` duplicate drop) and says one sequence per stream and
+  `(src, dst, seq)` now, for the same reason.
+- No test was adapted: nothing under `software/mobile/test/` exercises the
+  real `TransportNode` (the suite runs the managers over
+  `FakeTransportNode`), so no test asserted on the old rule.
+
 ## 10. Sequence per stream, and what a percentage is worth
 
 Decided on 2026-09-19, after the first bench run of the page: with a hub,

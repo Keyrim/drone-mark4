@@ -153,8 +153,9 @@ for the conventions). What the first iteration put in place:
   ephemeral data socket every frame leaves from, the loopback fallback
   when a broadcast has no route, and the drop of this node's own echo);
   `transport_node.dart` the node itself: the table of at most 32 nodes
-  (address, last sequence, hops, received / lost / duplicates), learning
-  from any frame heard, the `(src, seq)` duplicate drop, the keepalive
+  (address, one sequence per stream each way, hops, received / lost /
+  duplicates), learning from any frame heard, the `(src, dst, seq)`
+  duplicate drop, the keepalive
   broadcast every second and unicast once to a newcomer - a flagged frame
   carrying this run's boot id, so a node that restarts under the expiry is
   seen going down and up again rather than never leaving - the node
