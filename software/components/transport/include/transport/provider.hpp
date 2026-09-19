@@ -150,6 +150,7 @@ namespace mark4
                 peer.received = node.received;
                 peer.lost = node.lost;
                 peer.duplicates = node.duplicates;
+                peer.unicast_heard = node.unicastHeard;
                 // A frame stamped after this instant (a clock that went
                 // backwards) reads as no age at all rather than as an
                 // enormous one.

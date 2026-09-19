@@ -499,6 +499,9 @@ message TransportPeer {
   uint32 lost = 5;
   uint32 duplicates = 6;
   uint32 age_ms = 7;      // since the last frame from it
+  // The peer has sent this node at least one unicast since it was learnt:
+  // the edge carries more than the keepalive.
+  bool unicast_heard = 8;
 }
 
 // Stream: one node's view of the transport, every second, to the nodes
