@@ -1,6 +1,6 @@
 // The bench view: what is not a node. Presence and start/stop of the local
 // processes belong to the nodes view, which reads the gateway; what is left
-// here is the hub URL (an HTTP ping, used by the bench session) and the two
+// here is the hub URL (an HTTP ping, used by the bench session) and the
 // pages to dock.
 
 import * as http from "node:http";
@@ -49,6 +49,7 @@ export class BenchProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
         return [
             pageItem("control page", "mark4.openControl", "browser"),
             pageItem("plots page", "mark4.openPlots", "graph-line"),
+            pageItem("transport page", "mark4.openTransport", "type-hierarchy-sub"),
         ];
     }
 }

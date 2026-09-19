@@ -217,6 +217,12 @@
                 "icon": "$(graph-line)"
             },
             {
+                "command": "mark4.openTransport",
+                "title": "Open Transport Page",
+                "category": "Mark4",
+                "icon": "$(type-hierarchy-sub)"
+            },
+            {
                 "command": "mark4.benchSession",
                 "title": "Bench Session",
                 "category": "Mark4",
