@@ -213,10 +213,12 @@ then borrows the flags of an unrelated neighbour). `messaging/` and
   cannot read `reserved`, so a retired field number is named in a comment
   instead). Three kinds of message travel on it. Streams (`Status`, the
   small fixed report of what the drone is doing, every 10 frames;
-  `TelemetryData`; `Log` lines; `Rc`), sent once, never acknowledged, only
-  to the nodes that subscribed (`StatusSubscribe`, `LogSubscribe`,
-  `TelemetrySubscribe { enabled }`, answered by the state as held:
-  `StatusSubscription`, `LogSubscription`, `TelemetrySubscription`).
+  `TelemetryData`; `Log` lines; `Rc`; `TransportReport`, one node's view of
+  the wire every second, its peer table by pages), sent once, never
+  acknowledged, only to the nodes that subscribed (`StatusSubscribe`,
+  `LogSubscribe`, `TelemetrySubscribe { enabled }`, `TransportSubscribe`,
+  answered by the state as held: `StatusSubscription`, `LogSubscription`,
+  `TelemetrySubscription`, `TransportSubscription`).
   Requests, every one-shot in either direction: a message carrying a
   non-zero `Envelope.request_id` (field 100) that its sender resends until
   the destination's messenger answers `RequestAck` (tag `ack`) with the
@@ -305,7 +307,14 @@ then borrows the flags of an unrelated neighbour). `messaging/` and
   relay's address). The firmware emits nothing unasked: its providers
   answer the node that asked and stream to the nodes that subscribed, and
   it takes commands through a `Messenger` polled once per flight frame,
-  each message going to the handler of its tag.
+  each message going to the handler of its tag. The concept of its own
+  state lives next to the leaf: `TransportProvider` (`transport_provider`)
+  answers a `TransportSubscribe` and streams one `TransportReport` a second
+  to its subscribers (the transport's and the messenger's counters, one
+  entry per link with its medium kind, its frames and bytes each way and
+  its receive errors, and the peer table by pages of 4), and
+  `TransportConsumer<N>` (`transport_consumer`) merges those pages into one
+  view per node.
 - `messaging/` - static lib, the one place an `Envelope` meets the transport
   in both directions (`software/components/messaging/README.md`). Links
   `transport` and `protocol`, no heap, builds for the F405. An

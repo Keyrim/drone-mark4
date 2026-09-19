@@ -68,6 +68,8 @@ transport.poll(nowUs, deliver, context); // drain, learn, deliver, relay, expire
 transport.isAlive(id); transport.findNode(id); transport.nodeCount(); transport.node(i);
 transport.dropped(); transport.relayed();
 transport.sent(); transport.sentBytes(); transport.refused(); // this node's own sends
+transport.expired(); transport.restarted();                   // churn in the node table
+transport.linkCount(); transport.link(i); transport.linkStats(i); // one link, both directions
 
 class Presence final : public AbsPresenceListener // up to MAX_LISTENERS = 4
 {
@@ -88,6 +90,17 @@ destination, or a medium that would not take the frame (a full UART
 ring). They are what a
 composition reports as its own output health, which is why they live here
 rather than in a wrapper around `send()`.
+
+Next to them, one `LinkStats` per declared link, indexed like the links
+and cumulative: `framesIn` / `bytesIn` (every frame a link handed over,
+whether or not its header decoded), `framesOut` / `bytesOut` (every frame
+a link took, this node's sends, its keepalives and what it relayed) and
+`refused` (the frames the medium would not take). Whole frames, header
+included, where the global counters describe payloads: the two answer
+different questions, "what does this node say" and "what crosses this
+wire". Two more counters describe the churn of the node table: `expired()`
+counts the peers forgotten for silence and `restarted()` the peers seen
+coming back with another boot id.
 
 `poll()` is the only place anything happens, and `nowUs` comes from the
 caller: the transport never reads a clock. Every frame received, whatever
@@ -163,7 +176,13 @@ a broadcast.
 
 - `AbsLink` (`transport/link.hpp`): `send(frame, size, address)`,
   `broadcast(frame, size)`, `receive(buffer, capacity, addressOut)`, all
-  non-blocking. `LinkAddress` is a `std::variant<UartAddress, UdpAddress>`
+  non-blocking, plus `kind()` (`LinkKind::UART` or `LinkKind::UDP`, what a
+  report says of the medium) and `rxErrors()`, the frames the medium could
+  not deliver whole: a CRC failure or an impossible announced length on a
+  serial line (`SerialFrameParser::errors()`), plus the frames larger than
+  the caller's buffer, and the oversized datagrams on UDP. A stray byte
+  while hunting for the sync pair is not one of them: that is the normal
+  resynchronization. `LinkAddress` is a `std::variant<UartAddress, UdpAddress>`
   (an IPv4 host and port for UDP, an empty struct for a UART): the
   transport stores it per node and hands it back to the link the node was
   heard on without ever looking inside; a link reads its own alternative
@@ -203,6 +222,41 @@ a broadcast.
 - `UdpLink` drops the echo of its own broadcasts (own data port, one of
   the host's addresses) before the transport sees them: a relay would
   otherwise count every frame it forwards as a duplicate of its source.
+
+## Report
+
+`transport/provider.hpp` and `transport/consumer.hpp` put everything above
+on the wire, as the two roles every concept of the project holds. The
+targets sit next to the leaf, like the log library's: `transport_provider`
+and `transport_consumer`, header-only, no heap, the F405 included.
+
+`TransportProvider` (`transport_provider`) is the handler of
+`TransportSubscribe`: it answers with the `TransportSubscription` it
+holds, at most `MAX_SUBSCRIBERS` (2) of them, and `tick(nowUs)` sends one
+`TransportReport` every `REPORT_PERIOD_US` (1 s) to each. With no
+subscriber nothing is packed at all. One report is this node's view of the
+wire: the transport's own counters, the messenger's, one entry per link
+(kind, the `LinkStats`, `rxErrors()`) and the peer table. That table does
+not fit one frame, so it travels by pages of `PEERS_PER_PAGE` (4) peers,
+all of them in the same tick, every page carrying the counters again and
+naming the slice it holds (`peer_cursor`, `peer_total`). Everything is
+cumulative and never a rate: a lost report skews nothing, whoever reads
+takes the differences. `fillPage()` is public, so a node that consumes its
+own report walks the pages without the wire.
+
+`TransportConsumer<N>` (`transport_consumer`) is the other side. It is an
+`AbsDirectoryListener`: an identity of a kind that carries a provider
+(`FIRMWARE`, `DRONE_SIM`, `RELAY`, `GATEWAY`) with a matching wire hash
+opens an entry, and `setWanted(true)` subscribes to every entry open now
+and later. `setWanted(false)` unsubscribes and forgets the reports held,
+so nothing stale is published. The pages of one report are merged into one
+peer table, and the entry becomes the report when the last page arrives:
+a page with cursor 0 always opens a new merge, and a page whose cursor is
+not where the merge stood is dropped, which abandons that report and
+starts over on the next one. An `AbsTransportConsumerListener` (at most
+`MAX_LISTENERS`, 2) hears `onReport()` and `onForgotten()`. A node that
+consumes its own report has no wire to itself: `openLocal(id)` opens the
+entry and `accept()` feeds it the pages directly.
 
 ## GDScript port
 
