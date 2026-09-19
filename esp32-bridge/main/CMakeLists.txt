@@ -6,8 +6,9 @@
 # dispatches what is addressed to this node, the Discovery that answers who
 # it is (not the directory: this node asks nobody), the log library, whose
 # console sink is plain stdio and serves the USB serial port as it serves a
-# desktop terminal, and the header-only bricks (ota/, services/). The
-# desktop-only node_id.cpp (/dev/urandom) stays out.
+# desktop terminal, its provider on the messenger (the lines, the module
+# table, the levels), and the header-only bricks (ota/). The desktop-only
+# node_id.cpp (/dev/urandom) stays out.
 set(DRONE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../software/components")
 set(DRONE_TRANSPORT "${DRONE_ROOT}/transport")
 set(DRONE_LOG "${DRONE_ROOT}/log")
@@ -23,11 +24,11 @@ idf_component_register(SRCS "bridge_main.c"
                             "${DRONE_ROOT}/discovery/src/discovery.cpp"
                             "${DRONE_LOG}/src/module.cpp"
                             "${DRONE_LOG}/src/wire.cpp"
+                            "${DRONE_LOG}/src/provider.cpp"
                             "${DRONE_LOG}/src/posix/console_sink_posix.cpp"
                        INCLUDE_DIRS "." "${DRONE_TRANSPORT}/include"
                                     "${DRONE_ROOT}/messaging/include"
                                     "${DRONE_ROOT}/discovery/include"
-                                    "${DRONE_ROOT}/services/include"
                                     "${DRONE_LOG}/include"
                                     "${DRONE_OTA}/include")
 

@@ -4,25 +4,28 @@ extends RefCounted
 ## GDScript port of software/components/discovery/: who is who on the wire.
 ##
 ## The transport says a node appeared, this asks it who it is: one
-## IdentityRequest unicast to it, sent again every IDENTITY_TIMEOUT_US up
-## to IDENTITY_RETRIES times, and the node is left MUTE when it never
-## answers. An Announce coming back makes the entry KNOWN and the identity
+## IdentityRequest unicast to it as a request of Mark4Requests, whose
+## policy {IDENTITY_TIMEOUT_US, IDENTITY_RETRIES} sends it again every
+## 500 ms up to 5 times, and the node is left MUTE when the helper gives
+## up. An Announce coming back makes the entry KNOWN and the identity
 ## signal carries its kind and name. The other direction is the same
 ## question asked of this plant: an IdentityRequest addressed to it is
-## answered with its own Announce, unicast to whoever asked. Nothing is
-## broadcast, nothing is unsolicited; presence is the transport's keepalive.
+## answered with its own Announce, unicast to whoever asked and numbered
+## like every answer that matters. Nothing is broadcast, nothing is
+## unsolicited; presence is the transport's keepalive.
 ##
 ## Nothing here reads a clock: tick(now_us) takes the instant from the
-## caller, like DiscoveryDirectory::tick(). Every payload of the LAN goes
-## through the handler, telemetry at 500 Hz included, so the body is told
-## from its tag bytes and the codec only runs on the two payloads that
-## concern it.
+## caller, like DiscoveryDirectory::tick(), and it holds no retry of its
+## own: the timeout and the count are the request helper's. Every payload
+## of the LAN goes through the handler, telemetry at 500 Hz included, so
+## the body is told from its tag bytes and the codec only runs on the two
+## payloads that concern it.
 
 const Mark4 := preload("res://scripts/gen/mark4.gd")
 
-## Silence after a request before it is sent again [us].
+## Silence after a request before the helper sends it again [us].
 const IDENTITY_TIMEOUT_US := 500_000
-## Requests sent to a node before giving up on it.
+## Requests sent to a node before the helper gives up on it.
 const IDENTITY_RETRIES := 5
 
 ## Where this stands with a node.
@@ -33,45 +36,43 @@ signal identity(node_id: int, kind: int, name: String)
 ## The transport expired the node and its entry is gone.
 signal forgotten(node_id: int)
 
-## Node id -> {state, kind, name, wire_hash, asked_us, requests}.
+## Node id -> {state, kind, name, wire_hash, asked_us, requests, request}.
 var entries: Dictionary = {}
 
 var _transport: Mark4Transport = null
-var _self_announce := PackedByteArray()
-var _request := PackedByteArray()
+var _requests: Mark4Requests = null
+var _self_announce: Mark4.Envelope = null
+var _request: Mark4.Envelope = null
 
 
 ## Bind this directory to the transport it asks and answers on.
 ## @param transport transport node of this process.
-## @param self_announce the encoded Announce this node answers with.
-func setup(transport: Mark4Transport, self_announce: PackedByteArray) -> void:
+## @param self_announce the Announce envelope this node answers with; the
+##        helper numbers and encodes it once per answer.
+## @param requests the request helper that numbers, resends and gives up.
+func setup(
+	transport: Mark4Transport, self_announce: Mark4.Envelope, requests: Mark4Requests
+) -> void:
 	_transport = transport
 	_self_announce = self_announce
-	var envelope := Mark4.Envelope.new()
-	var _body: Mark4.IdentityRequest = envelope.new_identity_request()
-	_request = envelope.to_bytes()
+	_requests = requests
+	_request = Mark4.Envelope.new()
+	var _body: Mark4.IdentityRequest = _request.new_identity_request()
 	transport.node_up.connect(_on_node_up)
 	transport.node_down.connect(_on_node_down)
 	transport.payload_received.connect(_on_payload)
+	requests.request_failed.connect(_on_request_failed)
 
 
-## Ask, retry and give up on time. Call it from the loop, after the
-## transport's poll.
+## Start the first request of every entry nobody has asked yet. Call it
+## from the loop, after the transport's poll. Once a request is with the
+## helper, the resends and the giving up are its business.
 ## @param now_us caller's monotonic instant [us].
 func tick(now_us: int) -> void:
 	for node_id: int in entries:
 		var entry: Dictionary = entries[node_id]
-		if entry["state"] != State.PENDING:
-			continue
-		if entry["requests"] == 0:
+		if entry["state"] == State.PENDING and entry["requests"] == 0:
 			_ask(node_id, entry, now_us)
-			continue
-		if now_us - entry["asked_us"] < IDENTITY_TIMEOUT_US:
-			continue
-		if entry["requests"] < IDENTITY_RETRIES:
-			_ask(node_id, entry, now_us)
-			continue
-		entry["state"] = State.MUTE
 
 
 ## Node kind of a node, or -1 while its identity is not known.
@@ -102,6 +103,7 @@ func _on_node_up(node_id: int) -> void:
 		"wire_hash": 0,
 		"asked_us": 0,
 		"requests": 0,
+		"request": 0,
 	}
 
 
@@ -123,14 +125,16 @@ func _on_payload(src: int, payload: PackedByteArray) -> void:
 		_take_announce(src, payload)
 
 
-## Answer one IdentityRequest with this node's Announce.
+## Answer one IdentityRequest with this node's Announce, as a request of
+## its own: an answer that matters is acknowledged like everything that has
+## to arrive.
 func _answer(src: int, payload: PackedByteArray) -> void:
 	var envelope := Mark4.Envelope.new()
 	if envelope.from_bytes(payload) != Mark4.PB_ERR.NO_ERRORS:
 		return
 	if envelope.get_body_case() != Mark4.Envelope.BodyCase.IDENTITY_REQUEST:
 		return
-	var _sent := _transport.send(src, _self_announce)
+	var _id := _requests.request(src, _self_announce)
 
 
 ## Store an Announce as the identity of the node it came from.
@@ -155,6 +159,7 @@ func _take_announce(src: int, payload: PackedByteArray) -> void:
 			"wire_hash": 0,
 			"asked_us": 0,
 			"requests": 0,
+			"request": 0,
 		}
 		entries[src] = entry
 	var changed: bool = (
@@ -172,9 +177,24 @@ func _take_announce(src: int, payload: PackedByteArray) -> void:
 		identity.emit(src, kind, name)
 
 
-## Send one IdentityRequest and count it, whether or not the frame left:
-## the transport may refuse it, the retry covers that.
+## Start one IdentityRequest on the helper. A refusal (the transport does
+## not hold the node yet) leaves the entry untouched and the next tick asks
+## again.
 func _ask(node_id: int, entry: Dictionary, now_us: int) -> void:
-	var _sent := _transport.send(node_id, _request)
+	var id := _requests.request(node_id, _request, IDENTITY_TIMEOUT_US, IDENTITY_RETRIES)
+	if id == 0:
+		return
 	entry["asked_us"] = now_us
-	entry["requests"] += 1
+	entry["requests"] = 1
+	entry["request"] = id
+
+
+## The helper gave up on a request. The id is checked because every request
+## of this process comes out of the same signal: only the one this entry is
+## waiting for leaves a still PENDING node MUTE.
+func _on_request_failed(dst: int, id: int) -> void:
+	var entry: Dictionary = entries.get(dst, {})
+	if entry.is_empty() or entry["state"] != State.PENDING or entry["request"] != id:
+		# Answered in the meantime, gone, or another request of this node.
+		return
+	entry["state"] = State.MUTE

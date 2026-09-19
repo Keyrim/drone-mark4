@@ -3,7 +3,7 @@
     "displayName": "Mark4",
     "description": "Bench tooling: build and run the apps, drive the bench, dock the hub pages in the editor.",
     "publisher": "tmagne",
-    "version": "0.2.3",
+    "version": "0.0.0",
     "private": true,
     "type": "module",
     "packageManager": "pnpm@11.21.0",
@@ -16,7 +16,7 @@
     "main": "./dist/extension.cjs",
     "scripts": {
         "gen": "mkdir -p src/gen && python3 -m grpc_tools.protoc -I ../../software/components/protocol --plugin=protoc-gen-es=./node_modules/.bin/protoc-gen-es --es_out=src/gen --es_opt=target=ts mark4.proto gateway.proto",
-        "build": "pnpm gen && node esbuild.js",
+        "build": "pnpm gen && node esbuild.js && ./source_hash.sh > dist/source-hash",
         "watch": "pnpm gen && node esbuild.js --watch",
         "typecheck": "pnpm gen && tsc --noEmit",
         "test": "pnpm gen && node --import tsx --test test/*.test.ts",

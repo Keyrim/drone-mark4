@@ -25,7 +25,8 @@ mark4.Status.motor                  max_count:4 fixed_count:true
 # either is not an option, lowering them is.
 mark4.TelemetryDescriptor.name      max_size:41
 mark4.TelemetryDescriptors.descriptors  max_count:6
-mark4.TelemetryEnable.ids           max_count:64
+mark4.TelemetryConfigure.ids        max_count:64
+mark4.TelemetryConfig.ids           max_count:64
 mark4.TelemetryData.values          max_count:32
 
 mark4.Log.text                      max_size:97
@@ -41,6 +42,7 @@ mark4.SimScenario.velocity_mps            max_count:3 fixed_count:true
 mark4.SimScenario.angular_velocity_rad_s  max_count:3 fixed_count:true
 
 mark4.TuningInfo.name               max_size:17
+mark4.TuningInfos.infos             max_count:8
 
 mark4.OtaSlotStatus.git_hash        max_size:9
 mark4.OtaStatus.slots               max_count:2 fixed_count:true

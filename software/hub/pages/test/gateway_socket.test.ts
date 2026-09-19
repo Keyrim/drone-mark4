@@ -1,16 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { create, toBinary } from "@bufbuild/protobuf";
+import { create } from "@bufbuild/protobuf";
 
-import { GatewayMessageSchema } from "../src/gen/gateway_pb";
-import { EnvelopeSchema, NodeKind } from "../src/gen/mark4_pb";
+import { GatewayMessageSchema, type NodeStatus } from "../src/gen/gateway_pb";
+import { NodeKind } from "../src/gen/mark4_pb";
 import {
     GatewaySocket,
     type SocketLike,
     decodeGatewayMessage,
     encodeGatewayMessage,
-    frameMessage,
 } from "../src/shared/gateway_socket";
 
 /** A websocket that records what was sent and lets the test push messages in. */
@@ -55,39 +54,45 @@ class FakeSocket implements SocketLike {
 }
 
 test("a GatewayMessage round trips through the binary framing", () => {
-    const envelope = create(EnvelopeSchema, { body: { case: "rc", value: { arm: true, throttle: 0.25 } } });
-    const bytes = encodeGatewayMessage(frameMessage(9, envelope, 77));
-    const back = decodeGatewayMessage(bytes);
+    const command = create(GatewayMessageSchema, {
+        id: 77,
+        body: {
+            case: "pilotInput",
+            value: { node: 9, rc: { arm: true, throttle: 0.25 } },
+        },
+    });
+    const back = decodeGatewayMessage(encodeGatewayMessage(command));
     assert.ok(back !== null);
     assert.equal(back.id, 77);
-    assert.equal(back.body.case, "frame");
-    if (back.body.case === "frame") {
-        assert.equal(back.body.value.dst, 9);
-        assert.deepEqual(back.body.value.payload, toBinary(EnvelopeSchema, envelope));
+    assert.equal(back.body.case, "pilotInput");
+    if (back.body.case === "pilotInput") {
+        assert.equal(back.body.value.node, 9);
+        assert.equal(back.body.value.rc?.arm, true);
+        assert.equal(back.body.value.rc?.throttle, 0.25);
     }
     assert.equal(decodeGatewayMessage(new Uint8Array([0xff, 0xff, 0xff])), null);
 });
 
-test("frames are decoded into envelopes with their source, other bodies dispatch by case", () => {
+test("every body dispatches by case, and a handler can be forgotten", () => {
     const fake = new FakeSocket();
     const socket = new GatewaySocket(() => fake);
     fake.open();
     assert.equal(fake.binaryType, "arraybuffer");
     assert.equal(socket.connectionState(), "open");
 
-    const envelopes: [number, string][] = [];
-    socket.onEnvelope((src, envelope) => envelopes.push([src, envelope.body.case ?? "none"]));
+    const reports: [number, number][] = [];
+    const onStatus = (report: NodeStatus): void =>
+        void reports.push([report.node, report.status?.throwCount ?? -1]);
+    socket.on("nodeStatus", onStatus);
     const tables: number[] = [];
     socket.on("nodes", (table) => tables.push(table.nodes.length));
 
-    const status = create(EnvelopeSchema, { body: { case: "status", value: { throwCount: 1 } } });
-    fake.receive(
-        encodeGatewayMessage(
-            create(GatewayMessageSchema, {
-                body: { case: "frame", value: { src: 42, dst: 0, payload: toBinary(EnvelopeSchema, status) } },
-            })
-        )
+    const report = encodeGatewayMessage(
+        create(GatewayMessageSchema, {
+            body: { case: "nodeStatus", value: { node: 42, status: { throwCount: 1 } } },
+        })
     );
+    fake.receive(report);
     fake.receive(
         encodeGatewayMessage(
             create(GatewayMessageSchema, {
@@ -97,8 +102,13 @@ test("frames are decoded into envelopes with their source, other bodies dispatch
     );
     // Garbage is ignored, not thrown
     fake.receive(new Uint8Array([1, 2, 3, 4, 5]));
-    assert.deepEqual(envelopes, [[42, "status"]]);
+    assert.deepEqual(reports, [[42, 1]]);
     assert.deepEqual(tables, [1]);
+
+    // A widget leaving with its node stops hearing about it
+    socket.off("nodeStatus", onStatus);
+    fake.receive(report);
+    assert.deepEqual(reports, [[42, 1]]);
 });
 
 test("a request carries a correlation id and resolves on the ack echoing it", async () => {
@@ -106,12 +116,14 @@ test("a request carries a correlation id and resolves on the ack echoing it", as
     const socket = new GatewaySocket(() => fake);
     fake.open();
 
-    const envelope = create(EnvelopeSchema, { body: { case: "reboot", value: {} } });
-    const pending = socket.requestEnvelope(5, envelope);
+    const reboot = create(GatewayMessageSchema, {
+        body: { case: "nodeCommand", value: { node: 5, action: { case: "reboot", value: true } } },
+    });
+    const pending = socket.request(reboot);
     assert.equal(fake.sent.length, 1);
     const sent = decodeGatewayMessage(fake.sent[0]!)!;
     assert.notEqual(sent.id, 0);
-    assert.equal(sent.body.case, "frame");
+    assert.equal(sent.body.case, "nodeCommand");
 
     // An ack for another tab is not ours
     fake.receive(
@@ -132,7 +144,9 @@ test("a request carries a correlation id and resolves on the ack echoing it", as
     assert.equal(ack.error, "node 5 is not reachable");
 
     // Fire and forget sends without an id
-    socket.sendEnvelope(5, envelope);
+    socket.send(
+        create(GatewayMessageSchema, { body: { case: "pilotInput", value: { node: 5, rc: {} } } })
+    );
     assert.equal(decodeGatewayMessage(fake.sent[1]!)!.id, 0);
 });
 

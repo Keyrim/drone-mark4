@@ -2,34 +2,18 @@
  * The tunable parameter table of one node, and the profiles the gateway
  * stores beside it.
  *
- * The table is paged: TuningList only asks for a start index, and the
- * process unrolls one TuningInfo per flight frame. The ack to the request
- * says it went out, nothing more, so the page watches the descriptions
- * arrive and resumes from the last index it saw when they stop coming - a
- * lost datagram costs one more request, never the whole table.
- *
- * A TuningAck is broadcast by the node and carries no correlation id, so it
- * is matched on (node, id): the answer to a write on this node, for this
- * parameter.
+ * The gateway holds that table: it pulls it from the node page by page and
+ * publishes it whole as NodeTuning, so this panel asks for a refresh and
+ * paints what comes back. A write is a TuningCommand, and its answer is a
+ * TuningResult the gateway publishes to every client, matched on (node,
+ * parameter id): the value in effect afterwards, refused or not.
  */
 
 import { create } from "@bufbuild/protobuf";
 
-import { GatewayMessageSchema, ProfileCommand_Op } from "../gen/gateway_pb";
-import {
-    type Envelope,
-    EnvelopeSchema,
-    type TuningAck,
-    type TuningInfo,
-    TuningStatus,
-} from "../gen/mark4_pb";
+import { GatewayMessageSchema, type NodeTuning, ProfileCommand_Op, type TuningResult } from "../gen/gateway_pb";
+import { type TuningAck, TuningStatus } from "../gen/mark4_pb";
 import type { GatewaySocket } from "../shared/gateway_socket";
-
-/** No description for this long means the page asks again [ms]. */
-const RESUME_AFTER_MS = 1500;
-
-/** Requests a stalled table gets before the page gives up on it. */
-const MAX_RESUMES = 5;
 
 const STATUS_NAMES: Record<number, string> = {
     [TuningStatus.OK]: "ok",
@@ -52,6 +36,14 @@ interface Row {
     tr: HTMLTableRowElement;
     input: HTMLInputElement;
     status: HTMLElement;
+}
+
+/** A TuningCommand for one node: the table again, or one parameter. */
+function tuningCommand(
+    node: number,
+    action: { case: "refresh"; value: boolean } | { case: "set"; value: { id: number; value: number } } | { case: "get"; value: { id: number } }
+) {
+    return create(GatewayMessageSchema, { body: { case: "tuningCommand", value: { node, action } } });
 }
 
 /** A ProfileCommand message, the gateway-local service behind the profiles. */
@@ -80,17 +72,14 @@ export class TuningPanel {
     private loaded: Map<number, number> | null = null;
     private loadedName = "";
     private count = 0;
-    private highestIndex = -1;
-    private resumes = 0;
-    private watchdog: ReturnType<typeof setInterval> | null = null;
-    private readonly onEnvelope = (src: number, envelope: Envelope): void => {
-        if (src !== this.nodeId) {
-            return;
+    private readonly onTable = (published: NodeTuning): void => {
+        if (published.node === this.nodeId) {
+            this.onParams(published);
         }
-        if (envelope.body.case === "tuningInfo") {
-            this.onInfo(envelope.body.value);
-        } else if (envelope.body.case === "tuningAck") {
-            this.onAck(envelope.body.value);
+    };
+    private readonly onResult = (result: TuningResult): void => {
+        if (result.node === this.nodeId && result.ack !== undefined) {
+            this.onAck(result.ack);
         }
     };
 
@@ -151,7 +140,8 @@ export class TuningPanel {
         this.root.appendChild(bar);
         this.root.appendChild(scroll);
 
-        socket.onEnvelope(this.onEnvelope);
+        socket.on("nodeTuning", this.onTable);
+        socket.on("tuningResult", this.onResult);
         socket.on("profiles", (list) => this.onProfiles(list.names));
         socket.on("profile", (profile) => {
             this.loaded = new Map(profile.values.map((pair) => [pair.id, pair.value]));
@@ -168,8 +158,8 @@ export class TuningPanel {
 
     /** The widget is leaving: stop listening for the node's answers. */
     destroy(): void {
-        this.socket.offEnvelope(this.onEnvelope);
-        this.stopWatchdog();
+        this.socket.off("nodeTuning", this.onTable);
+        this.socket.off("tuningResult", this.onResult);
     }
 
     /** Drops the table: it belongs to the process that answered it. */
@@ -178,69 +168,33 @@ export class TuningPanel {
         this.rows.clear();
         this.body.replaceChildren();
         this.count = 0;
-        this.highestIndex = -1;
         this.note.textContent = "";
-        this.stopWatchdog();
     }
 
-    /** Walks the table of the node from the start. */
+    /** Asks the gateway to pull the node's table again. */
     refresh(): void {
-        this.clear();
-        this.resumes = 0;
-        this.request(0);
-        this.stopWatchdog();
-        this.watchdog = setInterval(() => this.resume(), RESUME_AFTER_MS);
+        this.note.textContent = "reading the table...";
+        this.ask(tuningCommand(this.nodeId, { case: "refresh", value: true }), "read table");
     }
 
-    private request(startIndex: number): void {
-        this.note.textContent = `reading from index ${startIndex}...`;
-        const list = create(EnvelopeSchema, { body: { case: "tuningList", value: { startIndex } } });
-        void this.socket
-            .requestEnvelope(this.nodeId, list)
-            .then((ack) => {
-                if (!ack.ok) {
-                    this.notify(`tuningList: ${ack.error}`, false);
-                    this.stopWatchdog();
-                }
-            })
-            .catch((error: unknown) => {
-                this.notify(`tuningList: ${String(error)}`, false);
-                this.stopWatchdog();
+    /** The node's whole table, as the gateway holds it. */
+    private onParams(published: NodeTuning): void {
+        this.params.clear();
+        this.rows.clear();
+        this.body.replaceChildren();
+        published.infos.forEach((info, index) => {
+            this.params.set(info.id, {
+                index,
+                name: info.name,
+                value: info.value,
+                minValue: info.minValue,
+                maxValue: info.maxValue,
+                armedChange: info.armedChange,
             });
-    }
-
-    /** Nothing arrived for a while: pick the walk back up where it stopped. */
-    private resume(): void {
-        if (this.count > 0 && this.params.size >= this.count) {
-            this.note.textContent = `${this.count} parameters`;
-            this.stopWatchdog();
-            return;
-        }
-        if (this.resumes >= MAX_RESUMES) {
-            this.note.textContent = `stalled at ${this.params.size}/${this.count || "?"}`;
-            this.stopWatchdog();
-            return;
-        }
-        this.resumes += 1;
-        this.request(this.highestIndex + 1);
-    }
-
-    private onInfo(info: TuningInfo): void {
-        this.count = info.count;
-        this.highestIndex = Math.max(this.highestIndex, info.index);
-        this.params.set(info.id, {
-            index: info.index,
-            name: info.name,
-            value: info.value,
-            minValue: info.minValue,
-            maxValue: info.maxValue,
-            armedChange: info.armedChange,
         });
+        this.count = this.params.size;
         this.render();
-        this.note.textContent = `${this.params.size}/${this.count} parameters`;
-        if (this.params.size >= this.count) {
-            this.stopWatchdog();
-        }
+        this.note.textContent = `${this.count} parameters`;
     }
 
     private onAck(ack: TuningAck): void {
@@ -314,18 +268,11 @@ export class TuningPanel {
         this.ask(profileCommand(ProfileCommand_Op.SAVE, { name, values }), `save ${name}`);
     }
 
-    private ask(message: ReturnType<typeof profileCommand>, what: string): void {
+    private ask(message: ReturnType<typeof profileCommand> | ReturnType<typeof tuningCommand>, what: string): void {
         void this.socket
             .request(message)
             .then((ack) => this.notify(ack.ok ? `${what}: ok` : `${what}: ${ack.error}`, ack.ok))
             .catch((error: unknown) => this.notify(`${what}: ${String(error)}`, false));
-    }
-
-    private stopWatchdog(): void {
-        if (this.watchdog !== null) {
-            clearInterval(this.watchdog);
-            this.watchdog = null;
-        }
     }
 
     private render(): void {
@@ -382,16 +329,13 @@ export class TuningPanel {
             input.value = String(param.value);
             return;
         }
-        const set = create(EnvelopeSchema, {
-            body: { case: "tuningSet", value: { id: paramId, value } },
-        });
         void this.socket
-            .requestEnvelope(this.nodeId, set)
+            .request(tuningCommand(this.nodeId, { case: "set", value: { id: paramId, value } }))
             .then((ack) => {
                 if (!ack.ok) {
                     this.notify(`${param.name}: ${ack.error}`, false);
                 }
-                // The value in effect comes back as a TuningAck, not here
+                // The value in effect comes back as a TuningResult, not here
             })
             .catch((error: unknown) => this.notify(`${param.name}: ${String(error)}`, false));
     }

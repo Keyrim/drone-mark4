@@ -5,7 +5,7 @@ import 'package:mark4/gen/mark4.pb.dart';
 /// Every node carries one; a node that cannot say who it is does not exist
 /// for the ground tools. Presence is the transport's keepalive and carries
 /// no identity, so nothing is broadcast and nothing is unsolicited.
-class Discovery implements AbsMessageHandler {
+class Discovery extends AbsMessageHandler {
   Discovery(this.messenger, this.self);
 
   /// The messenger the requests come from and the answers leave by.
@@ -24,9 +24,10 @@ class Discovery implements AbsMessageHandler {
 
   @override
   bool onMessage(int src, Envelope envelope, int nowUs) {
-    // Whether the frame left is the messenger's count: the requester asks
-    // again if it did not.
-    messenger.send(src, Envelope()..announce = self);
+    // An answer that matters is a request of its own: the messenger keeps it
+    // until the requester acknowledges it, and gives up on its own policy.
+    // Whether this one was taken is that table's business.
+    messenger.request(src, Envelope()..announce = self, this);
     ++_answered;
     return true;
   }

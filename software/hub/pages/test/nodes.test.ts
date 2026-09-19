@@ -93,13 +93,13 @@ test("a widget is created when a drone appears and destroyed when it leaves", ()
     assert.equal(widgets.size, 0);
 });
 
-test("a frame from an unlisted node adds a placeholder; its announce later turns it into a drone", () => {
+test("a node heard from but unlisted adds a placeholder; its announce later turns it into a drone", () => {
     const model = new NodeModel();
     const events: string[] = [];
     model.onChange((_nodes, diff) => {
         events.push(...diff.removed.map((id) => `-${id}`), ...diff.added.map((node) => `+${node.id}:${node.kindName}`));
     });
-    model.noteFrame(42);
+    model.noteHeard(42);
     assert.equal(model.get(42)!.kindName, "unknown");
     assert.equal(isDrone(model.get(42)!), false);
     model.applyTable(table([{ id: 42, kind: NodeKind.FIRMWARE }]));
@@ -110,13 +110,13 @@ test("a frame from an unlisted node adds a placeholder; its announce later turns
     assert.ok(events.includes("+42:firmware"));
 });
 
-test("a frame refreshes the age of a listed node without an event", () => {
+test("hearing a listed node refreshes its age without an event", () => {
     const model = new NodeModel();
     model.applyTable(table());
     let changes = 0;
     model.onChange(() => changes++);
     assert.equal(model.get(2)!.ageMs, 300);
-    model.noteFrame(2);
+    model.noteHeard(2);
     assert.equal(model.get(2)!.ageMs, 0);
     assert.equal(changes, 0);
 });
@@ -136,7 +136,7 @@ test("the wire mismatch flag compares the announce with the gateway's hash", () 
 test("diffNodes reports kind changes on both sides and nothing for an identical table", () => {
     const a: NodeView = {
         id: 1, kind: NodeKind.DRONE_SIM, kindName: "drone_sim", name: "a", address: "", ageMs: 0,
-        received: 0, lost: 0, wireMismatch: false, announce: undefined, logModules: [],
+        received: 0, lost: 0, wireMismatch: false, announce: undefined,
     };
     const before = new Map([[1, a]]);
     assert.deepEqual(diffNodes(before, new Map([[1, { ...a, ageMs: 5 }]])), { added: [], removed: [] });
@@ -183,7 +183,7 @@ test("a widget fades on the age the table reports, and a frame clears it", () =>
     const fading = (id: number) => model.get(id)!.ageMs >= FADING_MS;
     assert.equal(fading(10), false);
     assert.equal(fading(11), true);
-    model.noteFrame(11);
+    model.noteHeard(11);
     assert.equal(fading(11), false);
 });
 

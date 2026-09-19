@@ -8,7 +8,10 @@ loop, and an update is what happens when the loop is parked. Header-only
 INTERFACE target `ota`, `protocol/` alone underneath, no heap, no
 iostream, no exceptions, so the same headers compile for the F405, for the
 ESP32 (which builds `software/components/` sources as they are) and for the
-desktop. `docs/ota-design.md` is the reference for every decision below.
+desktop. The ground side of the same concept lives here too
+(`ota_consumer`), desktop only and under its own rules, described at the
+end of the list below. `docs/ota-design.md` is the reference for every
+decision below.
 
 ## What is here
 
@@ -34,9 +37,40 @@ desktop. `docs/ota-design.md` is the reference for every decision below.
 - `ota/image_header.hpp` - the `OtaImageHeader` reads of the two stores
   whose slots open with that header (stm32, sim): validity of a flashed
   image and its build identity.
+- `ota/provider.hpp` - `OtaProvider`, the updater on the wire (target
+  `ota_provider`, over `messaging`): an `AbsMessageHandler` that hands each
+  `Ota*` request to the updater and sends its reply, when there is one, to
+  the node that asked. The replies go out with `send()` rather than
+  `request()`: the session has its own go-back-N and its own retries, and a
+  reply resent by the messenger would answer a step the session has left.
+  `consumed()` counts the requests the updater consumed, so a composition
+  that caches something an update may change (the arming interlock read off
+  the boot metadata) re-reads it when the count moves rather than on every
+  frame.
+- `ota/gate.hpp` - `AbsOtaGate`, the two facts the updater asks of the node
+  before it lets a session in: whether the motors may spin and whether the
+  pack is above the update floor. `ota/flight_gate.hpp` is the gate of a
+  node that flies (`FlightOtaGate`, target `ota_flight_gate`, the one
+  header here that knows a `FlightCore` exists); a node that does not fly
+  writes its own two-line gate and carries the provider without a flight
+  core.
 - `ota/crc32_mpeg2.hpp` - the one checksum of the update system, software,
   bit for bit what the F405 hardware CRC unit computes over the same words.
   The hub uses this very code on the bundle.
+- `ota/bundle.hpp` + `ota/consumer.hpp` - the ground side: the `.ota` bundle
+  a firmware build produces, read and validated off a filesystem, and
+  `OtaConsumer`, the session state machine that drives one board through the
+  transfer, the trial boot and the confirmation. It owns no socket, no
+  thread and no clock: it is fed instants by `tick()`, messages by
+  `onEnvelope()` and emits through a `MessageSink` the composition binds.
+
+  These two are the one exemption to the rules at the top of this page.
+  They read a file and keep the `std::string` and `std::function` they were
+  written with, so they are a static library (`ota_consumer`) declared only
+  where the desktop platform is configured, the way `platform_sim` is: the
+  one ground node of the project is a desktop process. Nothing of them
+  compiles for the F405 or the ESP32, and nothing of the headers above
+  depends on them.
 
 ## Two image formats behind one updater
 

@@ -3,15 +3,15 @@
 // plain one, so the extension owns the whole line, its timestamp and its
 // filtering; VS Code neither stamps nor hides anything.
 //
-// The gateway's own lines arrive as frames from its node id like everyone
-// else's, so nothing here knows about the hub. Only the state of the link
-// itself has no node: it is stored under a pseudo node, id 0, named
-// "gateway link", so a redraw keeps it in place like any other line.
+// The gateway's own lines arrive from its node id like everyone else's, so
+// nothing here knows about the hub. Only the state of the link itself has
+// no node: it is stored under a pseudo node, id 0, named "gateway link", so
+// a redraw keeps it in place like any other line.
 
 import * as vscode from "vscode";
 
 import { type NodeTable } from "./gen/gateway_pb";
-import { type Envelope, LogLevel, NodeKind } from "./gen/mark4_pb";
+import { type Log, LogLevel, type LogModuleInfo, NodeKind } from "./gen/mark4_pb";
 import { type LogRecord, LogStore } from "./logStore";
 import { type LevelTarget } from "./logTree";
 import { LogFilter, type NameTable, type NodeNames, renderLogs, sameNames, visibleLine } from "./logView";
@@ -24,12 +24,12 @@ const FLUSH_MS = 200;
 const LINK_NODE_ID = 0;
 const LINK_NAMES: NodeNames = { kind: "gateway", modules: new Map([[0, "gateway link"]]) };
 
-function namesOf(table: NodeTable): NameTable {
+function namesOf(table: NodeTable, modules: ReadonlyMap<number, readonly LogModuleInfo[]>): NameTable {
     const names = new Map<number, NodeNames>([[LINK_NODE_ID, LINK_NAMES]]);
     for (const node of table.nodes) {
         names.set(node.id, {
             kind: kindName(node.announce?.kind ?? NodeKind.NODE_KIND_UNSPECIFIED),
-            modules: new Map(node.logModules.map((module) => [module.id, module.name])),
+            modules: new Map((modules.get(node.id) ?? []).map((module) => [module.id, module.name])),
         });
     }
     return names;
@@ -42,6 +42,9 @@ export class LogChannel {
     private readonly store = new LogStore();
     private readonly filter = new LogFilter();
     private names: NameTable = new Map([[LINK_NODE_ID, LINK_NAMES]]);
+    /** The modules of every node, as the gateway published them. */
+    private modules = new Map<number, readonly LogModuleInfo[]>();
+    private table: NodeTable | undefined;
     private search = "";
     /** Records received since the last flush, still to append. */
     private pending: LogRecord[] = [];
@@ -61,12 +64,14 @@ export class LogChannel {
      * whenever it changes, the whole projection is drawn again.
      */
     setTable(table: NodeTable): void {
-        const names = namesOf(table);
-        if (sameNames(this.names, names)) {
-            return;
-        }
-        this.names = names;
-        this.scheduleRedraw();
+        this.table = table;
+        this.resolveNames();
+    }
+
+    /** One node's module table: the names its lines are rendered with. */
+    setModules(node: number, modules: readonly LogModuleInfo[]): void {
+        this.modules.set(node, modules);
+        this.resolveNames();
     }
 
     /** One line of its own when the link came back: the gap is the news. */
@@ -80,19 +85,17 @@ export class LogChannel {
         });
     }
 
-    /** Stores the line of one Log envelope; every other body is ignored. */
-    write(src: number, envelope: Envelope): void {
-        if (envelope.body.case !== "log") {
-            return;
+    /** Stores the lines of one node: one as it arrives, or a whole ring. */
+    write(src: number, lines: readonly Log[]): void {
+        for (const line of lines) {
+            this.append({
+                receivedAt: new Date(),
+                nodeId: src,
+                moduleId: line.moduleId,
+                level: line.level,
+                text: line.text,
+            });
         }
-        const record = envelope.body.value;
-        this.append({
-            receivedAt: new Date(),
-            nodeId: src,
-            moduleId: record.moduleId,
-            level: record.level,
-            text: record.text,
-        });
     }
 
     /** The display side of a "Set level...": the same scope, shown at once. */
@@ -127,6 +130,19 @@ export class LogChannel {
 
     show(): void {
         this.channel.show(true);
+    }
+
+    /** The names come from the table and the module tables together. */
+    private resolveNames(): void {
+        if (this.table === undefined) {
+            return;
+        }
+        const names = namesOf(this.table, this.modules);
+        if (sameNames(this.names, names)) {
+            return;
+        }
+        this.names = names;
+        this.scheduleRedraw();
     }
 
     private append(record: LogRecord): void {

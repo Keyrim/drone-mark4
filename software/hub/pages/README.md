@@ -35,8 +35,8 @@ the same schema as the hub that serves them. `uint64` fields come out as
 ## Layout
 
 - `src/shared/` - modules every page uses: the binary websocket link
-  (`gateway_socket.ts`: `GatewayMessage` both ways, per-case handlers,
-  `onEnvelope` for decoded frames, ack correlation), the node model
+  (`gateway_socket.ts`: `GatewayMessage` both ways, per-case handlers, ack
+  correlation), the node model
   (`nodes.ts`), the page shell (`shell.ts`, a thin top bar with the page's
   own controls, the connection state and the toasts), the quaternion helpers
   (`quat.ts`) and the flight-core state words (`phases.ts`).
@@ -69,6 +69,7 @@ the same schema as the hub that serves them. `uint64` fields come out as
 - `test/` - node:test suites run through tsx.
 - `scripts/smoke.ts` - the bench smoke: a `ws` client using the same
   generated codec against a live hub, plant and two flight processes.
+  `scripts/log_smoke.ts` is the same for the log path.
 
 ## Talking to the gateway
 
@@ -77,11 +78,19 @@ The pages are served by the hub, so the websocket URL is always
 
 Every message is one binary `GatewayMessage` (`gateway.proto`, see
 `software/hub/README.md` for the contract). Handlers are registered per body
-case and an unknown case is ignored, so a gateway that learns a new message
-never breaks an older page. A transport frame carries one `Envelope` of
-`mark4.proto`: `socket.onEnvelope((src, envelope) => ...)` hands it decoded
-with the node id it came from, and `socket.sendEnvelope(dst, envelope)` /
-`socket.requestEnvelope(dst, envelope)` send one to a node.
+case (`socket.on("nodeStatus", ...)`, `socket.off(...)` when a widget leaves
+with its node) and an unknown case is ignored, so a gateway that learns a
+new message never breaks an older page.
+
+**Nothing raw crosses.** A page never encodes or decodes an `Envelope`: the
+gateway decodes everything it hears through its consumers and publishes
+typed messages (`NodeStatus`, `NodeLogLines`, `NodeLogModules`,
+`NodeTelemetry`, `NodeTelemetryConfig`, `TelemetrySamples`, `NodeTuning`,
+`TuningResult`), and a page sends typed commands naming the node they act on
+(`TelemetryCommand`, `LogCommand`, `TuningCommand`, `PilotInput`,
+`NodeCommand`, plus the gateway-local `OtaCommand` and `ProfileCommand`).
+The generated `mark4_pb.ts` is kept for the types `gateway.proto` imports
+and for nothing else.
 
 Acks are broadcast to every connected client, so a correlation id has to say
 which tab asked. Each tab draws a random nonce at load and numbers its
@@ -92,8 +101,10 @@ whose id is not in the map belongs to another tab and is dropped.
 
 `shared/nodes.ts` is the world of a page: the gateway's `NodeTable` (every
 node id the transport hears, its last Announce, its age and counters),
-refreshed by the frames that arrive between two tables, and the gateway's
-own wire hash from `GatewayStatus`. Everything on screen is keyed by node
+refreshed by what arrives from a node between two tables (its `NodeStatus`,
+its `NodeLogLines`), and the gateway's own wire hash from `GatewayStatus`.
+A node's log modules are their own message, so the model keeps them beside
+the table: a name to resolve a log line with, not a field of a node. Everything on screen is keyed by node
 id: a widget for every drone, a source entry for every drone in the plots
 and update selectors (`nodeLabel`, the name then the 8 hex digits of the
 id). Colors are a stable hash of the node id, so a drone wears the
@@ -109,8 +120,9 @@ inventory.
 
 ## Exact state
 
-The estimated attitude is the `Status` envelope; the exact plant state, when
-the sender has a plant, is its `truth` field, sampled at the same instant.
+The estimated attitude is the `Status` the gateway publishes as
+`NodeStatus`; the exact plant state, when the sender has a plant, is its
+`truth` field, sampled at the same instant.
 The error angle a page shows is computed page-side from the two quaternions
 of that one message: a readout, not a score. The 3D ghost is the truth of
 whichever live drone streams one. The same comparison exists as a telemetry
@@ -121,8 +133,11 @@ plot: it is sampled at the loop rate rather than at the 50 Hz of Status.
 
 The transmitter of a drone widget is its switches (kill, arm), its mode
 selector and its throttle slider: no engage ritual, no keyboard layer. The
-widget streams an `Rc` envelope to its node at 20 Hz from the first
-interaction on and never stops while the page is visible. It has no sticks
+widget streams a `PilotInput` naming its node at 20 Hz from the first
+interaction on and never stops while the page is visible; the gateway
+forwards each one as one `Rc` to that node, from its own id, and never
+repeats it. The first client to pilot a node holds it: another tab's input
+is refused until the seat is released. It has no sticks
 and streams them released, which is why it starts in the `level` mode
 (released sticks mean level) rather than `manual` (the sticks are body
 rates and nothing levels the drone: that mode is flown from a gamepad,
@@ -132,8 +147,8 @@ through the phone).
 closed tab, a frozen browser or a dead link all end the same way. Hiding the
 page flips the kill switch on - a pilot who cannot see the drone is not
 piloting it - and a widget leaving (its node disappeared) sends the safe
-state twice before its stream stops. The gateway counts the clients that
-streamed RC recently and the top bar warns when there is more than one.
+state twice before its stream stops. The gateway counts the pilot seats held and the top bar warns when there is
+more than one.
 
 ## Firmware update
 
@@ -187,14 +202,15 @@ config OR looks at its lanes, never both at once:
   chip is in the air: removing the dragged element during its own dragstart
   cancels the drag.
 - `live`: the lanes of that config, full height, with what is recorded in
-  them. Record sends `TelemetryEnable` to the node at the start and again
-  every second, because the enable IS the keepalive: the drone stops three
-  seconds after the last one, so a tab that crashes never leaves a board
-  streaming to nobody. Stop sends `period_ms = 0` once and leaves the
-  curves on screen; so does a node switch, Edit config (back to setup) and
-  `pagehide` / `beforeunload`. Follow and pause behave as they always did.
-  The toolbar names the config, its series count and the period the node
-  acknowledged.
+  them. Record sends one `TelemetryCommand.config` (the ids and the period)
+  and one `TelemetryCommand.subscribe` to the gateway, which configures the
+  node and holds its stream while at least one client asks for it. Stop
+  gives the subscription back once and leaves the curves on screen; so does
+  a node switch, Edit config (back to setup) and `pagehide` /
+  `beforeunload`, and a tab that dies takes its mark with its connection.
+  Follow and pause behave as they always did. The toolbar names the config,
+  its series count and the period the node applied, which comes back as
+  `NodeTelemetryConfig`.
 
 **Identity is the name.** A descriptor id is an index into the node's frozen
 table and a reboot hands the same number to another measure, so a series is

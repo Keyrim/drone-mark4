@@ -78,6 +78,7 @@ namespace mark4
         header.dst = dst;
         header.seq = m_nextSeq;
         header.hops = 0U;
+        header.keepalive = false;
         ++m_nextSeq;
 
         encodeFrameHeader(header, m_txBuffer.data());
@@ -111,15 +112,24 @@ namespace mark4
         header.dst = dst;
         header.seq = m_nextSeq;
         header.hops = 0U;
+        header.keepalive = true;
         ++m_nextSeq;
         encodeFrameHeader(header, m_txBuffer.data());
+        // The boot id of this run, little-endian: a peer that sees it change
+        // knows this node restarted without ever leaving its table.
+        for (std::size_t index = 0U; index < KEEPALIVE_PAYLOAD_SIZE; ++index)
+        {
+            m_txBuffer[FRAME_HEADER_SIZE + index] = static_cast<std::uint8_t>(
+                m_bootId >> (static_cast<unsigned>(index) * FRAME_BYTE_BITS));
+        }
+        const std::size_t frameSize = FRAME_HEADER_SIZE + KEEPALIVE_PAYLOAD_SIZE;
 
         if (dst == BROADCAST_NODE)
         {
             bool all = true;
             for (std::size_t index = 0U; index < m_linkCount; ++index)
             {
-                all = m_links[index]->broadcast(m_txBuffer.data(), FRAME_HEADER_SIZE) && all;
+                all = m_links[index]->broadcast(m_txBuffer.data(), frameSize) && all;
             }
             static_cast<void>(countSend(all, 0U));
             return;
@@ -127,7 +137,7 @@ namespace mark4
         const Node *target = findNode(dst);
         static_cast<void>(countSend(
             target != nullptr &&
-                m_links[target->link]->send(m_txBuffer.data(), FRAME_HEADER_SIZE, target->address),
+                m_links[target->link]->send(m_txBuffer.data(), frameSize, target->address),
             0U));
     }
 
@@ -192,6 +202,13 @@ namespace mark4
         {
             return;
         }
+
+        const std::uint8_t *payload = m_rxBuffer.data() + FRAME_HEADER_SIZE;
+        const std::size_t payloadSize = size - FRAME_HEADER_SIZE;
+        if (header.keepalive && payloadSize >= KEEPALIVE_PAYLOAD_SIZE)
+        {
+            onBootId(header, payload, isNew);
+        }
         if (isNew)
         {
             notifyUp(*findNode(header.src));
@@ -200,12 +217,12 @@ namespace mark4
             sendKeepalive(header.src);
         }
 
-        const std::uint8_t *payload = m_rxBuffer.data() + FRAME_HEADER_SIZE;
-        const std::size_t payloadSize = size - FRAME_HEADER_SIZE;
-        if (payloadSize > 0U && (header.dst == m_nodeId || header.dst == BROADCAST_NODE))
+        if (!header.keepalive && payloadSize > 0U &&
+            (header.dst == m_nodeId || header.dst == BROADCAST_NODE))
         {
-            // A header alone is a keepalive: it was learnt from above and
-            // carries nothing for the application.
+            // A flagged frame is the transport's own, whatever it carries,
+            // and a frame without a payload has nothing for the application
+            // either: both were learnt from above and stop here.
             if (deliver != nullptr)
             {
                 deliver(context, header.src, payload, payloadSize);
@@ -218,6 +235,47 @@ namespace mark4
             // arrival link.
             relay(header, linkIndex, size);
         }
+    }
+
+    void Transport::onBootId(const FrameHeader &header, const std::uint8_t *payload, bool isNew)
+    {
+        std::uint32_t boot = 0U;
+        for (std::size_t index = 0U; index < KEEPALIVE_PAYLOAD_SIZE; ++index)
+        {
+            boot |= static_cast<std::uint32_t>(payload[index])
+                    << (static_cast<unsigned>(index) * FRAME_BYTE_BITS);
+        }
+        Node *node = lookup(header.src);
+        if (node == nullptr)
+        {
+            return;
+        }
+        if (isNew || node->boot == 0U)
+        {
+            // The first keepalive of a node this transport had only heard
+            // data frames from: its incarnation, learnt without an event.
+            node->boot = boot;
+            return;
+        }
+        if (boot == 0U || boot == node->boot)
+        {
+            return;
+        }
+        // Another incarnation of the same id: the node restarted without
+        // ever leaving the table. Everything the listeners knew of it is
+        // stale, so it leaves and comes back.
+        const Node gone = *node;
+        *node = Node{};
+        node->id = gone.id;
+        node->link = gone.link;
+        node->address = gone.address;
+        node->lastSeenUs = gone.lastSeenUs;
+        node->lastSeq = header.seq;
+        node->received = 1U;
+        node->hops = header.hops;
+        node->boot = boot;
+        notifyDown(gone);
+        notifyUp(*node);
     }
 
     bool Transport::learn(const FrameHeader &header,
@@ -277,7 +335,11 @@ namespace mark4
             ++m_dropped;
             return;
         }
-        m_rxBuffer[FRAME_HEADER_SIZE - 1U] = static_cast<std::uint8_t>(header.hops + 1U);
+        // The last header byte is rebuilt rather than incremented in place:
+        // the hop count shares it with the flags, which travel unchanged.
+        FrameHeader forwarded = header;
+        forwarded.hops = static_cast<std::uint8_t>(header.hops + 1U);
+        encodeFrameHeader(forwarded, m_rxBuffer.data());
         if (header.dst == BROADCAST_NODE)
         {
             for (std::size_t index = 0U; index < m_linkCount; ++index)

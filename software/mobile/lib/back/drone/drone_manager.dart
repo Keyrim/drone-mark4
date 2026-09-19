@@ -3,8 +3,8 @@ import 'dart:math' as math;
 
 import 'package:logging/logging.dart';
 import 'package:mark4/back/drone/drone_models.dart';
+import 'package:mark4/back/drone/status_consumer.dart';
 import 'package:mark4/back/manager.dart';
-import 'package:mark4/back/messaging/messenger.dart';
 import 'package:mark4/back/transport/frame.dart';
 import 'package:mark4/back/transport/node_id.dart';
 import 'package:mark4/back/transport/node_kind.dart';
@@ -17,8 +17,9 @@ final Logger _log = Logger('back/drone');
 
 /// The drones of the network, the one the user connected to, and what that
 /// one reports. Reads the discovery directory and the transport's node
-/// table, and the Status broadcasts of the connected drone; the pilot
-/// service addresses [connection].
+/// table, and the Status stream of the connected drone, which it subscribes
+/// to as soon as the node is heard; the pilot service addresses
+/// [connection].
 class DroneManager extends AbsManager {
   DroneManager(
     this._transport, {
@@ -40,7 +41,7 @@ class DroneManager extends AbsManager {
   );
   final BehaviorSubject<DroneStatus?> _status = BehaviorSubject.seeded(null);
   StreamSubscription<TransportSnapshot>? _subscription;
-  late final _StatusHandler _statusHandler = _StatusHandler(_onStatus);
+  StatusConsumer? _statusConsumer;
   int _targetId = broadcastNode;
   int _lastStatusUs = 0;
 
@@ -58,17 +59,27 @@ class DroneManager extends AbsManager {
   @override
   Future<bool> init() async {
     final messenger = _transport.messenger;
-    if (messenger == null || !messenger.register(_statusHandler)) {
-      _log.severe('the dispatch table refused the Status handler');
+    if (messenger == null) {
+      _log.severe('the transport holds no messenger');
       return false;
     }
+    final consumer = StatusConsumer(messenger, _onStatus);
+    if (!messenger.register(consumer)) {
+      _log.severe('the dispatch table refused the Status consumer');
+      return false;
+    }
+    _statusConsumer = consumer;
     _subscription = _transport.snapshots.listen(_onSnapshot);
     return true;
   }
 
   @override
   Future<void> dispose() async {
-    _transport.messenger?.unregister(_statusHandler);
+    final consumer = _statusConsumer;
+    if (consumer != null) {
+      _transport.messenger?.unregister(consumer);
+    }
+    _statusConsumer = null;
     await _subscription?.cancel();
     _subscription = null;
     await _status.close();
@@ -77,9 +88,11 @@ class DroneManager extends AbsManager {
   }
 
   /// Connects to the drone [nodeId]: follows it from now on, connected while
-  /// it is heard, lost while it is not.
+  /// it is heard, lost while it is not, and subscribed to its Status stream
+  /// for as long.
   Future<void> connect(int nodeId) async {
     _log.info('connect to ${formatNodeId(nodeId)}');
+    _dropSubscription();
     _targetId = nodeId;
     if (_status.value != null) {
       _status.add(null);
@@ -94,6 +107,7 @@ class DroneManager extends AbsManager {
       return;
     }
     _log.info('disconnect from ${formatNodeId(_targetId)}');
+    _dropSubscription();
     _targetId = broadcastNode;
     if (_status.value != null) {
       _status.add(null);
@@ -156,6 +170,16 @@ class DroneManager extends AbsManager {
       );
       return;
     }
+    final consumer = _statusConsumer;
+    if (current.status != DroneLinkStatus.connected &&
+        consumer != null &&
+        !consumer.subscribed) {
+      // The drone streams its Status to the nodes that asked for it: the
+      // subscription is taken the moment the transport holds the node, and
+      // again after a reboot, which the transport reports as a node going
+      // down and coming back.
+      consumer.subscribe(_targetId);
+    }
     _emit(
       DroneConnection(
         status: DroneLinkStatus.connected,
@@ -163,6 +187,16 @@ class DroneManager extends AbsManager {
         info: DroneInfo.fromNode(node, announce, snapshot.nowUs),
       ),
     );
+  }
+
+  /// Tells the drone being let go to stop streaming, while the transport
+  /// still knows where it is.
+  void _dropSubscription() {
+    final consumer = _statusConsumer;
+    if (consumer == null || _targetId == broadcastNode) {
+      return;
+    }
+    consumer.unsubscribe(_targetId);
   }
 
   void _emit(DroneConnection connection) {
@@ -175,20 +209,4 @@ class DroneManager extends AbsManager {
       _connection.add(connection);
     }
   }
-}
-
-/// The Status case of the Envelope, routed to the manager. A handler is one
-/// object per case (docs of `back/messaging`), so the manager registers this
-/// one rather than being a handler itself.
-class _StatusHandler implements AbsMessageHandler {
-  _StatusHandler(this._onStatus);
-
-  final bool Function(int src, Status status, int nowUs) _onStatus;
-
-  @override
-  List<Envelope_Body> get bodyCases => const [Envelope_Body.status];
-
-  @override
-  bool onMessage(int src, Envelope envelope, int nowUs) =>
-      _onStatus(src, envelope.status, nowUs);
 }

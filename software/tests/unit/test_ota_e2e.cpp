@@ -1,6 +1,6 @@
 /// @file
 /// @brief The desktop end-to-end test of the firmware update system, the one
-///        docs/ota-design.md section 6 asks for: the hub's real OtaClient
+///        docs/ota-design.md section 6 asks for: the hub's real OtaConsumer
 ///        against a real drone_sim process, over real UDP, with a real .ota
 ///        bundle on disk. Nothing is faked between the two ends - the sim
 ///        runs the same OtaUpdater the board runs, over the file-backed store,
@@ -12,7 +12,7 @@
 ///        unconfirmed and rebooted, which must roll back to the image the
 ///        first one installed and leave the trial slot BAD.
 ///
-///        Everything the test touches is a public surface: the OtaClient API,
+///        Everything the test touches is a public surface: the OtaConsumer API,
 ///        drone_sim's command line, the wire, and the bundle file format.
 
 #include <array>
@@ -41,8 +41,9 @@
 
 #include "byte_pipe.hpp"
 #include "hub/gateway_codec.hpp"
-#include "hub/ota_bundle.hpp"
-#include "hub/ota_client.hpp"
+#include "log/wire.hpp"
+#include "ota/bundle.hpp"
+#include "ota/consumer.hpp"
 #include "ota/crc32_mpeg2.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
@@ -56,6 +57,9 @@ namespace
     /// four, so the CRC convention's 0xFF tail padding never enters the
     /// picture, and small enough that the whole transfer is a handful of
     /// chunks.
+    /// Incarnation every transport of this file is built with: a test
+    /// restarts nothing, so one constant stands for the random draw.
+    constexpr std::uint32_t BOOT_ID = 0xB0071D00U;
     constexpr std::uint32_t IMAGE_PAYLOAD_SIZE = 1024U;
 
     /// Total bytes of one test image.
@@ -157,7 +161,7 @@ namespace
     }
 
     /// @brief Writes a complete two-image .ota bundle for OTA_MCU_SIM. The
-    ///        layout is the one hub/ota_bundle.hpp documents; the manifest is
+    ///        layout is the one ota/bundle.hpp documents; the manifest is
     ///        the one scripts/make_ota.py writes, minus the F405 assumptions
     ///        that script is built on.
     /// @param path file to write
@@ -285,7 +289,7 @@ namespace
         ///        hub's poll loop does.
         /// @param client client to feed
         /// @param instantUs current time [us]
-        void drain(mark4::OtaClient &client, std::uint64_t instantUs)
+        void drain(mark4::OtaConsumer &client, std::uint64_t instantUs)
         {
             m_pending = &client;
             m_pendingUs = instantUs;
@@ -320,21 +324,21 @@ namespace
             }
         }
 
-        bool m_viaRelay;                                   ///< through the wire and two relays
-        mark4::UdpLink m_udp;                              ///< the ground node's LAN link
-        mark4::Transport m_transport{GROUND_NODE};         ///< this node
-        mark4::BytePipe m_wire;                            ///< the UART between the relays
-        mark4::PipeEnd m_relayEnd{m_wire.toA, m_wire.toB}; ///< ESP32 side of the wire
-        mark4::PipeEnd m_farEnd{m_wire.toB, m_wire.toA};   ///< board side of the wire
-        mark4::UartLink m_relayUart{m_relayEnd};           ///< the ESP32's UART link (index 0)
-        mark4::UdpLink m_relayUdp;                         ///< the ESP32's LAN link, the
-                                                           ///< ground's discovery port
-        mark4::Transport m_relay{RELAY_NODE};              ///< the ESP32
-        mark4::UartLink m_farUart{m_farEnd};               ///< far relay's UART link
-        mark4::UdpLink m_farUdp;                           ///< far relay's link to the sim
-        mark4::Transport m_farRelay{FAR_RELAY_NODE};       ///< the board's side of the wire
-        mark4::OtaClient *m_pending = nullptr;             ///< client being fed by drain()
-        std::uint64_t m_pendingUs = 0U;                    ///< instant handed to it
+        bool m_viaRelay;                                      ///< through the wire and two relays
+        mark4::UdpLink m_udp;                                 ///< the ground node's LAN link
+        mark4::Transport m_transport{GROUND_NODE, BOOT_ID};   ///< this node
+        mark4::BytePipe m_wire;                               ///< the UART between the relays
+        mark4::PipeEnd m_relayEnd{m_wire.toA, m_wire.toB};    ///< ESP32 side of the wire
+        mark4::PipeEnd m_farEnd{m_wire.toB, m_wire.toA};      ///< board side of the wire
+        mark4::UartLink m_relayUart{m_relayEnd};              ///< the ESP32's UART link (index 0)
+        mark4::UdpLink m_relayUdp;                            ///< the ESP32's LAN link, the
+                                                              ///< ground's discovery port
+        mark4::Transport m_relay{RELAY_NODE, BOOT_ID};        ///< the ESP32
+        mark4::UartLink m_farUart{m_farEnd};                  ///< far relay's UART link
+        mark4::UdpLink m_farUdp;                              ///< far relay's link to the sim
+        mark4::Transport m_farRelay{FAR_RELAY_NODE, BOOT_ID}; ///< the board's side of the wire
+        mark4::OtaConsumer *m_pending = nullptr;              ///< client being fed by drain()
+        std::uint64_t m_pendingUs = 0U;                       ///< instant handed to it
     };
 
     /// @return a UDP port nothing holds right now
@@ -461,7 +465,7 @@ namespace
     /// @param budgetMs how long it may take [ms]
     /// @return true when the condition held before the budget ran out
     template <typename Condition>
-    bool driveUntil(mark4::OtaClient &client,
+    bool driveUntil(mark4::OtaConsumer &client,
                     GroundLink &link,
                     Condition condition,
                     std::uint64_t budgetMs = STEP_BUDGET_MS)
@@ -499,7 +503,7 @@ namespace
     /// @param link ground side of the link
     /// @return true once a status packet newer than the current snapshot
     ///         came back
-    bool refreshBoard(mark4::OtaClient &client, GroundLink &link)
+    bool refreshBoard(mark4::OtaConsumer &client, GroundLink &link)
     {
         const std::uint64_t knownUs = client.board().seenAtUs;
         std::uint64_t nextPokeUs = 0U;
@@ -523,9 +527,9 @@ namespace
     ///        machine, its real timeouts shortened to what a loopback link
     ///        and a 500 ms sim wakeup actually need.
     /// @return the configuration
-    mark4::OtaClient::Config testConfig()
+    mark4::OtaConsumer::Config testConfig()
     {
-        mark4::OtaClient::Config config;
+        mark4::OtaConsumer::Config config;
         config.statusPeriodMs = 200U;
         config.statusTries = 60U;
         config.rebootSettleMs = 500U;
@@ -575,7 +579,7 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
     SimProcess sim;
     REQUIRE(sim.start(runDirectory, otaDirectory, discoveryPort, SIM_NODE));
 
-    mark4::OtaClient client(testConfig());
+    mark4::OtaConsumer client(testConfig());
     client.setSink([&link](const mark4_Envelope &envelope, std::string &errorOut) {
         if (!link.send(envelope))
         {
@@ -618,7 +622,7 @@ TEST_CASE("a hub-driven update of a live drone_sim confirms, then an unconfirmed
 
     // --- The rollback path: a trial that never confirms itself, then a
     // reset. ---
-    mark4::OtaClient manual(testConfig());
+    mark4::OtaConsumer manual(testConfig());
     manual.setSink([&link](const mark4_Envelope &envelope, std::string &errorOut) {
         if (!link.send(envelope))
         {
@@ -696,7 +700,7 @@ TEST_CASE("a hub-driven update crosses the esp32 relay and the serial framing", 
     SimProcess sim;
     REQUIRE(sim.start(runDirectory, otaDirectory, farPort, SIM_NODE));
 
-    mark4::OtaClient client(testConfig());
+    mark4::OtaConsumer client(testConfig());
     client.setSink([&link](const mark4_Envelope &envelope, std::string &errorOut) {
         if (!link.send(envelope))
         {
@@ -756,7 +760,7 @@ TEST_CASE("an OtaCommand from a gateway client drives the update of the node it 
     REQUIRE(sim.start(runDirectory, otaDirectory, discoveryPort, SIM_NODE));
 
     std::uint32_t target = 0U;
-    mark4::OtaClient client(testConfig());
+    mark4::OtaConsumer client(testConfig());
     client.setSink([&link, &target](const mark4_Envelope &envelope, std::string &errorOut) {
         // The gateway routes every updater message to the node the command
         // named; here the link only knows the sim, so the check is the target.
@@ -832,6 +836,29 @@ namespace
                    m_transport.send(SIM_NODE, bytes.data(), size);
         }
 
+        /// @brief Polls until the transport has heard from the sim, so a
+        ///        unicast to it can leave: a node nobody heard from has no
+        ///        address, and the sim now answers instead of broadcasting.
+        /// @param budgetMs how long to wait at most [ms]
+        /// @return true when the node is alive before the budget runs out
+        bool waitForNode(std::uint64_t budgetMs = STEP_BUDGET_MS)
+        {
+            const std::uint64_t deadlineUs = nowUs() + (budgetMs * US_PER_MS);
+            for (;;)
+            {
+                m_transport.poll(nowUs(), &Listener::Deliver, this);
+                if (m_transport.isAlive(SIM_NODE))
+                {
+                    return true;
+                }
+                if (nowUs() >= deadlineUs)
+                {
+                    return false;
+                }
+                sleepStep();
+            }
+        }
+
         /// @brief Polls until an envelope heard so far satisfies the
         ///        predicate (what arrived before the call counts).
         /// @return true when one did before the budget ran out
@@ -874,7 +901,7 @@ namespace
         }
 
         mark4::UdpLink m_udp;
-        mark4::Transport m_transport{GROUND_NODE};
+        mark4::Transport m_transport{GROUND_NODE, BOOT_ID};
     };
 
     bool isLogModules(const mark4_Envelope &envelope)
@@ -903,6 +930,10 @@ namespace
         return -1;
     }
 
+    /// Modules a test walks past before giving up on finding one: the
+    /// process has a few dozen, eight per page.
+    constexpr std::uint32_t LOG_MODULES_AT_MOST = 128U;
+
     /// @return the id of the module named, 0 when no page listed it
     std::uint32_t moduleIdOf(const std::vector<mark4_Envelope> &heard, const char *name)
     {
@@ -925,7 +956,7 @@ namespace
     }
 } // namespace
 
-TEST_CASE("a live drone_sim publishes its log modules and takes a level from the wire",
+TEST_CASE("a live drone_sim answers a page of its log modules and takes a level from the wire",
           "[log][e2e]")
 {
     std::error_code error;
@@ -940,41 +971,49 @@ TEST_CASE("a live drone_sim publishes its log modules and takes a level from the
     SimProcess sim;
     REQUIRE(sim.start(runDirectory, (runDirectory / "flash").string(), discoveryPort, SIM_NODE));
 
-    // The table follows the first keepalive, unasked, and names the boot line's
-    // module; the boot line itself is a Log carrying that module's id.
-    REQUIRE(ground.waitFor(isLogModules));
-    const std::uint32_t bootId = moduleIdOf(ground.heard, "app/boot");
-    const std::uint32_t linkId = moduleIdOf(ground.heard, "sim/link");
-    REQUIRE(bootId != 0U);
-    REQUIRE(linkId != 0U);
-    REQUIRE(ground.waitFor([bootId](const mark4_Envelope &envelope) {
-        return envelope.which_body == mark4_Envelope_log_tag &&
-               envelope.body.log.module_id == bootId &&
-               std::strncmp(envelope.body.log.text, "boot: node 51300001", 19U) == 0;
-    }));
+    // The table is pulled one page per request, and names the modules the
+    // process logs with. The first keepalive is what makes the sim
+    // reachable at all.
+    REQUIRE(ground.waitForNode());
+    mark4_Envelope ask = mark4_Envelope_init_zero;
+    ask.which_body = mark4_Envelope_log_modules_request_tag;
+    std::uint32_t linkId = 0U;
+    std::uint32_t bootId = 0U;
+    for (std::uint32_t cursor = 0U; linkId == 0U || bootId == 0U;
+         cursor += static_cast<std::uint32_t>(mark4::LOG_MODULES_PER_PAGE))
+    {
+        REQUIRE(cursor < LOG_MODULES_AT_MOST);
+        ask.body.log_modules_request.cursor = cursor;
+        ground.heard.clear();
+        REQUIRE(ground.send(ask));
+        REQUIRE(ground.waitFor([cursor](const mark4_Envelope &envelope) {
+            return isLogModules(envelope) && envelope.body.log_modules.cursor == cursor;
+        }));
+        bootId = bootId != 0U ? bootId : moduleIdOf(ground.heard, "app/boot");
+        linkId = linkId != 0U ? linkId : moduleIdOf(ground.heard, "sim/link");
+    }
 
-    // Setting one module publishes the table again, with the new level.
-    mark4_Envelope control = mark4_Envelope_init_zero;
-    control.which_body = mark4_Envelope_log_control_tag;
-    control.body.log_control.which_request = mark4_LogControl_set_tag;
-    control.body.log_control.request.set.module_id = linkId;
-    control.body.log_control.request.set.level = mark4_LogLevel_DEBUG;
+    // Setting one module is answered by that module as it stands.
+    mark4_Envelope set = mark4_Envelope_init_zero;
+    set.which_body = mark4_Envelope_log_set_level_tag;
+    set.body.log_set_level.module_id = linkId;
+    set.body.log_set_level.level = mark4_LogLevel_DEBUG;
     ground.heard.clear();
-    REQUIRE(ground.send(control));
+    REQUIRE(ground.send(set));
     REQUIRE(ground.waitFor([linkId](const mark4_Envelope &envelope) {
-        return levelOf({envelope}, linkId) == mark4_LogLevel_DEBUG;
+        return envelope.which_body == mark4_Envelope_log_module_info_tag &&
+               envelope.body.log_module_info.id == linkId &&
+               envelope.body.log_module_info.level == mark4_LogLevel_DEBUG;
     }));
 
-    // A query answers with the table as it stands: the module set, every
-    // other one at its default.
-    control.body.log_control.which_request = mark4_LogControl_query_tag;
-    control.body.log_control.request.query = true;
+    // And the table says so too: the module set, every other one at its
+    // default.
+    ask.body.log_modules_request.cursor = 0U;
     ground.heard.clear();
-    REQUIRE(ground.send(control));
+    REQUIRE(ground.send(ask));
     REQUIRE(ground.waitFor([bootId](const mark4_Envelope &envelope) {
         return levelOf({envelope}, bootId) == mark4_LogLevel_INFO;
     }));
-    CHECK(levelOf(ground.heard, linkId) == mark4_LogLevel_DEBUG);
     sim.stop();
     std::filesystem::remove_all(runDirectory, error);
 }

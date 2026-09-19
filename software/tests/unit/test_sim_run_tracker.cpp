@@ -5,63 +5,17 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "flight_core/types.hpp"
 #include "platform_sim/sim_run_tracker.hpp"
-#include "protocol/envelope.hpp"
-#include "recording_link.hpp"
-#include "transport/frame.hpp"
-#include "transport/transport.hpp"
 
 namespace
 {
     /// Frames per simulated second of the sequences below.
     constexpr std::uint64_t TICK_US = 2000U;
-
-    constexpr std::uint32_t NODE_SELF = 0x5147A000U;
-
-    /// A transport over a recording link: the tracker publishes on it and
-    /// the test reads back what went out.
-    class Wire
-    {
-      public:
-        Wire()
-        {
-            static_cast<void>(m_transport.addLink(m_link));
-        }
-
-        /// @return transport the tracker publishes on
-        mark4::Transport &transport()
-        {
-            return m_transport;
-        }
-
-        /// @return payload of every frame sent so far, in order
-        [[nodiscard]] std::vector<std::vector<std::uint8_t>> sent() const
-        {
-            std::vector<std::vector<std::uint8_t>> payloads;
-            payloads.reserve(m_link.frames().size());
-            for (const mark4::RecordedFrame &frame : m_link.frames())
-            {
-                payloads.push_back(frame.payload);
-            }
-            return payloads;
-        }
-
-        /// @return every frame sent so far, headers included
-        [[nodiscard]] const std::vector<mark4::RecordedFrame> &frames() const
-        {
-            return m_link.frames();
-        }
-
-      private:
-        mark4::RecordingLink m_link;             ///< the medium
-        mark4::Transport m_transport{NODE_SELF}; ///< what the tracker holds
-    };
 
     /// One step of a synthetic run: the frame and the outputs it drew.
     struct Step
@@ -100,8 +54,7 @@ namespace
     /// @return the tracker, run played out
     std::uint64_t playHash(const std::vector<Step> &run, std::uint32_t windowUs = 0U)
     {
-        Wire wire;
-        mark4::SimRunTracker tracker(wire.transport());
+        mark4::SimRunTracker tracker;
         tracker.beginRun(1U, run.front().frame.timestampUs, windowUs);
         for (const Step &step : run)
         {
@@ -115,8 +68,7 @@ namespace
     /// @return frames folded into the hash
     std::uint32_t playFrames(const std::vector<Step> &run)
     {
-        Wire wire;
-        mark4::SimRunTracker tracker(wire.transport());
+        mark4::SimRunTracker tracker;
         tracker.beginRun(1U, run.front().frame.timestampUs, 0U);
         for (const Step &step : run)
         {
@@ -199,8 +151,7 @@ TEST_CASE("the hash seals at the end of the window and stops moving")
     // Ten frames of window: the eleventh frame seals, the rest change nothing.
     const auto window = static_cast<std::uint32_t>(10U * TICK_US);
 
-    Wire wire;
-    mark4::SimRunTracker tracker(wire.transport());
+    mark4::SimRunTracker tracker;
     tracker.beginRun(1U, 0U, window);
     for (std::size_t index = 0U; index < 10U; ++index)
     {
@@ -223,8 +174,7 @@ TEST_CASE("the hash seals at the end of the window and stops moving")
 
 TEST_CASE("a run that lost a tick latches degraded")
 {
-    Wire wire;
-    mark4::SimRunTracker tracker(wire.transport());
+    mark4::SimRunTracker tracker;
     tracker.beginRun(1U, 0U, 0U);
 
     // The first report is the baseline of the run, whatever it carries: the
@@ -249,73 +199,4 @@ TEST_CASE("a run that lost a tick latches degraded")
     tracker.noteLink(18U, 5U);
     REQUIRE(!tracker.degraded());
     REQUIRE(tracker.runId() == 2U);
-}
-
-namespace
-{
-    /// @brief Decodes one captured datagram as a SimRunStats envelope.
-    /// @param datagram bytes to decode
-    /// @return the stats it carries
-    mark4_SimRunStats decodeStats(const std::vector<std::uint8_t> &datagram)
-    {
-        mark4_Envelope envelope;
-        REQUIRE(mark4::decodeEnvelope(datagram.data(), datagram.size(), envelope));
-        REQUIRE(envelope.which_body == mark4_Envelope_sim_run_stats_tag);
-        return envelope.body.sim_run_stats;
-    }
-} // namespace
-
-TEST_CASE("the published stats message round-trips the wire")
-{
-    Wire wire;
-    mark4::SimRunTracker tracker(wire.transport());
-    const auto run = makeRun(1'000'000U, 4U);
-    // Two frames of window, so the run seals inside this sequence.
-    tracker.beginRun(42U, run.front().frame.timestampUs, static_cast<std::uint32_t>(2U * TICK_US));
-    tracker.noteLink(7U, 3U);
-
-    tracker.update(run[0].frame, run[0].actuator);
-    tracker.publish();
-    REQUIRE(wire.sent().size() == 1U);
-
-    mark4_SimRunStats decoded = decodeStats(wire.sent().front());
-    REQUIRE(decoded.run_id == 42U);
-    REQUIRE(!decoded.final);
-    REQUIRE(!decoded.degraded);
-    REQUIRE(decoded.run_start_us == 1'000'000U);
-    REQUIRE(decoded.run_hash == tracker.hash());
-    REQUIRE(decoded.duplicate_frames == 3U);
-    REQUIRE(decoded.lockstep_timeouts == 7U);
-
-    // Nothing changed and the period has not elapsed: nothing goes out.
-    tracker.update(run[1].frame, run[1].actuator);
-    tracker.publish();
-    REQUIRE(wire.sent().size() == 1U);
-
-    // The seal is a change, and a change is published at once.
-    tracker.noteLink(8U, 3U);
-    tracker.update(run[2].frame, run[2].actuator);
-    tracker.publish();
-    REQUIRE(tracker.sealed());
-    REQUIRE(wire.sent().size() == 2U);
-
-    decoded = decodeStats(wire.sent().back());
-    REQUIRE(decoded.final);
-    REQUIRE(decoded.degraded);
-    REQUIRE(decoded.lockstep_timeouts == 8U);
-}
-
-TEST_CASE("the run stats go out as transport broadcasts")
-{
-    Wire wire;
-    mark4::SimRunTracker tracker(wire.transport());
-    const auto run = makeRun(0U, 1U);
-    tracker.beginRun(1U, 0U, 0U);
-    tracker.update(run[0].frame, run[0].actuator);
-    tracker.publish();
-
-    REQUIRE(wire.frames().size() == 1U);
-    REQUIRE(wire.frames()[0].broadcast);
-    REQUIRE(wire.frames()[0].header.dst == mark4::BROADCAST_NODE);
-    REQUIRE(wire.frames()[0].header.src == NODE_SELF);
 }

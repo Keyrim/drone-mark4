@@ -56,6 +56,8 @@ namespace mark4
             std::uint32_t lost = 0U;       ///< frames the numbering says never arrived
             std::uint32_t duplicates = 0U; ///< frames carrying an already seen number
             std::uint8_t hops = 0U; ///< relays the last frame from it crossed (0: direct neighbour)
+            std::uint32_t boot = 0U; ///< boot id of the node's current incarnation, 0 until its
+                                     ///< first keepalive
         };
 
         /// Receives one payload addressed to this node or to everyone.
@@ -65,8 +67,12 @@ namespace mark4
                                    std::size_t size);
 
         /// @param nodeId identity of this node, never 0 (see node_id.hpp)
-        explicit Transport(std::uint32_t nodeId)
-            : m_nodeId(nodeId)
+        /// @param bootId identity of this run of this node, drawn at random
+        ///        by the composition and never derived from the chip, which
+        ///        is what makes it differ from one boot to the next
+        Transport(std::uint32_t nodeId, std::uint32_t bootId)
+            : m_nodeId(nodeId),
+              m_bootId(bootId)
         {
         }
 
@@ -84,8 +90,8 @@ namespace mark4
         /// @brief Sends one payload: a broadcast leaves on every link, a
         ///        unicast on the link its destination was last heard on. An
         ///        application always sends a message: an empty payload is
-        ///        refused, the header-only frame is the transport's own
-        ///        keepalive.
+        ///        refused. The frame is never flagged as a keepalive: that
+        ///        flag is the transport's own.
         /// @param dst node to reach, BROADCAST_NODE for every node on every link
         /// @param payload payload bytes, never nullptr
         /// @param size payload size, 1 to MAX_PAYLOAD
@@ -106,6 +112,13 @@ namespace mark4
         [[nodiscard]] std::uint32_t nodeId() const
         {
             return m_nodeId;
+        }
+
+        /// @return identity of this run of this node, in every keepalive it
+        ///         sends: a peer that sees it change knows this node rebooted
+        [[nodiscard]] std::uint32_t bootId() const
+        {
+            return m_bootId;
         }
 
         /// @return true when the node has been heard within NODE_EXPIRY_US
@@ -145,7 +158,10 @@ namespace mark4
             return m_sent;
         }
 
-        /// @return payload bytes of the frames counted by sent()
+        /// @return payload bytes of the frames counted by sent(). A
+        ///         keepalive counts none although it now carries a boot id:
+        ///         what this counter describes is what the application
+        ///         handed over, and the keepalive is the transport's own.
         [[nodiscard]] std::size_t sentBytes() const
         {
             return m_sentBytes;
@@ -203,6 +219,15 @@ namespace mark4
                      DeliverFn deliver,
                      void *context);
 
+        /// @brief Reads the boot id a keepalive carries and acts on it: the
+        ///        first one is learnt silently, one that differs from a known
+        ///        incarnation is a node that restarted, which leaves the
+        ///        table and comes back into it (onNodeDown then onNodeUp).
+        /// @param header header of the keepalive
+        /// @param payload its payload, at least KEEPALIVE_PAYLOAD_SIZE bytes
+        /// @param isNew true when learn() has just created the entry
+        void onBootId(const FrameHeader &header, const std::uint8_t *payload, bool isNew);
+
         /// @brief Refreshes or inserts the node a frame came from.
         /// @param header frame header
         /// @param linkIndex link it arrived on
@@ -231,7 +256,8 @@ namespace mark4
         /// @return mutable node, nullptr when unknown
         Node *lookup(std::uint32_t nodeId);
 
-        /// @brief Emits one keepalive, a header alone: this node's presence,
+        /// @brief Emits one keepalive: this node's presence and the boot id
+        ///        of this run behind a header flagged FRAME_FLAG_KEEPALIVE,
         ///        broadcast every KEEPALIVE_PERIOD_US and unicast once to a
         ///        node the moment it first appears. Counted like any send.
         /// @param dst node to reach, BROADCAST_NODE for every link
@@ -244,6 +270,7 @@ namespace mark4
         bool countSend(bool ok, std::size_t size);
 
         std::uint32_t m_nodeId;                     ///< this node
+        std::uint32_t m_bootId;                     ///< this run of this node
         std::array<AbsLink *, MAX_LINKS> m_links{}; ///< declared links
         std::size_t m_linkCount = 0U;               ///< links declared
         std::array<Node, MAX_NODES> m_nodes{};      ///< live nodes, dense prefix

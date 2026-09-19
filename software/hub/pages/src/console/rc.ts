@@ -1,5 +1,6 @@
 /**
- * The RC state a drone widget streams, and the few pure rules around it.
+ * The RC state a drone widget streams, and the few pure rules around it. It
+ * leaves as a PilotInput to the gateway, which forwards it to the node.
  *
  * There is no engage ritual and no keyboard layer: the switches, the mode
  * selector and the throttle slider ARE the transmitter. The widget starts
@@ -25,7 +26,8 @@
 
 import { create } from "@bufbuild/protobuf";
 
-import { type Envelope, EnvelopeSchema, RcMode } from "../gen/mark4_pb";
+import { type GatewayMessage, GatewayMessageSchema } from "../gen/gateway_pb";
+import { RcMode } from "../gen/mark4_pb";
 
 /**
  * Stream period once a widget transmits [ms]: 20 Hz, four messages inside
@@ -78,19 +80,27 @@ export function clampAxis(value: number): number {
     return value < -1 ? -1 : value > 1 ? 1 : Number.isNaN(value) ? 0 : value;
 }
 
-/** The Rc envelope for one state, exactly what the flight process reads. */
-export function rcEnvelope(state: RcState): Envelope {
-    return create(EnvelopeSchema, {
+/**
+ * The PilotInput for one state and one node: the gateway forwards it as one
+ * Rc to that node, from its own id, and never repeats it. The first client
+ * to send one takes the node; the gateway refuses another client's input
+ * while the seat is held.
+ */
+export function pilotInput(node: number, state: RcState): GatewayMessage {
+    return create(GatewayMessageSchema, {
         body: {
-            case: "rc",
+            case: "pilotInput",
             value: {
-                kill: state.kill,
-                arm: state.arm,
-                mode: state.mode,
-                throttle: clamp01(state.throttle),
-                roll: clampAxis(state.roll),
-                pitch: clampAxis(state.pitch),
-                yaw: clampAxis(state.yaw),
+                node,
+                rc: {
+                    kill: state.kill,
+                    arm: state.arm,
+                    mode: state.mode,
+                    throttle: clamp01(state.throttle),
+                    roll: clampAxis(state.roll),
+                    pitch: clampAxis(state.pitch),
+                    yaw: clampAxis(state.yaw),
+                },
             },
         },
     });

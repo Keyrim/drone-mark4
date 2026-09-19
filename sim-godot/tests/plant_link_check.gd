@@ -41,8 +41,10 @@ func _init() -> void:
 	if not transport.open(0, port):
 		quit(1)
 		return
+	var requests := Mark4Requests.new()
+	requests.setup(transport)
 	var discovery := Mark4Discovery.new()
-	discovery.setup(transport, Mark4Announce.build())
+	discovery.setup(transport, Mark4Announce.build(), requests)
 	discovery.identity.connect(_on_identity)
 	transport.payload_received.connect(_on_payload)
 
@@ -51,6 +53,7 @@ func _init() -> void:
 	var deadline := Time.get_ticks_msec() + REPLY_TIMEOUT_MS
 	while _flight_node == 0 and Time.get_ticks_msec() < deadline:
 		transport.poll(Time.get_ticks_usec())
+		requests.tick(Time.get_ticks_usec())
 		discovery.tick(Time.get_ticks_usec())
 		OS.delay_msec(5)
 	if _flight_node == 0:
@@ -77,6 +80,7 @@ func _init() -> void:
 	deadline = Time.get_ticks_msec() + REPLY_TIMEOUT_MS
 	while Time.get_ticks_msec() < deadline and not (_got_actuator and _got_scenario) and not _failed:
 		transport.poll(Time.get_ticks_usec())
+		requests.tick(Time.get_ticks_usec())
 		discovery.tick(Time.get_ticks_usec())
 		OS.delay_msec(5)
 	transport.close()
@@ -125,6 +129,8 @@ func _on_payload(src: int, payload: PackedByteArray) -> void:
 			if not _got_scenario:
 				push_error("plant_link_check: unexpected scenario %s" % str(reply))
 		Mark4.Envelope.BodyCase.ANNOUNCE:
+			pass
+		Mark4.Envelope.BodyCase.ACK:
 			pass
 		_:
 			push_error("plant_link_check: unexpected body %d" % reply.get_body_case())

@@ -11,18 +11,16 @@ the UART link build for every preset, the F405 included, with no heap and
 fixed-size tables; the UDP link needs BSD sockets (desktop, and lwIP on the
 ESP32).
 
-Adopted by every node: `drone_sim` and the `hub` over UDP, the batch
-campaign (`tools/batch/run_batch.py`, through the frame codec of
-`tools/telemetry_wire.py`), the Godot plant (a GDScript port, see below),
+Adopted by every node: `drone_sim` and the `hub` over UDP, the Godot plant
+(a GDScript port, see below),
 the board over its UART (the firmware is a node
 with one `UartLink` on USART1), and the ESP32 riding the drone
 (`esp32-bridge/`), which is a relay: a node with a `UartLink` to the board
 and a `UdpLink` on the WiFi LAN. The hub holds one `UdpLink`, so it relays
 nothing: the board reaches it as one more node of the LAN, at the relay's
 address. The mobile app (`software/mobile`, kind
-`PHONE`) compiles this directory as it is with the Android NDK (bionic has
-the BSD sockets; `DRONE_PLATFORM` `android` selects the POSIX sources) and
-drives it from Dart through the C ABI of its `native/` shim.
+`PHONE`) compiles no native code: `lib/back/transport/` is a Dart port of
+this directory, rule for rule and constant for constant.
 
 ## Frame
 
@@ -33,11 +31,16 @@ Every frame opens with an 11-byte little-endian header (`transport/frame.hpp`):
 | `src` | u32 | node that produced the payload |
 | `dst` | u32 | node it is for, `0` = every node (`BROADCAST_NODE`) |
 | `seq` | u16 | per-sender counter, wraps |
-| `hops` | u8 | relays crossed so far; a sender writes 0, a relay adds one and drops a frame already at `MAX_HOPS` = 4 |
+| `flags:hops` | u8 | low nibble (`FRAME_HOPS_MASK`): relays crossed so far; a sender writes 0, a relay adds one and drops a frame already at `MAX_HOPS` = 4. High nibble: flags, bit 7 (`FRAME_FLAG_KEEPALIVE`) marking the transport's own keepalive, the others written 0 and ignored on read |
 
-The payload follows, at most `MAX_PAYLOAD` = 512 bytes; a frame carrying
-none is the transport's own keepalive (see Presence), and an application
-`send()` of an empty payload is refused. A medium that keeps
+The payload follows, at most `MAX_PAYLOAD` = 512 bytes; a frame whose
+header carries the keepalive flag is the transport's own (see Presence) and
+is never delivered whatever it carries, and an application `send()` of an
+empty payload is refused. A frame without the flag and without a payload is
+nobody's message: it is learnt from like any other frame and delivered
+nowhere. That is the compatibility rule with a node built before the flag
+existed, whose keepalive is the header alone: it is still heard, its boot id
+is simply unknown. A medium that keeps
 datagram boundaries (UDP) adds nothing; the UART link wraps the frame in
 the serial framing (`transport/serial_framing.hpp`: `A5 5A len_lo len_hi
 payload crc16`, CRC-16/CCITT-FALSE over the two length bytes and the
@@ -48,15 +51,16 @@ payload), whose payload is capped at `SERIAL_MAX_PAYLOAD` = 512 bytes like
 
 Transport-level `uint32_t`, self-assigned at start, never configured, never
 0. A desktop process draws one from `/dev/urandom` (`randomNodeId()`);
-`drone_sim --node-id N` pins one so a batch campaign knows which node is
-which run. An embedded target folds its MCU UID or MAC through
+`drone_sim --node-id N` pins one so a launcher knows which node is
+which process. An embedded target folds its MCU UID or MAC through
 `hashNodeId(bytes, size)` (FNV-1a): the board hashes its MCU unique id,
 the ESP32 relay its WiFi MAC.
 
 ## API (`transport/transport.hpp`)
 
 ```cpp
-Transport transport(nodeId);           // explicit, value member of the App
+Transport transport(nodeId, bootId);   // value member of the App
+transport.nodeId(); transport.bootId(); // who it is, and which run of it
 transport.addLink(udpLink);            // up to MAX_LINKS = 4, AbsLink&
 transport.init();                      // false without a node id or a link
 transport.send(dst, payload, size);    // dst 0 = broadcast on every link, 1..MAX_PAYLOAD bytes
@@ -88,9 +92,10 @@ rather than in a wrapper around `send()`.
 `poll()` is the only place anything happens, and `nowUs` comes from the
 caller: the transport never reads a clock. Every frame received, whatever
 its payload, refreshes the node table (`nodeId -> link, address,
-lastSeenUs, lastSeq, received, lost, duplicates, hops`, `MAX_NODES` = 32);
+lastSeenUs, lastSeq, received, lost, duplicates, hops, boot`, `MAX_NODES` =
+32);
 a payload addressed to this node or to everyone is handed to `deliver`,
-and a frame carrying none (a keepalive) is not. A frame whose `src` is
+and a keepalive, or a frame carrying no payload, is not. A frame whose `src` is
 this node (its own broadcast coming back on a shared medium) is ignored.
 
 A broadcast leaves on every declared link; a unicast leaves on the link
@@ -105,13 +110,26 @@ nothing. The hub publishes these counters per node in its `NodeTable`
 
 ## Presence
 
-Presence is the keepalive, a frame that is the header alone (11 bytes, no
-payload), owned by the transport: every node broadcasts one every
-`KEEPALIVE_PERIOD_US` (1 s, the first one on the first `poll()`), and
-additionally unicasts one to a node the moment it first appears, so a
-newcomer learns everyone at once. A keepalive is learnt from, counted in
-the sequence accounting and relayed like any broadcast, and never
-delivered: it carries no identity and no application sees it. A node
+Presence is the keepalive, a frame flagged `FRAME_FLAG_KEEPALIVE` in its
+header and carrying `KEEPALIVE_PAYLOAD_SIZE` = 4 bytes, the sender's **boot
+id** little-endian (15 bytes in all), owned by the transport: every node
+broadcasts one every `KEEPALIVE_PERIOD_US` (1 s, the first one on the first
+`poll()`), and additionally unicasts one to a node the moment it first
+appears, so a newcomer learns everyone at once. A keepalive is learnt from,
+counted in the sequence accounting and relayed like any broadcast, and never
+delivered: it carries no identity and no application sees it.
+
+The boot id is the identity of one run of one node, drawn at random by the
+composition and handed to the constructor (`randomBootId()` on desktop, the
+RNG peripheral on the board, `esp_random()` on the ESP32); it is never
+derived from the chip, because what makes a node id stable is exactly what
+this number must not be. `Node::boot` keeps the last one heard, 0 until the
+node's first keepalive: a node id is stable across reboots, so a node that
+restarts faster than `NODE_EXPIRY_US` would otherwise never leave the tables
+of its peers. The first keepalive of a node sets its `boot` silently; one
+carrying a different, non-zero boot id is another incarnation of the same
+id, and the transport fires `onNodeDown()` then `onNodeUp()` for it with its
+counters reset, so every listener drops what it knew and starts over. A node
 silent for `NODE_EXPIRY_US` (3 s, three missed keepalives) is forgotten
 and every `AbsPresenceListener::onNodeDown()` fires; `onNodeUp()` fires
 when a node is heard for the first time. A listener attaches itself to the
@@ -130,7 +148,10 @@ arrival link (split horizon) or the destination is unknown (dropped). A
 node with one link therefore relays nothing, which is why no switch is
 needed. The duplicate drop by `(src, seq)` is what keeps a triangle of
 relays from looping. `Node::hops` keeps the count the last frame from a
-node carried: 0 for a direct neighbour, 1 for a node behind one relay.
+node carried: 0 for a direct neighbour, 1 for a node behind one relay. A
+relay rebuilds the last header byte rather than incrementing it in place:
+the hop count shares it with the flags, which cross unchanged, so a
+keepalive is relayed as a keepalive.
 
 The hub learns the board from its keepalives, relayed by the ESP32, at the
 relay's IP and data port, and its unicasts to the board land there and are
@@ -160,8 +181,8 @@ a broadcast.
   application logs it (the link itself prints nothing: this library does
   not link the log library, a failed system call is a `false` from
   `init()`). `DISCOVERY_PORT` = 47820 is the one port a
-  deployment must agree on; the constructor takes another one so a batch
-  campaign isolates itself from a live bench. `discoveryFd()` /
+  deployment must agree on; the constructor takes another one so a set of
+  processes isolates itself from a live bench. `discoveryFd()` /
   `dataFd()` let a caller `poll(2)` instead of spinning. The same source
   compiles against lwIP on the ESP32 (`socket`, `bind`, `sendto`,
   `recvfrom` with `MSG_DONTWAIT | MSG_TRUNC`, `getsockname`, `close`
@@ -209,8 +230,8 @@ and answers the plant's own identity to whoever asks.
 
 | port | who | what |
 |------|-----|------|
-| udp/47820 | every transport node | discovery: broadcast frames (keepalives, telemetry, answers) |
-| ephemeral | every transport node | data socket: unicast frames (commands, lockstep sim link, keepalive on first sight) |
+| udp/47820 | every transport node | discovery: the broadcast keepalives, and nothing else |
+| ephemeral | every transport node | data socket: every unicast frame (streams, commands, answers, the lockstep sim link, the keepalive on first sight) |
 | udp/47810 | hub | HTTP + WebSocket for the pages |
 
 The ESP32 relay owns no port of its own: it is one more node on udp/47820
@@ -218,21 +239,22 @@ with an ephemeral data socket, and the board's UART carries transport
 frames in the serial framing. It shares the address the board is seen at:
 two node ids, one IP and one data port.
 
-`drone_sim` and the firmware send telemetry, log lines and every answer
-(tuning, OTA, run stats) as broadcast frames, so the hub, a batch campaign
-and any other node read the same stream; commands reach them as unicasts to
-their node. Presence is the keepalive and carries no identity: no node
-announces itself on the wire today, a node id is all the transport knows
-of a peer. The board's node id is `hashNodeId()` of the 96-bit MCU unique
+`drone_sim` and the firmware send telemetry, log lines, the `Status`
+report and every answer (tuning, OTA) as unicasts to the node that asked
+or subscribed; commands reach them as unicasts to their node. The
+keepalive is the one broadcast left, and it carries the sender's boot id
+and no identity: who a node is travels only as the answer to an
+`IdentityRequest` (`software/components/discovery/`). The board's node id
+is `hashNodeId()` of the 96-bit MCU unique
 id (`boardNodeId()`), so it survives resets and reflashes.
 
 ## Open points
 
 - No retransmission, no acknowledgement, no fragmentation: what the
-  application needs it does itself (the OTA client already does).
-- Unicast replies are not used by `drone_sim` nor by the firmware: every
-  answer is a broadcast, which is the simpler option and what the ground
-  tools expect today (the ESP32 relays the board's onto the LAN).
+  application needs it does above. The messenger
+  (`software/components/messaging/`) numbers, keeps and resends what has to
+  arrive and acknowledges what it receives; the OTA session has its own
+  go-back-N on top of that.
 - The board's transport keeps the full `MAX_NODES` = 32 table (about
   1.3 KB) although it only ever sees a handful of nodes; RAM is not tight
   on the F405 so nothing shrinks it.

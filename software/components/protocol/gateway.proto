@@ -8,12 +8,13 @@
 // comfort is paid by every message, and anything per-node and unbounded
 // gets a message of its own instead of a field in Node.
 //
-// One GatewayMessage per websocket binary message, both
-// directions. Nothing here crosses the LAN: the gateway forwards transport
-// frames as-is inside Frame and owns the few services a browser cannot
-// (the OTA bundle on disk, the tuning profiles, the node table counters).
-// The codecs are generated at build time: nanopb for the hub, protoc-gen-es
-// for the pages.
+// One GatewayMessage per websocket binary message, both directions.
+// Nothing raw crosses: the gateway decodes everything it hears through its
+// consumers and publishes what they hold as the typed messages below, and a
+// client sends typed commands the gateway carries out through one consumer.
+// A client never encodes an Envelope, and the only mark4.proto types it
+// needs are the ones this schema imports. The codecs are generated at build
+// time: nanopb for the hub, protoc-gen-es for the pages.
 
 syntax = "proto3";
 
@@ -22,8 +23,11 @@ package mark4;
 import "mark4.proto";
 
 message GatewayMessage {
+  // 1 was Frame, one encoded Envelope forwarded raw in both directions.
+  // Never reuse.
+  reserved 1;
+
   oneof body {
-    Frame frame = 1;
     NodeTable nodes = 2;
     GatewayStatus status = 3;
     OtaCommand ota_command = 10;
@@ -33,26 +37,34 @@ message GatewayMessage {
     Profile profile = 22;
     Ack ack = 30;
     NodeTelemetry node_telemetry = 40;
+    TelemetryCommand telemetry_command = 50;
+    LogCommand log_command = 51;
+    TuningCommand tuning_command = 52;
+    PilotInput pilot_input = 53;
+    NodeCommand node_command = 54;
+    NodeLogModules node_log_modules = 60;
+    NodeLogLines node_log_lines = 61;
+    NodeStatus node_status = 62;
+    NodeTelemetryConfig node_telemetry_config = 63;
+    TelemetrySamples telemetry_samples = 64;
+    NodeTuning node_tuning = 65;
+    TuningResult tuning_result = 66;
     // 31 was the gateway's own Log: the gateway is a node and its lines
-    // travel as Log envelopes in Frame like everyone else's. Never reuse.
+    // travel as NodeLogLines from its own node id like everyone else's.
+    // Never reuse.
   }
   // Correlation id a client sets on a command (never 0); the gateway echoes
   // it on the Ack answering that command.
   uint32 id = 100;
 }
 
-// One transport frame. Gateway to client: every payload the transport
-// delivered to the gateway (unicast to it or broadcast), src set, dst left
-// 0 (the transport does not report it). Client to gateway: a payload to
-// send, dst set (0 = broadcast), src ignored.
-message Frame {
-  uint32 src = 1;
-  uint32 dst = 2;
-  bytes payload = 3;  // one encoded Envelope, at most 512 bytes
-}
-
 // One node of the gateway's transport table, plus the last beacon it sent.
 message Node {
+  // 9 was the node's log module table, which is a message of its own now
+  // (NodeLogModules): every body of the oneof is a union member, so one
+  // node's fixed 32-module array cost 50 kB on every GatewayMessage.
+  reserved 9;
+
   uint32 id = 1;
   string address = 2;          // IPv4 dotted, empty for the gateway itself
   uint32 port = 3;
@@ -61,13 +73,72 @@ message Node {
   uint32 lost = 6;
   uint32 duplicates = 7;
   Announce announce = 8;       // absent until the node beaconed
-  // The node's last LogModules table, whole, so a client connecting late
-  // knows every module and level; empty until the node published it.
-  // TODO(tmagne): move this out of Node the way NodeTelemetry below is out
-  // of it. Every body of the oneof is a union member, so one node's fixed
-  // 32-module array costs 50 kB on every GatewayMessage variable, the ones
-  // that only carry a 40 byte Frame included.
-  repeated LogModuleInfo log_modules = 9;
+}
+
+// Client to gateway: what one node's telemetry stream carries, and who
+// among the clients wants it.
+message TelemetryCommand {
+  uint32 node = 1;
+  oneof action {
+    // Replaces the node's configuration wholesale; last writer wins
+    // between clients too, there is one configuration per node.
+    TelemetryConfigRequest config = 2;
+    // Marks or unmarks this client: the gateway holds the node's stream
+    // while at least one client is marked.
+    bool subscribe = 3;
+  }
+}
+
+// The configuration a client asks a node for: the measures to sample and
+// how often.
+message TelemetryConfigRequest {
+  repeated uint32 ids = 1;  // at most 64
+  uint32 period_ms = 2;
+}
+
+// Client to gateway: one node's log table or one of its levels.
+message LogCommand {
+  uint32 node = 1;
+  oneof action {
+    bool refresh = 2;            // pull the module table again
+    LogLevelRequest set_level = 3;
+  }
+}
+
+// One module of one node moved to one level.
+message LogLevelRequest {
+  uint32 module_id = 1;
+  LogLevel level = 2;
+}
+
+// Client to gateway: one node's parameter table, or one parameter.
+message TuningCommand {
+  uint32 node = 1;
+  oneof action {
+    bool refresh = 2;  // pull the parameter table again
+    TuningSet set = 3;
+    TuningGet get = 4;
+  }
+}
+
+// Client to gateway: one pilot state for one node, forwarded once as an Rc
+// from the gateway's own id. The gateway never repeats it: a client that
+// stops sending stops the stream, and the node's own RC timeout does the
+// rest. One pilot per node at a time; another client's input is refused
+// while the seat is held.
+message PilotInput {
+  uint32 node = 1;
+  Rc rc = 2;
+}
+
+// Client to gateway: one command the gateway sends to the node as a
+// request of its own.
+message NodeCommand {
+  uint32 node = 1;
+  oneof action {
+    bool reboot = 2;
+    SimScenario scenario = 3;
+  }
 }
 
 // Gateway to client: one node's whole telemetry table, as the gateway
@@ -75,11 +146,61 @@ message Node {
 // that connects; a table the gateway dropped (the node went down) is
 // published empty. Its own message rather than a Node field on purpose:
 // a nanopb struct is its worst case, so 128 descriptors inside Node would
-// make every GatewayMessage variable a few hundred kB, including the one
-// the gateway fills per forwarded frame at 100 Hz.
+// make every GatewayMessage variable a few hundred kB.
 message NodeTelemetry {
   uint32 node = 1;
   repeated TelemetryDescriptor descriptors = 2;  // the node's whole table
+}
+
+// Gateway to client: one node's whole log module table, as its consumer
+// holds it. Published on every change and to every client that connects;
+// a node that went down is published empty.
+message NodeLogModules {
+  uint32 node = 1;
+  repeated LogModuleInfo modules = 2;  // 32 at most
+}
+
+// Gateway to client: log lines of one node. One line as it arrives, and
+// the whole ring the gateway kept (oldest first) to a client that connects.
+message NodeLogLines {
+  uint32 node = 1;
+  repeated Log lines = 2;  // 256 at most
+}
+
+// Gateway to client: the last report of one node, at that node's cadence.
+message NodeStatus {
+  uint32 node = 1;
+  Status status = 2;
+}
+
+// Gateway to client: the telemetry configuration as the node applied it,
+// and whether the gateway holds its sample stream.
+message NodeTelemetryConfig {
+  uint32 node = 1;
+  repeated uint32 ids = 2;  // at most 64
+  uint32 period_ms = 3;
+  bool subscribed = 4;
+}
+
+// Gateway to client: one sampling instant of one node, to the clients
+// marked on that node.
+message TelemetrySamples {
+  uint32 node = 1;
+  TelemetryData data = 2;
+}
+
+// Gateway to client: one node's whole parameter table, as the gateway
+// pulled it page by page.
+message NodeTuning {
+  uint32 node = 1;
+  repeated TuningInfo infos = 2;  // 64 at most
+}
+
+// Gateway to client: the answer to a set or a get, to every client. They
+// correlate on the id of their own command and on the parameter id.
+message TuningResult {
+  uint32 node = 1;
+  TuningAck ack = 2;
 }
 
 // The whole table, the gateway itself included as its first entry.
@@ -93,11 +214,11 @@ message GatewayStatus {
   uint32 node_id = 1;
   uint32 wire_hash = 2;     // hash of mark4.proto as built into the gateway
   uint32 clients = 3;       // websocket clients connected
-  uint32 rc_clients = 4;    // clients that sent an Rc frame recently
-  uint32 frames_in = 5;     // transport payloads delivered to the gateway
-  uint32 frames_out = 6;    // frames sent on behalf of clients
+  uint32 rc_clients = 4;    // pilot seats held, one per node at most
+  uint32 messages_in = 5;   // transport payloads delivered to the gateway
+  uint32 commands = 6;      // client commands carried out
   uint32 dropped = 7;       // transport frames dropped
-  uint32 bad_frames = 8;    // client frames refused (bad Envelope, unknown dst)
+  uint32 refused = 8;       // client commands refused
 }
 
 // Client to gateway: drive the firmware update client.
@@ -182,7 +303,7 @@ message ProfileCommand {
     LIST = 1;  // answer: ProfileList
     SAVE = 2;  // name + values
     LOAD = 3;  // name; answer: Profile
-    PUSH = 4;  // name + target_node: one TuningSet frame per value
+    PUSH = 4;  // name + target_node: one parameter write per value
   }
   Op op = 1;
   string name = 2;

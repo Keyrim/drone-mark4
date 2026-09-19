@@ -22,6 +22,12 @@
 namespace
 {
     constexpr std::uint64_t T0_US = 10'000'000U;
+    /// Incarnation every transport of this file is built with: a test
+    /// restarts nothing, so one constant stands for the random draw.
+    constexpr std::uint32_t BOOT_ID = 0xB0071D00U;
+    /// Requests these benches keep at once: enough for what one test
+    /// exchanges, the size a board's composition uses.
+    constexpr std::size_t PENDING_REQUESTS = mark4::Messenger::BOARD_PENDING_REQUESTS;
     constexpr std::uint32_t NODE_ME = 0xA0000001U;
     constexpr std::uint32_t NODE_PEER = 0xB0000002U;
     constexpr float THROTTLE = 0.25f;
@@ -159,9 +165,10 @@ namespace
     /// One node with a recording link and a messenger on top.
     struct Bench
     {
-        mark4::RecordingLink link;             ///< the medium
-        mark4::Transport transport{NODE_ME};   ///< this node
-        mark4::Messenger messenger{transport}; ///< under test
+        mark4::RecordingLink link;                                     ///< the medium
+        mark4::Transport transport{NODE_ME, BOOT_ID};                  ///< this node
+        std::array<mark4::PendingRequest, PENDING_REQUESTS> pending{}; ///< requests kept
+        mark4::Messenger messenger{transport, pending};                ///< under test
 
         Bench()
         {

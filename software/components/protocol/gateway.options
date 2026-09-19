@@ -4,11 +4,7 @@
 
 *                                   enum_intsize:IS_32
 
-mark4.Frame.payload                 max_size:512
-
 mark4.Node.address                  max_size:16
-# 32 per node: with 33 nodes the table must stay under nanopb's 64 kB struct.
-mark4.Node.log_modules              max_count:32
 mark4.NodeTable.nodes               max_count:33
 
 # One node's whole telemetry table (the drone side freezes at most
@@ -17,6 +13,16 @@ mark4.NodeTable.nodes               max_count:33
 # offsets at all, and would cost every GatewayMessage variable a few
 # hundred kB.
 mark4.NodeTelemetry.descriptors     max_count:128
+
+# The module table of one node, what its LogConsumer keeps.
+mark4.NodeLogModules.modules        max_count:32
+# The line ring the gateway keeps per node, sent whole to a client that
+# connects. The largest member of the union, and what sizes it.
+mark4.NodeLogLines.lines            max_count:256
+mark4.NodeTelemetryConfig.ids       max_count:64
+mark4.NodeTuning.infos              max_count:64
+
+mark4.TelemetryConfigRequest.ids    max_count:64
 
 mark4.OtaCommand.bundle_path        max_size:256
 

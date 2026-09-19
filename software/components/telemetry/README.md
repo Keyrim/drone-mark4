@@ -4,8 +4,9 @@ The registry of named float measures every node exposes. A leaf library
 like `log`: static lib, `drone_warnings` alone, no heap, no iostream, no
 exceptions, no RTTI, and it builds for the F405 as it stands. It knows
 names, units and where values live; it knows nothing of the wire, of ids,
-of periods or of subscribers. Those belong to the wire adapter
-(`services/telemetry_service.hpp`), which freezes the list into a
+of periods or of subscribers. Those belong to the provider
+(`telemetry/provider.hpp`, target `telemetry_provider`, which links
+`messaging`), described at the end of this page: it freezes the list into a
 table and answers the telemetry messages of `protocol/mark4.proto`.
 
 ## The model
@@ -67,9 +68,9 @@ pulled.
 ## Limits
 
 - `MAX_TELEMETRY_NAME` = 40 characters. A longer name is refused by the
-  wire adapter with a WARN, not truncated.
+  provider with a WARN, not truncated.
 - `MAX_TELEMETRY_ENTRIES` = 128. The registry itself has no limit; this is
-  the size of the frozen table the adapter indexes, and therefore the
+  the size of the frozen table the provider indexes, and therefore the
   largest id that can travel. Entries past it are ignored with a WARN.
 - Not thread-safe: every node registers and samples from its one loop
   thread.
@@ -78,7 +79,7 @@ pulled.
 
 Registered today, by area and by where they live. `[r]` marks a reader
 rather than a pointer. The count a node exposes is logged at boot
-(`platform/telemetry`): 76 for `drone_sim`, a few less for the firmware,
+(`telemetry/provider`): 76 for `drone_sim`, a few less for the firmware,
 which has no plant behind it.
 
 Platform, from the frame the loop stepped
@@ -157,7 +158,100 @@ Firmware only:
 ## Adding a measure
 
 Declare a `TelemetryEntry` next to the value, add it to the list above, and
-that is all: the wire adapter picks it up from the registry at the next
+that is all: the provider picks it up from the registry at the next
 `init()`, the gateway pulls the new table when the node comes up, and the
 telemetry page offers it in its catalog. Nothing in the schema, the packer
 or any codec changes - which is the whole reason the registry exists.
+
+## The provider
+
+`TelemetryProvider` (`telemetry/provider.hpp`) is the registry on the
+wire, an `AbsMessageHandler` of the composition's `Messenger` declared last
+among the services: `init()` freezes the registry into the table this node
+publishes, so every object holding a measure must already exist. The id of
+a measure is its index in that table, for the life of the process.
+
+```cpp
+TelemetryProvider telemetryProvider{messenger, MIN_TELEMETRY_PERIOD_MS};
+telemetryProvider.init();            // last, once every measure exists
+telemetryProvider.sample(frame.timestampUs);   // once per flight frame
+```
+
+Three messages reach it:
+
+- `TelemetryListRequest { cursor }`, answered by one
+  `TelemetryDescriptors { total, cursor, descriptors }` page; the consumer
+  paces the walk, one page per request, and the last page is the one where
+  `cursor + descriptors_count == total`.
+- `TelemetryConfigure { ids, period_ms }`: what the stream carries and how
+  often, **one configuration per node, never one per consumer**. It
+  replaces the enabled set and the period wholesale, last writer wins. The
+  ids are filtered to the table and to `MAX_ENABLED`, kept ascending, and
+  the period is clamped between the composition's floor and
+  `MAX_PERIOD_MS` = 60 s. It is answered by `TelemetryConfig`, the
+  configuration in effect, to the node that asked and to every other
+  subscriber: holding a stream means hearing what changes it. A period of
+  0, or no known id, stops the samples without touching the subscriptions.
+- `TelemetrySubscribe { enabled }`: take the sample stream, or stop it.
+  Answered by `TelemetrySubscription`, the subscription the node holds
+  afterwards; `enabled` comes back false when the table is full
+  (`MAX_SUBSCRIBERS` = 2). A node that goes down is dropped
+  (`onNodeDown()`), so a tool that crashed leaves nothing streaming behind
+  it.
+
+A request and its answer are two message types throughout, never one: the
+provider claims the request tags (`TelemetryListRequest`,
+`TelemetryConfigure`, `TelemetrySubscribe`) and the consumer the state tags
+(`TelemetryDescriptors`, `TelemetryConfig`, `TelemetrySubscription`), so a
+node that is both keeps one handler per body tag.
+
+`sample(nowUs)` emits one batch per subscriber when the period elapsed and
+splits a sampling instant wider than `VALUES_PER_MESSAGE` into several
+messages carrying the same timestamp. The samples go out with `send()`: a
+sample is only worth its own instant. The provider never reads a clock, and
+two time bases meet in it: the messenger is polled on the process clock
+(the sim polls it from the sensor wait) while the stream is timed on the
+frames, so a configuration is stamped with the instant of the last
+`sample()`, never with the instant of the poll that delivered it.
+
+### The period floor
+
+`minPeriodMs` is a constructor argument because it describes the link, not
+the loop:
+
+- `drone_sim` passes 2 ms, the frame period. The plant paces the loop at
+  500 Hz and a loopback datagram costs nothing, so there is nothing faster
+  to ask for: a shorter period would only repeat a frame's values.
+- the firmware passes 10 ms. At 921600 baud the serial framing carries about
+  92 kB/s; 64 enabled measures are two `TelemetryData` messages of roughly
+  300 bytes, so 100 Hz is about 60 kB/s. That leaves room for the Status
+  stream, the log lines and the tuning answers sharing the same UART, and
+  1 ms would not.
+
+A period outside `[minPeriodMs, MAX_PERIOD_MS]` is clamped and the answer
+says what was applied, so a ground tool never has to guess.
+
+## The consumer
+
+`telemetry/consumer.hpp` holds the other side of the same concept, for a
+ground node: `TelemetryConsumer<N>` (target `telemetry_consumer`), an
+`AbsMessageHandler` and an `AbsDirectoryListener` at once, sized by the
+composition. Header-only, fixed tables, no heap.
+
+```cpp
+TelemetryConsumer<Transport::MAX_NODES> telemetry{messenger, directory};  // after both
+telemetry.configure(node, ids, periodMs);   // also subscribe(), refresh()
+```
+
+The kinds that carry a `TelemetryProvider` are its own constant (`KINDS`:
+`FIRMWARE`, `DRONE_SIM`). A node of one of those kinds whose announce
+matches this wire hash is opened from `onIdentity()` and its measure table
+pulled with a `TablePull<mark4_TelemetryDescriptor, MAX_TELEMETRY_ENTRIES>`:
+one `TelemetryListRequest` per page, the next asked for as each page lands,
+the listeners told once the table is whole
+(`AbsTelemetryConsumerListener::onTable()`). Opening a node does not
+subscribe to its samples: a consumer takes the stream when it wants it, and
+`onConfig()` reports the configuration as the node applied it next to
+whether the stream is held. Samples reach `onSamples()`. A page request
+given up on abandons the walk; a node that goes down loses its entry, table
+and ids alike, because those ids are only stable while it runs.

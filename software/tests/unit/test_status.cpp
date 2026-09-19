@@ -10,8 +10,8 @@
 
 #include "flight_core/flight_core.hpp"
 #include "flight_core/types.hpp"
-#include "platform_common/status_packer.hpp"
 #include "protocol/envelope.hpp"
+#include "status/status_packer.hpp"
 
 TEST_CASE("packStatus carries the estimated attitude, the motors and the phase")
 {

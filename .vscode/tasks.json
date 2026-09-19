@@ -3,7 +3,7 @@
     "tasks": [
         {
             "label": "install mark4 extension",
-            "detail": "On folder open: build and install tools/vscode-mark4 when its version changed. Reload the window after an install.",
+            "detail": "On folder open: build and install tools/vscode-mark4 when the installed copy differs from the sources. Reload the window after an install.",
             "type": "shell",
             "command": "${workspaceFolder}/tools/vscode-mark4/install.sh",
             "runOptions": {

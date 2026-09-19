@@ -68,7 +68,7 @@ namespace mark4
         return pb_decode(&stream, mark4_GatewayMessage_fields, &messageOut);
     }
 
-    mark4_OtaState otaStateOf(const OtaClient &client, std::uint32_t targetNode)
+    mark4_OtaState otaStateOf(const OtaConsumer &client, std::uint32_t targetNode)
     {
         mark4_OtaState state = mark4_OtaState_init_zero;
         state.phase = static_cast<mark4_OtaState_Phase>(client.phase());
@@ -117,7 +117,7 @@ namespace mark4
         return state;
     }
 
-    bool applyOtaCommand(OtaClient &client,
+    bool applyOtaCommand(OtaConsumer &client,
                          const mark4_OtaCommand &command,
                          std::uint32_t &targetNodeInOut,
                          std::uint64_t nowUs,
@@ -156,7 +156,7 @@ namespace mark4
     bool pushProfile(const TuningProfiles &profiles,
                      std::string_view name,
                      std::uint32_t dst,
-                     const EnvelopeSink &sink,
+                     const TuningSink &sink,
                      std::string &errorOut)
     {
         if (dst == 0U)
@@ -171,12 +171,10 @@ namespace mark4
         }
         for (const auto &[id, value] : values)
         {
-            mark4_Envelope envelope = mark4_Envelope_init_zero;
-            envelope.which_body = mark4_Envelope_tuning_set_tag;
-            envelope.body.tuning_set.id = id;
-            envelope.body.tuning_set.value = value;
-            if (!sink(dst, envelope, errorOut))
+            if (!sink(id, value))
             {
+                errorOut =
+                    "node " + hexNodeId(dst) + " took no write for parameter " + std::to_string(id);
                 return false;
             }
         }
@@ -212,7 +210,6 @@ namespace mark4
     void fillNode(const Transport::Node &node,
                   std::uint64_t nowUs,
                   const mark4_Announce *announce,
-                  const LogModuleTable &logModules,
                   mark4_Node &nodeOut)
     {
         nodeOut = mark4_Node_init_zero;
@@ -241,52 +238,21 @@ namespace mark4
             nodeOut.has_announce = true;
             nodeOut.announce = *announce;
         }
-        const std::size_t count = std::min(logModules.size(), std::size(nodeOut.log_modules));
-        std::copy_n(logModules.begin(), count, nodeOut.log_modules);
-        nodeOut.log_modules_count = static_cast<pb_size_t>(count);
     }
 
-    void applyLogModulesPage(const mark4_LogModules &page, LogModuleTable &tableInOut)
+    void fillNodeLogModules(std::uint32_t node,
+                            std::span<const mark4_LogModuleInfo> modules,
+                            mark4_NodeLogModules &out)
     {
-        if (page.start_index == 0U)
-        {
-            tableInOut.clear();
-        }
-        tableInOut.resize(page.total);
-        for (pb_size_t i = 0U; i < page.modules_count; ++i)
-        {
-            const std::size_t index = page.start_index + i;
-            if (index < tableInOut.size())
-            {
-                tableInOut[index] = page.modules[i];
-            }
-        }
-    }
-
-    std::uint32_t applyTelemetryPage(const mark4_TelemetryDescriptors &page,
-                                     TelemetryTable &tableInOut)
-    {
-        if (page.cursor == 0U)
-        {
-            tableInOut.clear();
-        }
-        tableInOut.resize(page.total);
-        for (pb_size_t i = 0U; i < page.descriptors_count; ++i)
-        {
-            const std::size_t index = page.cursor + i;
-            if (index < tableInOut.size())
-            {
-                tableInOut[index] = page.descriptors[i];
-            }
-        }
-        // A page that carried nothing while the table is not full would loop
-        // forever on the same cursor: the total is what closes the walk.
-        const std::uint32_t next = page.cursor + page.descriptors_count;
-        return page.descriptors_count == 0U ? page.total : next;
+        out = mark4_NodeLogModules_init_zero;
+        out.node = node;
+        const std::size_t count = std::min(modules.size(), std::size(out.modules));
+        std::copy_n(modules.begin(), count, out.modules);
+        out.modules_count = static_cast<pb_size_t>(count);
     }
 
     void fillNodeTelemetry(std::uint32_t node,
-                           const TelemetryTable &table,
+                           std::span<const mark4_TelemetryDescriptor> table,
                            mark4_NodeTelemetry &out)
     {
         out = mark4_NodeTelemetry_init_zero;
@@ -296,18 +262,20 @@ namespace mark4
         out.descriptors_count = static_cast<pb_size_t>(count);
     }
 
-    LogModuleTable ownLogModules()
+    std::size_t ownLogModules(std::array<mark4_LogModuleInfo, NODE_LOG_MODULES> &out)
     {
-        LogModuleTable table;
-        for (const LogModule *module = logModules(); module != nullptr; module = module->next())
+        std::size_t count = 0U;
+        for (const LogModule *module = logModules(); module != nullptr && count < out.size();
+             module = module->next())
         {
-            mark4_LogModuleInfo info = mark4_LogModuleInfo_init_zero;
+            mark4_LogModuleInfo &info = out[count];
+            info = mark4_LogModuleInfo_init_zero;
             info.id = module->id();
             copyWireString(module->name(), info.name, sizeof(info.name));
             info.level = logLevelToWire(module->level());
-            table.push_back(info);
+            ++count;
         }
-        return table;
+        return count;
     }
 
     std::string hexNodeId(std::uint32_t id)

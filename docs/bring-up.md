@@ -134,41 +134,43 @@ Incremental, one observable win per step:
    `UartLink` on USART1 at 921600 baud, node id hashed from the MCU unique
    id. Its keepalive makes it visible, and it answers an `IdentityRequest`
    with the `Announce` naming the board, its chip, its build and its wire
-   hash; it broadcasts a 50 Hz `Status` stream,
-   its tuning and updater answers, and `Log` lines (init failures, update
-   state changes; at most 20 per second) so a bench without a probe reads
-   them in the hub. Every frame is the transport header then the envelope,
+   hash; it emits a 50 Hz `Status` stream and its `Log` lines (init
+   failures, update state changes; at most 50 per second) to the ground
+   nodes that subscribed to them, and its tuning and updater answers to
+   whoever asked, so a bench without a probe reads them in the hub. Every
+   frame is the transport header then the envelope,
    inside the serial framing of `transport/serial_framing.hpp` (a UART has
    no datagram boundaries), interrupt-driven behind a ring buffer; a frame
    the transmit ring cannot hold is dropped whole and counted. The other
    end of the UART is the ESP32 relay riding the drone (`esp32-bridge/`):
    a transport node that relays between its two links: the board's
-   broadcasts onto the WiFi LAN and, down the UART, the unicasts for the
+   unicasts onto the WiFi LAN and, down the UART, the unicasts for the
    board and the LAN's keepalives. The `hub` sees the board as one more
    node of the LAN (kind `firmware` once it answered who it is, at the
    relay's address) and the
    Connections panel of the control page connects to it with the same
    click as to `drone_sim`. The uplink carries the pilot state
-   (`Rc`: kill, arm, mode, throttle and the three sticks): an `rc`
-   message aimed at `firmware` on the hub websocket endpoint is a
-   transport unicast to the board's node, and 200 ms of silence trips the
+   (`Rc`: kill, arm, mode, throttle and the three sticks): a pilot input
+   aimed at the board on the hub websocket endpoint becomes one `Rc`
+   unicast from the gateway's own node to the board's, and 200 ms of
+   silence trips the
    fail-safe (kill engaged, disarmed), so closing the sender is itself a
    safe action. A simulated
-   flight is flown the same way: an `rc` message aimed at `drone_sim`
-   is a transport unicast to that process's node, so the RC path and its
+   flight is flown the same way, aimed at `drone_sim`
+   instead, so the RC path and its
    fail-safe are exercised in every simulated flight, not only on the
    bench. The simulator holds no pilot state of
    its own - it is the plant, not the cockpit - and its keyboard only
    drives the view (which drone is followed, from which camera); resets
    and throws are scenarios sent to the flight process by the console
-   page or the phone. A `reboot` message
-   reboots the board (NVIC
-   system reset), forwarded by the hub like any other uplink packet;
+   page or the phone. A reboot command on the endpoint becomes one `Reboot`
+   request the gateway unicasts to the board, acknowledged on arrival
+   before the NVIC system reset;
    no simulator key is wired to it.
 4. **Detection on real hands**: board armed and shaken in hand (no
    false spin-up expected), then thrown and caught - throw detection
    and apex prediction on real sensor data, compared against the
-   simulator campaign metrics.
+   simulated runs.
 
 No vendor HAL: the register map comes from the vendored CMSIS device
 header (`software/third_party/cmsis`), and only the peripherals actually

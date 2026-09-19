@@ -6,24 +6,24 @@
 ///        client, profiles, transport table) and the messages a client
 ///        reads. Pure functions, no socket, no state.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <span>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "gateway.pb.h"
-#include "hub/ota_client.hpp"
 #include "hub/tuning_profiles.hpp"
+#include "ota/consumer.hpp"
 #include "protocol/envelope.hpp"
 #include "transport/transport.hpp"
 
 namespace mark4
 {
-    /// Route one envelope to one node: what a profile push sends through.
-    using EnvelopeSink =
-        std::function<bool(std::uint32_t dst, const mark4_Envelope &, std::string &errorOut)>;
+    /// Write one parameter of one node: what a profile push sends through.
+    using TuningSink = std::function<bool(std::uint32_t id, float value)>;
 
     /// @brief Encodes one GatewayMessage into a websocket binary message.
     /// @param message message to encode; which_body must name a body
@@ -44,7 +44,7 @@ namespace mark4
     /// @param client update client
     /// @param targetNode node the session talks to, 0 when none was chosen
     /// @return the state
-    mark4_OtaState otaStateOf(const OtaClient &client, std::uint32_t targetNode);
+    mark4_OtaState otaStateOf(const OtaConsumer &client, std::uint32_t targetNode);
 
     /// @brief Carries out one update command. The target is fixed for the
     ///        whole session: a command naming another node while a session
@@ -55,23 +55,23 @@ namespace mark4
     /// @param nowUs current time [us]
     /// @param[out] errorOut receives the refusal reason
     /// @return true when the command was carried out
-    bool applyOtaCommand(OtaClient &client,
+    bool applyOtaCommand(OtaConsumer &client,
                          const mark4_OtaCommand &command,
                          std::uint32_t &targetNodeInOut,
                          std::uint64_t nowUs,
                          std::string &errorOut);
 
-    /// @brief Sends one whole profile to a node, one TuningSet per value.
+    /// @brief Sends one whole profile to a node, one write per value.
     /// @param profiles the profiles on disk
     /// @param name profile to push
     /// @param dst node to push it to
-    /// @param sink route to that node
+    /// @param sink writes one parameter of that node
     /// @param[out] errorOut receives the reason on failure
     /// @return true when every value went out
     bool pushProfile(const TuningProfiles &profiles,
                      std::string_view name,
                      std::uint32_t dst,
-                     const EnvelopeSink &sink,
+                     const TuningSink &sink,
                      std::string &errorOut);
 
     /// @brief Reads the value pairs of a ProfileCommand.
@@ -86,41 +86,31 @@ namespace mark4
     /// @param[out] profileOut receives them, truncated to the wire bound
     void fillProfile(std::string_view name, const TuningValues &values, mark4_Profile &profileOut);
 
-    /// A node's log module table, as the gateway remembers it.
-    using LogModuleTable = std::vector<mark4_LogModuleInfo>;
+    /// Modules one NodeLogModules message carries, from the wire bound of
+    /// gateway.options.
+    inline constexpr std::size_t NODE_LOG_MODULES =
+        sizeof(mark4_NodeLogModules::modules) / sizeof(mark4_LogModuleInfo);
 
     /// @brief Fills one Node entry of the table from the transport's record.
     /// @param node transport record
     /// @param nowUs current time [us], turned into an age
     /// @param announce last Announce of that node, nullptr when none
-    /// @param logModules the node's last module table, truncated to the
-    ///        wire bound; empty when it never published one
     /// @param[out] nodeOut receives the entry
     void fillNode(const Transport::Node &node,
                   std::uint64_t nowUs,
                   const mark4_Announce *announce,
-                  const LogModuleTable &logModules,
                   mark4_Node &nodeOut);
 
-    /// @brief Merges one LogModules page into a node's table: a page opening
-    ///        at index 0 restarts the table, every page sizes it to the total
-    ///        it announces.
-    /// @param page the page received
-    /// @param[in,out] tableInOut the node's table
-    void applyLogModulesPage(const mark4_LogModules &page, LogModuleTable &tableInOut);
-
-    /// A node's telemetry table, as the gateway pulled it.
-    using TelemetryTable = std::vector<mark4_TelemetryDescriptor>;
-
-    /// @brief Merges one TelemetryDescriptors page into a node's table: a
-    ///        page opening at cursor 0 restarts the table, every page sizes
-    ///        it to the total it announces.
-    /// @param page the page received
-    /// @param[in,out] tableInOut the node's table
-    /// @return the next cursor to ask for, equal to the total once the whole
-    ///         table has arrived
-    std::uint32_t applyTelemetryPage(const mark4_TelemetryDescriptors &page,
-                                     TelemetryTable &tableInOut);
+    /// @brief Fills the message that publishes one node's log module table.
+    ///        Its own message and not a Node field for the reason
+    ///        NodeTelemetry is one: every body of the GatewayMessage oneof
+    ///        shares one nanopb struct.
+    /// @param node node the table belongs to
+    /// @param modules the table, truncated to the wire bound
+    /// @param[out] out receives the message
+    void fillNodeLogModules(std::uint32_t node,
+                            std::span<const mark4_LogModuleInfo> modules,
+                            mark4_NodeLogModules &out);
 
     /// @brief Fills the message that publishes one node's telemetry table.
     ///        Its own message rather than a Node field: every body of the
@@ -131,12 +121,15 @@ namespace mark4
     /// @param table the table, truncated to the wire bound
     /// @param[out] out receives the message
     void fillNodeTelemetry(std::uint32_t node,
-                           const TelemetryTable &table,
+                           std::span<const mark4_TelemetryDescriptor> table,
                            mark4_NodeTelemetry &out);
 
-    /// @brief The gateway's own module table, read from the log registry.
-    /// @return the table
-    LogModuleTable ownLogModules();
+    /// @brief The gateway's own module table, read from the log registry:
+    ///        row 0 of the node table is this node, and it reads its own
+    ///        registry rather than the wire.
+    /// @param[out] out receives the modules, truncated to the wire bound
+    /// @return modules written
+    std::size_t ownLogModules(std::array<mark4_LogModuleInfo, NODE_LOG_MODULES> &out);
 
     /// @return a node id as the 8 hex digits every log line prints it with
     std::string hexNodeId(std::uint32_t id);

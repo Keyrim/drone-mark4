@@ -19,8 +19,10 @@
 
 	// Runs on the HOST before the container is created or started: exports
 	// the session X11 cookie to the stable path compose bind-mounts as the
-	// container's ~/.Xauthority (native X servers require it, WSLg does not).
-	"initializeCommand": "bash .devcontainer/host-xauth.sh",
+	// container's ~/.Xauthority (native X servers require it, WSLg does not),
+	// then refreshes the local copy of the dev image (compose alone never
+	// re-pulls :latest; see host-pull.sh, a failed pull does not block).
+	"initializeCommand": "bash .devcontainer/host-xauth.sh && bash .devcontainer/host-pull.sh",
 
 	// The named volumes (Claude/gh config) are created by the Docker daemon
 	// (root): hand them back to the container user on first start.

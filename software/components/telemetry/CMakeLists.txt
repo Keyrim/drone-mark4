@@ -5,3 +5,18 @@
 add_library(telemetry STATIC src/registry.cpp)
 target_include_directories(telemetry PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(telemetry PRIVATE drone_warnings drone_strict)
+
+# The registry on the wire: the frozen table, the pages, the configuration
+# and the sample stream. Header-only, no heap, no iostream, no exceptions:
+# it builds for the F405 as it stands.
+add_library(telemetry_provider INTERFACE)
+target_include_directories(telemetry_provider INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(telemetry_provider INTERFACE telemetry messaging log)
+
+# The other side of the same concept: another node's measure table as a
+# ground node holds it, pulled page by page, plus the configuration and the
+# sample stream. Header-only, fixed tables sized by the composition, no heap;
+# it links telemetry for MAX_TELEMETRY_ENTRIES, the bound of one table.
+add_library(telemetry_consumer INTERFACE)
+target_include_directories(telemetry_consumer INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(telemetry_consumer INTERFACE telemetry messaging discovery log)

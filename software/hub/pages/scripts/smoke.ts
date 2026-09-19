@@ -1,12 +1,13 @@
 /**
  * Bench smoke of the gateway contract, from a script instead of a browser:
  * connects to a running hub over `ws`, and with a plant and flight processes
- * on the LAN checks that the node table lists them by id, that status
- * frames arrive from every drone (truth included), that an Rc frame to one
- * drone shows up in its status, that the whole telemetry chain works
- * (descriptors pulled, an enable acknowledged, samples arriving, the stream
- * stopping when the keepalives stop), that the profile service answers, and
- * optionally that an OTA start against a drone_sim reaches a verdict.
+ * on the LAN checks that the node table lists them by id, that a NodeStatus
+ * arrives from every drone (truth included), that a PilotInput for one drone
+ * shows in its status, that the whole telemetry chain works (the table
+ * published, a configuration answered by the configuration as applied, a
+ * subscribe followed by samples and an unsubscribe by silence), that the
+ * profile service answers, and optionally that an OTA start against a
+ * drone_sim reaches a verdict. Everything is typed: no Envelope crosses.
  *
  *   pnpm smoke                    # nodes, status, rc, telemetry, profiles
  *   OTA_BUNDLE=/path/x.ota pnpm smoke   # plus an update of the first drone_sim
@@ -14,13 +15,13 @@
  * Exits non-zero on the first failed expectation. Timings are printed.
  */
 
-import { create, fromBinary } from "@bufbuild/protobuf";
+import { create } from "@bufbuild/protobuf";
 import WebSocket from "ws";
 
 import { GatewayMessageSchema, OtaCommand_Op, OtaState_Phase, ProfileCommand_Op, type GatewayMessage } from "../src/gen/gateway_pb";
-import { EnvelopeSchema, NodeKind, type Envelope } from "../src/gen/mark4_pb";
-import { decodeGatewayMessage, encodeGatewayMessage, frameMessage } from "../src/shared/gateway_socket";
-import { rcEnvelope, SAFE_RC } from "../src/console/rc";
+import { NodeKind } from "../src/gen/mark4_pb";
+import { decodeGatewayMessage, encodeGatewayMessage } from "../src/shared/gateway_socket";
+import { pilotInput, SAFE_RC } from "../src/console/rc";
 
 const URL = process.env["HUB_URL"] ?? "ws://127.0.0.1:47810";
 const startedAt = Date.now();
@@ -97,11 +98,11 @@ function waitForPastOrNext<T>(
     return waitFor(what, pick, timeoutMs);
 }
 
-function envelopeOf(message: GatewayMessage): { src: number; envelope: Envelope } | undefined {
-    if (message.body.case !== "frame") {
-        return undefined;
-    }
-    return { src: message.body.value.src, envelope: fromBinary(EnvelopeSchema, message.body.value.payload) };
+/** The report of one node, when this message is one. */
+function statusOf(message: GatewayMessage, node: number) {
+    return message.body.case === "nodeStatus" && message.body.value.node === node
+        ? message.body.value.status
+        : undefined;
 }
 
 await new Promise<void>((resolve) => ws.on("open", () => resolve()));
@@ -133,10 +134,7 @@ log(`two stable drone_sim nodes: ${droneIds.join(", ")}`);
 
 // Status from both, with truth.
 for (const id of droneIds) {
-    const status = await waitFor(`status from ${id}`, (m) => {
-        const frame = envelopeOf(m);
-        return frame?.src === id && frame.envelope.body.case === "status" ? frame.envelope.body.value : undefined;
-    });
+    const status = await waitFor(`status from ${id}`, (m) => statusOf(m, id));
     log(`status from ${id}: phase ${status.flightPhase}, truth ${status.truth ? "present" : "ABSENT"}`);
     if (status.truth === undefined) fail(`no truth in the status of ${id}`);
 }
@@ -144,33 +142,28 @@ for (const id of droneIds) {
 // Rc to the first drone: kill off + arm on, then watch its phase leave idle
 // (armed = 2) while the other drone stays where it was.
 const [pilot, bystander] = droneIds as [number, number];
-const before = await waitFor(`status from ${bystander}`, (m) => {
-    const frame = envelopeOf(m);
-    return frame?.src === bystander && frame.envelope.body.case === "status" ? frame.envelope.body.value.flightPhase : undefined;
-});
-const rcTimer = setInterval(() => ws.send(encodeGatewayMessage(frameMessage(pilot, rcEnvelope({ ...SAFE_RC, kill: false, arm: true })))), 100);
+const before = await waitFor(`status from ${bystander}`, (m) => statusOf(m, bystander)?.flightPhase);
+const rcTimer = setInterval(
+    () => ws.send(encodeGatewayMessage(pilotInput(pilot, { ...SAFE_RC, kill: false, arm: true }))),
+    100
+);
 const armedAt = Date.now();
 const armedPhase = await waitFor(`armed phase from ${pilot}`, (m) => {
-    const frame = envelopeOf(m);
-    if (frame?.src !== pilot || frame.envelope.body.case !== "status") return undefined;
-    const phase = frame.envelope.body.value.flightPhase;
-    return phase !== 0 ? phase : undefined;
+    const phase = statusOf(m, pilot)?.flightPhase;
+    return phase !== undefined && phase !== 0 ? phase : undefined;
 });
-log(`drone ${pilot} left idle (phase ${armedPhase}) ${Date.now() - armedAt} ms after the first Rc frame`);
-const after = await waitFor(`status from ${bystander}`, (m) => {
-    const frame = envelopeOf(m);
-    return frame?.src === bystander && frame.envelope.body.case === "status" ? frame.envelope.body.value.flightPhase : undefined;
-});
+log(`drone ${pilot} left idle (phase ${armedPhase}) ${Date.now() - armedAt} ms after the first pilot input`);
+const after = await waitFor(`status from ${bystander}`, (m) => statusOf(m, bystander)?.flightPhase);
 if (after !== before) fail(`the other drone changed phase too: ${before} -> ${after}`);
 log(`drone ${bystander} untouched (phase ${after})`);
 clearInterval(rcTimer);
 // Back to safe, twice, then silence: the drone's own timeout does the rest
-for (let i = 0; i < 2; ++i) ws.send(encodeGatewayMessage(frameMessage(pilot, rcEnvelope(SAFE_RC))));
+for (let i = 0; i < 2; ++i) ws.send(encodeGatewayMessage(pilotInput(pilot, SAFE_RC)));
 
 // The whole telemetry chain, end to end: the gateway pulls each drone's
-// descriptor table, an enable is acknowledged with what was applied, the
-// samples arrive at the period asked for, and the stream stops on its own
-// once the keepalives do.
+// descriptor table and publishes it, a configuration comes back as the
+// configuration applied, the samples arrive at the period asked for, and
+// they stop when the subscription is given back.
 const table = await waitForPastOrNext(
     `a telemetry table for ${pilot}`,
     (m) =>
@@ -185,30 +178,25 @@ if (table.length < 3) fail(`only ${table.length} measures in the table of ${pilo
 
 const enabledIds = table.slice(0, 3).map((descriptor) => descriptor.id);
 const PERIOD_MS = 50;
-const enable = (): void =>
+const telemetryCommand = (action: { case: "config"; value: { ids: number[]; periodMs: number } } | { case: "subscribe"; value: boolean }): void =>
     ws.send(
         encodeGatewayMessage(
-            frameMessage(
-                pilot,
-                create(EnvelopeSchema, {
-                    body: { case: "telemetryEnable", value: { ids: enabledIds, periodMs: PERIOD_MS } },
-                })
-            )
+            create(GatewayMessageSchema, { body: { case: "telemetryCommand", value: { node: pilot, action } } })
         )
     );
-// The enable doubles as the keepalive: repeated once per second, and the
-// drone stops three seconds after the last one.
-const enableTimer = setInterval(enable, 1000);
+const subscribe = (enabled: boolean): void => telemetryCommand({ case: "subscribe", value: enabled });
+// The configuration says what the stream carries, the subscription says
+// who gets it: two commands, and nothing to repeat afterwards.
 const enabledAt = Date.now();
-enable();
+telemetryCommand({ case: "config", value: { ids: enabledIds, periodMs: PERIOD_MS } });
+subscribe(true);
 
-const ack = await waitFor(`a TelemetryAck from ${pilot}`, (m) => {
-    const frame = envelopeOf(m);
-    return frame?.src === pilot && frame.envelope.body.case === "telemetryAck" ? frame.envelope.body.value : undefined;
-});
-log(`ack from ${pilot}: ${ack.enabled} measures every ${ack.periodMs} ms (${Date.now() - enabledAt} ms)`);
-if (ack.enabled !== enabledIds.length) fail(`the drone kept ${ack.enabled} of ${enabledIds.length} ids`);
-if (ack.periodMs !== PERIOD_MS) fail(`the drone applied ${ack.periodMs} ms instead of ${PERIOD_MS}`);
+const applied = await waitFor(`a NodeTelemetryConfig for ${pilot}`, (m) =>
+    m.body.case === "nodeTelemetryConfig" && m.body.value.node === pilot ? m.body.value : undefined
+);
+log(`config from ${pilot}: ${applied.ids.length} measures every ${applied.periodMs} ms (${Date.now() - enabledAt} ms)`);
+if (applied.ids.length !== enabledIds.length) fail(`the drone kept ${applied.ids.length} of ${enabledIds.length} ids`);
+if (applied.periodMs !== PERIOD_MS) fail(`the drone applied ${applied.periodMs} ms instead of ${PERIOD_MS}`);
 
 // A second of samples at 50 ms is 20 messages; 15 leaves room for the
 // datagram that goes missing on a busy bench.
@@ -216,12 +204,12 @@ const EXPECTED_SAMPLES = 15;
 let samples = 0;
 let lastSampleAt = 0;
 const countSamples = (message: GatewayMessage): boolean => {
-    const frame = envelopeOf(message);
-    if (frame?.src !== pilot || frame.envelope.body.case !== "telemetryData") {
+    if (message.body.case !== "telemetrySamples" || message.body.value.node !== pilot) {
         return false;
     }
-    if (frame.envelope.body.value.values.length !== enabledIds.length) {
-        fail(`a sample carried ${frame.envelope.body.value.values.length} values, expected ${enabledIds.length}`);
+    const values = message.body.value.data?.values ?? [];
+    if (values.length !== enabledIds.length) {
+        fail(`a sample carried ${values.length} values, expected ${enabledIds.length}`);
     }
     samples += 1;
     lastSampleAt = Date.now();
@@ -232,15 +220,14 @@ await new Promise<void>((resolve) => setTimeout(resolve, 1000));
 log(`${samples} sample messages from ${pilot} in one second`);
 if (samples < EXPECTED_SAMPLES) fail(`only ${samples} sample messages, expected ${EXPECTED_SAMPLES}`);
 
-// Stop the keepalives without saying anything: the drone must give up on
-// its own, which is what keeps a board from streaming to a dead tab.
-clearInterval(enableTimer);
-const silenceAt = Date.now();
-await new Promise<void>((resolve) => setTimeout(resolve, 4000));
+// Give the stream back: the drone stops emitting it at once.
+subscribe(false);
+const stoppedAt = Date.now();
+await new Promise<void>((resolve) => setTimeout(resolve, 1000));
 waiters.splice(waiters.indexOf(countSamples), 1);
 const quietFor = Date.now() - lastSampleAt;
-log(`the stream stopped ${lastSampleAt - silenceAt} ms after the last keepalive (quiet for ${quietFor} ms)`);
-if (quietFor < 500) fail(`${pilot} was still streaming 4 s after the last keepalive`);
+log(`the stream stopped ${lastSampleAt - stoppedAt} ms after the unsubscribe (quiet for ${quietFor} ms)`);
+if (quietFor < 500) fail(`${pilot} was still streaming after the unsubscribe`);
 
 // The profile service.
 // The answer is broadcast before the ack: listen first, then ask.

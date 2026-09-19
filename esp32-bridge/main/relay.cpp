@@ -4,8 +4,8 @@
 ///        node of its own too, present on both links through the transport's
 ///        keepalive: everything addressed to it goes through its messenger to
 ///        the handler of its tag, so it answers who it is when asked, it
-///        logs through the log library, it takes the LogControl and the
-///        Reboot addressed to it, and it updates itself over the air: the
+///        serves its log to whoever subscribes to it, it takes the Reboot
+///        addressed to it, and it updates itself over the air: the
 ///        same OtaUpdater the flight controller runs, over a store that
 ///        translates to the ESP-IDF OTA partitions, fed by the Ota* unicasts
 ///        a hub sends it.
@@ -23,6 +23,7 @@
 #include "driver/uart.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
+#include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -32,13 +33,13 @@
 #include "discovery/discovery.hpp"
 #include "log/console_sink_posix.hpp"
 #include "log/module.hpp"
-#include "log/wire.hpp"
+#include "log/provider.hpp"
 #include "log_modules.hpp"
 #include "messaging/messenger.hpp"
+#include "ota/gate.hpp"
+#include "ota/provider.hpp"
 #include "ota/updater.hpp"
 #include "protocol/wire_hash.hpp"
-#include "services/ota_gate.hpp"
-#include "services/ota_service.hpp"
 #include "transport/node_id.hpp"
 #include "transport/transport.hpp"
 #include "transport/uart_link.hpp"
@@ -97,6 +98,16 @@ namespace mark4
         /// Bytes of the MAC the node name carries, its low half.
         constexpr std::size_t MAC_NAME_BYTES = 3U;
 
+        /// @brief Draws the identity of this run of this relay. The node
+        ///        id is the MAC and never changes; this one has to, so it
+        ///        comes from the chip's random source and not from the MAC.
+        /// @return the boot id, never 0
+        std::uint32_t bootId()
+        {
+            const std::uint32_t drawn = esp_random();
+            return drawn == 0U ? 1U : drawn;
+        }
+
         /// @param mac the WiFi MAC, the node name's low half
         /// @return what this node answers when asked who it is: what it is,
         ///         what it was built from and the schema it speaks
@@ -151,23 +162,13 @@ namespace mark4
 
         struct Relay;
 
-        /// @brief Route of this node's own log lines and module table, defined
-        ///        below the composition it reads.
-        bool sendLogLine(void *context, const std::uint8_t *data, std::size_t size);
-
-        /// @brief Publishes this node's module table, defined below the
-        ///        composition it reads.
-        /// @param relay the composition
-        void publishModules(Relay &relay);
-
         /// The node's own commands: what is neither the updater's business
         /// nor a frame passing through.
         class Commands final : public AbsMessageHandler
         {
           public:
             /// Body tags this handler consumes.
-            static constexpr std::array<pb_size_t, 2> TAGS = {mark4_Envelope_log_control_tag,
-                                                              mark4_Envelope_reboot_tag};
+            static constexpr std::array<pb_size_t, 1> TAGS = {mark4_Envelope_reboot_tag};
 
             /// @param messenger messenger to attach to
             /// @param relay composition the commands act on
@@ -241,59 +242,47 @@ namespace mark4
             UartLink uart{stream}; ///< the board's link, serial framing
             UdpLink lan;           ///< the WiFi LAN, discovery port 47820
             Transport transport;   ///< the node, relaying between the two
+            /// The requests waiting for their acknowledgement, owned here
+            /// and handed to the messenger as a span.
+            std::array<PendingRequest, Messenger::BOARD_PENDING_REQUESTS> pendingRequests{};
             /// Every message addressed to this node goes through it to the one
             /// handler of its tag; every handler below is declared after it.
-            Messenger messenger{transport};            ///< decodes for the handlers below
-            PresenceLog presence{transport};           ///< one line per node up or gone
-            TransportSink logSink{&sendLogLine, this}; ///< its lines, as broadcasts
-            Commands commands{messenger, *this};       ///< the LogControl and the Reboot
-            Discovery discovery;                       ///< who this node is, on request
-            RelayOtaGate otaGate;                      ///< what the updater asks of a radio
-            FirmwareStoreEsp32 store;                  ///< the two OTA partitions
-            OtaUpdater updater{store};                 ///< the update session over them
+            Messenger messenger{transport, pendingRequests}; ///< decodes for the handlers below
+            PresenceLog presence{transport};                 ///< one line per node up or gone
+            /// Its log on the wire: the lines to whoever subscribed, the
+            /// module table one page per request, the levels.
+            LogProvider logProvider{messenger};
+            Commands commands{messenger, *this}; ///< the Reboot
+            Discovery discovery;                 ///< who this node is, on request
+            RelayOtaGate otaGate;                ///< what the updater asks of a radio
+            FirmwareStoreEsp32 store;            ///< the two OTA partitions
+            OtaUpdater updater{store};           ///< the update session over them
             /// The updater on the wire, absent until the store is ready: a
             /// node whose flash is not laid out for two slots claims no
             /// updater tag at all, which is the refusal it used to answer.
-            std::optional<OtaService>
+            std::optional<OtaProvider>
                 ota;                     ///< the updater on the wire, once the store is known good
             bool storeReady = false;     ///< the partition table is the two-slot one
             bool sessionWasOpen = false; ///< updater state at the last poll, for the log
 
             /// @param nodeId this relay's transport identity
+            /// @param bootId identity of this run of it, in every keepalive
             /// @param identity what it answers when asked who it is
-            Relay(std::uint32_t nodeId, const mark4_Announce &identity)
-                : transport(nodeId),
+            Relay(std::uint32_t nodeId, std::uint32_t bootId, const mark4_Announce &identity)
+                : transport(nodeId, bootId),
                   discovery(messenger, identity)
             {
             }
         };
-
-        bool sendLogLine(void *context, const std::uint8_t *data, std::size_t size)
-        {
-            return static_cast<Relay *>(context)->transport.send(BROADCAST_NODE, data, size);
-        }
-
-        /// @brief Publishes this node's module table, as any node does after
-        ///        its first keepalive and on every level change.
-        /// @param relay the composition
-        void publishModules(Relay &relay)
-        {
-            static_cast<void>(logPublishModules(&sendLogLine, &relay));
-        }
 
         bool Commands::onMessage(std::uint32_t src,
                                  const mark4_Envelope &envelope,
                                  std::uint64_t nowUs)
         {
             static_cast<void>(nowUs);
+            static_cast<void>(m_relay);
             switch (envelope.which_body)
             {
-                case mark4_Envelope_log_control_tag:
-                    if (logHandleControl(envelope.body.log_control))
-                    {
-                        publishModules(m_relay);
-                    }
-                    break;
                 case mark4_Envelope_reboot_tag:
                     // The end of an update session: a staged image boots as
                     // the IDF bootloader's one-shot trial, anything else boots
@@ -390,10 +379,10 @@ extern "C" void relayRun(void)
     ESP_ERROR_CHECK(esp_read_mac(mac.data(), ESP_MAC_WIFI_STA));
     // Static: the composition lives for the whole run and is too large for
     // the main task's stack (two frame buffers and the node table).
-    static Relay relay(hashNodeId(mac.data(), mac.size()), relayIdentity(mac));
+    static Relay relay(hashNodeId(mac.data(), mac.size()), bootId(), relayIdentity(mac));
 
     // A relay whose flash is not laid out for two slots still relays; it
-    // only refuses to update itself, and says so once. Without the service
+    // only refuses to update itself, and says so once. Without the provider
     // no handler claims the updater tags, which is that refusal.
     relay.storeReady = relay.store.init();
     if (relay.storeReady)
@@ -421,7 +410,7 @@ extern "C" void relayRun(void)
     // broadcast of ours can come back from, so the echo is dropped instead
     // of counted as a duplicate of every frame relayed.
     relay.lan.addLocalHost(ownAddress());
-    static_cast<void>(logAddSink(relay.logSink));
+    static_cast<void>(logAddSink(relay.logProvider));
     BOOT.info("boot: node %08" PRIx32 " relay build %lu %s wire %08lx",
               relay.transport.nodeId(),
               static_cast<unsigned long>(BRIDGE_BUILD_EPOCH),
@@ -433,7 +422,6 @@ extern "C" void relayRun(void)
               static_cast<unsigned>(relay.lan.discoveryPort()));
 
     std::int64_t nextStatsUs = esp_timer_get_time() + STATS_PERIOD_US;
-    bool modulesPublished = false;
     for (;;)
     {
         // The messenger polls the transport and hands what is addressed to
@@ -448,12 +436,6 @@ extern "C" void relayRun(void)
                 relay.sessionWasOpen = relay.updater.sessionActive();
                 OTA.info(relay.sessionWasOpen ? "update session open" : "update session closed");
             }
-        }
-        if (!modulesPublished)
-        {
-            // The first poll sent the first keepalive: the table follows it.
-            modulesPublished = true;
-            publishModules(relay);
         }
         const std::int64_t nowUs = esp_timer_get_time();
         if (nowUs >= nextStatsUs)

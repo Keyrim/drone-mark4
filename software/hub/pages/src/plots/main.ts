@@ -11,20 +11,21 @@
  *   live    the lanes of that config; Record streams into them, Stop leaves
  *           what was recorded on screen, Export writes it as CSV
  *
- * The enable is also the keepalive: the node stops streaming 3 s after the
- * last one, so a tab that crashes never leaves a board talking to nobody.
+ * The stream is a subscription: the node emits it until this page gives it
+ * back, or until the page's own node goes down, which the node hears from
+ * the transport.
  */
 
 import { create } from "@bufbuild/protobuf";
 import type uPlot from "uplot";
 
-import { EnvelopeSchema } from "../gen/mark4_pb";
+import { GatewayMessageSchema } from "../gen/gateway_pb";
 import { decimateMinMax } from "../lanes/decimate";
 import { LanesView } from "../lanes/lanes";
 import { type LaneConfig } from "../lanes/model";
 import { Ruler, RULER_H } from "../lanes/ruler";
 import { clampToData, pan, ticks, zoom, type Viewport } from "../lanes/timebase";
-import { frameMessage, GatewaySocket } from "../shared/gateway_socket";
+import { GatewaySocket } from "../shared/gateway_socket";
 import { nodeLabel } from "../shared/nodes";
 import { Shell } from "../shared/shell";
 import {
@@ -44,8 +45,8 @@ const DEFAULT_WINDOW_S = 20;
 const MAX_WINDOW_S = 3600;
 const ZOOM_STEP = 1.2;
 
-/** How often the enable is repeated while recording [ms]. */
-const KEEPALIVE_MS = 1000;
+/** How often the silence of the node is checked while recording [ms]. */
+const SILENCE_CHECK_MS = 1000;
 
 /** Silence from the node after which the curves are broken [ms]. */
 const SILENCE_MS = 3000;
@@ -84,7 +85,7 @@ let viewport: Viewport = { t0: 0, t1: windowS };
 let cursorT: number | null = null;
 let dirty = true;
 
-let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+let silenceTimer: ReturnType<typeof setInterval> | null = null;
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 /* -------------------- layout -------------------- */
@@ -407,30 +408,53 @@ socket.on("nodeTelemetry", (published) => {
     bindSource();
     if (recording) {
         // The node published a table again: it rebooted, or the gateway
-        // pulled it late. Either way the ids may have moved, so the enable
-        // goes out again on the ids that are current.
-        sendEnable(configPanel.period());
+        // pulled it late. Either way the ids may have moved, so the
+        // configuration goes out again on the ids that are current.
+        sendConfig(configPanel.period());
     }
 });
 
 /* -------------------- the stream -------------------- */
 
 /**
- * Sends one TelemetryEnable to the source node. A period of 0 stops the
- * stream; anything else replaces the enabled set and rearms the keepalive
- * on the node's side.
+ * Asks the gateway for the configuration of the source node: what the
+ * stream carries and how often, one configuration per node. A period of 0
+ * stops the samples without touching the subscription. The node answers
+ * with what it applied, which comes back as a NodeTelemetryConfig.
  */
-function sendEnable(periodMs: number): void {
+function sendConfig(periodMs: number): void {
     if (sourceNode === null) {
         return;
     }
-    const envelope = create(EnvelopeSchema, {
-        body: {
-            case: "telemetryEnable",
-            value: { ids: periodMs === 0 ? [] : model.enabledIds(), periodMs },
-        },
-    });
-    socket.send(frameMessage(sourceNode, envelope));
+    socket.send(
+        create(GatewayMessageSchema, {
+            body: {
+                case: "telemetryCommand",
+                value: {
+                    node: sourceNode,
+                    action: {
+                        case: "config",
+                        value: { ids: periodMs === 0 ? [] : model.enabledIds(), periodMs },
+                    },
+                },
+            },
+        })
+    );
+}
+
+/** Takes the sample stream of the source node, or gives it back. */
+function sendSubscribe(enabled: boolean): void {
+    if (sourceNode === null) {
+        return;
+    }
+    socket.send(
+        create(GatewayMessageSchema, {
+            body: {
+                case: "telemetryCommand",
+                value: { node: sourceNode, action: { case: "subscribe", value: enabled } },
+            },
+        })
+    );
 }
 
 function startRecording(): void {
@@ -438,9 +462,9 @@ function startRecording(): void {
     lastDataMs = Date.now();
     brokenBySilence = false;
     follow = true;
-    sendEnable(configPanel.period());
-    keepaliveTimer = setInterval(() => {
-        sendEnable(configPanel.period());
+    sendConfig(configPanel.period());
+    sendSubscribe(true);
+    silenceTimer = setInterval(() => {
         if (Date.now() - lastDataMs > SILENCE_MS && !brokenBySilence) {
             // The node stopped answering: an explicit hole, so the lanes
             // break instead of drawing a chord over the silence.
@@ -449,7 +473,7 @@ function startRecording(): void {
             say("the drone went silent: the curves are broken here");
             dirty = true;
         }
-    }, KEEPALIVE_MS);
+    }, SILENCE_CHECK_MS);
     refreshToolbar();
 }
 
@@ -459,29 +483,31 @@ function stopRecording(): void {
         return;
     }
     recording = false;
-    if (keepaliveTimer !== null) {
-        clearInterval(keepaliveTimer);
-        keepaliveTimer = null;
+    if (silenceTimer !== null) {
+        clearInterval(silenceTimer);
+        silenceTimer = null;
     }
-    // One explicit stop, so the node does not keep streaming for the three
-    // seconds its own keepalive would take to expire.
-    sendEnable(0);
+    // One explicit stop: the node streams until it is told otherwise, or
+    // until this page's node goes down.
+    sendSubscribe(false);
     effectivePeriodMs = null;
     configPanel.setEffectivePeriod(null);
     refreshToolbar();
 }
 
-socket.onEnvelope((src, envelope) => {
-    if (src !== sourceNode) {
+socket.on("nodeTelemetryConfig", (applied) => {
+    if (applied.node !== sourceNode) {
         return;
     }
-    if (envelope.body.case === "telemetryAck") {
-        effectivePeriodMs = envelope.body.value.periodMs;
-        configPanel.setEffectivePeriod(effectivePeriodMs);
-        refreshToolbar();
-        return;
-    }
-    if (envelope.body.case !== "telemetryData") {
+    // The configuration as the node applied it: the period clamped to what
+    // the link carries, and the ids it kept.
+    effectivePeriodMs = applied.periodMs;
+    configPanel.setEffectivePeriod(effectivePeriodMs);
+    refreshToolbar();
+});
+
+socket.on("telemetrySamples", (samples) => {
+    if (samples.node !== sourceNode || samples.data === undefined) {
         return;
     }
     if (!recording || paused) {
@@ -490,8 +516,8 @@ socket.onEnvelope((src, envelope) => {
     lastDataMs = Date.now();
     brokenBySilence = false;
     model.ingest(
-        Number(envelope.body.value.timestampUs),
-        envelope.body.value.values.map((value) => ({ id: value.id, value: value.value }))
+        Number(samples.data.timestampUs),
+        samples.data.values.map((value) => ({ id: value.id, value: value.value }))
     );
     if (exportButton.disabled) {
         refreshToolbar();
@@ -499,12 +525,12 @@ socket.onEnvelope((src, envelope) => {
     dirty = true;
 });
 
-// A tab that goes away must not leave the node streaming: the node would
-// only notice three seconds later, and a board has no bandwidth to waste.
+// A tab that goes away must not leave the node streaming: a board has no
+// bandwidth to waste on a page nobody is watching.
 for (const event of ["pagehide", "beforeunload"]) {
     addEventListener(event, () => {
         if (recording) {
-            sendEnable(0);
+            sendSubscribe(false);
         }
     });
 }

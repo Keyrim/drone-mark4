@@ -15,7 +15,7 @@ flowchart LR
 
     ESP["ESP32 relay<br/>transport node: UART <-> UDP WiFi"]
     GODOT["Godot simulator<br/>(plant only)"]
-    HUB["hub<br/>gateway: node table, frames to the pages"]
+    HUB["hub<br/>gateway: node table, typed messages to the pages"]
     PAGES["web pages<br/>control, plots"]
     BUS(("transport<br/>frames over UDP"))
 
@@ -29,17 +29,20 @@ flowchart LR
 
 - **A single output bus**: the transport (`software/components/transport/`)
   carries every packet between the flight processes and the ground tools as
-  a frame with a source and destination node; the periodic `Status` report
-  is a broadcast frame any number of nodes read simultaneously, commands
-  and the on-demand telemetry stream are unicasts to a node the transport
-  learnt from its keepalives. The board is a node too: the ESP32 riding it
+  a frame with a source and destination node. Every one of them is a
+  unicast to a node the transport learnt from its keepalives: commands go
+  to the flight process, and the periodic `Status` report, the log lines
+  and the telemetry samples go to the ground nodes that subscribed to them.
+  The keepalive, which carries the sender's boot id, is the only broadcast
+  left. The board is a node too: the ESP32 riding it
   relays its frames between the UART and the WiFi LAN.
 - **Godot and the hub never link flight-core**: they only know the wire of
   `protocol/mark4.proto`, through codecs generated at build time (nanopb,
   godobuf). The web pages speak `gateway.proto` over the hub's WebSocket
-  (binary, generated with protoc-gen-es): transport frames forwarded both
-  ways, whose `Envelope` they decode themselves, plus the gateway-local
-  services (OTA bundle, tuning profiles, node table). Never JSON.
+  (binary, generated with protoc-gen-es): the hub decodes the wire itself
+  and publishes typed messages per node (its status, its log, its telemetry,
+  its tuning), the pages send typed commands back, and no encoded `Envelope`
+  crosses in either direction. Never JSON.
 - The sim link's **lockstep** mode (the simulator waits for the motor
   response before advancing its physics) buys determinism, faster-than-real-
   time runs and debugger single-stepping.
@@ -60,13 +63,13 @@ flowchart TB
         CLK["AbsClock<br/>(internal to platform)"]
     end
 
-    TR["Transport<br/>(everything the node emits)"]
+    TR["Messenger over Transport<br/>(everything the node emits)"]
 
     MAIN -->|"builds and injects"| CORE
     MAIN -->|"instantiates one variant:<br/>stm32 / sim"| platform
     SRC -->|"waitFrame()"| CORE
     CORE -->|"push()"| SINK
-    MAIN -.->|"sendEnvelope(dst, ...)"| TR
+    MAIN -.->|"Messenger::send(dst, ...)"| TR
 ```
 
 Structuring principles:

@@ -1,21 +1,22 @@
 /**
  * Bench smoke of the log path, from a script instead of a browser: with a
- * hub and one drone_sim on the LAN, checks that the NodeTable carries the
- * sim's log modules, that its boot Log line resolves to app/boot, that a
- * LogControl set on sim/link turns its DEBUG lines on (and only its), and
- * that a query answers with the table showing the new level.
+ * hub and one drone_sim on the LAN, checks that the gateway publishes the
+ * sim's module table and its lines (the ring on connect, then one message
+ * per line), that its boot line resolves to app/boot, and that a
+ * LogCommand.set_level on sim/link turns its DEBUG lines on (and only
+ * its) and comes back in the published module table.
  *
  *   pnpm log-smoke
  *
  * Exits non-zero on the first failed expectation.
  */
 
-import { create, fromBinary } from "@bufbuild/protobuf";
+import { create } from "@bufbuild/protobuf";
 import WebSocket from "ws";
 
-import { type GatewayMessage, type Node } from "../src/gen/gateway_pb";
-import { EnvelopeSchema, LogLevel, NodeKind, type Envelope, type LogModuleInfo } from "../src/gen/mark4_pb";
-import { decodeGatewayMessage, encodeGatewayMessage, frameMessage } from "../src/shared/gateway_socket";
+import { GatewayMessageSchema, type GatewayMessage, type Node } from "../src/gen/gateway_pb";
+import { LogLevel, NodeKind, type LogModuleInfo } from "../src/gen/mark4_pb";
+import { decodeGatewayMessage, encodeGatewayMessage } from "../src/shared/gateway_socket";
 import { hexNodeId } from "../src/shared/nodes";
 
 const URL = process.env["HUB_URL"] ?? "ws://127.0.0.1:47810";
@@ -29,10 +30,27 @@ const fail = (text: string): never => {
 const ws = new WebSocket(URL);
 ws.binaryType = "arraybuffer";
 const waiters: ((message: GatewayMessage) => boolean)[] = [];
+/**
+ * The state the gateway publishes on every change and whole on connect:
+ * kept as it arrives, because a message that came before a wait was armed
+ * never comes again on its own. Only the streams (the lines) are waited on
+ * message by message.
+ */
+let nodes: readonly Node[] = [];
+const modules = new Map<number, readonly LogModuleInfo[]>();
+const moduleUpdates = new Map<number, number>();
 ws.on("message", (data: ArrayBuffer) => {
     const message = decodeGatewayMessage(new Uint8Array(data));
     if (message === null) {
         return fail("undecodable websocket message");
+    }
+    if (message.body.case === "nodes") {
+        nodes = message.body.value.nodes;
+    }
+    if (message.body.case === "nodeLogModules") {
+        const published = message.body.value;
+        modules.set(published.node, published.modules);
+        moduleUpdates.set(published.node, (moduleUpdates.get(published.node) ?? 0) + 1);
     }
     for (const waiter of [...waiters]) {
         if (waiter(message)) {
@@ -56,28 +74,59 @@ function waitFor<T>(what: string, pick: (message: GatewayMessage) => T | undefin
     });
 }
 
-function envelopeOf(message: GatewayMessage): { src: number; envelope: Envelope } | undefined {
-    if (message.body.case !== "frame") {
-        return undefined;
+/** Waits for something the kept state answers, failing after the timeout. */
+async function waitUntil<T>(what: string, pick: () => T | undefined, timeoutMs = 15000): Promise<T> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+        const value = pick();
+        if (value !== undefined) {
+            return value;
+        }
+        if (Date.now() > deadline) {
+            return fail(`timeout waiting for ${what}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    return { src: message.body.value.src, envelope: fromBinary(EnvelopeSchema, message.body.value.payload) };
 }
 
-type LogRequest = { case: "query"; value: boolean } | { case: "set"; value: { moduleId: number; level: LogLevel } };
-
-function logControl(dst: number, request: LogRequest): GatewayMessage {
-    return frameMessage(dst, create(EnvelopeSchema, { body: { case: "logControl", value: { request } } }));
+/** The lines of one node, when this message carries some. */
+function linesOf(message: GatewayMessage, node: number) {
+    return message.body.case === "nodeLogLines" && message.body.value.node === node
+        ? message.body.value.lines
+        : undefined;
 }
 
-/** Collects Log lines of one node for a while, returns them by module id. */
+/** The module table pulled again. */
+function logRefresh(node: number): GatewayMessage {
+    return create(GatewayMessageSchema, {
+        body: { case: "logCommand", value: { node, action: { case: "refresh", value: true } } },
+    });
+}
+
+/** One module moved to one level. */
+function logSetLevel(node: number, moduleId: number, level: LogLevel): GatewayMessage {
+    return create(GatewayMessageSchema, {
+        body: {
+            case: "logCommand",
+            value: { node, action: { case: "setLevel", value: { moduleId, level } } },
+        },
+    });
+}
+
+/** One node command: a reboot. */
+function reboot(node: number): GatewayMessage {
+    return create(GatewayMessageSchema, {
+        body: { case: "nodeCommand", value: { node, action: { case: "reboot", value: true } } },
+    });
+}
+
+/** Collects the lines of one node for a while, returns them by module id. */
 function collectLogs(src: number, ms: number): Promise<Map<number, number>> {
     const counts = new Map<number, number>();
     return new Promise((resolve) => {
         const waiter = (message: GatewayMessage): boolean => {
-            const frame = envelopeOf(message);
-            if (frame?.src === src && frame.envelope.body.case === "log") {
-                const id = frame.envelope.body.value.moduleId;
-                counts.set(id, (counts.get(id) ?? 0) + 1);
+            for (const line of linesOf(message, src) ?? []) {
+                counts.set(line.moduleId, (counts.get(line.moduleId) ?? 0) + 1);
             }
             return false;
         };
@@ -92,54 +141,42 @@ function collectLogs(src: number, ms: number): Promise<Map<number, number>> {
 ws.on("open", async () => {
     log(`connected to ${URL}`);
 
-    // 1. The table lists a drone_sim with its log modules.
-    const sim = await waitFor("a drone_sim with log modules in the node table", (message) => {
-        if (message.body.case !== "nodes") {
-            return undefined;
-        }
-        return message.body.value.nodes.find(
-            (node: Node) => node.announce?.kind === NodeKind.DRONE_SIM && node.logModules.length > 0,
-        );
+    // 1. The node table lists a drone_sim, and the gateway publishes its
+    //    module table as a message of its own.
+    const names = (published: readonly LogModuleInfo[]): string =>
+        published.map((m) => `${m.name}=${LogLevel[m.level]}`).join(" ");
+    const sim = await waitUntil("a drone_sim with its log modules", () => {
+        const node = nodes.find((entry: Node) => entry.announce?.kind === NodeKind.DRONE_SIM);
+        return node !== undefined && (modules.get(node.id) ?? []).length > 0 ? node : undefined;
     });
-    const names = (modules: readonly LogModuleInfo[]): string =>
-        modules.map((m) => `${m.name}=${LogLevel[m.level]}`).join(" ");
-    log(`drone_sim ${hexNodeId(sim.id)} modules: ${names(sim.logModules)}`);
-    const link = sim.logModules.find((m) => m.name === "sim/link") ?? fail("no sim/link module");
-    const boot = sim.logModules.find((m) => m.name === "app/boot") ?? fail("no app/boot module");
+    const published = modules.get(sim.id) ?? [];
+    log(`drone_sim ${hexNodeId(sim.id)} modules: ${names(published)}`);
+    const link = published.find((m) => m.name === "sim/link") ?? fail("no sim/link module");
+    const boot = published.find((m) => m.name === "app/boot") ?? fail("no app/boot module");
 
-    // 2. Its module table arrives as LogModules pages on a query, with the
-    //    names of the table; its boot line names app/boot. The sim booted
-    //    before this script, so the boot line is provoked: a Reboot makes
-    //    the sim re-run its boot decision and log it through app/boot.
-    ws.send(encodeGatewayMessage(logControl(sim.id, { case: "query", value: true })));
-    const page = await waitFor("a LogModules page from the sim", (message) => {
-        const frame = envelopeOf(message);
-        return frame?.src === sim.id && frame.envelope.body.case === "logModules" ? frame.envelope.body.value : undefined;
-    });
-    log(`query answered: page ${page.startIndex}/${page.total}: ${names(page.modules)}`);
-    ws.send(
-        encodeGatewayMessage(frameMessage(sim.id, create(EnvelopeSchema, { body: { case: "reboot", value: {} } }))),
+    // 2. The table comes again on a refresh, and the sim's boot line names
+    //    app/boot. The sim booted before this script, so the boot line is
+    //    provoked: a reboot makes it re-run its boot decision and log it.
+    const pulls = moduleUpdates.get(sim.id) ?? 0;
+    ws.send(encodeGatewayMessage(logRefresh(sim.id)));
+    const again = await waitUntil("the module table published again", () =>
+        (moduleUpdates.get(sim.id) ?? 0) > pulls ? (modules.get(sim.id) ?? []) : undefined,
     );
-    const bootLine = await waitFor("an app/boot Log line", (message) => {
-        const frame = envelopeOf(message);
-        return frame?.src === sim.id && frame.envelope.body.case === "log" && frame.envelope.body.value.moduleId === boot.id
-            ? frame.envelope.body.value
-            : undefined;
-    });
+    log(`refresh answered: ${again.length} modules: ${names(again)}`);
+    ws.send(encodeGatewayMessage(reboot(sim.id)));
+    const bootLine = await waitFor("an app/boot log line", (message) =>
+        (linesOf(message, sim.id) ?? []).find((line) => line.moduleId === boot.id),
+    );
     log(`app/boot ${LogLevel[bootLine.level]}: ${bootLine.text}`);
 
     // 3. DEBUG on sim/link: DEBUG lines from that module only.
     const before = await collectLogs(sim.id, 2500);
     log(`before: ${before.get(link.id) ?? 0} sim/link lines in 2.5 s`);
-    ws.send(encodeGatewayMessage(logControl(sim.id, { case: "set", value: { moduleId: link.id, level: LogLevel.DEBUG } })));
-    const updated = await waitFor("the table with sim/link at DEBUG", (message) => {
-        const frame = envelopeOf(message);
-        if (frame?.src !== sim.id || frame.envelope.body.case !== "logModules") {
-            return undefined;
-        }
-        return frame.envelope.body.value.modules.find((m) => m.id === link.id && m.level === LogLevel.DEBUG);
-    });
-    log(`set acknowledged by a table: ${updated.name}=${LogLevel[updated.level]}`);
+    ws.send(encodeGatewayMessage(logSetLevel(sim.id, link.id, LogLevel.DEBUG)));
+    const updated = await waitUntil("sim/link published at DEBUG", () =>
+        (modules.get(sim.id) ?? []).find((m) => m.id === link.id && m.level === LogLevel.DEBUG),
+    );
+    log(`set answered by the module: ${updated.name}=${LogLevel[updated.level]}`);
     const after = await collectLogs(sim.id, 2500);
     const linkLines = after.get(link.id) ?? 0;
     const others = [...after.entries()].filter(([id]) => id !== link.id);
@@ -148,23 +185,19 @@ ws.on("open", async () => {
         fail("no DEBUG line from sim/link after the set (is the plant driving the sim?)");
     }
 
-    // 4. The gateway's table shows the level too, and a query returns it.
-    const table = await waitFor("the node table with sim/link at DEBUG", (message) => {
-        if (message.body.case !== "nodes") {
-            return undefined;
-        }
-        const node = message.body.value.nodes.find((n: Node) => n.id === sim.id);
-        return node?.logModules.find((m) => m.id === link.id && m.level === LogLevel.DEBUG);
-    });
-    log(`node table: ${table.name}=${LogLevel[table.level]}`);
-    ws.send(encodeGatewayMessage(logControl(sim.id, { case: "set", value: { moduleId: link.id, level: LogLevel.INFO } })));
-    await waitFor("sim/link back at INFO", (message) => {
-        const frame = envelopeOf(message);
-        if (frame?.src !== sim.id || frame.envelope.body.case !== "logModules") {
-            return undefined;
-        }
-        return frame.envelope.body.value.modules.find((m) => m.id === link.id && m.level === LogLevel.INFO);
-    });
+    // 4. A refresh shows the level in the whole table too.
+    const pulled = moduleUpdates.get(sim.id) ?? 0;
+    ws.send(encodeGatewayMessage(logRefresh(sim.id)));
+    const table = await waitUntil("the module table with sim/link at DEBUG", () =>
+        (moduleUpdates.get(sim.id) ?? 0) > pulled
+            ? (modules.get(sim.id) ?? []).find((m) => m.id === link.id && m.level === LogLevel.DEBUG)
+            : undefined,
+    );
+    log(`module table: ${table.name}=${LogLevel[table.level]}`);
+    ws.send(encodeGatewayMessage(logSetLevel(sim.id, link.id, LogLevel.INFO)));
+    await waitUntil("sim/link back at INFO", () =>
+        (modules.get(sim.id) ?? []).find((m) => m.id === link.id && m.level === LogLevel.INFO),
+    );
     log("restored sim/link to INFO; all good");
     ws.close();
     process.exit(0);

@@ -2,8 +2,8 @@
 
 Status: implemented (the Ota* messages of mark4.proto, protocol/ota_image.hpp,
 the components/ota brick, the stm32, sim and esp32 firmware stores,
-drone_boot, scripts/make_ota.py in both modes, hub OtaClient and the update
-panel; the desktop end-to-end test drives a full update and a rollback
+drone_boot, scripts/make_ota.py in both modes, the hub's OtaConsumer and
+the update panel; the desktop end-to-end test drives a full update and a rollback
 against drone_sim; the relay of section 8 updates over the air from the same
 panel). This document remains the reference for the design decisions.
 Companions: `docs/target-architecture.md` (system picture this plugs into),
@@ -35,9 +35,9 @@ hub (desktop) --UDP/WiFi--> ESP32 relay --UART 921600--> flight controller
   to the board's node, they land at the relay's address, the relay
   forwards them down the UART in the serial framing (transport header,
   then the envelope) and the board's `UartLink` picks them up; the
-  board's answers are broadcasts the relay forwards onto the LAN. The
-  updater messages are unicasts for the board like RC is, so the relay's
-  filter (which only keeps LAN broadcasts off the UART) never sees them.
+  board's answers are unicasts back to the hub, which the relay forwards
+  onto the LAN. Every frame the relay carries is a unicast between two node
+  ids and it looks inside none of them.
   The board is a transport node like `drone_sim`; the hub has no special
   path for it. OTA needs no relay change.
 - **The serial framing caps a frame at 512 payload bytes** (two length
@@ -371,8 +371,8 @@ nothing; platform speaks protocol; humans speak to the hub):
   (`scripts/make_ota.py`) computes the CRC, stamps the header on both
   binaries and emits the `.ota` bundle; `build_app.py` and `apps.json`
   pick it up so one command produces the flashable artifact.
-- **Hub** - an OtaClient service: opens the bundle, matches it against
-  OTA_STATUS, runs the windowed transfer with retries and timeouts,
+- **Hub** - an OtaConsumer (`ota/consumer.hpp`): opens the bundle, matches
+  it against OTA_STATUS, runs the windowed transfer with retries and timeouts,
   drives reboot, watches the board come back and reads the verdict off
   the status (the trial image confirms itself on first contact), exposes
   the whole thing over the existing WebSocket as the `OtaCommand` /
@@ -386,8 +386,8 @@ nothing; platform speaks protocol; humans speak to the hub):
 Verification, in the spirit of everything else in this repo: unit tests
 on OtaUpdater and the metadata module (torn-record recovery above all), a
 round trip of every updater message through the generated codec, and one
-desktop end-to-end test in CI - hub OtaClient against drone_sim's updater
-through real UDP, full update, then a simulated failed trial that must
+desktop end-to-end test in CI - the hub's OtaConsumer against drone_sim's
+updater through real UDP, full update, then a simulated failed trial that must
 roll back.
 
 ## 7. Deliberately not in v1
@@ -428,7 +428,7 @@ The device-side OTA code first lived in the platform library
 placement was convenience, not design: the platform layer is defined as
 the abstract services of the flight loop, and OTA is not one - it is a
 node brick, like `log` and `transport`, wanted by the firmware, the
-desktop flight process, the hub (which keeps its `OtaClient` outside
+desktop flight process, the hub (which keeps its ground-side client outside
 platform already, having no platform at all) and the relay, which
 links `components/` sources only and has no reason to start including
 platform headers for a non-flight concern.
@@ -528,7 +528,7 @@ build packages `esp32_bridge.ota` next to its image, with the build epoch
 and git hash it stamped as `PROJECT_VER`, so the identity the bundle
 announces is the one the relay will report.
 
-The hub `OtaClient` and the pages changed for nothing else: the OTA
+The hub's `OtaConsumer` and the pages changed for nothing else: the OTA
 panel targets a node id, the relay is a node, and the mcu match
 refusal already existed. The operator types the bundle path
 (`esp32-bridge/build/esp32_bridge.ota`) in the panel's path field, the
@@ -536,13 +536,12 @@ default being the flight controller's bundle.
 
 ### 8.5 Relay composition
 
-`relay.cpp` already decoded the unicasts addressed to the relay (the
-`LogControl` path); the updater rides the same spot: the body tag is
-read off the first bytes (`envelopeBodyTag()`, the `Ota*` tags do not
-fit the one-byte compare the `LogControl` check used), decode, offer to
-`OtaUpdater::handle()` first (exactly like the firmware's command
-drain), send whatever reply comes back to the sender, plus the `Reboot`
-envelope answered with `esp_restart()`. `Inputs` are simple on a radio:
+`relay.cpp` dispatches what is addressed to the relay through its
+`Messenger`, one handler per body tag; the updater rides there as the
+shared `OtaProvider`, which claims the six `Ota*` tags, hands each request
+to `OtaUpdater::handle()` and sends whatever reply comes back to the node
+that asked. The `Reboot` is the relay's own `Commands` handler, answered
+with `esp_restart()`. `Inputs` are simple on a radio:
 never armed, no battery floor, `esp_timer` as the clock. The updater
 keeps its defaults - self-confirm on first ground contact included,
 which the store maps onto IDF's rollback cancel. The relay logs the

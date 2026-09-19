@@ -12,6 +12,7 @@
 #include "ota/boot_policy.hpp"
 #include "protocol/envelope.hpp"
 #include "protocol/ota_image.hpp"
+#include "transport/node_id.hpp"
 
 namespace
 {
@@ -89,7 +90,7 @@ namespace mark4
                              const char *otaDirectory)
         : m_maxFrames(maxFrames),
           m_udpLink(discoveryPort),
-          m_transport(nodeId),
+          m_transport(nodeId, randomBootId()),
           m_otaDirectory(makeOtaDirectory(otaDirectory))
     {
     }
@@ -107,19 +108,9 @@ namespace mark4
         return self;
     }
 
-    bool DroneSimApp::SendLog(void *context, const std::uint8_t *data, std::size_t size)
-    {
-        return static_cast<DroneSimApp *>(context)->m_transport.send(BROADCAST_NODE, data, size);
-    }
-
     std::uint64_t DroneSimApp::LogClock(void *context)
     {
         return static_cast<DroneSimApp *>(context)->m_clock.nowUs();
-    }
-
-    void DroneSimApp::publishLogModules()
-    {
-        static_cast<void>(logPublishModules(&DroneSimApp::SendLog, this));
     }
 
     bool DroneSimApp::init()
@@ -131,7 +122,7 @@ namespace mark4
             BOOT.error("transport initialization failed");
             return false;
         }
-        static_cast<void>(logAddSink(m_transportSink));
+        static_cast<void>(logAddSink(m_logProvider));
         BOOT.info("boot: node %08x on discovery udp/%u, wire %08x",
                   m_transport.nodeId(),
                   static_cast<unsigned>(m_udpLink.discoveryPort()),
@@ -142,14 +133,14 @@ namespace mark4
         }
         // Last: freezing the registry means every object holding a measure
         // must already exist, and the fake bootloader above builds some.
-        if (!m_telemetryService.init())
+        if (!m_telemetryProvider.init())
         {
             BOOT.error("telemetry: the registry is empty");
             return false;
         }
         BOOT.info("status: 1 message / %u frames; telemetry: %zu measures on demand",
-                  static_cast<unsigned>(StatusPublisher::DECIMATION),
-                  m_telemetryService.entryCount());
+                  static_cast<unsigned>(StatusProvider::STATUS_PERIOD_FRAMES),
+                  m_telemetryProvider.entryCount());
         return true;
     }
 
@@ -220,10 +211,10 @@ namespace mark4
             std::memcmp(probe.data(), OTA_BROKEN_MARKER, probe.size()) == 0;
         // The handler holds a reference to the updater: gone before it, back
         // right after it.
-        m_otaService.reset();
+        m_otaProvider.reset();
         m_otaUpdater.emplace(*m_firmwareStore, !broken);
-        m_otaService.emplace(m_messenger, *m_otaUpdater, m_otaGate);
-        m_otaConsumedSeen = m_otaService->consumed();
+        m_otaProvider.emplace(m_messenger, *m_otaUpdater, m_otaGate);
+        m_otaConsumedSeen = m_otaProvider->consumed();
         refreshArmInterlock();
 
         BOOT.info("running slot %c, active slot %c, states %02x/%02x, emulated flash in %s",
@@ -246,7 +237,7 @@ namespace mark4
         {
             // Nothing bootable: the updater stops being served, which is the
             // closest a process gets to a board sitting in the bootloader.
-            m_otaService.reset();
+            m_otaProvider.reset();
             m_otaUpdater.reset();
         }
         // A reset is a power cycle: the flight core starts over, tuned values
@@ -341,12 +332,6 @@ namespace mark4
                 m_app.m_motorSink.sendScenario(envelope.body.sim_scenario);
                 m_app.m_pendingHashWindowUs = envelope.body.sim_scenario.hash_window_us;
                 return true;
-            case mark4_Envelope_log_control_tag:
-                if (logHandleControl(envelope.body.log_control))
-                {
-                    m_app.publishLogModules();
-                }
-                return true;
             default:
                 return false;
         }
@@ -365,11 +350,11 @@ namespace mark4
             // process, and an update takes longer than the keepalive period.
             // The poll dispatches, so the session is served from inside it.
             m_plantLink.poll();
-            if (m_otaService && m_otaService->consumed() != m_otaConsumedSeen)
+            if (m_otaProvider && m_otaProvider->consumed() != m_otaConsumedSeen)
             {
                 // A staging record may just have moved the running slot's
                 // state, which is what the arming interlock reads.
-                m_otaConsumedSeen = m_otaService->consumed();
+                m_otaConsumedSeen = m_otaProvider->consumed();
                 refreshArmInterlock();
             }
             m_otaUpdater->tick(m_clock.nowUs());
@@ -415,12 +400,6 @@ namespace mark4
                 continue; // the sim source always produces a frame
             }
             m_lastFrameUs = frame.timestampUs;
-            if (!m_logModulesPublished)
-            {
-                // The first poll sent the first keepalive: the table follows it.
-                m_logModulesPublished = true;
-                publishLogModules();
-            }
             // The time base of the frames changed (the platform switched
             // between its clock and a plant's, or the plant's clock started
             // over): nothing the flight core remembers about time applies,
@@ -476,11 +455,11 @@ namespace mark4
                 m_rebootRequested = false;
                 rebootFirmware();
             }
-            if (m_otaService && m_otaService->consumed() != m_otaConsumedSeen)
+            if (m_otaProvider && m_otaProvider->consumed() != m_otaConsumedSeen)
             {
                 // A staging record may just have moved the running slot's
                 // state, which is what the arming interlock reads.
-                m_otaConsumedSeen = m_otaService->consumed();
+                m_otaConsumedSeen = m_otaProvider->consumed();
                 refreshArmInterlock();
             }
             if (m_otaUpdater.has_value() && m_otaUpdater->sessionActive())
@@ -516,22 +495,18 @@ namespace mark4
                 // measurable at all.
                 m_truthTelemetry.update(m_sensorSource.truth(), m_core.attitude());
             }
-            // The plant's exact state rides next to the estimate, so a ground
-            // tool compares the two sample by sample; a frame without sensors
-            // has no plant behind it and no truth.
-            m_statusPublisher.publish(frame,
-                                      actuators,
-                                      m_core,
-                                      !m_rcTracker.failsafeActive(frame.timestampUs),
-                                      frame.imuValid ? &m_sensorSource.truth() : nullptr);
+            // The plant's exact state rides next to the estimate, so a
+            // consumer compares the two sample by sample; a frame without
+            // sensors has no plant behind it and no truth.
+            m_statusProvider.publish(frame,
+                                     actuators,
+                                     m_core,
+                                     !m_rcTracker.failsafeActive(frame.timestampUs),
+                                     frame.imuValid ? &m_sensorSource.truth() : nullptr);
             // Whatever a subscriber enabled, at the period it asked for; the
             // frame's own timestamp stamps the samples, so the service never
             // reads a clock either.
-            m_telemetryService.sample(frame.timestampUs);
-            // Paced answers to a list request: one description per frame, so
-            // a table dump never bursts ahead of the telemetry it shares the
-            // link with.
-            m_tuningService.pump();
+            m_telemetryProvider.sample(frame.timestampUs);
             if (frame.imuValid)
             {
                 // The run is the plant's trajectory: frames without sensors
@@ -539,7 +514,6 @@ namespace mark4
                 m_runTracker.update(frame, actuators);
                 m_runTracker.noteLink(m_sensorSource.lockstepTimeouts(),
                                       m_sensorSource.duplicateFrameCount());
-                m_runTracker.publish();
             }
             if ((steps % LINK_DEBUG_PERIOD_FRAMES) == 0U)
             {

@@ -1,6 +1,7 @@
 // The log levels view: every module of every node and its threshold, grouped
-// by node or by module name. A level is set by sending one LogControl per
-// module under the item, then a query so the node republishes its table.
+// by node or by module name. A level is set by sending one LogCommand per
+// module under the item, then a refresh so the gateway pulls the node's
+// table again and publishes it.
 //
 // The table comes once a second and the levels almost never move: the root
 // items are kept and refreshed in place, and the change event only fires for
@@ -9,7 +10,7 @@
 import * as vscode from "vscode";
 
 import { type NodeTable } from "./gen/gateway_pb";
-import { NodeKind } from "./gen/mark4_pb";
+import { type LogModuleInfo, NodeKind } from "./gen/mark4_pb";
 import { buildLevelTree, diffLevelTree, type LevelItem, type LevelMode, type LevelNode } from "./logTree";
 import { kindName } from "./model";
 
@@ -36,7 +37,10 @@ export class LevelTreeItem extends vscode.TreeItem {
 }
 
 /** Turns the gateway's table into what the pure tree builder needs. */
-function toLevelNodes(table: NodeTable | undefined): LevelNode[] {
+function toLevelNodes(
+    table: NodeTable | undefined,
+    modules: ReadonlyMap<number, readonly LogModuleInfo[]>,
+): LevelNode[] {
     return (table?.nodes ?? []).map((node) => {
         const kind = node.announce?.kind ?? NodeKind.NODE_KIND_UNSPECIFIED;
         const word = kindName(kind);
@@ -45,7 +49,7 @@ function toLevelNodes(table: NodeTable | undefined): LevelNode[] {
             kind,
             kindName: word,
             name: node.announce?.name || word,
-            logModules: node.logModules,
+            logModules: modules.get(node.id) ?? [],
         };
     });
 }
@@ -54,12 +58,26 @@ export class LogLevelsProvider implements vscode.TreeDataProvider<LevelTreeItem>
     private readonly changed = new vscode.EventEmitter<LevelTreeItem | undefined>();
     readonly onDidChangeTreeData = this.changed.event;
     private nodes: LevelNode[] = [];
+    private table: NodeTable | undefined;
+    /** The modules of every node, as the gateway published them. */
+    private modules = new Map<number, readonly LogModuleInfo[]>();
     private roots: LevelItem[] = [];
     private items = new Map<string, LevelTreeItem>();
     private mode: LevelMode = "byNode";
 
     setTable(table: NodeTable | undefined): void {
-        this.nodes = toLevelNodes(table);
+        this.table = table;
+        if (table === undefined) {
+            this.modules.clear();
+        }
+        this.nodes = toLevelNodes(this.table, this.modules);
+        this.rebuild();
+    }
+
+    /** One node's module table, the levels this view is made of. */
+    setModules(node: number, modules: readonly LogModuleInfo[]): void {
+        this.modules.set(node, modules);
+        this.nodes = toLevelNodes(this.table, this.modules);
         this.rebuild();
     }
 
