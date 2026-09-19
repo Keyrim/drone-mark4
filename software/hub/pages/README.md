@@ -279,12 +279,25 @@ view is the whole picture and the wire pays nothing.
 **The banner** is the system verdict, how many nodes report out of how many
 are known, the worst edge and the frames per second over every edge held.
 Under it the findings, worst first: one line per edge that loses frames or
-has gone quiet, per asymmetric pair, per link that refused frames or could
-not read them, per node that gave up on requests or saw its peers churn,
-and one per node that does not report at all. The three thresholds
-(`LOSS_DEGRADED` 1 %, `LOSS_BAD` 10 %, `FADING_MS` 1500) are repeated in
-`src/transport/health.ts` from `software/hub/include/hub/transport_health.hpp`:
-the gateway decides, the page colors and words what it decided.
+fades, per asymmetric pair, per link that refused frames or could not read
+them, per node that gave up on requests or saw its peers churn, and one per
+node that does not report at all. The four thresholds
+(`LOSS_DEGRADED` 1 %, `LOSS_BAD` 10 %, `FADING_MS` 1500, `LOSS_MIN_FRAMES`
+20) are repeated in `src/transport/health.ts` from
+`software/hub/include/hub/transport_health.hpp`: the gateway decides, the
+page colors and words what it decided.
+
+**A percentage is printed with what it was counted on**, as `lost/total over
+N s` with the span of the window in whole seconds: in the edge tooltips, in
+the findings, on the banner's worst edge and in the peers table, which holds
+the window and the three cumulative counters side by side. An edge whose
+window carries fewer than `LOSS_MIN_FRAMES` frames is **quiet**: too little
+went through it for a percentage to mean anything, so the gateway does not
+judge it on its loss and the page raises no finding for it. A quiet edge is
+a **keepalive-only** edge, which is what the words mean in practice, and it
+is drawn dotted in the description foreground, with its own tooltip
+(`keepalive only (n frames over N s)`) and `quiet` rather than `traffic` in
+the peers table.
 
 **The graph** reads its topology from the reports. For every reporting node
 and every link it has, a medium holds that node plus every peer it hears
@@ -302,7 +315,8 @@ An edge goes from the observer to the peer, because a loss belongs to the
 direction that measured it: the losses towards the board are only ever
 counted by the board. Edges above the degraded threshold are always drawn;
 the others appear with the card hovered or selected. A dashed edge is one
-whose other end does not report, so only half of that wire is known.
+whose other end does not report, so only half of that wire is known; a
+dotted one is quiet, and an edge that is both is drawn dotted.
 
 **The panel** is the selected node: its links (with the serial utilization
 against 921600 baud), its peers, its messenger counters cumulative and over

@@ -14,12 +14,12 @@
 
 import uPlot from "uplot";
 
-import { type NodeTransport, type TransportNodeHealth } from "../gen/gateway_pb";
+import { type NodeTransport, type TransportEdge, type TransportNodeHealth } from "../gen/gateway_pb";
 import { LinkKind } from "../gen/mark4_pb";
 import { cssVar } from "../lanes/lanes";
 import { hexNodeId, type NodeView } from "../shared/nodes";
 import { kindIcon, verdictClass, verdictWord } from "./graph";
-import { linkWord, percent, rate } from "./health";
+import { linkWord, percent, quiet, rate, windowCount } from "./health";
 
 /** What one serial line carries [bytes/s]: 921600 baud, 10 bits a byte. */
 export const UART_BYTES_PER_S = 92160;
@@ -102,15 +102,7 @@ export class TransportPanel {
         const tabs = document.createElement("vscode-tabs");
         if (input.view === undefined) {
             // Nothing of its own: only what the others hear of it.
-            this.addTab(tabs, "seen by", "peers", [
-                "observer",
-                "link",
-                "hops",
-                "rx/s",
-                "loss",
-                "dup/s",
-                "age ms",
-            ]);
+            this.addTab(tabs, "seen by", "peers", peerColumns("observer"));
         } else {
             this.addTab(tabs, "links", "links", [
                 "#",
@@ -123,7 +115,7 @@ export class TransportPanel {
                 "rx errors",
                 "use",
             ]);
-            this.addTab(tabs, "peers", "peers", ["peer", "link", "hops", "rx/s", "loss", "dup/s", "age ms"]);
+            this.addTab(tabs, "peers", "peers", peerColumns("peer"));
             this.addTab(tabs, "messenger", "counters", ["counter", "total", "window"]);
         }
         this.body.appendChild(tabs);
@@ -224,15 +216,7 @@ export class TransportPanel {
         const nodeId = input.node.id;
         if (input.view !== undefined) {
             return input.view.edges.map((edge) =>
-                row([
-                    `${input.name(edge.peer)} ${hexNodeId(edge.peer)}`,
-                    String(edge.link),
-                    String(edge.hops),
-                    rate(edge.rxPerS),
-                    percent(edge.loss),
-                    rate(edge.duplicatesPerS),
-                    String(edge.ageMs),
-                ])
+                edgeRow(`${input.name(edge.peer)} ${hexNodeId(edge.peer)}`, edge)
             );
         }
         const rows: HTMLElement[] = [];
@@ -241,17 +225,7 @@ export class TransportPanel {
                 if (edge.peer !== nodeId) {
                     continue;
                 }
-                rows.push(
-                    row([
-                        `${input.name(other.node)} ${hexNodeId(other.node)}`,
-                        String(edge.link),
-                        String(edge.hops),
-                        rate(edge.rxPerS),
-                        percent(edge.loss),
-                        rate(edge.duplicatesPerS),
-                        String(edge.ageMs),
-                    ])
-                );
+                rows.push(edgeRow(`${input.name(other.node)} ${hexNodeId(other.node)}`, edge));
             }
         }
         return rows;
@@ -269,6 +243,31 @@ export class TransportPanel {
         }
         this.spark.setData(history);
     }
+}
+
+/** The columns of one edge table, named after the end it lists. */
+function peerColumns(who: string): readonly string[] {
+    return [who, "stream", "link", "hops", "rx/s", "loss", "window", "received", "lost", "dup", "age ms"];
+}
+
+/**
+ * One row per edge: the window first, as the percentage and the count it was
+ * read from, then the three cumulative counters.
+ */
+function edgeRow(who: string, edge: TransportEdge): HTMLElement {
+    return row([
+        who,
+        quiet(edge) ? "quiet" : "traffic",
+        String(edge.link),
+        String(edge.hops),
+        rate(edge.rxPerS),
+        percent(edge.loss),
+        windowCount(edge),
+        String(edge.received),
+        String(edge.lost),
+        String(edge.duplicates),
+        String(edge.ageMs),
+    ]);
 }
 
 /** The counters of the report, cumulative and over the window. */

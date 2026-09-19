@@ -198,6 +198,19 @@ body {
     fill: var(--vscode-descriptionForeground);
 }
 
+/* Too few frames over the window to read a percentage from: the edge carries
+   its keepalive and little else, which is said in dots rather than in a
+   color the ladder does not have. The short dashes come after the long ones
+   of one-sided on purpose: an edge that is both is quiet first. */
+.tp-edge.quiet {
+    stroke: var(--vscode-descriptionForeground);
+    stroke-dasharray: 2 3;
+}
+
+.tp-arrow.quiet {
+    fill: var(--vscode-descriptionForeground);
+}
+
 .tp-edge.ok {
     stroke: var(--vscode-charts-green);
 }

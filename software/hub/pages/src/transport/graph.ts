@@ -14,7 +14,17 @@
 import { type NodeTransport, type TransportHealth, TransportVerdict } from "../gen/gateway_pb";
 import { NodeKind } from "../gen/mark4_pb";
 import { hexNodeId, type NodeView } from "../shared/nodes";
-import { linkWord, lossClass, percent, rate, type LossClass } from "./health";
+import {
+    keepaliveOnly,
+    linkWord,
+    lossClass,
+    percent,
+    quiet,
+    rate,
+    windowCount,
+    windowSpan,
+    type LossClass,
+} from "./health";
 import { CARD_H, CARD_W, layoutGraph, PORT_Y, type Card, type Layout, type LayoutNode } from "./layout";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -251,7 +261,7 @@ export class TransportGraph {
             }
             for (const edge of view.edges) {
                 const to = cards.get(edge.peer);
-                const grade = lossClass(edge.loss, view.windowMs);
+                const grade = lossClass(edge, view.windowMs);
                 const touched = focus.includes(view.node) || focus.includes(edge.peer);
                 if (to === undefined || (!touched && grade !== "degraded" && grade !== "bad")) {
                     continue;
@@ -263,8 +273,10 @@ export class TransportGraph {
                         peer: edge.peer,
                         text:
                             `${this.name(view.node)} -> ${this.name(edge.peer)}: ` +
-                            `${rate(edge.rxPerS)} fps, loss ${percent(edge.loss)}, ` +
-                            `dup ${rate(edge.duplicatesPerS)}/s, hops ${edge.hops}, age ${edge.ageMs} ms`,
+                            `loss ${percent(edge.loss)} (${windowCount(edge)} ${windowSpan(view.windowMs)}), ` +
+                            `${rate(edge.rxPerS)} fps, dup ${rate(edge.duplicatesPerS)}/s, ` +
+                            `hops ${edge.hops}, age ${edge.ageMs} ms` +
+                            (quiet(edge) ? `, ${keepaliveOnly(edge, view.windowMs)}` : ""),
                     })
                 );
             }
@@ -324,7 +336,7 @@ function toLayoutNode(node: NodeView, input: GraphInput): LayoutNode {
 /** One arrowhead per loss class: a marker cannot read the line's stroke. */
 function arrowDefs(): SVGDefsElement {
     const defs = document.createElementNS(SVG_NS, "defs");
-    for (const grade of ["idle", "ok", "degraded", "bad"]) {
+    for (const grade of ["idle", "quiet", "ok", "degraded", "bad"]) {
         const marker = document.createElementNS(SVG_NS, "marker");
         marker.setAttribute("id", `tp-arrow-${grade}`);
         marker.setAttribute("viewBox", "0 0 8 8");

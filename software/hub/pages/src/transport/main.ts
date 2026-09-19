@@ -33,7 +33,7 @@ import { GatewaySocket } from "../shared/gateway_socket";
 import { hexNodeId } from "../shared/nodes";
 import { Shell } from "../shared/shell";
 import { TransportGraph, verdictClass, verdictWord } from "./graph";
-import { findings, percent, rate, type Finding } from "./health";
+import { findings, percent, rate, windowCount, type Finding } from "./health";
 import { HISTORY, TransportPanel, type PanelHistory } from "./panel";
 import "./transport.css";
 
@@ -200,8 +200,15 @@ function paintBanner(): void {
     bannerWorst.textContent =
         health === null || health.worstObserver === 0
             ? "no loss measured"
-            : `worst ${nameOf(health.worstObserver)} -> ${nameOf(health.worstPeer)} ${percent(health.worstLoss)}`;
+            : `worst ${nameOf(health.worstObserver)} -> ${nameOf(health.worstPeer)} ` +
+              `${percent(health.worstLoss)}${worstCount(health.worstObserver, health.worstPeer)}`;
     bannerRate.textContent = `${rate(health?.framesPerS ?? 0)} frames/s`;
+}
+
+/** What the worst loss was counted on, when the edge it names is held. */
+function worstCount(observer: number, peer: number): string {
+    const edge = views.get(observer)?.edges.find((one) => one.peer === peer);
+    return edge === undefined ? "" : ` (${windowCount(edge)})`;
 }
 
 function paintFindings(): void {

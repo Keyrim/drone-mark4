@@ -12,12 +12,12 @@
  * Pure: no DOM, no socket. The page sorts them into its table.
  */
 
-import { type NodeTransport, type TransportHealth } from "../gen/gateway_pb";
+import { type NodeTransport, type TransportEdge, type TransportHealth } from "../gen/gateway_pb";
 import { LinkKind } from "../gen/mark4_pb";
 
 /**
  * Loss on one edge above this is degraded. The gateway judges with the same
- * three numbers (LOSS_DEGRADED, LOSS_BAD and FADING_MS of
+ * four numbers (LOSS_DEGRADED, LOSS_BAD, FADING_MS and LOSS_MIN_FRAMES of
  * software/hub/include/hub/transport_health.hpp); they are repeated here to
  * color and to word what it already decided, never to decide again.
  */
@@ -28,6 +28,14 @@ export const LOSS_BAD = 0.1;
 
 /** An edge whose last frame is older than this is fading [ms]. */
 export const FADING_MS = 1500;
+
+/**
+ * An edge whose window holds fewer frames than this is quiet: a percentage
+ * over a handful of frames is not a measurement, so it is not judged on its
+ * loss. A keepalive alone fills ten frames of a ten second window, which is
+ * what such an edge carries.
+ */
+export const LOSS_MIN_FRAMES = 20;
 
 /** How a finding reads: what it costs, worst first. */
 export type Severity = "bad" | "degraded" | "info";
@@ -51,25 +59,55 @@ export interface HealthInput {
 }
 
 /** A loss class, the same ladder the gateway judged with. */
-export type LossClass = "idle" | "ok" | "degraded" | "bad";
+export type LossClass = "idle" | "quiet" | "ok" | "degraded" | "bad";
 
-/** Where one edge sits on the ladder; idle while no window was measured. */
-export function lossClass(loss: number, windowMs: number): LossClass {
+/**
+ * Where one edge sits on the ladder; idle while no window was measured, and
+ * quiet while the window holds too few frames to read a percentage from.
+ */
+export function lossClass(edge: TransportEdge, windowMs: number): LossClass {
     if (windowMs === 0) {
         return "idle";
     }
-    if (loss > LOSS_BAD) {
+    if (quiet(edge)) {
+        return "quiet";
+    }
+    if (edge.loss > LOSS_BAD) {
         return "bad";
     }
-    if (loss > LOSS_DEGRADED) {
+    if (edge.loss > LOSS_DEGRADED) {
         return "degraded";
     }
     return "ok";
 }
 
+/**
+ * True while the window of one edge holds fewer than LOSS_MIN_FRAMES
+ * frames: what it carries is the keepalive and little else, so its loss says
+ * nothing and the page words it as keepalive only.
+ */
+export function quiet(edge: TransportEdge): boolean {
+    return edge.windowReceived + edge.windowLost < LOSS_MIN_FRAMES;
+}
+
 /** A ratio as a percentage, one decimal while it is small. */
 export function percent(ratio: number): string {
     return `${(ratio * 100).toFixed(ratio < 0.1 ? 1 : 0)} %`;
+}
+
+/** What a percentage was counted on: what the window lost of what it held. */
+export function windowCount(edge: TransportEdge): string {
+    return `${edge.windowLost}/${edge.windowReceived + edge.windowLost}`;
+}
+
+/** The span every count of a window is read over, in whole seconds. */
+export function windowSpan(windowMs: number): string {
+    return `over ${Math.round(windowMs / 1000)} s`;
+}
+
+/** What a quiet edge carried, in words: the frames and the span. */
+export function keepaliveOnly(edge: TransportEdge, windowMs: number): string {
+    return `keepalive only (${edge.windowReceived + edge.windowLost} frames ${windowSpan(windowMs)})`;
 }
 
 /** A rate with one decimal, as every port chip and every edge prints one. */
@@ -121,13 +159,13 @@ function edgeFindings(input: HealthInput, view: NodeTransport, into: Weighted[])
     const observer = input.name(view.node);
     for (const edge of view.edges) {
         const where = `${observer} -> ${input.name(edge.peer)}`;
-        const grade = lossClass(edge.loss, view.windowMs);
+        const grade = lossClass(edge, view.windowMs);
         if (grade === "bad" || grade === "degraded") {
             into.push({
                 finding: {
                     severity: grade,
                     where,
-                    what: `loses ${percent(edge.loss)} (${rate(edge.rxPerS)} f/s)`,
+                    what: `loses ${percent(edge.loss)} (${windowCount(edge)} ${windowSpan(view.windowMs)})`,
                 },
                 weight: edge.loss,
             });
