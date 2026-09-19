@@ -157,7 +157,12 @@ node that uses it (pulls the tables, subscribes, keeps what it learnt,
 drops it on node down), and a **Gateway** in the hub only (maps
 `gateway.proto` commands onto one consumer, publishes what it holds as
 typed messages). Providers and consumers build for the F405 (no heap);
-the one exemption is `ota_consumer`, desktop only. `messaging/` and
+the one exemption is `ota_consumer`, desktop only. A header-only library
+is still a STATIC target: every header of its own has a source file of the
+same name in `src/` holding a single `#include` of it, which compiles the
+header alone under the project flags and is the source clangd infers a
+header's compile command from (an INTERFACE target has none, and the editor
+then borrows the flags of an unrelated neighbour). `messaging/` and
 `discovery/` are the floor every concept stands on:
 
 - `flight-core/` - pure static lib. Single entry point
@@ -327,8 +332,9 @@ the one exemption is `ota_consumer`, desktop only. `messaging/` and
   the sim (it is the `sim_sensor` handler), `pollTransport()` on the board;
   each App keeps one nested `Commands` handler for what is its own (`rc`,
   `reboot`, and `sim_scenario` in the sim).
-- `status/` - `StatusProvider` (`status_provider`, INTERFACE on `messaging`
-  and `flight_core`; `packStatus` lives here as `status/status_packer.hpp`):
+- `status/` - `StatusProvider` (`status_provider`, header-only over
+  `messaging` and `flight_core`; `packStatus` lives here as
+  `status/status_packer.hpp`):
   `StatusSubscribe` in, one report every `STATUS_PERIOD_FRAMES` (10) to at
   most 4 subscribers, nothing packed with none. `StatusConsumer<N>`
   (`status_consumer`): subscribes to every `FIRMWARE` and `DRONE_SIM` of a
@@ -361,9 +367,9 @@ the one exemption is `ota_consumer`, desktop only. `messaging/` and
   Dart one (its messenger requests and acknowledges too, `DroneManager`
   subscribes to its drone's Status).
 - `ota/` - the firmware update brick every node with two firmware slots
-  builds on (`software/components/ota/README.md`): header-only INTERFACE
-  target `ota`, `protocol` alone underneath, builds for the F405, the ESP32
-  and the desktop. `AbsFirmwareStore` (slot geometry, erase, program in
+  builds on (`software/components/ota/README.md`): header-only target
+  `ota`, `protocol` alone underneath, builds for the F405, the ESP32 and
+  the desktop. `AbsFirmwareStore` (slot geometry, erase, program in
   order, read, CRC, boot metadata, plus `imageValid()` / `readIdentity()`,
   the two reads that depend on the chip's image format), `OtaUpdater` (the
   board-side session state machine, one `Ota*` message in, at most one

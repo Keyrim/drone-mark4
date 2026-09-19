@@ -436,8 +436,10 @@ platform headers for a non-flight concern.
 So the brick lives in **`software/components/ota/`**: `AbsFirmwareStore`
 and the `OtaMetaState`/`OtaMetaRecord` types, `OtaUpdater`, the boot
 policy, the metadata log, and the CRC-32/MPEG-2 helper (which the hub
-uses too, instead of a private copy). Header-only INTERFACE target
-`ota`, depending on `protocol` alone; include paths keep the module
+uses too, instead of a private copy). Header-only target `ota` (a
+static library whose sources are one single-include file per header, so
+each header compiles alone and the editor finds its flags), depending on
+`protocol` alone; include paths keep the module
 prefix (`#include "ota/updater.hpp"`). The store implementations did not
 move: they are genuinely target-specific and stay with their targets
 (`platform_stm32`, `platform_sim`, and `esp32-bridge/main/`). A

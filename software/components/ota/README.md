@@ -5,10 +5,12 @@ the flight controller, the desktop flight process (with files for slots)
 and the ESP32 relay. It is a node brick like `log` and `transport`, not a
 flight service: the platform layer is the abstract services of the flight
 loop, and an update is what happens when the loop is parked. Header-only
-INTERFACE target `ota`, `protocol/` alone underneath, no heap, no
-iostream, no exceptions, so the same headers compile for the F405, for the
-ESP32 (which builds `software/components/` sources as they are) and for the
-desktop. The ground side of the same concept lives here too
+target `ota`, `protocol/` alone underneath, no heap, no iostream, no
+exceptions, so the same headers compile for the F405, for the ESP32 (which
+builds `software/components/` sources as they are) and for the desktop;
+its `src/` holds one single-include source per header, the file that
+compiles the header alone and that the editor's language server takes the
+header's flags from. The ground side of the same concept lives here too
 (`ota_consumer`), desktop only and under its own rules, described at the
 end of the list below. `docs/ota-design.md` is the reference for every
 decision below.

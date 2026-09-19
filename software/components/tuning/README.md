@@ -1,9 +1,12 @@
 # tuning
 
 The tunable parameters of the flight core on the wire. A header-only
-INTERFACE target (`tuning_provider`) over `messaging` (the dispatch and the
-sender), `flight_core` (the registry) and `log`; no heap, no iostream, no
-exceptions, no RTTI, and it builds for the F405 as it stands.
+target (`tuning_provider`) over `messaging` (the dispatch and the sender),
+`flight_core` (the registry) and `log`; no heap, no iostream, no
+exceptions, no RTTI, and it builds for the F405 as it stands. Its `src/`
+holds one single-include source per header: the file that compiles the
+header alone and that the editor's language server takes the header's
+flags from.
 
 ## The provider
 

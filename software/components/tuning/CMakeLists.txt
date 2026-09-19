@@ -2,13 +2,17 @@
 # the glue between the tuning messages of protocol/mark4.proto and the
 # registry the core owns. No heap, no iostream, no exceptions: it builds
 # for the F405 as it stands.
-add_library(tuning_provider INTERFACE)
-target_include_directories(tuning_provider INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(tuning_provider INTERFACE messaging flight_core log)
+add_library(tuning_provider STATIC src/provider.cpp)
+target_include_directories(tuning_provider PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(tuning_provider
+    PUBLIC messaging flight_core log
+    PRIVATE drone_warnings drone_strict)
 
 # The other side of the same concept: the parameter table of a node as a
 # ground node holds it, pulled page by page, plus set and get. Header-only,
 # fixed tables sized by the composition, no heap.
-add_library(tuning_consumer INTERFACE)
-target_include_directories(tuning_consumer INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(tuning_consumer INTERFACE messaging discovery log)
+add_library(tuning_consumer STATIC src/consumer.cpp)
+target_include_directories(tuning_consumer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(tuning_consumer
+    PUBLIC messaging discovery log
+    PRIVATE drone_warnings drone_strict)
