@@ -8,9 +8,20 @@
 
 import * as vscode from "vscode";
 
-import { type GatewayStatus, type NodeTable } from "./gen/gateway_pb";
+import { type GatewayStatus, type NodeTable, type TransportHealth, TransportVerdict } from "./gen/gateway_pb";
 import { NodeKind } from "./gen/mark4_pb";
 import { diffNodeRows, type NodeRow, nodeRows, simInstance } from "./model";
+
+/** The colour of a node's icon: its verdict first, then whether it is live. */
+function verdictColor(row: NodeRow): string {
+    if (row.verdict === TransportVerdict.VERDICT_BAD) {
+        return "charts.red";
+    }
+    if (row.verdict === TransportVerdict.VERDICT_DEGRADED) {
+        return "charts.yellow";
+    }
+    return row.live && row.verdict === TransportVerdict.VERDICT_OK ? "testing.iconPassed" : "descriptionForeground";
+}
 
 export class NodeItem extends vscode.TreeItem {
     constructor(public row: NodeRow) {
@@ -27,14 +38,18 @@ export class NodeItem extends vscode.TreeItem {
         this.tooltip = row.tooltip;
         this.iconPath = row.mismatch
             ? new vscode.ThemeIcon("warning", new vscode.ThemeColor("problemsWarningIcon.foreground"))
-            : new vscode.ThemeIcon(
-                  row.icon,
-                  new vscode.ThemeColor(row.live ? "testing.iconPassed" : "descriptionForeground"),
-              );
+            : new vscode.ThemeIcon(row.icon, new vscode.ThemeColor(verdictColor(row)));
         if (row.mismatch) {
             this.description += " WIRE MISMATCH";
-        } else if (!row.live) {
-            this.description += " fading";
+        } else {
+            if (row.verdict === TransportVerdict.VERDICT_DEGRADED) {
+                this.description += " degraded";
+            } else if (row.verdict === TransportVerdict.VERDICT_BAD) {
+                this.description += " bad";
+            }
+            if (!row.live) {
+                this.description += " fading";
+            }
         }
         this.contextValue = "node" + (stoppable(row) ? ":stop" : "");
     }
@@ -62,6 +77,7 @@ export class NodesProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private rows: NodeRow[] = [];
     private items = new Map<number, NodeItem>();
     private table: NodeTable | undefined;
+    private health: TransportHealth | undefined;
     private wireHash = 0;
     private online = false;
 
@@ -69,6 +85,7 @@ export class NodesProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
         this.online = online;
         if (!online) {
             this.table = undefined;
+            this.health = undefined;
             this.rows = [];
             this.items.clear();
         }
@@ -77,6 +94,12 @@ export class NodesProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
 
     setTable(table: NodeTable): void {
         this.table = table;
+        this.rebuild();
+    }
+
+    /** The gateway's verdict on every node, which the rows read. */
+    setHealth(health: TransportHealth): void {
+        this.health = health;
         this.rebuild();
     }
 
@@ -103,7 +126,7 @@ export class NodesProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     }
 
     private rebuild(): void {
-        const next = this.table === undefined ? [] : nodeRows(this.table.nodes, this.wireHash);
+        const next = this.table === undefined ? [] : nodeRows(this.table.nodes, this.wireHash, this.health);
         const changes = diffNodeRows(this.rows, next);
         this.rows = next;
         if (changes.structural) {

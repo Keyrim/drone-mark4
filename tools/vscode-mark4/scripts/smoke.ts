@@ -12,13 +12,13 @@
  * Exits non-zero on the first failed expectation.
  */
 
-import { type NodeTable } from "../src/gen/gateway_pb";
+import { type NodeTable, type TransportHealth } from "../src/gen/gateway_pb";
 import { LogLevel, type LogModuleInfo, NodeKind } from "../src/gen/mark4_pb";
 import { GatewayClient, GATEWAY_URL } from "../src/gateway";
 import { LogStore } from "../src/logStore";
 import { levelName } from "../src/logTree";
 import { LogFilter, type NameTable, type NodeNames, renderLogs } from "../src/logView";
-import { hexNodeId, kindName, nodeRows } from "../src/model";
+import { hexNodeId, kindName, nodeRows, verdictName } from "../src/model";
 
 const startedAt = Date.now();
 const log = (text: string): void => console.log(`[${((Date.now() - startedAt) / 1000).toFixed(2)} s] ${text}`);
@@ -28,6 +28,7 @@ const fail = (text: string): never => {
 };
 
 let table: NodeTable | undefined;
+let health: TransportHealth | undefined;
 let wireHash = 0;
 const modules = new Map<number, readonly LogModuleInfo[]>();
 let names: NameTable = new Map();
@@ -60,6 +61,9 @@ const client = new GatewayClient({
     },
     onStatus: (status) => {
         wireHash = status.wireHash;
+    },
+    onTransportHealth: (published) => {
+        health = published;
     },
     onLogModules: (node, published) => {
         modules.set(node, published);
@@ -105,8 +109,11 @@ const sim = await waitFor("a drone_sim with its log modules published", () => {
     return node !== undefined && (modules.get(node.id) ?? []).length > 0 ? node : undefined;
 });
 log(`nodes view (gateway wire ${wireHash.toString(16).padStart(8, "0")}):`);
-for (const row of nodeRows(table?.nodes ?? [], wireHash)) {
-    log(`  ${row.live ? "*" : "."} ${row.name} [${row.kindName} ${row.hex}]${row.mismatch ? " WIRE MISMATCH" : ""}`);
+for (const row of nodeRows(table?.nodes ?? [], wireHash, health)) {
+    log(
+        `  ${row.live ? "*" : "."} ${row.name} [${row.kindName} ${row.hex}]` +
+            ` transport ${verdictName(row.verdict)}${row.mismatch ? " WIRE MISMATCH" : ""}`,
+    );
 }
 
 const link =

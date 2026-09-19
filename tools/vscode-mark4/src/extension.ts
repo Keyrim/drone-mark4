@@ -112,6 +112,7 @@ export function activate(context: vscode.ExtensionContext): void {
             logs.setTable(table);
         },
         onStatus: (status) => nodes.setStatus(status),
+        onTransportHealth: (health) => nodes.setHealth(health),
         onLogModules: (node, modules) => {
             levels.setModules(node, modules);
             logs.setModules(node, modules);
