@@ -6,9 +6,9 @@ the hub pages inside the editor. Everything about the running bench comes
 from one websocket to the gateway (the hub, `ws://127.0.0.1:47810`): the
 extension is one more client of `gateway.proto`, like the pages. Nothing
 raw crosses that link: the gateway publishes typed messages (`NodeTable`,
-`NodeLogModules`, `NodeLogLines`, `GatewayStatus`) and the extension sends
-typed commands (`LogCommand`), so it never encodes or decodes an
-`Envelope`.
+`NodeLogModules`, `NodeLogLines`, `GatewayStatus`, `TransportHealth`) and the
+extension sends typed commands (`LogCommand`), so it never encodes or decodes
+an `Envelope`.
 
 - **Apps**: one line per apps.json entry, with inline build / run / debug.
   Build and run shell out to `scripts/build_app.py` / `scripts/run_app.py`
@@ -17,19 +17,29 @@ typed commands (`LogCommand`), so it never encodes or decodes an
 - **Nodes**: one line per node of the gateway's `NodeTable`, whoever started
   it: an icon per kind (firmware, drone_sim, plant, gateway, batch, relay, a
   generic one for a kind this build does not know), the name, then the kind
-  and the node id in 8 hex digits. Green while the node was heard less than
-  1.5 s ago, grey ("fading") after that, and a warning icon plus `WIRE
-  MISMATCH` when the node announces another `mark4.proto` hash than the
-  gateway's. The tooltip has the address, the build date, the git and wire
-  hashes and the frame counters. Inline stop for what runs on this machine
-  (the hub, the Godot plant, a drone_sim the extension started); the title
-  bar starts one more `drone_sim` (`+`) or the Godot sim (globe). With no
-  gateway the view is one line, "gateway offline: start the hub", with a
-  start action. The table arrives once a second and almost never differs:
-  the view is only redrawn for the lines that read differently (a name, a
-  kind, live or fading, a wire mismatch), and only the whole view when
-  nodes appear or leave. The counters and the last-seen of the tooltip are
-  not a reason to redraw, so they are one refresh behind at worst.
+  and the node id in 8 hex digits, and a warning icon plus `WIRE MISMATCH`
+  when the node announces another `mark4.proto` hash than the gateway's.
+  Colour and suffix say what the gateway makes of that node's transport (the
+  verdict of its `TransportHealth`, published every second): green while the
+  node was heard less than 1.5 s ago and the verdict is ok, yellow plus
+  " degraded", red plus " bad", grey when the node is fading ("fading",
+  after the verdict when both) or nothing is known of its transport yet. That
+  verdict is partial while no transport page is open: the gateway subscribes
+  to the reports of the other nodes only for a client that asked for them,
+  and judges from its own view alone until one does. The tooltip has the
+  address, the build date, the git and wire hashes, then the transport line:
+  the verdict, the worst loss the node observes and the worst loss observed
+  of it, and one word per flag the gateway raised (`asymmetric`,
+  `requests-failed`, `fading`, `refused`, `rx-errors`, `churn`). Inline stop
+  for what runs on this machine (the hub, the Godot plant, a drone_sim the
+  extension started); the title bar starts one more `drone_sim` (`+`) or the
+  Godot sim (globe). With no gateway the view is one line, "gateway offline:
+  start the hub", with a start action. The table arrives once a second and
+  almost never differs: the view is only redrawn for the lines that read
+  differently (a name, a kind, live or fading, a wire mismatch, a verdict),
+  and only the whole view when nodes appear or leave. The losses and the
+  last-seen of the tooltip are not a reason to redraw, so they are one
+  refresh behind at worst.
 - **Log levels**: every module of every node with its current threshold,
   grouped by node or by module name (the title action switches). A `/` in
   the names makes a folder (`platform/`) when two modules or more share it.
@@ -48,7 +58,8 @@ typed commands (`LogCommand`), so it never encodes or decodes an
   not the filter), and shows the channel (`Mark4: Show Logs`, `ctrl+alt+l` /
   `cmd+alt+l`, which keeps the focus where it is). Like the nodes view, it
   only redraws the subtrees that read differently.
-- **Bench**: what is not a node, the two pages to dock. `Mark4: Bench
+- **Bench**: what is not a node, the three pages to dock: control, plots and
+  transport (the state of the wire seen from every node). `Mark4: Bench
   Session` (rocket icon) builds and starts the hub, starts the Godot sim,
   then docks the control and plots pages in two editor groups.
 
