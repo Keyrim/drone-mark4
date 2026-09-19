@@ -6,12 +6,17 @@
  *
  * There is no in-page navigation: control and plots are two windows meant
  * to live on two screens, each with its own websocket to the gateway.
+ *
+ * Every page wears the theme of whoever embeds it: the shell installs the
+ * relay, and a page opened in a browser tab keeps its stylesheet's own
+ * colors.
  */
 
 import { type GatewayMessage } from "../gen/gateway_pb";
 import { LogLevel } from "../gen/mark4_pb";
 import { type Ack, type GatewaySocket } from "./gateway_socket";
 import { NodeModel, hexNodeId, logModuleName } from "./nodes";
+import { installTheme } from "./theme";
 
 /** How long a toast stays on screen [ms]. */
 const TOAST_MS = 6000;
@@ -29,6 +34,10 @@ export class Shell {
     private readonly toasts: HTMLElement;
 
     constructor(private readonly socket: GatewaySocket) {
+        // The editor paints the page it embeds: its theme arrives as a
+        // message, and a plain browser tab simply never gets one.
+        installTheme();
+
         const nav = document.createElement("nav");
         nav.className = "nav";
 
