@@ -910,3 +910,134 @@ Step 3 (the pages):
   `:root` block of `transport.css`.
 - The hub's MIME table gained `.ttf` (`font/ttf`) for the codicon font
   the page links.
+
+## 10. Sequence per stream, and what a percentage is worth
+
+Decided on 2026-09-19, after the first bench run of the page: with a hub,
+three `drone_sim` and the plant, every edge read 58 % to 99 % loss while
+nothing was lost. The transport numbers every frame a node sends with one
+counter, whatever the destination; a receiver only sees the frames for it
+and the broadcasts, and counts every gap as a loss. Every unicast to
+someone else therefore reads as a lost frame: a `drone_sim` hears from
+another `drone_sim` its keepalives alone (one per second) and "loses" the
+hundreds of `SimActuator` per second that went to the plant. `NodeTable`
+carried the same numbers before this feature; the page is what made them
+readable. This section fixes the accounting, then what the page shows next
+to a percentage so it can be read.
+
+### 10.1 Streams (`transport/`, C++)
+
+A sequence numbers one **stream**: the frames from one sender to one
+destination, the broadcast being a stream of its own. The header does not
+change; what `seq` means does.
+
+Sender (`Transport`):
+
+- `Node` gains `std::uint16_t txSeq = 0U;` ///< next sequence of the unicast
+  stream to it. It starts at 0 when the entry is created and when the entry
+  is reset by a reincarnation (`onBootId()` rebuilds it).
+- `m_nextSeq` becomes `m_broadcastSeq`, the broadcast stream.
+- `send()` and `sendKeepalive()`: a broadcast takes `m_broadcastSeq++`; a
+  unicast takes `target->txSeq++` of its destination (the unicast
+  keepalive to a newcomer included: it is the first frame of that stream,
+  sequence 0).
+
+Receiver (`learn()`):
+
+- `Node::lastSeq` is replaced by four fields: `unicastSeq`,
+  `unicastHeard` (false until the first frame of that stream), `broadcastSeq`,
+  `broadcastHeard`.
+- The stream of a frame is decided by its `dst`: `m_nodeId` is the unicast
+  stream of `src`, `BROADCAST_NODE` its broadcast stream, anything else is
+  a frame for another node that this node relays. On the first frame of a
+  stream the sequence is taken silently and the flag set; then `delta ==
+  0` is a duplicate (dropped, `duplicates` counted), `1 < delta <
+  RESYNC_THRESHOLD` adds `delta - 1` to `lost`, a larger jump counts as
+  nothing; `received` counts every accepted frame of either stream.
+- A frame for another node refreshes the presence of its sender (link,
+  address, `lastSeenUs`, `hops`) and nothing else: no sequence, no
+  duplicate drop, no loss, no `received`. It is relayed as before. The
+  broadcast stream keeps the duplicate drop that stops a triangle of
+  relays from looping a broadcast (the existing test); a unicast that loops
+  is bounded by `MAX_HOPS` alone. No relay triangle exists today.
+- `onBootId()` on a reincarnation rebuilds the entry as today, then takes
+  the keepalive's sequence into the stream its `dst` names, the other
+  stream unheard.
+
+`transport/README.md` rewrites the sequence paragraphs (Frame, API,
+Relay) with this rule. The existing tests of `test_transport.cpp` that
+assert on `lost`, `duplicates` or the sequence are adapted to the rule (a
+test sending unicasts to two destinations from one node now expects no
+loss at either); no new test.
+
+### 10.2 Wire
+
+`TransportPeer` gains `bool unicast_heard = 8;` "the peer has sent this
+node at least one unicast since it was learnt: the edge carries more than
+the keepalive". The provider copies `Node::unicastHeard`. The consumer is
+unchanged.
+
+### 10.3 The GDScript plant (`sim-godot/scripts/transport/transport.gd`)
+
+The same rule, field for field: the node dictionary gains `tx_seq`,
+`unicast_seq`, `unicast_heard`, `broadcast_seq`, `broadcast_heard` and
+loses `last_seq`; `_next_seq` becomes `_broadcast_seq`; `send()` and
+`_send_keepalive()` pick the stream by destination; `_on_frame()` decides
+the stream by `dst` and touches presence alone for a frame addressed to
+another node (the plant has one link and relays nothing, so it only
+forwards nothing); `_on_boot_id()` resets the streams as 10.1 says. The
+header comment of the file states the rule. `sim-godot/tests/transport_check.gd`
+and `software/tests/unit/test_plant_link.cpp` are adapted only if they
+assert on the old rule.
+
+### 10.4 The Dart phone (`software/mobile/lib/back/transport/transport_node.dart`)
+
+The same rule: `_Node.lastSeq` becomes `unicastSeq`, `unicastHeard`,
+`broadcastSeq`, `broadcastHeard` plus `txSeq`; `_nextSeq` becomes
+`_broadcastSeq`; `send()`, the keepalive, `_learn()` and `_onBootId()`
+follow 10.1. The doc comment of the class states the rule. The fakes and
+tests under `software/mobile/test/` are adapted only where they assert on
+the old rule; `flutter analyze`, `dart format --set-exit-if-changed` and
+`flutter test` pass.
+
+### 10.5 The hub
+
+`gateway.proto`, `TransportEdge` gains:
+
+```proto
+bool unicast_heard = 11;    // the edge carries more than the keepalive
+uint32 window_received = 12;  // frames received over the window
+uint32 window_lost = 13;      // frames lost over the window
+```
+
+`fillNodeTransport()` copies the flag and the two deltas it already
+computes for `loss`.
+
+A percentage over ten frames is not a measurement. `hub/transport_health.hpp`
+gains `LOSS_MIN_FRAMES = 20`: an edge whose `window_received +
+window_lost` is below it is **quiet** and is not judged on its loss (it
+still counts for fading), and it is never the worst edge of
+`TransportHealth`. A keepalive-only edge over a 10 s window holds 10
+frames and is therefore judged on presence alone, which is what a keepalive
+is for; an edge with traffic is judged on its real loss.
+
+### 10.6 The page
+
+Wherever a percentage is printed, the count it was computed on is printed
+next to it, as `lost/total over N s` with the window's span in whole
+seconds:
+
+- edge tooltip: `A -> B: loss 3 % (1/33 over 10 s), 3.3 fps, dup d/s, hops h,
+  age a ms`, plus `keepalive only` when `unicast_heard` is false;
+- findings line: `loses 3 % (1/33 over 10 s)`; a quiet edge (10.5) raises
+  no finding, the page mirrors `LOSS_MIN_FRAMES` in `health.ts` like the
+  other thresholds, and `lossClass()` returns `quiet` for it (drawn in the
+  description foreground like an edge with no window);
+- banner: `worst A -> B 3 % (1/33)`;
+- Peers table of the panel: peer, stream (`unicast` or `keepalive`), link,
+  hops, rx/s, loss %, window (`lost/total`), received, lost, dup (the three
+  cumulative), age.
+
+A keepalive-only edge is drawn dotted (short dashes); the dashed stroke
+keeps its meaning (the other direction is not reported). The README of the
+pages says what a quiet edge and a keepalive-only edge are.
