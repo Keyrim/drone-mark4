@@ -6,8 +6,8 @@
 #include <span>
 
 #include "discovery/discovery.hpp"
-#include "mark4.pb.h"
 #include "messaging/messenger.hpp"
+#include "protocol/envelope.hpp"
 #include "protocol/wire_hash.hpp"
 #include "transport/transport.hpp"
 

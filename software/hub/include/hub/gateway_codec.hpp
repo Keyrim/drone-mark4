@@ -14,7 +14,7 @@
 #include <string>
 #include <string_view>
 
-#include "gateway.pb.h"
+#include "gateway.pb.h" // IWYU pragma: export
 #include "hub/tuning_profiles.hpp"
 #include "ota/consumer.hpp"
 #include "protocol/envelope.hpp"

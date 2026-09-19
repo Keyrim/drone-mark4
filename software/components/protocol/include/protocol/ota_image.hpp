@@ -20,7 +20,7 @@
 #include <cstdint>
 #include <type_traits>
 
-#include "mark4.pb.h"
+#include "protocol/envelope.hpp"
 
 namespace mark4
 {

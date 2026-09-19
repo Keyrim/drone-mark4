@@ -44,7 +44,11 @@ says so when they are missing.
   values, ahead of the 390-byte telemetry configuration and the 255-byte
   OTA chunk). Static asserts
   keep `sizeof(mark4_Envelope)` under 400 bytes, and the transport and
-  serial framing check that every envelope fits their payloads.
+  serial framing check that every envelope fits their payloads. It is the
+  one header the schema enters C++ through: it re-exports `mark4.pb.h`,
+  `pb.h` and `protocol/wire_hash.hpp` (IWYU pragmas, honoured by clangd),
+  so a file that uses a `mark4_*` type or `WIRE_HASH` includes it and
+  never the generated headers directly.
 - `protocol/wire_hash.hpp`: `WIRE_HASH`, the first 8 hex characters of the
   SHA-256 of `mark4.proto`, computed by CMake at configure time and
   regenerated on every edit of the schema. Every `Announce` carries it; the

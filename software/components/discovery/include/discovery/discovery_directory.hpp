@@ -15,8 +15,8 @@
 #include <pb.h>
 
 #include "discovery/discovery.hpp"
-#include "mark4.pb.h"
 #include "messaging/messenger.hpp"
+#include "protocol/envelope.hpp"
 #include "transport/transport.hpp"
 
 namespace mark4
