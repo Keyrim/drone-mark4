@@ -90,9 +90,10 @@ namespace mark4
             bool all = true;
             for (std::size_t index = 0U; index < m_linkCount; ++index)
             {
-                all = countLinkSend(
-                          index, m_links[index]->broadcast(m_txBuffer.data(), frameSize), frameSize)
-                      && all;
+                all = countLinkSend(index,
+                                    m_links[index]->broadcast(m_txBuffer.data(), frameSize),
+                                    frameSize) &&
+                      all;
             }
             return countSend(all, size);
         }
@@ -103,11 +104,11 @@ namespace mark4
             ++m_refused;
             return false;
         }
-        return countSend(
-            countLinkSend(target->link,
-                          m_links[target->link]->send(m_txBuffer.data(), frameSize, target->address),
-                          frameSize),
-            size);
+        return countSend(countLinkSend(target->link,
+                                       m_links[target->link]->send(
+                                           m_txBuffer.data(), frameSize, target->address),
+                                       frameSize),
+                         size);
     }
 
     void Transport::sendKeepalive(std::uint32_t dst)
@@ -134,20 +135,20 @@ namespace mark4
             bool all = true;
             for (std::size_t index = 0U; index < m_linkCount; ++index)
             {
-                all = countLinkSend(
-                          index, m_links[index]->broadcast(m_txBuffer.data(), frameSize), frameSize)
-                      && all;
+                all = countLinkSend(index,
+                                    m_links[index]->broadcast(m_txBuffer.data(), frameSize),
+                                    frameSize) &&
+                      all;
             }
             static_cast<void>(countSend(all, 0U));
             return;
         }
         const Node *target = findNode(dst);
         static_cast<void>(countSend(
-            target != nullptr &&
-                countLinkSend(
-                    target->link,
-                    m_links[target->link]->send(m_txBuffer.data(), frameSize, target->address),
-                    frameSize),
+            target != nullptr && countLinkSend(target->link,
+                                               m_links[target->link]->send(
+                                                   m_txBuffer.data(), frameSize, target->address),
+                                               frameSize),
             0U));
     }
 

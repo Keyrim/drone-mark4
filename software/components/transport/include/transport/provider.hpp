@@ -9,6 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 
 #include "log/module.hpp"
 #include "log/module_ids.hpp"
@@ -226,6 +227,13 @@ namespace mark4
       private:
         /// Links one report carries at most: the bound of the repeated field.
         static constexpr std::size_t MAX_WIRE_LINKS = 4U;
+
+        // The two page sizes are the nanopb bounds of mark4.options, spelled
+        // here so a page never overruns the generated arrays.
+        static_assert(PEERS_PER_PAGE == std::size(mark4_TransportReport{}.peers),
+                      "PEERS_PER_PAGE is not the bound of TransportReport.peers");
+        static_assert(MAX_WIRE_LINKS == std::size(mark4_TransportReport{}.links),
+                      "MAX_WIRE_LINKS is not the bound of TransportReport.links");
 
         /// Microseconds in one millisecond, the unit the ages travel in.
         static constexpr std::uint64_t US_PER_MS = 1000U;

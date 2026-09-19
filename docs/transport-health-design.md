@@ -835,3 +835,24 @@ layout's medium merge; the theme relay.
 
 Filled during the implementation where the code departs from the sections
 above.
+
+Step 1 (transport, wire, provider, consumer, compositions):
+
+- `Entry::staging_valid` of 5.2 is `stagingValid`: the member naming rule
+  of `.clang-tidy` (camelBack) applies to every field of the struct.
+- `UdpLink::ReadOne` stays a static method and takes the error counter by
+  reference (the option 3.1 left open; the smaller change, and the
+  static-method naming rule stays satisfied).
+- `drone_sim` ticks its provider in the main loop of `run()`, after the
+  updater's `consumed()` check: 5.3 named "the updater's tick", which
+  lives in the parked update loop, not in `run()`. Consequence: like its
+  status stream, `drone_sim` does not report during an update session.
+- A second `AbsLink` fake exists in `software/tests/unit/test_transport.cpp`
+  (`FakeLink`), adapted like `RecordingLink`; 3.1 named one fake only.
+- The compile-time guard of `messaging/messenger.hpp` on the highest tag
+  of the schema names `transport_report` now.
+- `TransportProvider` pins `PEERS_PER_PAGE` and its link bound to the
+  generated array sizes with two `static_assert`s.
+- Measured after the change: `mark4_TransportReport_size` 438,
+  `mark4_Envelope_size` 449 (under `MAX_PAYLOAD` 512),
+  `sizeof(mark4_Envelope)` 384 (the `static_assert` budget is 400).

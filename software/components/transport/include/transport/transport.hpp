@@ -320,16 +320,16 @@ namespace mark4
         /// @return ok, so a caller returns it straight away
         bool countSend(bool ok, std::size_t size);
 
-        std::uint32_t m_nodeId;                     ///< this node
-        std::uint32_t m_bootId;                     ///< this run of this node
-        std::array<AbsLink *, MAX_LINKS> m_links{};      ///< declared links
+        std::uint32_t m_nodeId;                         ///< this node
+        std::uint32_t m_bootId;                         ///< this run of this node
+        std::array<AbsLink *, MAX_LINKS> m_links{};     ///< declared links
         std::array<LinkStats, MAX_LINKS> m_linkStats{}; ///< what crossed each of them
-        std::size_t m_linkCount = 0U;               ///< links declared
-        std::array<Node, MAX_NODES> m_nodes{};      ///< live nodes, dense prefix
-        std::size_t m_nodeCount = 0U;               ///< nodes in m_nodes
-        std::uint16_t m_nextSeq = 0U;               ///< sequence of the next frame sent
-        std::uint64_t m_lastKeepaliveUs = 0U;       ///< instant of the last keepalive
-        bool m_keepaliveSent = false;               ///< true once one went out
+        std::size_t m_linkCount = 0U;                   ///< links declared
+        std::array<Node, MAX_NODES> m_nodes{};          ///< live nodes, dense prefix
+        std::size_t m_nodeCount = 0U;                   ///< nodes in m_nodes
+        std::uint16_t m_nextSeq = 0U;                   ///< sequence of the next frame sent
+        std::uint64_t m_lastKeepaliveUs = 0U;           ///< instant of the last keepalive
+        bool m_keepaliveSent = false;                   ///< true once one went out
         std::array<AbsPresenceListener *, MAX_LISTENERS> m_listeners{}; ///< attached, in order
         std::size_t m_listenerCount = 0U;                               ///< listeners attached
         bool m_listenersOverflow = false;                      ///< a fifth one tried to attach
