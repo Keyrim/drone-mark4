@@ -34,6 +34,7 @@
 #include "status/status_provider.hpp"
 #include "telemetry/provider.hpp"
 #include "telemetry/registry.hpp"
+#include "transport/provider.hpp"
 #include "transport/transport.hpp"
 #include "transport/uart_link.hpp"
 #include "tuning/provider.hpp"
@@ -153,6 +154,9 @@ namespace mark4
         /// This board's log on the wire: the lines to whoever subscribed, the
         /// module table one page per request, the levels.
         mark4::LogProvider m_logProvider{m_messenger};
+        /// What this board's transport and messenger count, to whoever
+        /// subscribed: one report a second, its peer table by pages.
+        mark4::TransportProvider m_transportProvider{m_messenger, m_transport};
         mark4::I2cBus m_bus;
         mark4::Mpu6050 m_imu{m_bus};
         mark4::Bmp581 m_baro{m_bus};

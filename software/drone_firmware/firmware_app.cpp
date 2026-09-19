@@ -176,6 +176,7 @@ namespace mark4
     void FirmwareApp::pollTransport(std::uint64_t nowUs)
     {
         m_messenger.poll(nowUs);
+        m_transportProvider.tick(nowUs);
     }
 
     FirmwareApp::Commands::Commands(mark4::Messenger &messenger, FirmwareApp &app)

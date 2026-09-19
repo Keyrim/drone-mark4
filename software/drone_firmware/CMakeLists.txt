@@ -27,7 +27,8 @@ foreach(variant IN ITEMS A B)
     # toolchain file happening to duplicate the flags.
     target_link_libraries(${target}
         PRIVATE flight_core platform_common platform_stm32 protocol messaging discovery
-                status_provider telemetry_provider tuning_provider ota_provider ota_flight_gate
+                status_provider telemetry_provider tuning_provider transport_provider
+                ota_provider ota_flight_gate
                 log log_provider
                 drone_warnings
                 drone_strict)

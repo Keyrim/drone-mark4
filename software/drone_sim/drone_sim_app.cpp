@@ -462,6 +462,9 @@ namespace mark4
                 m_otaConsumedSeen = m_otaProvider->consumed();
                 refreshArmInterlock();
             }
+            // Wall time, not the frame's: the report describes the wire,
+            // which runs on the clock and not on the plant's tick grid.
+            m_transportProvider.tick(m_clock.nowUs());
             if (m_otaUpdater.has_value() && m_otaUpdater->sessionActive())
             {
                 // An accepted OtaBegin arrived in that wait: this frame is
