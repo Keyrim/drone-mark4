@@ -1,0 +1,837 @@
+# Transport health - design
+
+Decided on 2026-09-19. The state of the transport layer of the whole
+system, seen from every node, gathered by the hub and shown as a graph in
+the editor: which nodes are on the wire, over which links, how many frames
+each one receives and loses from each other, and a verdict that says
+whether the transport is healthy and, when it is not, why.
+
+This document is the closed specification of the work: the subagents that
+implement it take no decision of their own. What is not written here is
+asked, not guessed. The code is the reference once merged; where the code
+had to depart from this document, section 9 says so.
+
+## 1. Why
+
+Every node's transport keeps a table of its peers with `received`, `lost`,
+`duplicates`, `hops` and `lastSeenUs` per peer, and global send counters
+(`sent`, `sentBytes`, `refused`, `dropped`, `relayed`). Every messenger
+keeps its own (`undecodable`, `unhandled`, `requests`, `resent`,
+`completed`, `failed`, `unmatchedAcks`). Today only the hub's table is
+visible (`NodeTable` of `gateway.proto`), and only from the hub's point of
+view.
+
+A loss on the direction A to B is only seen by B. The hub's table shows
+the losses towards the hub and never the losses towards the board (hub,
+relay, UART), which are exactly the ones that make requests fail. The
+feature is therefore: every node reports its own view of the transport,
+the hub gathers every view into the directed matrix (observer, peer), and
+derives from it what a person needs to know.
+
+## 2. Principles
+
+- Nothing travels unasked. A node reports only to the nodes that
+  subscribed, and the hub subscribes only while a websocket client asked
+  for the reports (the transport page is open). With no client marked, the
+  hub's own view is the whole picture, and it costs the wire nothing.
+- Counters travel cumulative, never as rates: a lost report skews nothing,
+  the hub computes the deltas.
+- The hub is provider and consumer of the concept: it reports to another
+  gateway that subscribes, and it feeds its own consumer through a local
+  path since a messenger cannot send to its own node.
+- The GDScript plant and the Dart phone do not report in this version.
+  They still appear as peers in everyone else's reports, with only their
+  inbound direction known, and the page draws them as such.
+- No new unit test is written; the existing tests are adapted where an API
+  they exercise changes. Candidates for the testing design are listed in
+  section 8.
+- Every rule of `CLAUDE.md` holds: English, ASCII, `mark4` namespace, no
+  heap in the components, Doxygen, Conventional Commits, the log library
+  for every diagnostic line.
+
+## 3. Transport additions (`software/components/transport/`)
+
+### 3.1 `AbsLink` (`transport/link.hpp`)
+
+```cpp
+/// What medium a link is: what a report says of it, and what a page draws.
+enum class LinkKind : std::uint8_t
+{
+    UART = 1, ///< a point-to-point serial line behind the serial framing
+    UDP = 2,  ///< an IPv4 LAN, one shared discovery port and one data socket
+};
+
+/// @return what medium this link is
+[[nodiscard]] virtual LinkKind kind() const = 0;
+
+/// @return frames the medium could not deliver whole, cumulative: a CRC
+///         failure or an impossible length on a serial line, a datagram
+///         larger than the caller's buffer on UDP
+[[nodiscard]] virtual std::uint32_t rxErrors() const = 0;
+```
+
+`UartLink::kind()` returns `UART`; `UdpLink::kind()` returns `UDP`.
+
+`UartLink::rxErrors()` is the parser's count plus the frames dropped for
+being larger than the caller's capacity in `receive()`. `SerialFrameParser`
+gains a `std::uint32_t m_errors` counter and an accessor `errors()`,
+incremented on a CRC mismatch and on an impossible announced length (0 or
+greater than `SERIAL_MAX_PAYLOAD`), the two places where the parser goes
+back to `SYNC0` without returning a frame. A stray byte while hunting for
+the sync pair is not an error: that is the normal resynchronization.
+
+`UdpLink::rxErrors()` counts the oversized datagrams `ReadOne()` skips
+(`received > capacity`); the counter is a member of the link and `ReadOne`
+becomes a non-static member (or takes the counter by reference; the
+implementer picks the smaller change).
+
+The test fake `software/tests/unit/recording_link.hpp` (`RecordingLink`)
+implements both: `kind()` returns `LinkKind::UDP`, `rxErrors()` returns 0.
+Nothing else implements `AbsLink` outside `transport/`.
+
+### 3.2 `Transport` (`transport/transport.hpp`)
+
+Per-link counters, indexed like `m_links`:
+
+```cpp
+/// What crossed one link, in both directions, cumulative.
+struct LinkStats
+{
+    std::uint32_t framesIn = 0U;  ///< frames the link handed over, header decoded or not
+    std::uint32_t bytesIn = 0U;   ///< their bytes, header included
+    std::uint32_t framesOut = 0U; ///< frames the link took: this node's sends,
+                                  ///< its keepalives and what it relayed
+    std::uint32_t bytesOut = 0U;  ///< their bytes, header included
+    std::uint32_t refused = 0U;   ///< frames the link would not take (a full UART ring)
+};
+
+[[nodiscard]] std::size_t linkCount() const;
+[[nodiscard]] const AbsLink &link(std::size_t index) const;      // 0 <= index < linkCount()
+[[nodiscard]] const LinkStats &linkStats(std::size_t index) const;
+```
+
+Rules:
+
+- `poll()` counts every frame a link's `receive()` returns in `framesIn`
+  and `bytesIn` of that link, before `onFrame()` looks at it.
+- Every `send()` / `broadcast()` call on a link, from `send()`,
+  `sendKeepalive()` and `relay()`, counts in `framesOut` and `bytesOut`
+  (the whole frame size) when the link returned true, in `refused` when it
+  returned false. The existing global counters keep their meaning exactly
+  (`sent()` and `refused()` describe this node's own sends and keepalives,
+  `relayed()` counts the forwards whether the link took them or not).
+
+Two churn counters on the transport:
+
+```cpp
+/// @return peers forgotten for silence (NODE_EXPIRY_US), cumulative
+[[nodiscard]] std::uint32_t expired() const;
+/// @return peers seen restarting (another boot id), cumulative
+[[nodiscard]] std::uint32_t restarted() const;
+```
+
+`expire()` increments the first per node forgotten; `onBootId()` increments
+the second when it fires `notifyDown` then `notifyUp`.
+
+The GDScript and Dart ports are not touched: they neither report nor need
+the new counters.
+
+`transport/README.md` documents the new counters (API section, Links
+section) and gains a section on the provider and the consumer (section 4
+below).
+
+## 4. Wire (`software/components/protocol/mark4.proto`)
+
+Three bodies in the `Envelope` oneof, numbered after the last one in use:
+
+```proto
+TransportSubscribe transport_subscribe = 54;
+TransportSubscription transport_subscription = 55;
+TransportReport transport_report = 56;
+```
+
+Messages, placed after the tuning family with the same comment style as
+the other concepts:
+
+```proto
+// The transport concept: what every node's transport and messenger count.
+// Request, answered by the subscription as held (TransportSubscription).
+message TransportSubscribe {
+  bool enabled = 1;
+}
+
+// The subscription as the provider holds it.
+message TransportSubscription {
+  bool enabled = 1;
+}
+
+enum LinkKind {
+  LINK_KIND_UNSPECIFIED = 0;
+  LINK_UART = 1;  // a point-to-point serial line
+  LINK_UDP = 2;   // an IPv4 LAN
+}
+
+// One physical link of the reporting node, cumulative counters.
+message TransportLink {
+  LinkKind kind = 1;
+  uint32 frames_in = 2;
+  uint32 bytes_in = 3;
+  uint32 frames_out = 4;
+  uint32 bytes_out = 5;
+  uint32 refused = 6;    // frames the medium would not take (a full UART ring)
+  uint32 rx_errors = 7;  // frames the medium could not deliver whole (CRC, length, oversize)
+}
+
+// One peer as the reporting node's transport holds it.
+message TransportPeer {
+  uint32 id = 1;
+  uint32 link = 2;        // index into TransportReport.links
+  uint32 hops = 3;        // relays the last frame from it crossed
+  uint32 received = 4;
+  uint32 lost = 5;
+  uint32 duplicates = 6;
+  uint32 age_ms = 7;      // since the last frame from it
+}
+
+// Stream: one node's view of the transport, every second, to the nodes
+// that subscribed. Cumulative counters, so a lost report skews nothing.
+// The peer table travels by pages of at most 4 (peer_cursor, peer_total),
+// every page carrying the counters again; a consumer takes the counters
+// from any page and replaces the peer slice the page names.
+message TransportReport {
+  // this node's transport
+  uint32 sent = 1;            // frames this node handed to a link: its sends and keepalives
+  uint32 sent_bytes = 2;      // their payload bytes
+  uint32 refused = 3;         // sends that reached no link
+  uint32 dropped = 4;         // frames dropped: too short, table full, nobody to relay to
+  uint32 relayed = 5;         // frames forwarded onto another link
+  uint32 expired = 6;         // peers forgotten for silence
+  uint32 restarted = 7;       // peers seen restarting (another boot id)
+  // this node's messenger
+  uint32 undecodable = 8;     // payloads that were no Envelope
+  uint32 unhandled = 9;       // messages nobody claimed
+  uint32 requests = 10;       // requests started
+  uint32 resent = 11;         // requests sent again
+  uint32 completed = 12;      // requests acknowledged
+  uint32 failed = 13;         // requests given up on
+  uint32 unmatched_acks = 14; // acknowledgements matching no pending request
+  repeated TransportLink links = 15;  // at most 4, in declaration order
+  uint32 peer_cursor = 16;    // index of peers[0] in the node table
+  uint32 peer_total = 17;     // peers in the whole table
+  repeated TransportPeer peers = 18;  // at most 4 per page
+}
+```
+
+`mark4.options`:
+
+```
+mark4.TransportReport.links         max_count:4
+mark4.TransportReport.peers         max_count:4
+```
+
+Worst case of one page encoded: about 450 bytes, under `MAX_PAYLOAD` (512),
+and the struct stays under `MAX_ENVELOPE_STRUCT_SIZE` (400); both are
+checked by the build (`static_assert` in `protocol/envelope.hpp`, the
+nanopb `_size` constant). If either limit is hit, the implementer stops
+and reports rather than lowering a bound.
+
+No `reserved` statement (the godobuf parser cannot read it). The wire hash
+changes: every node rebuilds, which is the normal course of a schema
+change. The GDScript and Dart codecs regenerate from the schema at build
+time and their messengers acknowledge and drop the tags they do not claim.
+
+`protocol/README.md` lists the three messages with the other concepts.
+
+## 5. The concept in `transport/`: provider and consumer
+
+Same directory as the leaf, on the model of `log/` (the leaf `log`, then
+`log_provider` and `log_consumer` next to it). Two header-only targets,
+each header with its one-include source in `src/` (the rule of PR #33):
+
+- `transport_provider`: `include/transport/provider.hpp`,
+  `src/provider.cpp`; links `messaging` and `log` PUBLIC, `drone_warnings`
+  and `drone_strict` PRIVATE.
+- `transport_consumer`: `include/transport/consumer.hpp`,
+  `src/consumer.cpp`; links `messaging`, `discovery` and `log` PUBLIC,
+  `drone_warnings` and `drone_strict` PRIVATE.
+
+Log module ids in `log/module_ids.hpp`:
+
+```cpp
+inline constexpr std::uint16_t LOG_MODULE_TRANSPORT_PROVIDER = 27U; ///< transport/provider
+inline constexpr std::uint16_t LOG_MODULE_TRANSPORT_CONSUMER = 28U; ///< transport/consumer
+```
+
+### 5.1 `TransportProvider`
+
+```cpp
+class TransportProvider final : public AbsMessageHandler
+{
+  public:
+    static constexpr std::array<pb_size_t, 1> TAGS = {mark4_Envelope_transport_subscribe_tag};
+    static constexpr std::uint64_t REPORT_PERIOD_US = 1'000'000U;
+    static constexpr std::size_t MAX_SUBSCRIBERS = 2U;
+    static constexpr std::size_t PEERS_PER_PAGE = 4U;   // = the nanopb bound
+
+    /// @param messenger the subscribes come from it, the reports leave by it,
+    ///        and its counters are part of the report
+    /// @param transport what is reported; must outlive the provider
+    TransportProvider(Messenger &messenger, const Transport &transport);
+
+    /// @brief Sends the report when due, to every subscriber: one page
+    ///        per PEERS_PER_PAGE peers, all pages in the same call. With no
+    ///        subscriber nothing is packed at all.
+    /// @param nowUs current instant [us], from the caller's clock
+    void tick(std::uint64_t nowUs);
+
+    /// @brief Fills one page of the report, as tick() sends it. Public so a
+    ///        node that consumes its own report (the gateway) can walk the
+    ///        pages without the wire.
+    /// @param cursor index of the first peer of the page
+    /// @param nowUs current instant [us], for the ages
+    /// @param[out] out the page
+    /// @return peers written, 0 when cursor is past the table (the page
+    ///         still carries the counters and peer_total)
+    std::size_t fillPage(std::uint32_t cursor, std::uint64_t nowUs, mark4_TransportReport &out) const;
+
+    bool onMessage(std::uint32_t src, const mark4_Envelope &envelope, std::uint64_t nowUs) override;
+    void onNodeDown(std::uint32_t nodeId) override;
+
+    [[nodiscard]] std::size_t subscribers() const;
+    [[nodiscard]] std::uint32_t reportsSent() const;   // pages sent
+};
+```
+
+Behaviour, copied from `StatusProvider` where it applies:
+
+- `onMessage` on `transport_subscribe`: add or remove `src` in a
+  `SubscriberTable<MAX_SUBSCRIBERS>`; a full table is a WARN of
+  `transport/provider` and `applied = false`; answer with
+  `TransportSubscription { enabled = applied }` sent as a `request()`.
+- `onNodeDown`: remove the node, INFO line like the status provider's.
+- `tick`: nothing with no subscriber. Otherwise when `nowUs -
+  m_lastReportUs >= REPORT_PERIOD_US` (the first tick sends at once):
+  `cursor = 0; do { fillPage(cursor, nowUs, page); send to every
+  subscriber with Messenger::send(); cursor += page.peers_count; } while
+  (cursor < page.peer_total);`. A stream: `send()`, never `request()`.
+- `fillPage`: the transport counters and the messenger counters
+  (`accessMessenger()` gives the messenger; every counter it exposes is a
+  const accessor), `links` from `linkCount()` / `link(i).kind()` /
+  `linkStats(i)` / `link(i).rxErrors()`, `peer_total = nodeCount()`,
+  `peers` from `node(cursor + k)` for `k < PEERS_PER_PAGE`, `age_ms =
+  (nowUs - min(nowUs, lastSeenUs)) / 1000`.
+
+### 5.2 `TransportConsumer`
+
+Non-template base over a storage span plus `TransportConsumer<N>`, exactly
+the shape of `status/consumer.hpp` (read it first and copy its structure:
+listener class with attach/detach, `Entry` table as a dense prefix, `open`,
+`lookup`, `onNodeDown`, `onRequestFailed`, `Module()`).
+
+```cpp
+class AbsTransportConsumerListener
+{
+    /// @brief One node's report, pages merged: fired when the last page of
+    ///        a report arrived.
+    virtual void onReport(std::uint32_t nodeId, const TransportConsumerBase::Entry &entry, std::uint64_t nowUs) = 0;
+    /// @brief A node went down: everything the consumer held of it is gone.
+    virtual void onForgotten(std::uint32_t nodeId) = 0;
+};
+
+class TransportConsumerBase : public AbsMessageHandler, public AbsDirectoryListener
+{
+  public:
+    static constexpr std::array<pb_size_t, 2> TAGS = {mark4_Envelope_transport_report_tag,
+                                                      mark4_Envelope_transport_subscription_tag};
+    /// Kinds that carry a TransportProvider in this version.
+    static constexpr std::array<mark4_NodeKind, 4> KINDS = {FIRMWARE, DRONE_SIM, RELAY, GATEWAY};
+    static constexpr std::size_t MAX_LISTENERS = 2U;
+    /// Peers one report may hold once its pages are merged: a transport's table.
+    static constexpr std::size_t MAX_PEERS = Transport::MAX_NODES;
+
+    struct Entry
+    {
+        std::uint32_t id = 0U;
+        bool local = false;                  ///< this node's own report, fed by accept(), never subscribed
+        bool subscribed = false;             ///< the node took the subscribe
+        std::uint32_t subscribeRequest = 0U; ///< subscribe (or unsubscribe) waiting for its answer, 0 none
+        bool hasReport = false;              ///< a complete report arrived
+        mark4_TransportReport last;          ///< counters and links of the last complete report; its peers field is unused
+        std::array<mark4_TransportPeer, MAX_PEERS> peers{}; ///< the merged peer table of that report
+        std::size_t peerCount = 0U;
+        std::uint64_t receivedUs = 0U;       ///< instant the last complete report arrived [us]
+        std::uint32_t reports = 0U;          ///< complete reports from this node
+        // staging of the report being received
+        std::array<mark4_TransportPeer, MAX_PEERS> staging{};
+        std::size_t stagingCount = 0U;
+        bool staging_valid = false;          ///< a page with cursor 0 opened the staging
+    };
+
+    TransportConsumerBase(Messenger &, DiscoveryDirectory &, std::span<Entry>);
+    [[nodiscard]] bool init() const;
+
+    /// @brief Asks every node open now and later for its reports, or stops
+    ///        asking: one TransportSubscribe per remote entry, as a request.
+    ///        Turning it off also forgets the reports held of the remote
+    ///        entries (hasReport = false), so nothing stale is published;
+    ///        the local entry keeps its own.
+    void setWanted(bool wanted);
+    [[nodiscard]] bool wanted() const;
+
+    /// @brief Opens the entry of this node's own report, fed by accept()
+    ///        and never subscribed to. Once, by the composition.
+    /// @return false when the table is full
+    bool openLocal(std::uint32_t id);
+
+    /// @brief Takes one page of one node's report: the counters are copied,
+    ///        the peer slice [peer_cursor, peer_cursor + n) replaces the
+    ///        staging; when the page completes the table (cursor + n >=
+    ///        peer_total, or peer_total == 0) the staging becomes the
+    ///        report, hasReport is set, reports is counted and the
+    ///        listeners hear onReport(). A page with cursor 0 always opens
+    ///        a new staging; a page whose cursor is not where the staging
+    ///        ended is dropped (a lost page: the next report starts over).
+    void accept(std::uint32_t nodeId, const mark4_TransportReport &page, std::uint64_t nowUs);
+
+    void onIdentity(const DirectoryEntry &) override;   // open on a KINDS kind with no wireMismatch; subscribe if wanted
+    void onForgotten(std::uint32_t) override;           // nothing: presence does it
+    bool onMessage(...) override;                       // report page -> accept(); subscription -> entry state
+    void onNodeDown(std::uint32_t) override;            // drop the entry, tell the listeners
+    void onRequestFailed(std::uint32_t, std::uint32_t) override;  // WARN like the status consumer
+
+    [[nodiscard]] const Entry *find(std::uint32_t id) const;
+    [[nodiscard]] std::size_t size() const;
+    [[nodiscard]] const Entry &entry(std::size_t index) const;
+};
+
+template <std::size_t N> class TransportConsumer final : public TransportConsumerBase { ... };
+```
+
+The `TransportSubscription` answer sets `entry.subscribed = enabled` and
+clears `subscribeRequest`. `setWanted(false)` sends `TransportSubscribe {
+enabled = false }` to every subscribed remote entry. An `Entry` weighs
+about 2.2 kB; `TransportConsumer<Transport::MAX_NODES>` on the hub is
+about 70 kB, which is the hub's business.
+
+### 5.3 Compositions
+
+Every C++ node gets a provider, declared after its `LogProvider` and
+ticked where its messenger is polled:
+
+- `drone_sim` (`software/drone_sim/drone_sim_app.hpp` / `.cpp`):
+  `mark4::TransportProvider m_transportProvider{m_messenger, m_transport};`
+  ticked with `m_clock.nowUs()` in the run loop next to the updater's
+  tick.
+- firmware (`software/drone_firmware/firmware_app.hpp` / `.cpp`): member
+  after the log provider, ticked in `pollTransport(nowUs)` after
+  `m_messenger.poll(nowUs)`. It builds for the F405 as it stands (no heap,
+  `drone_strict`).
+- relay (`esp32-bridge/main/relay.cpp`): a member of `Relay` after
+  `logProvider`, ticked in the loop after `messenger.poll()`;
+  `esp32-bridge/main/CMakeLists.txt` adds
+  `${DRONE_TRANSPORT}/src/provider.cpp` to the sources like
+  `log/src/provider.cpp`. The relay's `STATS.debug` line stays.
+- hub: section 6.
+
+The pending request tables are untouched: the provider sends the answer to
+a subscribe as one request, which the board's table of 4 affords.
+
+## 6. The hub (`software/hub/`)
+
+### 6.1 `gateway.proto`
+
+```proto
+// in the GatewayMessage oneof
+TransportCommand transport_command = 55;
+NodeTransport node_transport = 67;
+TransportHealth transport_health = 68;
+```
+
+`Node` loses `received`, `lost` and `duplicates`: the three numbers become
+`reserved 5, 6, 7;` with the comment "were the gateway's own receive
+counters, which live in NodeTransport now; never reuse". `NodeTable` is
+identity and presence only: id, address, port, `last_seen_ms_ago`,
+`announce`.
+
+```proto
+// Client to gateway: this client wants the transport reports of every
+// node. The gateway subscribes to the nodes while at least one client is
+// marked, and unsubscribes when the last one clears or disconnects. Its own
+// report needs no subscription and is always published.
+message TransportCommand {
+  bool subscribe = 1;
+}
+
+// Gateway to client: one node's view of the transport, the last report it
+// sent (pages merged) plus what the gateway derives from it over a sliding
+// window. Published on every complete report; the gateway's own every
+// second. A client that connects gets every one held.
+message NodeTransport {
+  uint32 node = 1;
+  TransportReport report = 2;       // counters and links as reported; peers is empty here, the edges carry them
+  uint32 window_ms = 3;             // span of the rates below, 0 while one report only
+  repeated TransportLinkRate links = 4;   // one per report.links entry
+  repeated TransportEdge edges = 5;       // one per peer the node holds, 32 at most
+  TransportWindow window = 6;       // this node's own counters over the window
+}
+
+// One link of a node over the window.
+message TransportLinkRate {
+  float frames_in_per_s = 1;
+  float bytes_in_per_s = 2;
+  float frames_out_per_s = 3;
+  float bytes_out_per_s = 4;
+  uint32 refused = 5;    // over the window
+  uint32 rx_errors = 6;  // over the window
+}
+
+// One directed edge: what the reporting node (the observer) counts of one
+// peer, cumulative as reported and as rates over the window.
+message TransportEdge {
+  uint32 peer = 1;
+  uint32 link = 2;             // index into NodeTransport.report.links
+  uint32 hops = 3;
+  uint32 age_ms = 4;
+  uint32 received = 5;
+  uint32 lost = 6;
+  uint32 duplicates = 7;
+  float rx_per_s = 8;          // frames per second over the window
+  float loss = 9;              // lost / (received + lost) over the window, 0..1
+  float duplicates_per_s = 10;
+}
+
+// A node's own counters over the window: what happened lately rather than
+// since boot.
+message TransportWindow {
+  uint32 sent = 1;
+  uint32 refused = 2;
+  uint32 dropped = 3;
+  uint32 relayed = 4;
+  uint32 expired = 5;
+  uint32 restarted = 6;
+  uint32 requests = 7;
+  uint32 resent = 8;
+  uint32 failed = 9;
+  uint32 undecodable = 10;
+  uint32 unhandled = 11;
+}
+
+enum TransportVerdict {
+  VERDICT_UNKNOWN = 0;   // nothing to judge yet
+  VERDICT_OK = 1;
+  VERDICT_DEGRADED = 2;
+  VERDICT_BAD = 3;
+}
+
+// One node as the gateway judges it from every view it holds.
+message TransportNodeHealth {
+  uint32 node = 1;
+  TransportVerdict verdict = 2;
+  bool reporting = 3;        // a complete report of its own is held (the gateway itself always)
+  float worst_in_loss = 4;   // worst loss over the edges this node observes
+  float worst_out_loss = 5;  // worst loss over the edges other nodes observe of it
+  bool fading = 6;           // some observer heard it more than 1.5 s ago
+  bool asymmetric = 7;       // a reporting node lists it and it does not list that node back
+  bool link_refused = 8;     // one of its links refused frames in the window
+  bool link_rx_errors = 9;   // one of its links had receive errors in the window
+  bool requests_failed = 10; // it gave up on requests in the window
+  bool churn = 11;           // it expired or saw restart a peer in the window
+}
+
+// Gateway to client: the verdict on the whole transport, published every
+// second and to a client that connects. With no client marked it is built
+// from the gateway's own view alone, which nodes_reporting says.
+message TransportHealth {
+  TransportVerdict verdict = 1;
+  uint32 nodes_known = 2;      // the node table, the gateway included
+  uint32 nodes_reporting = 3;
+  uint32 worst_observer = 4;   // the edge with the worst loss, 0 when none
+  uint32 worst_peer = 5;
+  float worst_loss = 6;
+  float frames_per_s = 7;      // sum of rx_per_s over every edge held
+  repeated TransportNodeHealth nodes = 8;   // one per node of the table, 33 at most
+}
+```
+
+`gateway.options`:
+
+```
+mark4.NodeTransport.links           max_count:4
+mark4.NodeTransport.edges           max_count:32
+mark4.TransportHealth.nodes         max_count:33
+```
+
+### 6.2 `TransportGateway` (`hub/gateway_transport.hpp` / `.cpp`)
+
+An `AbsTransportConsumerListener` like the other gateways, holding the
+publisher, the consumer, the provider (for its own pages) and the
+transport's node id. Hub code: `std::map`, `std::set`, `std::deque` are
+fine here.
+
+- **Marks**: `apply(const mark4_TransportCommand &, clientId, errorOut)`
+  inserts or erases the client in a `std::set<std::string>`;
+  `onClientClosed(clientId)` erases it; whenever the set goes from empty
+  to non-empty or back, `m_consumer.setWanted(!empty)`. An `Ack` answers
+  the command like every other.
+- **Own report**: `tick(nowUs)` once per second (the gateway's
+  `STATUS_PERIOD_MS` cadence, driven from `housekeeping()`): walks
+  `m_provider.fillPage()` pages and feeds them to
+  `m_consumer.accept(selfId, page, nowUs)`; the consumer's `openLocal(selfId)`
+  is called once by the gateway's constructor. Then `publishHealth()`.
+- **Window**: per node, a `std::deque<Sample>` of at most `WINDOW = 10`
+  samples, one per `onReport()` (the counters, the links, the peers, the
+  instant). Rates: newest against oldest, `window_ms` = their span, 0 with
+  a single sample (rates 0, window counters 0). `onForgotten()` drops the
+  deque; `setWanted(false)` (the last client left) also drops every remote
+  deque, so a client that connects later sees only the gateway's own.
+- **`onReport()`**: push the sample, build `NodeTransport` (section 6.3),
+  broadcast.
+- **`onClientConnected()`**: every `NodeTransport` held (nodes with a
+  report), then the last `TransportHealth`, to that client alone.
+- **`publishHealth()`**: builds and broadcasts `TransportHealth` (section
+  6.4).
+
+### 6.3 Derivation of `NodeTransport`
+
+For a node with samples `newest` and `oldest` (the same sample when only
+one), `span = newest.t - oldest.t` in seconds:
+
+- `report`: `newest.report` with `peers_count = 0`.
+- `links[i]`: `frames_in_per_s = (newest.links[i].frames_in -
+  oldest.links[i].frames_in) / span` and the three others alike; `refused`
+  and `rx_errors` as deltas. All zero when `span == 0`. A link index the
+  oldest sample does not have is treated as zeros.
+- `edges`: one per peer of `newest`; the cumulative fields as reported;
+  the deltas against the same peer id in `oldest` (a peer absent from
+  `oldest` counts as zeros): `rx_per_s = d_received / span`, `loss =
+  d_lost / (d_received + d_lost)` (0 when the denominator is 0),
+  `duplicates_per_s = d_duplicates / span`.
+- `window`: the deltas of the node counters.
+
+### 6.4 Derivation of `TransportHealth`
+
+Thresholds, constants of `gateway_transport.hpp`:
+
+| constant | value | meaning |
+|---|---|---|
+| `LOSS_DEGRADED` | 0.01 | edge loss above this is DEGRADED |
+| `LOSS_BAD` | 0.10 | edge loss above this is BAD |
+| `FADING_MS` | 1500 | an edge older than this is fading |
+
+Per node of the node table (the gateway first, then the transport table
+like `nodesMessage()`):
+
+- `reporting`: the consumer holds a complete report of it.
+- edges in: the node's own edges (when reporting); `worst_in_loss` = max
+  loss over them.
+- edges out: every edge of every reporting node whose `peer` is this node;
+  `worst_out_loss` = max loss over them; `fading` = any of them with
+  `age_ms > FADING_MS`.
+- `asymmetric`: this node is reporting, some other reporting node A lists
+  it as a peer, and this node's edges do not list A.
+- `link_refused`, `link_rx_errors`: any link of its `NodeTransport` with a
+  non-zero window delta.
+- `requests_failed`: `window.failed > 0`.
+- `churn`: `window.expired + window.restarted > 0`.
+- verdict: start OK; `max(worst_in_loss, worst_out_loss) > LOSS_DEGRADED`
+  or `fading` or `link_refused` or `link_rx_errors` or `churn` makes it
+  DEGRADED; `> LOSS_BAD` or `asymmetric` or `requests_failed` makes it
+  BAD. A node that is not reporting and that no edge observes (no report
+  anywhere lists it) is UNKNOWN.
+
+System: `verdict` = the worst node verdict (UNKNOWN when the table holds
+only the gateway); `worst_observer` / `worst_peer` / `worst_loss` = the
+edge with the highest loss over every edge held (0 / 0 / 0 when none);
+`frames_per_s` = the sum of `rx_per_s`; `nodes_known` = the table size,
+`nodes_reporting` = the count of reporting nodes.
+
+The derivation is written as free functions in `hub/transport_health.hpp`
+(pure: inputs are the samples, output the messages), so the gateway is
+wiring and the arithmetic reads alone.
+
+### 6.5 `HubApp` wiring
+
+- Members, in declaration order after the existing consumers: `TransportConsumer<Transport::MAX_NODES> m_transport{m_messenger, m_directory};`
+  (name it `m_transportViews` to avoid clashing with `m_transport` the
+  Transport), then after `m_logProvider`: `TransportProvider
+  m_transportProvider{m_messenger, m_transport};`, then with the other
+  gateways: `TransportGateway m_transportGateway{*this, m_transportViews, m_transportProvider, m_transport.nodeId()};`.
+- `applyClientMessage`: `transport_command_tag` routes to
+  `m_transportGateway.apply(...)`.
+- `snapshot()`: `m_transportGateway.onClientConnected(clientId)` with the
+  others.
+- `housekeeping()`: `m_transportGateway.onClientClosed()` in the drainClosed
+  loop; `m_transportGateway.tick(nowUs)` inside the once-per-second block,
+  before `statusMessage()`.
+- `gateway_codec.cpp` `fillNode()` stops writing the three removed fields.
+- `GatewayStatus` is unchanged.
+
+`hub/README.md` gains the concept (consumer, gateway, marks, own report,
+the two messages) and `protocol/README.md` the gateway messages. The
+`CLAUDE.md` architecture paragraphs (the gateway message list under
+`protocol/`, the `transport/` paragraph) name the new messages and the
+provider/consumer in one sentence each.
+
+## 7. Clients
+
+### 7.1 Pages (`software/hub/pages/`)
+
+`NodeView` in `src/shared/nodes.ts` loses `received` and `lost`; the tests
+that build a `Node` drop the fields.
+
+New page `transport.html` and `src/transport/` (bundled like the others by
+`esbuild.js`, one `main.ts`), on the shared `Shell` (nav, connection dot,
+toasts). Dependencies added to `package.json`: `@vscode-elements/elements`
+2.5.1 and `@vscode/codicons` 0.0.46 (exact versions, the lockfile
+updated). `esbuild.js` gets `loader: { ".ttf": "file" }`; `src/shared/style.css`
+imports `@vscode/codicons/dist/codicon.css` so every page has the icon
+font. The page's own stylesheet `src/transport/transport.css` is imported
+from `main.ts` (esbuild emits `dist/transport.css`, which `transport.html`
+links after `style.css`).
+
+**Theme**. VS Code injects its theme as `--vscode-*` custom properties on
+the `<html>` element of the webview document and a `vscode-dark` /
+`vscode-light` / `vscode-high-contrast` / `vscode-high-contrast-light`
+class on its `<body>`; an iframe on another origin gets neither. The
+webview host (section 7.2) posts them to the iframe as
+
+```ts
+{ type: "mark4-theme", kind: "vscode-dark" | "vscode-light" | "vscode-high-contrast" | "vscode-high-contrast-light", vars: Record<string, string> }
+```
+
+where `vars` maps every `--vscode-*` property name to its value.
+`src/shared/theme.ts` listens for that message, writes each var on
+`document.documentElement.style`, and puts the kind on `<body>` as its
+class. Every page installs it (one call in `Shell`'s constructor), the
+transport page is the one that uses it. `transport.css` defines, on
+`:root`, a dark default for every `--vscode-*` variable the page and the
+components it uses read, so a browser tab with no host renders; and remaps
+the shared tokens (`--bg`, `--bg-panel`, `--bg-raised`, `--border`,
+`--fg`, `--fg-dim`, `--accent`, `--ok`, `--warn`, `--bad`) to vscode
+variables so the shell's nav follows the theme too. `@vscode-elements`
+components read the same variables; the implementer checks whether they
+carry fallbacks of their own for a page with no host and, if they render
+unstyled without one, stops and reports.
+
+**Subscription**. On every socket open the page sends `TransportCommand {
+subscribe: true }`; on `pagehide` it sends `false`. A `vscode-checkbox`
+"live reports" in the toolbar, checked by default, sends the same
+command when toggled.
+
+**Layout**: `vscode-split-layout` (horizontal, graph left 65 %, panel
+right) under a banner.
+
+**Banner**: a `vscode-badge` with the system verdict (OK green / DEGRADED
+yellow / BAD red / UNKNOWN neutral, the colors from `--vscode-charts-*`
+and `--vscode-badge-*`), "n reporting / m nodes", the worst edge as
+"observer -> peer loss x %", the frames per second; below it the findings
+as a `vscode-table` (columns: severity badge, where, what), sorted worst
+first, built in TypeScript from `TransportHealth` and the `NodeTransport`s:
+one line per edge above `LOSS_DEGRADED` ("A -> B loses 12 % (n/s)"), per
+fading edge, per asymmetric node ("B hears A, A does not hear B"), per link
+with refusals or receive errors ("board uart: 14 frames refused, ring
+full"), per node with failed requests, per node with churn, and one per
+node not reporting ("plant does not report: inbound only"). The thresholds
+are repeated in `src/transport/health.ts` as constants with a comment
+naming their C++ twin.
+
+**Graph** (`src/transport/graph.ts`, `layout.ts`): HTML cards absolutely
+positioned over one SVG layer that draws the buses, the stubs and the
+edges, in a scrollable container.
+
+Topology from the reports: for every reporting node R and every link index
+L of R, a medium instance = {R} plus every peer of R with `link == L` and
+`hops == 0`, of kind `links[L].kind`. Instances of the same kind sharing a
+member merge. A node in no instance is placed by the hops the gateway sees
+it at.
+
+Columns, left to right, cards stacked within a column sorted by kind
+order (gateway, relay, firmware, drone_sim, plant, phone, other) then id:
+
+1. nodes that are only in UART media, one group per medium;
+2. one vertical bus line per UART medium;
+3. nodes in both a UART and a UDP medium (the relay);
+4. one vertical bus line per UDP medium;
+5. nodes that are only in UDP media;
+6. nodes in no medium, labelled "via n hops" (or "unplaced" when the
+   gateway does not hear them either).
+
+Fixed geometry: column width 240 px, card height 96 px, row gap 16 px.
+Each card: kind icon (`<vscode-icon>` with the same codicon names as the
+extension's `KINDS`), name, id in 8 hex digits, a verdict dot, and one
+port chip per link ("uart 12/15 fps" as in / out frames per second) or
+"no report" for a non-reporting node. A card's ports connect to their bus
+with a horizontal stub.
+
+Edges (observer to peer): a line from the observer card to the peer card
+with an arrowhead at the peer, colored by loss class (green under
+`LOSS_DEGRADED`, yellow under `LOSS_BAD`, red above, the description
+foreground when the window is 0) and a dashed stroke when the observer is
+the only one of the pair reporting. Drawn always for an edge that is
+DEGRADED or worse, and for every edge from or to the hovered or selected
+card; `<title>` on the line with "observer -> peer: n fps, loss x %, dup
+d/s, hops h, age a ms". A card is selected by click.
+
+**Panel**: with no selection, "select a node". With one: header (icon,
+name, id, kind, verdict badge), then `vscode-tabs`:
+
+- Links: `vscode-table` with index, kind, frames in/s, bytes in/s, frames
+  out/s, bytes out/s, refused (window), rx errors (window), and for a UART
+  link the utilization "x %" of `UART_BYTES_PER_S = 92160` (921600 baud,
+  10 bits per byte) computed on `bytes_in_per_s + bytes_out_per_s`.
+- Peers: `vscode-table` with peer name and id, link, hops, rx/s, loss %,
+  dup/s, age ms, one row per edge.
+- Messenger: `vscode-table` with the report's messenger and transport
+  counters, cumulative and over the window.
+- a uPlot sparkline under the tabs (frames in per second summed over the
+  links, and worst in-loss %, over the last 60 samples kept client side
+  from successive `NodeTransport`).
+
+For a non-reporting node the panel shows the edges other nodes observe of
+it (Peers tab titled "seen by") and nothing else.
+
+`pages/README.md` documents the page, the theme message and the
+subscription.
+
+### 7.2 Extension (`tools/vscode-mark4/`)
+
+- `webviews.ts`: `PAGES` gains `transport: { title: "mark4 transport",
+  path: "transport.html" }`; the host HTML posts the theme message of 7.1
+  to the iframe on the iframe's `load` event and from a `MutationObserver`
+  on `<html>` (attribute `style`) and `<body>` (attribute `class`), every
+  time reading the inline `--vscode-*` properties of
+  `document.documentElement.style` and the `vscode-*` class of `<body>`.
+- `bench.ts`: a third line "transport page" (icon `type-hierarchy-sub`),
+  command `mark4.openTransport` registered in `extension.ts` and declared
+  in `package.json` next to the two others.
+- `gateway.ts`: handles `transportHealth` and hands it to the nodes
+  provider.
+- `model.ts`: `NodeRow` gains `verdict` (0..3); `nodeRows()` takes the
+  last `TransportHealth` (or undefined) and reads each node's verdict and
+  flags: the tooltip line "received n, lost m, duplicates d" becomes
+  "transport: ok | degraded | bad | unknown, in loss x %, out loss y %"
+  plus one word per raised flag; `sameRow()` compares the verdict.
+- `nodesTree.ts`: `setHealth(health)` stores it and rebuilds; the item
+  icon color becomes `testing.iconPassed` for OK live, `charts.yellow`
+  for DEGRADED, `charts.red` for BAD, `descriptionForeground` for
+  fading or UNKNOWN; the description suffix says " degraded" / " bad"
+  after the kind and id (before " fading" when both).
+- Tests in `test/model.test.ts` adapt to the removed fields and the new
+  parameter; no new test.
+- `README.md` of the extension: the Nodes paragraph names the verdict and
+  the Bench paragraph the third page.
+
+## 8. Candidates for the testing design
+
+Not written now (see `tests-are-a-subject-of-their-own`): the per-link
+counters and the churn counters of the transport; the serial parser's
+error count; the provider's paging (0 peers, 4, 5, 32) and its nothing-
+without-subscriber rule; the consumer's page merge (a lost page, a cursor
+out of order, `setWanted(false)` forgetting the reports); the health
+derivation (rates over a window, asymmetry, the verdict ladder); the
+layout's medium merge; the theme relay.
+
+## 9. As implemented
+
+Filled during the implementation where the code departs from the sections
+above.
