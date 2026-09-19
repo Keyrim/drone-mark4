@@ -875,3 +875,39 @@ Step 2 (gateway wire, hub, clients trimmed):
   loop, the provider paces itself), so it streams its report to another
   gateway that subscribes, as principle 2 says; 6.5 had listed only the
   gateway's `tick()`.
+
+Step 3 (the pages):
+
+- `@vscode/codicons` 0.0.46 of 7.1 does not exist: upstream publishes its
+  releases under a prerelease shape and the registry holds `0.0.46-1` to
+  `0.0.46-40` with no plain `0.0.46` (the last plain release is 0.0.45).
+  Pinned at `0.0.46-24`, which is the `latest` tag.
+  `@vscode-elements/elements` is 2.5.1 as written.
+- The codicon stylesheet is a bundle entry point of its own
+  (`dist/codicon.css`, esbuild) linked by `transport.html` as `<link
+  id="vscode-codicon-stylesheet">`, rather than the `@import` in
+  `src/shared/style.css` of 7.1: `vscode-icon` looks that id up in the
+  document and loads the stylesheet it names into its own shadow root,
+  where a stylesheet the document imports reaches nothing, so an import
+  would have left every icon blank. Only the page with icons links it.
+- The sparkline of 7.1 is two charts stacked rather than one with both
+  measures: frames per second and a loss percentage share no scale, and two
+  scales on one plot is a chart that cannot be read.
+- 7.1 calls the split layout horizontal; the component calls a side-by-side
+  divider `split="vertical"`. The geometry is the one 7.1 describes, graph
+  left at 65 %, panel right.
+- A column of the layout that nothing falls into takes no width, so a bench
+  with no serial link does not start three columns to the right. The card
+  is 200 px wide inside its 240 px column, the rest of the column being
+  where the stubs run.
+- A medium member that does not report is tied to its bus by a stub like
+  the others, although it has no port chip to leave from: 7.1 described the
+  stubs from the ports alone, which would have left those cards floating.
+- The check 7.1 asked for: the components do render in a browser tab with
+  no host. 211 of the 215 `--vscode-*` reads of the bundle carry their own
+  dark default; the three that do not (`--vscode-checkbox-border`,
+  `--vscode-checkbox-foreground`, `--vscode-font-size`) are covered by the
+  `:root` block of `transport.css`.
+- The hub's MIME table has no `.ttf`, so it serves the font as
+  `application/octet-stream`. Browsers take that for a `@font-face`, so the
+  hub was left alone.
