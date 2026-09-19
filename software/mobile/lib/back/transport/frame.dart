@@ -61,7 +61,8 @@ class FrameHeader {
   /// Node it is for, [broadcastNode] for all.
   final int dst;
 
-  /// Per-sender counter, wraps.
+  /// Counter of the stream the frame belongs to (one sender towards one
+  /// destination, the broadcast being a stream of its own), wraps.
   final int seq;
 
   /// Relays crossed so far; a sender writes 0.
