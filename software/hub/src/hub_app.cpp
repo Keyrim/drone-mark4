@@ -158,7 +158,8 @@ namespace mark4
             MODULE.error("too many directory listeners");
             return false;
         }
-        if (!m_status.init() || !m_logs.init() || !m_telemetryTables.init() || !m_tuning.init())
+        if (!m_status.init() || !m_logs.init() || !m_telemetryTables.init() || !m_tuning.init() ||
+            !m_transportViews.init())
         {
             MODULE.error("too many consumer listeners");
             return false;
@@ -385,6 +386,8 @@ namespace mark4
                     message.body.pilot_input, clientId, monotonicUs(), errorOut);
             case mark4_GatewayMessage_node_command_tag:
                 return applyNodeCommand(message.body.node_command, errorOut);
+            case mark4_GatewayMessage_transport_command_tag:
+                return m_transportGateway.apply(message.body.transport_command, clientId, errorOut);
             default:
                 errorOut = "unsupported message";
                 return false;
@@ -549,6 +552,7 @@ namespace mark4
         m_logGateway.onClientConnected(clientId);
         m_telemetryGateway.onClientConnected(clientId);
         m_tuningGateway.onClientConnected(clientId);
+        m_transportGateway.onClientConnected(clientId);
         sendTo(clientId, nodesMessage());
     }
 
@@ -568,6 +572,7 @@ namespace mark4
         {
             m_telemetryGateway.onClientClosed(clientId);
             m_pilotGateway.onClientClosed(clientId);
+            m_transportGateway.onClientClosed(clientId);
         }
         for (const std::string &clientId : m_ws.drainConnected())
         {
@@ -577,6 +582,7 @@ namespace mark4
         {
             m_nextStatusUs = nowUs + STATUS_PERIOD_MS * US_PER_MS;
             m_nodesDirty = true;
+            m_transportGateway.tick(nowUs);
             broadcast(statusMessage());
         }
         if (m_nodesDirty)

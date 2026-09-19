@@ -20,6 +20,7 @@
 #include "hub/gateway_publisher.hpp"
 #include "hub/gateway_status.hpp"
 #include "hub/gateway_telemetry.hpp"
+#include "hub/gateway_transport.hpp"
 #include "hub/gateway_tuning.hpp"
 #include "hub/tuning_profiles.hpp"
 #include "hub/ws_bridge.hpp"
@@ -31,6 +32,8 @@
 #include "protocol/envelope.hpp"
 #include "status/consumer.hpp"
 #include "telemetry/consumer.hpp"
+#include "transport/consumer.hpp"
+#include "transport/provider.hpp"
 #include "transport/transport.hpp"
 #include "transport/udp_link.hpp"
 #include "tuning/consumer.hpp"
@@ -308,12 +311,18 @@ namespace mark4
         TelemetryConsumer<Transport::MAX_NODES> m_telemetryTables{m_messenger, ///< measure tables
                                                                   m_directory};
         TuningConsumer<Transport::MAX_NODES> m_tuning{m_messenger, m_directory}; ///< parameters
+        /// Every node's view of the wire, this one's own included. Named
+        /// apart from m_transport, which is this node's transport itself.
+        TransportConsumer<Transport::MAX_NODES> m_transportViews{m_messenger, m_directory};
         OtaReader m_otaReader{m_messenger, *this}; ///< the update answers
         HubRequester m_requester{m_messenger};     ///< what this node asks of another
         ConsoleSinkPosix m_consoleSink;            ///< log lines on stdout
         /// This node's log on the wire: the lines to whoever subscribed, the
         /// module table one page per request, the levels.
         LogProvider m_logProvider{m_messenger};
+        /// This node's own view of the wire: answered to whoever subscribes,
+        /// and read page by page by its own gateway.
+        TransportProvider m_transportProvider{m_messenger, m_transport};
         WsBridge m_ws;                  ///< websocket endpoint
         OtaConsumer m_ota;              ///< firmware update session
         std::uint32_t m_otaTarget = 0U; ///< node the updater talks to
@@ -323,12 +332,15 @@ namespace mark4
         LogGateway m_logGateway{*this, m_logs, m_transport.nodeId()};  ///< lines and levels
         TelemetryGateway m_telemetryGateway{*this, m_telemetryTables}; ///< tables and samples
         TuningGateway m_tuningGateway{*this, m_tuning};                ///< parameters
-        PilotGateway m_pilotGateway{m_messenger};                      ///< the pilot seats
-        std::atomic_bool m_stopRequested{false};                       ///< set by a signal
-        std::uint64_t m_nextStatusUs = 0U;                             ///< next publish [us]
-        bool m_nodesDirty = false;                                     ///< table changed
-        bool m_loopbackWarned = false;        ///< the link's fallback was logged
-        std::uint32_t m_commands = 0U;        ///< client commands carried out
-        std::uint32_t m_refusedCommands = 0U; ///< client commands refused
+        /// The wire itself: every node's view and the verdict on it.
+        TransportGateway m_transportGateway{
+            *this, m_transportViews, m_transportProvider, m_transport.nodeId()};
+        PilotGateway m_pilotGateway{m_messenger}; ///< the pilot seats
+        std::atomic_bool m_stopRequested{false};  ///< set by a signal
+        std::uint64_t m_nextStatusUs = 0U;        ///< next publish [us]
+        bool m_nodesDirty = false;                ///< table changed
+        bool m_loopbackWarned = false;            ///< the link's fallback was logged
+        std::uint32_t m_commands = 0U;            ///< client commands carried out
+        std::uint32_t m_refusedCommands = 0U;     ///< client commands refused
     };
 } // namespace mark4

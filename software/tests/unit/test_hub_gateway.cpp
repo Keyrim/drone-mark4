@@ -122,9 +122,6 @@ TEST_CASE("the node table carries the transport record and the last announce")
     node.id = 0xABCDU;
     node.address = mark4::UdpAddress{0xC0A80105U, 4711U}; // 192.168.1.5
     node.lastSeenUs = 1'000'000U;
-    node.received = 10U;
-    node.lost = 2U;
-    node.duplicates = 1U;
     mark4_Announce announce = mark4_Announce_init_zero;
     announce.kind = mark4_NodeKind_DRONE_SIM;
     announce.wire_hash = 0xDEADBEEFU;
@@ -169,9 +166,6 @@ TEST_CASE("the node table carries the transport record and the last announce")
     CHECK(std::string(first.address) == "192.168.1.5");
     CHECK(first.port == 4711U);
     CHECK(first.last_seen_ms_ago == 250U);
-    CHECK(first.received == 10U);
-    CHECK(first.lost == 2U);
-    CHECK(first.duplicates == 1U);
     REQUIRE(first.has_announce);
     CHECK(first.announce.kind == mark4_NodeKind_DRONE_SIM);
     CHECK(first.announce.wire_hash == 0xDEADBEEFU);

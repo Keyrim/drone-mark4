@@ -14,4 +14,6 @@ namespace mark4
     inline constexpr std::uint16_t LOG_MODULE_GATEWAY_CORE =
         LOG_MODULE_APP_BASE + 1U; ///< gateway/core
     inline constexpr std::uint16_t LOG_MODULE_GATEWAY_WS = LOG_MODULE_APP_BASE + 2U; ///< gateway/ws
+    inline constexpr std::uint16_t LOG_MODULE_GATEWAY_TRANSPORT =
+        LOG_MODULE_APP_BASE + 3U; ///< gateway/transport
 } // namespace mark4
