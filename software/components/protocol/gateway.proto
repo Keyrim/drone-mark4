@@ -251,6 +251,9 @@ message TransportEdge {
   float rx_per_s = 8;          // frames per second over the window
   float loss = 9;              // lost / (received + lost) over the window, 0..1
   float duplicates_per_s = 10;
+  bool unicast_heard = 11;     // the edge carries more than the keepalive
+  uint32 window_received = 12; // frames received over the window
+  uint32 window_lost = 13;     // frames lost over the window
 }
 
 // A node's own counters over the window: what happened lately rather than

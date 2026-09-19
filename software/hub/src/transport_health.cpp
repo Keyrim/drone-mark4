@@ -54,6 +54,14 @@ namespace mark4
             return NO_PEER;
         }
 
+        /// @param edge one directed edge
+        /// @return true while its window holds too few frames for its loss
+        ///         to mean anything
+        bool quiet(const mark4_TransportEdge &edge)
+        {
+            return edge.window_received + edge.window_lost < LOSS_MIN_FRAMES;
+        }
+
         /// @param views every view held
         /// @param nodeId node to find
         /// @return its view, nullptr when it reports nothing
@@ -160,6 +168,9 @@ namespace mark4
             edge.duplicates = peer.duplicates;
             const std::uint32_t received = windowDelta(peer.received, was.received);
             const std::uint32_t lost = windowDelta(peer.lost, was.lost);
+            edge.unicast_heard = peer.unicast_heard;
+            edge.window_received = received;
+            edge.window_lost = lost;
             edge.rx_per_s = perSecond(received, spanS);
             // Loss is what the window missed of what it should have had;
             // with nothing at all in the window it is not a loss.
@@ -196,6 +207,10 @@ namespace mark4
             {
                 const mark4_TransportEdge &edge = view.edges[index];
                 out.frames_per_s += edge.rx_per_s;
+                if (quiet(edge))
+                {
+                    continue;
+                }
                 if (edge.loss > out.worst_loss)
                 {
                     out.worst_loss = edge.loss;
@@ -221,7 +236,11 @@ namespace mark4
                 ++out.nodes_reporting;
                 for (pb_size_t index = 0U; index < own->edges_count; ++index)
                 {
-                    health.worst_in_loss = std::max(health.worst_in_loss, own->edges[index].loss);
+                    const mark4_TransportEdge &edge = own->edges[index];
+                    if (!quiet(edge))
+                    {
+                        health.worst_in_loss = std::max(health.worst_in_loss, edge.loss);
+                    }
                 }
                 for (pb_size_t index = 0U; index < own->links_count; ++index)
                 {
@@ -248,7 +267,12 @@ namespace mark4
                         continue;
                     }
                     observed = true;
-                    health.worst_out_loss = std::max(health.worst_out_loss, edge.loss);
+                    if (!quiet(edge))
+                    {
+                        health.worst_out_loss = std::max(health.worst_out_loss, edge.loss);
+                    }
+                    // A quiet edge is still an edge: its age says whether the
+                    // node is there, which is what a keepalive is for.
                     health.fading = health.fading || edge.age_ms > FADING_MS;
                     // One side of a pair hearing the other and not the way
                     // back is the shape of a half-open link.

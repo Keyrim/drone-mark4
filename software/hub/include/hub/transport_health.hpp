@@ -38,6 +38,13 @@ namespace mark4
     /// missed.
     inline constexpr std::uint32_t FADING_MS = 1500U;
 
+    /// An edge that carried fewer frames than this over its window is quiet
+    /// and is not judged on its loss: a percentage over a handful of frames
+    /// is not a measurement. A keepalive-only edge holds ten frames over a
+    /// ten second window, so it is judged on presence alone, which is what a
+    /// keepalive is for.
+    inline constexpr std::uint32_t LOSS_MIN_FRAMES = 20U;
+
     /// @brief Derives one node's view: its last report, and what its
     ///        counters did between the two samples given.
     /// @param nodeId node the samples came from

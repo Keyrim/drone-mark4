@@ -190,6 +190,13 @@ frames or could not deliver them whole, requests given up on, peers
 expiring or restarting. `NodeTable` carries none of this any more: it is
 identity and presence, and `node_transport` is what each node counts.
 
+A percentage over a handful of frames is not a measurement, so every edge
+carries the frames its window received and lost next to the ratio, and an
+edge whose window holds fewer than `LOSS_MIN_FRAMES` (20) of them is quiet:
+its loss enters neither `worst_in_loss` nor `worst_out_loss` and it is never
+the worst edge of the verdict. Its age still counts, so a quiet edge is
+judged on presence alone, which is what a keepalive is for.
+
 ### Piloting
 
 The gateway is the pilot node: it forwards each `pilot_input` as one `Rc`
