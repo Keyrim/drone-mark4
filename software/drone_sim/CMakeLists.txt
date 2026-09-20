@@ -10,5 +10,6 @@ target_compile_definitions(drone_sim PRIVATE DRONE_SIM_FRAME_LIMIT=${DRONE_SIM_F
 # UBSan's vptr check does not reference typeinfo that is never emitted.
 target_link_libraries(
     drone_sim PRIVATE flight_core platform_common platform_sim protocol messaging discovery
-                      status_provider telemetry_provider tuning_provider ota_provider ota_flight_gate
+                      status_provider telemetry_provider tuning_provider transport_provider
+                      ota_provider ota_flight_gate
                       log log_provider drone_warnings drone_strict)

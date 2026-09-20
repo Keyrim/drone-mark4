@@ -147,14 +147,15 @@ namespace mark4
         {
             return 0U;
         }
-        const std::size_t unicast = ReadOne(m_dataFd, bufferOut, capacity, fromOut);
+        const std::size_t unicast = ReadOne(m_dataFd, bufferOut, capacity, fromOut, m_rxErrors);
         if (unicast > 0U)
         {
             return unicast;
         }
         for (;;)
         {
-            const std::size_t size = ReadOne(m_discoveryFd, bufferOut, capacity, fromOut);
+            const std::size_t size =
+                ReadOne(m_discoveryFd, bufferOut, capacity, fromOut, m_rxErrors);
             if (size == 0U || !isOwnEcho(fromOut))
             {
                 return size;
@@ -194,7 +195,8 @@ namespace mark4
     std::size_t UdpLink::ReadOne(int fd,
                                  std::uint8_t *bufferOut,
                                  std::size_t capacity,
-                                 LinkAddress &fromOut)
+                                 LinkAddress &fromOut,
+                                 std::uint32_t &rxErrorsOut)
     {
         for (;;)
         {
@@ -215,6 +217,7 @@ namespace mark4
             }
             if (static_cast<std::size_t>(received) > capacity)
             {
+                ++rxErrorsOut;
                 continue; // oversized: not one of ours, take the next
             }
             fromOut = UdpAddress{ntohl(from.sin_addr.s_addr), ntohs(from.sin_port)};

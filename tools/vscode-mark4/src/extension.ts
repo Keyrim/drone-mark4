@@ -112,6 +112,7 @@ export function activate(context: vscode.ExtensionContext): void {
             logs.setTable(table);
         },
         onStatus: (status) => nodes.setStatus(status),
+        onTransportHealth: (health) => nodes.setHealth(health),
         onLogModules: (node, modules) => {
             levels.setModules(node, modules);
             logs.setModules(node, modules);
@@ -250,6 +251,7 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand("mark4.showLogs", () => logs.show()),
         vscode.commands.registerCommand("mark4.openControl", () => openPage("control", vscode.ViewColumn.Active)),
         vscode.commands.registerCommand("mark4.openPlots", () => openPage("plots", vscode.ViewColumn.Active)),
+        vscode.commands.registerCommand("mark4.openTransport", () => openPage("transport", vscode.ViewColumn.Active)),
         vscode.commands.registerCommand("mark4.benchSession", benchSession),
     );
 }

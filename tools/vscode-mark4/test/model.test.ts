@@ -38,7 +38,6 @@ test("a row carries the kind, its icon and the identity of the node", () => {
                 address: "127.0.0.1",
                 port: 47820,
                 lastSeenMsAgo: 120,
-                received: 42,
                 announce: announce({
                     kind: NodeKind.DRONE_SIM,
                     name: "sim-a",
@@ -49,6 +48,7 @@ test("a row carries the kind, its icon and the identity of the node", () => {
             }),
         ],
         7,
+        undefined,
     );
     assert.ok(row);
     assert.equal(row.name, "sim-a");
@@ -60,11 +60,10 @@ test("a row carries the kind, its icon and the identity of the node", () => {
     assert.match(row.tooltip, /127\.0\.0\.1:47820/);
     assert.match(row.tooltip, /built 2023-11-14/);
     assert.match(row.tooltip, /git abcdef12/);
-    assert.match(row.tooltip, /received 42/);
 });
 
 test("an unannounced node and an unknown kind stay generic", () => {
-    const rows = nodeRows([node({ id: 5 }), node({ id: 6, announce: announce({ kind: 99 as NodeKind }) })], 0);
+    const rows = nodeRows([node({ id: 5 }), node({ id: 6, announce: announce({ kind: 99 as NodeKind }) })], 0, undefined);
     assert.equal(rows[0]?.name, "unknown");
     assert.equal(rows[0]?.icon, "question");
     assert.match(rows[0]?.tooltip ?? "", /no announce yet/);
@@ -73,7 +72,7 @@ test("an unannounced node and an unknown kind stay generic", () => {
 });
 
 test("the relay of the ESP32 is named even before the schema knows it", () => {
-    const [row] = nodeRows([node({ id: 7, announce: announce({ kind: 6 as NodeKind }) })], 0);
+    const [row] = nodeRows([node({ id: 7, announce: announce({ kind: 6 as NodeKind }) })], 0, undefined);
     assert.equal(row?.kindName, "relay");
     assert.equal(row?.icon, "radio-tower");
 });
@@ -85,6 +84,7 @@ test("a node fades once its last frame is old, and a mismatch is flagged", () =>
             node({ id: 2, lastSeenMsAgo: LIVE_MS, announce: announce({ kind: NodeKind.FIRMWARE, wireHash: 9 }) }),
         ],
         7,
+        undefined,
     );
     assert.equal(rows[0]?.live, true);
     assert.equal(rows[1]?.live, false);
@@ -92,13 +92,12 @@ test("a node fades once its last frame is old, and a mismatch is flagged", () =>
     assert.match(rows[1]?.tooltip ?? "", /WIRE MISMATCH/);
 });
 
-const table = (fields: { lastSeenMsAgo?: number; received?: number; name?: string; wireHash?: number } = {}) =>
+const table = (fields: { lastSeenMsAgo?: number; name?: string; wireHash?: number } = {}) =>
     nodeRows(
         [
             node({
                 id: 0xd5000001,
                 lastSeenMsAgo: fields.lastSeenMsAgo ?? 100,
-                received: fields.received ?? 10,
                 announce: announce({
                     kind: NodeKind.DRONE_SIM,
                     name: fields.name ?? "sim-a",
@@ -108,10 +107,11 @@ const table = (fields: { lastSeenMsAgo?: number; received?: number; name?: strin
             node({ id: 0x0000000a, announce: announce({ kind: NodeKind.GATEWAY, wireHash: 7 }) }),
         ],
         7,
+        undefined,
     );
 
-test("counters and a last-seen that moves do not redraw a line", () => {
-    const changes = diffNodeRows(table(), table({ received: 4321, lastSeenMsAgo: 900 }));
+test("a last-seen that moves does not redraw a line", () => {
+    const changes = diffNodeRows(table(), table({ lastSeenMsAgo: 900 }));
     assert.deepEqual(changes, { structural: false, changed: [] });
 });
 

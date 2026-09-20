@@ -230,9 +230,6 @@ namespace mark4
         }
         nodeOut.last_seen_ms_ago =
             static_cast<std::uint32_t>((nowUs - std::min(nowUs, node.lastSeenUs)) / US_PER_MS);
-        nodeOut.received = node.received;
-        nodeOut.lost = node.lost;
-        nodeOut.duplicates = node.duplicates;
         if (announce != nullptr)
         {
             nodeOut.has_announce = true;

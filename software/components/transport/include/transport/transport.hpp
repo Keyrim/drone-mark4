@@ -5,8 +5,10 @@
 ///        physical links, then sends payloads to node ids; the transport
 ///        remembers on which link and at which address every node was last
 ///        heard, keeps them alive with a periodic keepalive and relays
-///        frames between its links. It never reads a clock: every instant
-///        comes from the caller.
+///        frames between its links. A sequence numbers one stream, the
+///        frames from one sender to one destination, and the broadcast is
+///        a stream of its own. It never reads a clock: every instant comes
+///        from the caller.
 
 #include <array>
 #include <cstddef>
@@ -41,23 +43,40 @@ namespace mark4
         static constexpr std::uint8_t MAX_HOPS = 4U;
 
         /// A forward jump of the sequence larger than this is a sender that
-        /// restarted, not a burst of losses, and counts as nothing.
+        /// restarted, not a burst of losses, and counts as nothing. It is
+        /// read inside one stream: the unicasts a peer sends this node and
+        /// its broadcasts are numbered apart.
         static constexpr std::uint16_t RESYNC_THRESHOLD = 1024U;
 
         /// One node heard on one of the links.
         struct Node
         {
-            std::uint32_t id = 0U;         ///< node id, never 0
-            std::size_t link = 0U;         ///< index of the link it was last heard on
-            LinkAddress address;           ///< where it is on that link
-            std::uint64_t lastSeenUs = 0U; ///< instant of the last frame from it [us]
-            std::uint16_t lastSeq = 0U;    ///< sequence of the last frame accepted
-            std::uint32_t received = 0U;   ///< frames accepted from it
-            std::uint32_t lost = 0U;       ///< frames the numbering says never arrived
-            std::uint32_t duplicates = 0U; ///< frames carrying an already seen number
+            std::uint32_t id = 0U;           ///< node id, never 0
+            std::size_t link = 0U;           ///< index of the link it was last heard on
+            LinkAddress address;             ///< where it is on that link
+            std::uint64_t lastSeenUs = 0U;   ///< instant of the last frame from it [us]
+            std::uint16_t txSeq = 0U;        ///< sequence of the next unicast sent to it
+            std::uint16_t unicastSeq = 0U;   ///< sequence of the last unicast accepted from it
+            std::uint16_t broadcastSeq = 0U; ///< sequence of the last broadcast accepted from it
+            bool unicastHeard = false;       ///< a unicast from it has been accepted
+            bool broadcastHeard = false;     ///< a broadcast from it has been accepted
+            std::uint32_t received = 0U;     ///< frames accepted from it, both streams
+            std::uint32_t lost = 0U;         ///< frames the numbering says never arrived
+            std::uint32_t duplicates = 0U;   ///< frames carrying an already seen number
             std::uint8_t hops = 0U; ///< relays the last frame from it crossed (0: direct neighbour)
             std::uint32_t boot = 0U; ///< boot id of the node's current incarnation, 0 until its
                                      ///< first keepalive
+        };
+
+        /// What crossed one link, in both directions, cumulative.
+        struct LinkStats
+        {
+            std::uint32_t framesIn = 0U;  ///< frames the link handed over, header decoded or not
+            std::uint32_t bytesIn = 0U;   ///< their bytes, header included
+            std::uint32_t framesOut = 0U; ///< frames the link took: this node's sends,
+                                          ///< its keepalives and what it relayed
+            std::uint32_t bytesOut = 0U;  ///< their bytes, header included
+            std::uint32_t refused = 0U;   ///< frames the link would not take (a full UART ring)
         };
 
         /// Receives one payload addressed to this node or to everyone.
@@ -142,6 +161,38 @@ namespace mark4
         [[nodiscard]] const Node &node(std::size_t index) const
         {
             return m_nodes[index];
+        }
+
+        /// @return links declared
+        [[nodiscard]] std::size_t linkCount() const
+        {
+            return m_linkCount;
+        }
+
+        /// @param index 0 <= index < linkCount()
+        /// @return one declared link, in declaration order
+        [[nodiscard]] const AbsLink &link(std::size_t index) const
+        {
+            return *m_links[index];
+        }
+
+        /// @param index 0 <= index < linkCount()
+        /// @return what crossed that link since construction
+        [[nodiscard]] const LinkStats &linkStats(std::size_t index) const
+        {
+            return m_linkStats[index];
+        }
+
+        /// @return peers forgotten for silence (NODE_EXPIRY_US), cumulative
+        [[nodiscard]] std::uint32_t expired() const
+        {
+            return m_expired;
+        }
+
+        /// @return peers seen restarting (another boot id), cumulative
+        [[nodiscard]] std::uint32_t restarted() const
+        {
+            return m_restarted;
         }
 
         /// @return frames dropped: shorter than a header, table full, or
@@ -241,6 +292,22 @@ namespace mark4
                    std::uint64_t nowUs,
                    bool &isNewOut);
 
+        /// @brief Takes one frame into the stream its destination names:
+        ///        the unicasts a peer sends this node and its broadcasts
+        ///        are numbered apart, and a frame for a third node is
+        ///        numbered in neither, since this node hears only a part of
+        ///        that stream.
+        /// @param node entry of the sender
+        /// @param header frame header
+        /// @return false when the frame repeats the last sequence of its
+        ///         stream and must be dropped
+        bool track(Node &node, const FrameHeader &header) const;
+
+        /// @brief Takes the next sequence of one stream and advances it.
+        /// @param target destination entry, nullptr for the broadcast stream
+        /// @return the sequence the frame must carry
+        std::uint16_t nextSeq(Node *target);
+
         /// @brief Forwards the frame in m_rxBuffer with one hop more, or
         ///        drops it when it already crossed MAX_HOPS relays.
         /// @param header its header
@@ -263,21 +330,30 @@ namespace mark4
         /// @param dst node to reach, BROADCAST_NODE for every link
         void sendKeepalive(std::uint32_t dst);
 
+        /// @brief Folds the outcome of one frame handed to one link into
+        ///        that link's counters.
+        /// @param linkIndex link the frame was handed to
+        /// @param ok true when the link took it
+        /// @param frameSize frame size, header included [bytes]
+        /// @return ok, so a caller returns it straight away
+        bool countLinkSend(std::size_t linkIndex, bool ok, std::size_t frameSize);
+
         /// @brief Folds the outcome of one send into the send-side counters.
         /// @param ok true when every link the frame was meant for took it
         /// @param size payload size of the frame [bytes], 0 for a keepalive
         /// @return ok, so a caller returns it straight away
         bool countSend(bool ok, std::size_t size);
 
-        std::uint32_t m_nodeId;                     ///< this node
-        std::uint32_t m_bootId;                     ///< this run of this node
-        std::array<AbsLink *, MAX_LINKS> m_links{}; ///< declared links
-        std::size_t m_linkCount = 0U;               ///< links declared
-        std::array<Node, MAX_NODES> m_nodes{};      ///< live nodes, dense prefix
-        std::size_t m_nodeCount = 0U;               ///< nodes in m_nodes
-        std::uint16_t m_nextSeq = 0U;               ///< sequence of the next frame sent
-        std::uint64_t m_lastKeepaliveUs = 0U;       ///< instant of the last keepalive
-        bool m_keepaliveSent = false;               ///< true once one went out
+        std::uint32_t m_nodeId;                         ///< this node
+        std::uint32_t m_bootId;                         ///< this run of this node
+        std::array<AbsLink *, MAX_LINKS> m_links{};     ///< declared links
+        std::array<LinkStats, MAX_LINKS> m_linkStats{}; ///< what crossed each of them
+        std::size_t m_linkCount = 0U;                   ///< links declared
+        std::array<Node, MAX_NODES> m_nodes{};          ///< live nodes, dense prefix
+        std::size_t m_nodeCount = 0U;                   ///< nodes in m_nodes
+        std::uint16_t m_broadcastSeq = 0U;              ///< sequence of the next broadcast sent
+        std::uint64_t m_lastKeepaliveUs = 0U;           ///< instant of the last keepalive
+        bool m_keepaliveSent = false;                   ///< true once one went out
         std::array<AbsPresenceListener *, MAX_LISTENERS> m_listeners{}; ///< attached, in order
         std::size_t m_listenerCount = 0U;                               ///< listeners attached
         bool m_listenersOverflow = false;                      ///< a fifth one tried to attach
@@ -286,6 +362,8 @@ namespace mark4
         std::size_t m_sentBytes = 0U;                          ///< payload bytes of those frames
         std::uint32_t m_refused = 0U;                          ///< sends that reached no link
         std::uint32_t m_relayed = 0U;                          ///< frames forwarded
+        std::uint32_t m_expired = 0U;                          ///< peers forgotten for silence
+        std::uint32_t m_restarted = 0U;                        ///< peers seen restarting
         std::array<std::uint8_t, MAX_FRAME_SIZE> m_rxBuffer{}; ///< frame being handled
         std::array<std::uint8_t, MAX_FRAME_SIZE> m_txBuffer{}; ///< frame being sent
     };

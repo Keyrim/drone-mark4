@@ -44,6 +44,9 @@ mark4.SimScenario.angular_velocity_rad_s  max_count:3 fixed_count:true
 mark4.TuningInfo.name               max_size:17
 mark4.TuningInfos.infos             max_count:8
 
+mark4.TransportReport.links         max_count:4
+mark4.TransportReport.peers         max_count:4
+
 mark4.OtaSlotStatus.git_hash        max_size:9
 mark4.OtaStatus.slots               max_count:2 fixed_count:true
 mark4.OtaChunk.data                 max_size:240

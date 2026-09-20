@@ -28,6 +28,7 @@
 #include "protocol/envelope.hpp"
 #include "status/status_provider.hpp"
 #include "telemetry/provider.hpp"
+#include "transport/provider.hpp"
 #include "transport/transport.hpp"
 #include "transport/udp_link.hpp"
 #include "tuning/provider.hpp"
@@ -208,6 +209,9 @@ namespace mark4
         /// This node's log on the wire: the lines to whoever subscribed, the
         /// module table one page per request, the levels.
         mark4::LogProvider m_logProvider{m_messenger};
+        /// What this node's transport and messenger count, to whoever
+        /// subscribed: one report a second, its peer table by pages.
+        mark4::TransportProvider m_transportProvider{m_messenger, m_transport};
         /// The sim link: the handler of the plant's sensor messages, and the
         /// one caller of the messenger's poll; the wait point of the flight
         /// loop sleeps on the link's sockets through it.

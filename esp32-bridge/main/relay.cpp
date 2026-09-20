@@ -41,6 +41,7 @@
 #include "ota/updater.hpp"
 #include "protocol/wire_hash.hpp"
 #include "transport/node_id.hpp"
+#include "transport/provider.hpp"
 #include "transport/transport.hpp"
 #include "transport/uart_link.hpp"
 #include "transport/udp_link.hpp"
@@ -252,6 +253,9 @@ namespace mark4
             /// Its log on the wire: the lines to whoever subscribed, the
             /// module table one page per request, the levels.
             LogProvider logProvider{messenger};
+            /// What this node's transport and messenger count, to whoever
+            /// subscribed: one report a second, its peer table by pages.
+            TransportProvider transportProvider{messenger, transport};
             Commands commands{messenger, *this}; ///< the Reboot
             Discovery discovery;                 ///< who this node is, on request
             RelayOtaGate otaGate;                ///< what the updater asks of a radio
@@ -428,6 +432,7 @@ extern "C" void relayRun(void)
         // this node to the handler of its tag; every other payload is
         // relayed or dropped by the transport.
         relay.messenger.poll(static_cast<std::uint64_t>(esp_timer_get_time()));
+        relay.transportProvider.tick(static_cast<std::uint64_t>(esp_timer_get_time()));
         if (relay.storeReady)
         {
             relay.updater.tick(static_cast<std::uint64_t>(esp_timer_get_time()));

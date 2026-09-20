@@ -15,6 +15,7 @@ import {
     GatewayMessageSchema,
     type GatewayStatus,
     type NodeTable,
+    type TransportHealth,
 } from "./gen/gateway_pb";
 import { type Log, type LogLevel, type LogModuleInfo } from "./gen/mark4_pb";
 
@@ -28,6 +29,8 @@ export interface GatewayHandlers {
     /** The whole table, every second and on every change. */
     onNodes(table: NodeTable): void;
     onStatus(status: GatewayStatus): void;
+    /** The verdict on the whole transport, every second and on connect. */
+    onTransportHealth(health: TransportHealth): void;
     /** One node's whole module table, on every change and on connect. */
     onLogModules(node: number, modules: readonly LogModuleInfo[]): void;
     /**
@@ -139,6 +142,9 @@ export class GatewayClient {
                 return;
             case "status":
                 this.handlers.onStatus(message.body.value);
+                return;
+            case "transportHealth":
+                this.handlers.onTransportHealth(message.body.value);
                 return;
             case "nodeLogModules":
                 this.handlers.onLogModules(message.body.value.node, message.body.value.modules);

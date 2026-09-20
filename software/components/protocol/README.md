@@ -11,11 +11,12 @@ of the messenger). `gateway.proto` (imports it) is
 the contract between the hub and its websocket clients: `GatewayMessage`,
 a `oneof` over the `NodeTable`, one message per node and per concept (its
 log modules and its lines, its last `Status`, its telemetry descriptors,
-configuration and samples, its tuning table and results), the commands a
-client sends (telemetry, log, tuning, pilot input, node, plus the
-`OtaCommand` of the updater and the `ProfileCommand` of the tuning
-profiles), the `GatewayStatus`, the `OtaState`, the `ProfileList` /
-`Profile`, and `Ack`. No encoded `Envelope` crosses it in either direction:
+configuration and samples, its tuning table and results, its view of the
+wire as `NodeTransport`), the commands a client sends (telemetry, log,
+tuning, pilot input, node, transport, plus the `OtaCommand` of the updater
+and the `ProfileCommand` of the tuning profiles), the `GatewayStatus`, the
+`TransportHealth`, the `OtaState`, the `ProfileList` / `Profile`, and
+`Ack`. No encoded `Envelope` crosses it in either direction:
 the hub decodes everything it hears and publishes typed messages, and a
 client sends typed commands. It never crosses the LAN. Its bodies share one
 nanopb struct, so anything per-node and unbounded gets a message of its own
@@ -147,6 +148,17 @@ request tags and the consumer the state tags, and the two never meet.
   in `Status.rc_link_ok`. The sticks are raw positions: deadband, ranges
   and the mapping onto the body frame are the flight core's, tunable like
   a gain (`stick_*` in the tuning table).
+- The transport family, all unicast: `TransportSubscribe { enabled }`
+  takes a node's report stream or stops it and is answered by a
+  `TransportSubscription`; `TransportReport` is one node's view of the
+  wire, sent once a second to whoever subscribed. It carries that node's
+  transport and messenger counters, one `TransportLink` per declared link
+  (the medium as a `LinkKind`, the frames and bytes each way, what the
+  medium refused and what it could not deliver whole) and its peer table
+  as `TransportPeer` entries, by pages of four named by `peer_cursor` and
+  `peer_total`. Every number is cumulative, so a lost report skews nothing
+  and the reader takes the differences. Every C++ node answers
+  (`software/components/transport/README.md`).
 - `SimSensor` (truth included) and `SimActuator`: the lockstep exchange
   between a flight process and its plant, transport unicasts between the
   two node ids; `SimScenario` is forwarded to the plant the same way as

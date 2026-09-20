@@ -73,47 +73,80 @@ namespace mark4
             ++m_refused;
             return false;
         }
+        // The sequence is the destination's, so the destination entry is
+        // needed before the header is written.
+        Node *target = nullptr;
+        if (dst != BROADCAST_NODE)
+        {
+            target = lookup(dst);
+            if (target == nullptr)
+            {
+                ++m_dropped;
+                ++m_refused;
+                return false;
+            }
+        }
         FrameHeader header;
         header.src = m_nodeId;
         header.dst = dst;
-        header.seq = m_nextSeq;
+        header.seq = nextSeq(target);
         header.hops = 0U;
         header.keepalive = false;
-        ++m_nextSeq;
 
         encodeFrameHeader(header, m_txBuffer.data());
         std::memcpy(m_txBuffer.data() + FRAME_HEADER_SIZE, payload, size);
         const std::size_t frameSize = FRAME_HEADER_SIZE + size;
 
-        if (dst == BROADCAST_NODE)
+        if (target == nullptr)
         {
             bool all = true;
             for (std::size_t index = 0U; index < m_linkCount; ++index)
             {
-                all = m_links[index]->broadcast(m_txBuffer.data(), frameSize) && all;
+                all = countLinkSend(index,
+                                    m_links[index]->broadcast(m_txBuffer.data(), frameSize),
+                                    frameSize) &&
+                      all;
             }
             return countSend(all, size);
         }
-        const Node *target = findNode(dst);
+        return countSend(countLinkSend(target->link,
+                                       m_links[target->link]->send(
+                                           m_txBuffer.data(), frameSize, target->address),
+                                       frameSize),
+                         size);
+    }
+
+    std::uint16_t Transport::nextSeq(Node *target)
+    {
         if (target == nullptr)
         {
-            ++m_dropped;
-            ++m_refused;
-            return false;
+            const std::uint16_t seq = m_broadcastSeq;
+            ++m_broadcastSeq;
+            return seq;
         }
-        return countSend(m_links[target->link]->send(m_txBuffer.data(), frameSize, target->address),
-                         size);
+        const std::uint16_t seq = target->txSeq;
+        ++target->txSeq;
+        return seq;
     }
 
     void Transport::sendKeepalive(std::uint32_t dst)
     {
+        Node *target = nullptr;
+        if (dst != BROADCAST_NODE)
+        {
+            target = lookup(dst);
+            if (target == nullptr)
+            {
+                static_cast<void>(countSend(false, 0U));
+                return;
+            }
+        }
         FrameHeader header;
         header.src = m_nodeId;
         header.dst = dst;
-        header.seq = m_nextSeq;
+        header.seq = nextSeq(target);
         header.hops = 0U;
         header.keepalive = true;
-        ++m_nextSeq;
         encodeFrameHeader(header, m_txBuffer.data());
         // The boot id of this run, little-endian: a peer that sees it change
         // knows this node restarted without ever leaving its table.
@@ -124,21 +157,38 @@ namespace mark4
         }
         const std::size_t frameSize = FRAME_HEADER_SIZE + KEEPALIVE_PAYLOAD_SIZE;
 
-        if (dst == BROADCAST_NODE)
+        if (target == nullptr)
         {
             bool all = true;
             for (std::size_t index = 0U; index < m_linkCount; ++index)
             {
-                all = m_links[index]->broadcast(m_txBuffer.data(), frameSize) && all;
+                all = countLinkSend(index,
+                                    m_links[index]->broadcast(m_txBuffer.data(), frameSize),
+                                    frameSize) &&
+                      all;
             }
             static_cast<void>(countSend(all, 0U));
             return;
         }
-        const Node *target = findNode(dst);
-        static_cast<void>(countSend(
-            target != nullptr &&
-                m_links[target->link]->send(m_txBuffer.data(), frameSize, target->address),
-            0U));
+        static_cast<void>(
+            countSend(countLinkSend(target->link,
+                                    m_links[target->link]->send(
+                                        m_txBuffer.data(), frameSize, target->address),
+                                    frameSize),
+                      0U));
+    }
+
+    bool Transport::countLinkSend(std::size_t linkIndex, bool ok, std::size_t frameSize)
+    {
+        LinkStats &stats = m_linkStats[linkIndex];
+        if (!ok)
+        {
+            ++stats.refused;
+            return false;
+        }
+        ++stats.framesOut;
+        stats.bytesOut += static_cast<std::uint32_t>(frameSize);
+        return true;
     }
 
     bool Transport::countSend(bool ok, std::size_t size)
@@ -166,6 +216,8 @@ namespace mark4
                 {
                     break;
                 }
+                ++m_linkStats[index].framesIn;
+                m_linkStats[index].bytesIn += static_cast<std::uint32_t>(size);
                 onFrame(index, from, size, nowUs, deliver, context);
             }
         }
@@ -270,10 +322,12 @@ namespace mark4
         node->link = gone.link;
         node->address = gone.address;
         node->lastSeenUs = gone.lastSeenUs;
-        node->lastSeq = header.seq;
-        node->received = 1U;
         node->hops = header.hops;
         node->boot = boot;
+        // The keepalive that said so opens the stream its destination
+        // names; the other one is unheard until its first frame.
+        static_cast<void>(track(*node, header));
+        ++m_restarted;
         notifyDown(gone);
         notifyUp(*node);
     }
@@ -297,33 +351,56 @@ namespace mark4
             ++m_nodeCount;
             *node = Node{};
             node->id = header.src;
-            node->lastSeq = header.seq;
-            node->received = 1U;
             isNewOut = true;
         }
-        else
+        node->lastSeenUs = nowUs;
+        if (!track(*node, header))
         {
-            node->lastSeenUs = nowUs;
-            const auto delta = static_cast<std::uint16_t>(header.seq - node->lastSeq);
-            if (delta == 0U)
-            {
-                // The same frame again: a relay loop closing, a medium that
-                // duplicates, or this node's own forwarding echoed back by
-                // a shared medium. Either way it was already handled.
-                ++node->duplicates;
-                return false;
-            }
-            if (delta > 1U && delta < RESYNC_THRESHOLD)
-            {
-                node->lost += delta - 1U;
-            }
-            node->lastSeq = header.seq;
-            ++node->received;
+            return false;
         }
         node->link = linkIndex;
         node->address = from;
-        node->lastSeenUs = nowUs;
         node->hops = header.hops;
+        return true;
+    }
+
+    bool Transport::track(Node &node, const FrameHeader &header) const
+    {
+        const bool unicast = header.dst == m_nodeId;
+        if (!unicast && header.dst != BROADCAST_NODE)
+        {
+            // A frame this node only relays: it says its sender is there
+            // and nothing more. Its numbering belongs to a stream this node
+            // hears one part of, and counting the gaps would call every
+            // frame that went elsewhere a loss.
+            return true;
+        }
+        std::uint16_t &seq = unicast ? node.unicastSeq : node.broadcastSeq;
+        bool &heard = unicast ? node.unicastHeard : node.broadcastHeard;
+        if (!heard)
+        {
+            // First frame of that stream: its sequence is taken as it is,
+            // whatever the sender numbered before this node listened.
+            heard = true;
+            seq = header.seq;
+            ++node.received;
+            return true;
+        }
+        const auto delta = static_cast<std::uint16_t>(header.seq - seq);
+        if (delta == 0U)
+        {
+            // The same frame again: a relay loop closing, a medium that
+            // duplicates, or this node's own forwarding echoed back by a
+            // shared medium. Either way it was already handled.
+            ++node.duplicates;
+            return false;
+        }
+        if (delta > 1U && delta < RESYNC_THRESHOLD)
+        {
+            node.lost += delta - 1U;
+        }
+        seq = header.seq;
+        ++node.received;
         return true;
     }
 
@@ -346,7 +423,8 @@ namespace mark4
             {
                 if (index != arrivalLink)
                 {
-                    static_cast<void>(m_links[index]->broadcast(m_rxBuffer.data(), size));
+                    static_cast<void>(countLinkSend(
+                        index, m_links[index]->broadcast(m_rxBuffer.data(), size), size));
                     ++m_relayed;
                 }
             }
@@ -360,7 +438,10 @@ namespace mark4
             ++m_dropped;
             return;
         }
-        static_cast<void>(m_links[target->link]->send(m_rxBuffer.data(), size, target->address));
+        static_cast<void>(
+            countLinkSend(target->link,
+                          m_links[target->link]->send(m_rxBuffer.data(), size, target->address),
+                          size));
         ++m_relayed;
     }
 
@@ -379,6 +460,7 @@ namespace mark4
             --m_nodeCount;
             node = m_nodes[m_nodeCount];
             m_nodes[m_nodeCount] = Node{};
+            ++m_expired;
             notifyDown(gone);
         }
     }

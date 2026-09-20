@@ -55,6 +55,9 @@ message Envelope {
     LogSubscription log_subscription = 51;
     TelemetrySubscription telemetry_subscription = 52;
     TelemetryConfig telemetry_config = 53;
+    TransportSubscribe transport_subscribe = 54;
+    TransportSubscription transport_subscription = 55;
+    TransportReport transport_report = 56;
   }
 
   // A request and its answer are two bodies, never one. A request is an
@@ -457,6 +460,76 @@ message TuningInfos {
   uint32 total = 1;
   uint32 cursor = 2;
   repeated TuningInfo infos = 3;  // at most 8 per page
+}
+
+// The transport concept: what every node's transport and messenger count.
+// Request, answered by the subscription as held (TransportSubscription).
+message TransportSubscribe {
+  bool enabled = 1;
+}
+
+// The subscription as the provider holds it.
+message TransportSubscription {
+  bool enabled = 1;
+}
+
+enum LinkKind {
+  LINK_KIND_UNSPECIFIED = 0;
+  LINK_UART = 1;  // a point-to-point serial line
+  LINK_UDP = 2;   // an IPv4 LAN
+}
+
+// One physical link of the reporting node, cumulative counters.
+message TransportLink {
+  LinkKind kind = 1;
+  uint32 frames_in = 2;
+  uint32 bytes_in = 3;
+  uint32 frames_out = 4;
+  uint32 bytes_out = 5;
+  uint32 refused = 6;    // frames the medium would not take (a full UART ring)
+  uint32 rx_errors = 7;  // frames the medium could not deliver whole (CRC, length, oversize)
+}
+
+// One peer as the reporting node's transport holds it.
+message TransportPeer {
+  uint32 id = 1;
+  uint32 link = 2;        // index into TransportReport.links
+  uint32 hops = 3;        // relays the last frame from it crossed
+  uint32 received = 4;
+  uint32 lost = 5;
+  uint32 duplicates = 6;
+  uint32 age_ms = 7;      // since the last frame from it
+  // The peer has sent this node at least one unicast since it was learnt:
+  // the edge carries more than the keepalive.
+  bool unicast_heard = 8;
+}
+
+// Stream: one node's view of the transport, every second, to the nodes
+// that subscribed. Cumulative counters, so a lost report skews nothing.
+// The peer table travels by pages of at most 4 (peer_cursor, peer_total),
+// every page carrying the counters again; a consumer takes the counters
+// from any page and replaces the peer slice the page names.
+message TransportReport {
+  // this node's transport
+  uint32 sent = 1;            // frames this node handed to a link: its sends and keepalives
+  uint32 sent_bytes = 2;      // their payload bytes
+  uint32 refused = 3;         // sends that reached no link
+  uint32 dropped = 4;         // frames dropped: too short, table full, nobody to relay to
+  uint32 relayed = 5;         // frames forwarded onto another link
+  uint32 expired = 6;         // peers forgotten for silence
+  uint32 restarted = 7;       // peers seen restarting (another boot id)
+  // this node's messenger
+  uint32 undecodable = 8;     // payloads that were no Envelope
+  uint32 unhandled = 9;       // messages nobody claimed
+  uint32 requests = 10;       // requests started
+  uint32 resent = 11;         // requests sent again
+  uint32 completed = 12;      // requests acknowledged
+  uint32 failed = 13;         // requests given up on
+  uint32 unmatched_acks = 14; // acknowledgements matching no pending request
+  repeated TransportLink links = 15;  // at most 4, in declaration order
+  uint32 peer_cursor = 16;    // index of peers[0] in the node table
+  uint32 peer_total = 17;     // peers in the whole table
+  repeated TransportPeer peers = 18;  // at most 4 per page
 }
 
 // Slot lifecycle states. The flash keeps its own encoding (0xFF = empty);

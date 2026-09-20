@@ -27,8 +27,6 @@ export interface NodeView {
     readonly name: string;
     readonly address: string;
     readonly ageMs: number;
-    readonly received: number;
-    readonly lost: number;
     /** The node was built on another mark4.proto than the gateway: listed, and mute. */
     readonly wireMismatch: boolean;
     readonly announce: Announce | undefined;
@@ -132,8 +130,6 @@ function toView(node: Node, gatewayWireHash: number): NodeView {
         name: node.announce?.name ? node.announce.name : word,
         address: node.address,
         ageMs: node.lastSeenMsAgo,
-        received: node.received,
-        lost: node.lost,
         wireMismatch: wireMismatch(node.announce, gatewayWireHash),
         announce: node.announce,
     };
@@ -206,8 +202,6 @@ export class NodeModel {
             name: `node ${hexNodeId(src)}`,
             address: "",
             ageMs: 0,
-            received: 0,
-            lost: 0,
             wireMismatch: false,
             announce: undefined,
         });

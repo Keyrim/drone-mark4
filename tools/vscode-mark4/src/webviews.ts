@@ -11,6 +11,7 @@ import { HUB_URL } from "./bench";
 const PAGES = {
     control: { title: "mark4 control", path: "" },
     plots: { title: "mark4 plots", path: "plots.html" },
+    transport: { title: "mark4 transport", path: "transport.html" },
 } as const;
 
 const panels = new Map<string, vscode.WebviewPanel>();
@@ -58,6 +59,31 @@ export function openPage(page: keyof typeof PAGES, column: vscode.ViewColumn): v
         Object.defineProperty(synthetic, "keyCode", { get: () => data.keyCode });
         document.dispatchEvent(synthetic);
     });
+
+    // The editor gives this document its theme as --vscode-* properties on
+    // <html> and one vscode-* class on <body>; an iframe on another origin
+    // is given neither, so the host reads both and posts them to the page,
+    // which applies them itself. Sent when the page loads and again on every
+    // theme change (the editor rewrites the properties and the class).
+    const iframe = document.querySelector("iframe");
+    const hubOrigin = new URL(iframe.src).origin;
+    const THEME_KINDS = ["vscode-high-contrast-light", "vscode-high-contrast", "vscode-light", "vscode-dark"];
+    const postTheme = () => {
+        const style = document.documentElement.style;
+        const vars = {};
+        for (let index = 0; index < style.length; index++) {
+            const name = style.item(index);
+            if (name.startsWith("--vscode-")) {
+                vars[name] = style.getPropertyValue(name);
+            }
+        }
+        const kind = THEME_KINDS.find((candidate) => document.body.classList.contains(candidate)) || "vscode-dark";
+        iframe.contentWindow?.postMessage({ type: "mark4-theme", kind: kind, vars: vars }, hubOrigin);
+    };
+    iframe.addEventListener("load", postTheme);
+    const themeObserver = new MutationObserver(postTheme);
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
+    themeObserver.observe(document.body, { attributes: true, attributeFilter: ["class"] });
 </script>
 </body>
 </html>`;

@@ -149,14 +149,14 @@ Godot project imported once). That page has the commands and the reasons.
 Everything C++ lives under `software/`: the executables at its top level
 (`drone_sim`, `drone_firmware`, `hub`), the libraries in
 `software/components/`. Eleven directories, one rule of dependency flow.
-Five of them are wire concepts (`log`, `telemetry`, `tuning`, `status`,
-`ota`), each holding up to three roles with fixed names: a **Provider** on
-the node that owns the data (an `AbsMessageHandler` that answers requests
-towards `src` and emits its stream to its subscribers), a **Consumer** on a
-node that uses it (pulls the tables, subscribes, keeps what it learnt,
-drops it on node down), and a **Gateway** in the hub only (maps
-`gateway.proto` commands onto one consumer, publishes what it holds as
-typed messages). Providers and consumers build for the F405 (no heap);
+Six of them are wire concepts (`log`, `telemetry`, `tuning`, `status`,
+`ota`, `transport`), each holding up to three roles with fixed names: a
+**Provider** on the node that owns the data (an `AbsMessageHandler` that
+answers requests towards `src` and emits its stream to its subscribers), a
+**Consumer** on a node that uses it (pulls the tables, subscribes, keeps
+what it learnt, drops it on node down), and a **Gateway** in the hub only
+(maps `gateway.proto` commands onto one consumer, publishes what it holds
+as typed messages). Providers and consumers build for the F405 (no heap);
 the one exemption is `ota_consumer`, desktop only. A header-only library
 is still a STATIC target: every header of its own has a source file of the
 same name in `src/` holding a single `#include` of it, which compiles the
@@ -213,10 +213,12 @@ then borrows the flags of an unrelated neighbour). `messaging/` and
   cannot read `reserved`, so a retired field number is named in a comment
   instead). Three kinds of message travel on it. Streams (`Status`, the
   small fixed report of what the drone is doing, every 10 frames;
-  `TelemetryData`; `Log` lines; `Rc`), sent once, never acknowledged, only
-  to the nodes that subscribed (`StatusSubscribe`, `LogSubscribe`,
-  `TelemetrySubscribe { enabled }`, answered by the state as held:
-  `StatusSubscription`, `LogSubscription`, `TelemetrySubscription`).
+  `TelemetryData`; `Log` lines; `Rc`; `TransportReport`, one node's view of
+  the wire every second, its peer table by pages), sent once, never
+  acknowledged, only to the nodes that subscribed (`StatusSubscribe`,
+  `LogSubscribe`, `TelemetrySubscribe { enabled }`, `TransportSubscribe`,
+  answered by the state as held: `StatusSubscription`, `LogSubscription`,
+  `TelemetrySubscription`, `TransportSubscription`).
   Requests, every one-shot in either direction: a message carrying a
   non-zero `Envelope.request_id` (field 100) that its sender resends until
   the destination's messenger answers `RequestAck` (tag `ack`) with the
@@ -240,10 +242,12 @@ then borrows the flags of an unrelated neighbour). `messaging/` and
   flight-core. The hub is a GATEWAY: its websocket carries binary
   `GatewayMessage`s of the second schema, `gateway.proto`, typed both ways
   and never a raw `Envelope` (client to gateway: `TelemetryCommand`,
-  `LogCommand`, `TuningCommand`, `PilotInput`, `NodeCommand`, `OtaCommand`,
+  `LogCommand`, `TuningCommand`, `PilotInput`, `NodeCommand`,
+  `TransportCommand`, `OtaCommand`,
   `ProfileCommand`; gateway to client: `NodeTable`, `NodeStatus`,
   `NodeLogModules`, `NodeLogLines`, `NodeTelemetry`, `NodeTelemetryConfig`,
-  `TelemetrySamples`, `NodeTuning`, `TuningResult`, `GatewayStatus`,
+  `TelemetrySamples`, `NodeTuning`, `TuningResult`, `NodeTransport`,
+  `TransportHealth`, `GatewayStatus`,
   `OtaState`, `ProfileList`, `Profile`, `Ack`), never JSON. Every body of
   that oneof shares one nanopb struct, so anything per-node and unbounded
   gets a message of its own rather than a field in `Node`. The gateway is
@@ -305,7 +309,14 @@ then borrows the flags of an unrelated neighbour). `messaging/` and
   relay's address). The firmware emits nothing unasked: its providers
   answer the node that asked and stream to the nodes that subscribed, and
   it takes commands through a `Messenger` polled once per flight frame,
-  each message going to the handler of its tag.
+  each message going to the handler of its tag. The concept of its own
+  state lives next to the leaf: `TransportProvider` (`transport_provider`)
+  answers a `TransportSubscribe` and streams one `TransportReport` a second
+  to its subscribers (the transport's and the messenger's counters, one
+  entry per link with its medium kind, its frames and bytes each way and
+  its receive errors, and the peer table by pages of 4), and
+  `TransportConsumer<N>` (`transport_consumer`) merges those pages into one
+  view per node.
 - `messaging/` - static lib, the one place an `Envelope` meets the transport
   in both directions (`software/components/messaging/README.md`). Links
   `transport` and `protocol`, no heap, builds for the F405. An

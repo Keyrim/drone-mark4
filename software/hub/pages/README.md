@@ -1,13 +1,16 @@
 # Hub pages
 
-The web front end the hub serves: two windows meant for two screens,
-`index.html` (control: one widget per drone node and the 3D attitude, the
-default view) and `plots.html` (telemetry: a config of measures, and the
-lanes it is recorded into). The entry keeps the `plots` name because the editor
-extension embeds it as a webview; the page itself is the telemetry page. They show the drones, not the
+The web front end the hub serves: `index.html` (control: one widget per
+drone node and the 3D attitude, the default view), `plots.html` (telemetry:
+a config of measures, and the lanes it is recorded into) and
+`transport.html` (the state of the wire itself). The entry keeps the
+`plots` name because the editor
+extension embeds it as a webview; the page itself is the telemetry page.
+The first two show the drones, not the
 system: the inventory of transport nodes and the log stream belong to the
-editor extension (`tools/vscode-mark4`), so the pages never list a node
-that is not a drone. Plain TypeScript bundled by
+editor extension (`tools/vscode-mark4`), so they never list a node
+that is not a drone. The transport page is the exception by subject: what
+it draws is every node and the links between them. Plain TypeScript bundled by
 esbuild into `dist/`, one ESM bundle per page plus a single `style.css`: no
 framework, no runtime template engine, nothing for the hub to do beyond
 handing out static files.
@@ -32,13 +35,26 @@ gitignored: nothing generated is committed, the pages are always built from
 the same schema as the hub that serves them. `uint64` fields come out as
 `bigint` (`Number(telemetry.timestampUs)` where a plain number is wanted).
 
+## Components and icons
+
+The transport page is built from the editor's own web components
+(`@vscode-elements/elements`) over the codicon font (`@vscode/codicons`,
+pinned at `0.0.46-24`: upstream publishes its releases under that
+prerelease shape and no plain `0.0.46` exists). The font stylesheet is a
+bundle entry point of its own, `dist/codicon.css`, and the page links it
+as `<link id="vscode-codicon-stylesheet" ...>`: the icon component looks
+that link up by its id and loads the stylesheet it names into its own
+shadow root, where a stylesheet the document imports reaches nothing. Only
+the page that draws icons links it.
+
 ## Layout
 
 - `src/shared/` - modules every page uses: the binary websocket link
   (`gateway_socket.ts`: `GatewayMessage` both ways, per-case handlers, ack
   correlation), the node model
   (`nodes.ts`), the page shell (`shell.ts`, a thin top bar with the page's
-  own controls, the connection state and the toasts), the quaternion helpers
+  own controls, the connection state and the toasts), the theme relay
+  (`theme.ts`), the quaternion helpers
   (`quat.ts`) and the flight-core state words (`phases.ts`).
 - `src/lanes/` - the lane viewer: time-axis math, sample buffers, the uPlot
   charts and the ruler. It knows what a plotted series looks like
@@ -63,6 +79,11 @@ the same schema as the hub that serves them. `uint64` fields come out as
   `rc.ts` is the piloting state, pure and unit tested. `ota_panel.ts` is
   the firmware update panel, over the pure `ota.ts`; its target is a node
   picked in the panel.
+- `src/transport/` - the transport page: where the cards go (`layout.ts`),
+  what the verdict says in words (`health.ts`), the graph (`graph.ts`), the
+  panel (`panel.ts`) and the page's own stylesheet (`transport.css`,
+  emitted as `dist/transport.css` from the `main.ts` that imports it).
+  `layout.ts` and `health.ts` are DOM-free.
 - `src/<page>/main.ts` - one page. Every directory holding a `main.ts`
   becomes its own bundle, so adding a page is adding a directory and an
   `.html` file next to `esbuild.js`.
@@ -238,3 +259,79 @@ skipped), built here and stored under `/api/telemetry/exports` as
 `<config>-<yyyymmdd>-<hhmmss>.csv`; the page then offers the link the hub
 serves it from. There is no stored recording beyond that: what a recording
 leaves behind is its export.
+
+## The transport page
+
+What the wire itself is doing, which is the one subject that is not about a
+drone: every node's own view of the transport, gathered by the gateway (see
+`software/hub/README.md`). The page paints what the gateway publishes and
+derives nothing: `TransportHealth` for the verdicts, one `NodeTransport`
+per node for the numbers.
+
+**The reports are asked for.** A node streams its report only to whoever
+subscribed, and the gateway subscribes only while a client asks, so the
+page sends `TransportCommand { subscribe: true }` on every socket open and
+`false` on `pagehide`. The `live reports` checkbox of the toolbar, checked
+by default, sends the same command; clearing it also drops what was held,
+so nothing stale stays on screen. With no client asking, the gateway's own
+view is the whole picture and the wire pays nothing.
+
+**The banner** is the system verdict, how many nodes report out of how many
+are known, the worst edge and the frames per second over every edge held.
+Under it the findings, worst first: one line per edge that loses frames or
+fades, per asymmetric pair, per link that refused frames or could not read
+them, per node that gave up on requests or saw its peers churn, and one per
+node that does not report at all. The four thresholds
+(`LOSS_DEGRADED` 1 %, `LOSS_BAD` 10 %, `FADING_MS` 1500, `LOSS_MIN_FRAMES`
+20) are repeated in `src/transport/health.ts` from
+`software/hub/include/hub/transport_health.hpp`: the gateway decides, the
+page colors and words what it decided.
+
+**A percentage is printed with what it was counted on**, as `lost/total over
+N s` with the span of the window in whole seconds: in the edge tooltips, in
+the findings, on the banner's worst edge and in the peers table, which holds
+the window and the three cumulative counters side by side. An edge whose
+window carries fewer than `LOSS_MIN_FRAMES` frames is **quiet**: too little
+went through it for a percentage to mean anything, so the gateway does not
+judge it on its loss and the page raises no finding for it. A quiet edge is
+a **keepalive-only** edge, which is what the words mean in practice, and it
+is drawn dotted in the description foreground, with its own tooltip
+(`keepalive only (n frames over N s)`) and `quiet` rather than `traffic` in
+the peers table.
+
+**The graph** reads its topology from the reports. For every reporting node
+and every link it has, a medium holds that node plus every peer it hears
+over that link without a relay; two instances of the same medium kind that
+share a member are the same wire seen from two ends, so they merge. The
+columns are then fixed, left to right: the nodes on serial lines only, one
+group per line, their buses, the nodes on both a serial line and the LAN
+(the relay), the LAN buses, the nodes on the LAN only, and last the nodes
+no report places, labelled with the hops the gateway sees them at. A column
+nothing falls into takes no width. Geometry is fixed (240 px columns,
+200 px cards 96 px high, 16 px between rows), so the picture of one bench
+does not move between two reports.
+
+An edge goes from the observer to the peer, because a loss belongs to the
+direction that measured it: the losses towards the board are only ever
+counted by the board. Edges above the degraded threshold are always drawn;
+the others appear with the card hovered or selected. A dashed edge is one
+whose other end does not report, so only half of that wire is known; a
+dotted one is quiet, and an edge that is both is drawn dotted.
+
+**The panel** is the selected node: its links (with the serial utilization
+against 921600 baud), its peers, its messenger counters cumulative and over
+the window, and two sparklines of the last minute - frames in per second
+and worst in loss. They are two charts rather than one because frames and a
+percentage share no scale. A node that does not report has none of that, so
+its panel lists what the others hear of it instead.
+
+**The theme.** The editor writes its colors as `--vscode-*` properties on
+the root element of its webview and names the theme as a class on its body;
+an iframe on another origin inherits neither, so the webview host posts
+both as one `mark4-theme` message and `src/shared/theme.ts` (installed by
+the shell, on every page) writes them where the page and the components
+read them. A browser tab never gets that message: `transport.css` defines
+the dark value of every variable the page and its components read on
+`:root`, which is the only place in the pages where a color is written
+out, and remaps the shared tokens of `style.css` onto them so the top bar
+follows the theme too.

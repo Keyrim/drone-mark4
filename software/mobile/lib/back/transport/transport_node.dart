@@ -9,13 +9,26 @@ import 'package:mark4/back/transport/udp_link.dart';
 
 /// One node of the transport table, as this node keeps it.
 class _Node {
-  _Node({required this.id, required this.lastSeq});
+  _Node({required this.id});
 
   final int id;
   int host = 0;
   int port = 0;
   int lastSeenUs = 0;
-  int lastSeq;
+
+  /// Next sequence of the unicast stream from this node to it.
+  int txSeq = 0;
+
+  /// Last sequence of the unicast stream from it to this node, meaningful
+  /// once [unicastHeard].
+  int unicastSeq = 0;
+  bool unicastHeard = false;
+
+  /// Last sequence of its broadcast stream, meaningful once
+  /// [broadcastHeard].
+  int broadcastSeq = 0;
+  bool broadcastHeard = false;
+
   int received = 0;
   int lost = 0;
   int duplicates = 0;
@@ -40,16 +53,20 @@ class _Node {
 /// The phone as a node of the network: the transport of
 /// `software/components/transport` in Dart, over one UDP link.
 ///
-/// Every frame heard refreshes the node table (address, last sequence, hops,
-/// counters); a node silent for [nodeExpiryUs] is forgotten. Presence is a
-/// keepalive, a flagged frame carrying this node's boot id: broadcast every
-/// [keepalivePeriodUs] and unicast once to a node the moment it first
-/// appears, carrying nothing for the application whatever its size. A boot
-/// id that changes is another incarnation of the same node id, reported as
-/// a node that went down and came back. A frame repeating the last sequence
-/// of its sender is a duplicate and is dropped. No relay: with one link
-/// there is nowhere to forward to, so a frame for another node is only used
-/// to learn its sender.
+/// Every frame heard refreshes the node table (address, hops, counters); a
+/// node silent for [nodeExpiryUs] is forgotten. A sequence numbers one
+/// stream: the frames from one sender to one destination, the broadcast
+/// being a stream of its own. A frame is therefore judged in the stream its
+/// destination names, where a repeated sequence is a duplicate and is
+/// dropped and a gap is a loss; a frame addressed to another node belongs
+/// to no stream of this node and says its sender is alive, nothing more.
+/// Presence is a keepalive, a flagged frame carrying this node's boot id:
+/// broadcast every [keepalivePeriodUs] and unicast once to a node the
+/// moment it first appears, carrying nothing for the application whatever
+/// its size. A boot id that changes is another incarnation of the same node
+/// id, reported as a node that went down and came back. No relay: with one
+/// link there is nowhere to forward to, so a frame for another node is only
+/// used to learn its sender.
 ///
 /// It reads no clock: every instant comes from the caller.
 class TransportNode implements AbsTransportNode {
@@ -102,7 +119,7 @@ class TransportNode implements AbsTransportNode {
   final Queue<InboundPayload> _rx = Queue();
   final StreamController<PresenceEvent> _presence =
       StreamController<PresenceEvent>.broadcast(sync: true);
-  int _nextSeq = 0;
+  int _broadcastSeq = 0;
   int _lastKeepaliveUs = 0;
   bool _keepaliveSent = false;
   int _dropped = 0;
@@ -181,18 +198,14 @@ class TransportNode implements AbsTransportNode {
     _emit(dst, boot, keepalive: true);
   }
 
-  /// Frames one payload and hands it to the link.
+  /// Frames one payload and hands it to the link. The frame is numbered in
+  /// the stream its destination names: the broadcast stream, or the unicast
+  /// stream this node keeps towards that node.
   bool _emit(int dst, Uint8List payload, {bool keepalive = false}) {
-    final header = FrameHeader(
-      src: _nodeId,
-      dst: dst,
-      seq: _nextSeq,
-      keepalive: keepalive,
-    );
-    _nextSeq = (_nextSeq + 1) & 0xFFFF;
-    final frame = header.frame(payload);
     final counted = keepalive ? 0 : payload.length;
     if (dst == broadcastNode) {
+      final frame = _frame(dst, _broadcastSeq, payload, keepalive);
+      _broadcastSeq = (_broadcastSeq + 1) & 0xFFFF;
       return _countSend(_link.broadcast(frame), counted);
     }
     final target = _nodes[dst];
@@ -201,8 +214,19 @@ class TransportNode implements AbsTransportNode {
       ++_refused;
       return false;
     }
+    final frame = _frame(dst, target.txSeq, payload, keepalive);
+    target.txSeq = (target.txSeq + 1) & 0xFFFF;
     return _countSend(_link.send(frame, target.host, target.port), counted);
   }
+
+  /// One whole frame from this node, header and payload.
+  Uint8List _frame(int dst, int seq, Uint8List payload, bool keepalive) =>
+      FrameHeader(
+        src: _nodeId,
+        dst: dst,
+        seq: seq,
+        keepalive: keepalive,
+      ).frame(payload);
 
   bool _countSend(bool ok, int size) {
     if (!ok) {
@@ -267,8 +291,8 @@ class TransportNode implements AbsTransportNode {
 
   /// Reads the boot id one keepalive carries. The first one is learnt
   /// silently; one that differs from a known incarnation is a node that
-  /// restarted, whose counters are reset and whose caller reports it as
-  /// gone and back.
+  /// restarted, whose counters and streams are reset and whose caller
+  /// reports it as gone and back.
   bool _onBootId(_Node node, int boot, FrameHeader header, bool isNew) {
     if (isNew || node.boot == 0) {
       node.boot = boot;
@@ -277,7 +301,12 @@ class TransportNode implements AbsTransportNode {
     if (boot == 0 || boot == node.boot) {
       return false;
     }
-    node.lastSeq = header.seq;
+    node.txSeq = 0;
+    node.unicastSeq = 0;
+    node.unicastHeard = false;
+    node.broadcastSeq = 0;
+    node.broadcastHeard = false;
+    _takeSeq(node, header);
     node.received = 1;
     node.lost = 0;
     node.duplicates = 0;
@@ -286,9 +315,10 @@ class TransportNode implements AbsTransportNode {
     return true;
   }
 
-  /// Refreshes or inserts the node a frame came from. The node is null when
-  /// the frame must be dropped (a duplicate, or a full table), and the flag
-  /// says whether the node was not known before.
+  /// Refreshes or inserts the node a frame came from, and accounts for the
+  /// frame in its stream. The node is null when the frame must be dropped (a
+  /// duplicate, or a full table), and the flag says whether the node was not
+  /// known before.
   (_Node?, bool) _learn(FrameHeader header, UdpDatagram datagram, int nowUs) {
     var isNew = false;
     var node = _nodes[header.src];
@@ -297,28 +327,58 @@ class TransportNode implements AbsTransportNode {
         ++_dropped;
         return (null, false);
       }
-      node = _Node(id: header.src, lastSeq: header.seq)..received = 1;
+      node = _Node(id: header.src);
       _nodes[header.src] = node;
       isNew = true;
-    } else {
-      final delta = (header.seq - node.lastSeq) & 0xFFFF;
-      if (delta == 0) {
-        // The same frame again: a medium that duplicates, or this node's own
-        // forwarding echoed back. Either way it was already handled.
-        ++node.duplicates;
-        return (null, false);
-      }
-      if (delta > 1 && delta < resyncThreshold) {
-        node.lost += delta - 1;
-      }
-      node.lastSeq = header.seq;
-      ++node.received;
+    }
+    // A frame for another node carries the numbering of a stream this node
+    // does not see: it says its sender is alive and nothing else.
+    final mine = header.dst == _nodeId || header.dst == broadcastNode;
+    if (mine && !_account(node, header)) {
+      return (null, false);
     }
     node.host = datagram.host;
     node.port = datagram.port;
     node.lastSeenUs = nowUs;
     node.hops = header.hops;
     return (node, isNew);
+  }
+
+  /// Counts one frame in the stream its destination names. False when the
+  /// frame must be dropped as a duplicate.
+  bool _account(_Node node, FrameHeader header) {
+    final broadcast = header.dst == broadcastNode;
+    final heard = broadcast ? node.broadcastHeard : node.unicastHeard;
+    if (heard) {
+      final last = broadcast ? node.broadcastSeq : node.unicastSeq;
+      final delta = (header.seq - last) & 0xFFFF;
+      if (delta == 0) {
+        // The same frame again: a medium that duplicates, or this node's own
+        // forwarding echoed back. Either way it was already handled.
+        ++node.duplicates;
+        return false;
+      }
+      if (delta > 1 && delta < resyncThreshold) {
+        node.lost += delta - 1;
+      }
+    }
+    // The first frame of a stream opens its numbering and is judged on
+    // nothing.
+    _takeSeq(node, header);
+    ++node.received;
+    return true;
+  }
+
+  /// Takes the sequence of a frame into the stream its destination names,
+  /// which the frame opens when it is its first.
+  void _takeSeq(_Node node, FrameHeader header) {
+    if (header.dst == broadcastNode) {
+      node.broadcastSeq = header.seq;
+      node.broadcastHeard = true;
+    } else if (header.dst == _nodeId) {
+      node.unicastSeq = header.seq;
+      node.unicastHeard = true;
+    }
   }
 
   /// Forgets every node silent for [nodeExpiryUs].

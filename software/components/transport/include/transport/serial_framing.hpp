@@ -135,6 +135,10 @@ namespace mark4
                     m_crc = crc16(m_crc, &byte, 1U);
                     if (m_expected == 0U || m_expected > SERIAL_MAX_PAYLOAD)
                     {
+                        // An announced length no frame of this project can
+                        // carry: the bytes behind the sync pair were not a
+                        // header, or they were corrupted on the way.
+                        ++m_errors;
                         m_state = State::SYNC0;
                         break;
                     }
@@ -162,6 +166,7 @@ namespace mark4
                     {
                         return m_expected;
                     }
+                    ++m_errors;
                     break;
             }
             return 0U;
@@ -171,6 +176,15 @@ namespace mark4
         [[nodiscard]] const std::uint8_t *payload() const
         {
             return m_payload;
+        }
+
+        /// @return frames the stream could not deliver whole, cumulative: a
+        ///         CRC mismatch or an impossible announced length. A stray
+        ///         byte while hunting for the sync pair is not one of them:
+        ///         that is the normal resynchronization.
+        [[nodiscard]] std::uint32_t errors() const
+        {
+            return m_errors;
         }
 
       private:
@@ -190,6 +204,7 @@ namespace mark4
         std::size_t m_expected = 0U;                     ///< announced payload size
         std::size_t m_received = 0U;                     ///< payload bytes accumulated
         std::uint16_t m_crc = CRC16_INIT;                ///< running CRC over length + payload
+        std::uint32_t m_errors = 0U;                     ///< frames dropped for a CRC or a length
         std::uint8_t m_crcLow = 0U;                      ///< first CRC byte of the frame
         State m_state = State::SYNC0;                    ///< decoder position
     };
